@@ -290,7 +290,9 @@ internal class PermissionRiskScorer private constructor(context: Context) {
             )
         val modelSelection =
             runCatching {
-                    functionalConfigManager.getEffectiveConfigMappingForFunction(
+                    com.ai.assistance.operit.features.orbit.OrbitModels.mapping(
+                        appContext, FunctionType.PERMISSION_RISK_SCORER, callerChatId)
+                    ?: functionalConfigManager.getEffectiveConfigMappingForFunction(
                         FunctionType.PERMISSION_RISK_SCORER
                     )
                 }
@@ -417,7 +419,14 @@ internal class PermissionRiskScorer private constructor(context: Context) {
                 "prior_reviews=${priorReviews?.count ?: 0}"
         )
         PermissionRiskScoreRepository.publish(record())
-        workScope.launch {
+        // The classifier runs on its own scope; an Orbit's review still counts against Orbit's
+        // allowance and is held back with the rest of Orbit's calls while it is paused.
+        val orbitTag =
+            kotlinx.coroutines.currentCoroutineContext()[com.ai.assistance.operit.features.orbit.OrbitUsageTag]
+                ?.withPurpose(com.ai.assistance.operit.features.orbit.OrbitQuota.Purpose.REVIEW)
+                ?: com.ai.assistance.operit.features.orbit.OrbitQuota.tagForChat(
+                    appContext, callerChatId, com.ai.assistance.operit.features.orbit.OrbitQuota.Purpose.REVIEW)
+        workScope.launch(orbitTag ?: kotlin.coroutines.EmptyCoroutineContext) {
             val outcome = classify(input = input, modelKey = modelKey.orEmpty())
             classifierUsage = outcome.usage
             val verdict = outcome.verdict

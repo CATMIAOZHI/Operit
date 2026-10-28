@@ -52,7 +52,7 @@ class MemoryLearningSnapshotTest {
         assertEquals(128_000 / 3, MemoryLearningSnapshot.sourceBudget(128_000, 0))
         assertEquals(256_000 / 3, MemoryLearningSnapshot.sourceBudget(256_000, 0))
         // The ceiling still bounds a very large advertised window.
-        assertEquals(96_000, MemoryLearningSnapshot.sourceBudget(2_000_000, 0))
+        assertEquals(160_000, MemoryLearningSnapshot.sourceBudget(2_000_000, 0))
     }
 
     @Test fun windowKeepsLocalProviderCapsAndTheFallback() {

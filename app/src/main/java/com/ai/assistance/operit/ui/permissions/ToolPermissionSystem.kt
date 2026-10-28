@@ -143,6 +143,8 @@ class ToolPermissionSystem private constructor(private val context: Context) {
     
     // 工具权限存储：使用 "tool_permission_<tool_name>" 作为key
     private fun toolPermissionKey(toolName: String) = stringPreferencesKey("tool_permission_$toolName")
+    // Orbit keeps its own list, apart from the main app's: "orbit_tool_permission_<tool_name>".
+    private fun orbitToolPermissionKey(toolName: String) = stringPreferencesKey("$ORBIT_TOOL_PERMISSION_PREFIX$toolName")
 
     val toolPermissionOverridesFlow: Flow<Map<String, PermissionLevel>> =
         context.toolPermissionsDataStore.data.map { preferences ->
@@ -152,6 +154,32 @@ class ToolPermissionSystem private constructor(private val context: Context) {
                 else null
             }.toMap()
         }
+
+    /** The levels the user set for tools in Orbit chats. The main app's own list never reads these. */
+    val orbitToolPermissionOverridesFlow: Flow<Map<String, PermissionLevel>> =
+        context.toolPermissionsDataStore.data.map { preferences ->
+            preferences.asMap().entries.mapNotNull { (key, value) ->
+                if (key.name.startsWith(ORBIT_TOOL_PERMISSION_PREFIX) && value is String)
+                    key.name.removePrefix(ORBIT_TOOL_PERMISSION_PREFIX) to PermissionLevel.fromString(value)
+                else null
+            }.toMap()
+        }
+
+    suspend fun saveOrbitToolPermission(toolName: String, level: PermissionLevel) {
+        context.toolPermissionsDataStore.edit { it[orbitToolPermissionKey(toolName)] = level.name }
+    }
+
+    suspend fun clearOrbitToolPermission(toolName: String) {
+        context.toolPermissionsDataStore.edit { it.remove(orbitToolPermissionKey(toolName)) }
+    }
+
+    /** Orbit's tool access: false is the fast automatic review, true lets every tool run unreviewed. */
+    val orbitFullAccessFlow: Flow<Boolean> =
+        context.toolPermissionsDataStore.data.map { it[ORBIT_FULL_ACCESS] ?: false }
+
+    suspend fun setOrbitFullAccess(enabled: Boolean) {
+        context.toolPermissionsDataStore.edit { it[ORBIT_FULL_ACCESS] = enabled }
+    }
     
     // Permission request management
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -305,6 +333,9 @@ class ToolPermissionSystem private constructor(private val context: Context) {
     fun getOperationDescription(tool: AITool): String {
         return operationDescriptionRegistry[tool.name]?.invoke(tool) ?: context.getString(R.string.tool_permission_operation, tool.name)
     }
+
+    private fun getOperationDescription(tool: AITool, reviewContext: ToolPermissionReviewContext): String =
+        getOperationDescription(tool)
     
     /**
      * Check if a tool is allowed to execute
@@ -353,7 +384,17 @@ class ToolPermissionSystem private constructor(private val context: Context) {
                 liveAssistantContent = liveAssistantContent,
             )
 
-        val effectiveLevel = getEffectivePermissionLevel(tool.name)
+        // Nobody watches an unattended turn, and a turn that another chat runs for it would ask
+        // there with nobody around to answer, so handing work to other chats is refused here.
+        if (UnattendedChats.contains(callerChatId) && UnattendedChats.isHandOffTool(tool.name)) {
+            val taskScope = com.ai.assistance.operit.features.orbit.OrbitTaskExecution.resolve(context, callerChatId)
+            if (taskScope == null ||
+                tool.name !in com.ai.assistance.operit.core.agent.collaboration.CollaborationTools.names) {
+                return permissionDeniedBySettings(UNATTENDED_DENIAL_REASON)
+            }
+        }
+
+        val effectiveLevel = getEffectivePermissionLevel(tool.name, callerChatId)
         val currentRoute = resolveCurrentPermissionRoute(tool, reviewContext)
         if (
             !callerChatId.isNullOrBlank() &&
@@ -365,7 +406,7 @@ class ToolPermissionSystem private constructor(private val context: Context) {
             val skippedAction =
                 PermissionReviewAction.fromTool(
                     tool = tool,
-                    operationDescription = getOperationDescription(tool),
+                    operationDescription = getOperationDescription(tool, reviewContext),
                     reviewContext = reviewContext,
                     targetId = targetId ?: skippedReviewId,
                 )
@@ -393,19 +434,46 @@ class ToolPermissionSystem private constructor(private val context: Context) {
             level = effectiveLevel,
             tool = tool,
             reviewContext = reviewContext,
-            onAsk = { requestPermission(tool, reviewContext) },
+            onAsk = {
+                if (UnattendedChats.contains(callerChatId)) {
+                    permissionDeniedBySettings(UNATTENDED_DENIAL_REASON)
+                } else {
+                    requestPermission(tool, reviewContext)
+                }
+            },
         )
     }
 
-    suspend fun getEffectivePermissionLevel(toolName: String): PermissionLevel {
+    /**
+     * The level [toolName] runs at. An Orbit's chats use Orbit's own list, which the main app's list
+     * never changes: Orbit's internal tools are always allowed, everything else goes through the fast
+     * automatic review, unless the user changed that tool in Orbit's developer settings.
+     */
+    suspend fun getEffectivePermissionLevel(
+        toolName: String,
+        callerChatId: String? = null,
+    ): PermissionLevel {
         val preferences = context.toolPermissionsDataStore.data.first()
         val masterSwitch = PermissionLevel.fromString(preferences[MASTER_SWITCH] ?: DEFAULT_MASTER_SWITCH)
         val key = toolPermissionKey(toolName)
+        if (isOrbitChat(callerChatId)) {
+            val stored = preferences[orbitToolPermissionKey(toolName)]?.let { PermissionLevel.fromString(it) }
+            return orbitPermissionLevel(
+                storedToolLevel = stored,
+                defaultToolLevel = orbitDefaultPermissionLevel(toolName, preferences[ORBIT_FULL_ACCESS] ?: false),
+            )
+        }
         val overrideLevel =
             preferences[key]?.let { PermissionLevel.fromString(it) }
                 ?: defaultPermissionLevelFor(toolName, masterSwitch)
         return resolveEffectivePermissionLevel(masterSwitch, overrideLevel)
     }
+
+    private suspend fun isOrbitChat(chatId: String?): Boolean =
+        !chatId.isNullOrBlank() &&
+            com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context)
+                .current()
+                .ownerForChat(chatId) != null
     
     /**
      * Request permission from the user to execute a tool.
@@ -439,6 +507,7 @@ class ToolPermissionSystem private constructor(private val context: Context) {
                                             requestPermissionInternal(
                                                 tool,
                                                 reviewContext.conversationLabel,
+                                                operationDescriptionOverride = getOperationDescription(tool, reviewContext),
                                             )
                                         ) {
                                             ToolPermissionDecision.Allowed
@@ -469,7 +538,7 @@ class ToolPermissionSystem private constructor(private val context: Context) {
         val decision = fastPathDecision ?: try {
                 AgentToolPermissionReviewer.getInstance(context).review(
                     tool = tool,
-                    operationDescription = getOperationDescription(tool),
+                    operationDescription = getOperationDescription(tool, reviewContext),
                     reviewContext = reviewContext,
                 )
             } catch (cancelled: CancellationException) {
@@ -581,11 +650,16 @@ class ToolPermissionSystem private constructor(private val context: Context) {
             invalidateStoredRiskScores(reviewContext)
         }
         return refreshedDecision
-            ?: requestManualPermission(
-                tool = tool,
-                reviewContext = reviewContext,
-                pendingRequestAlreadyCounted = pendingRequestAlreadyCounted,
-            )
+            ?: if (UnattendedChats.contains(reviewContext.callerChatId)) {
+                // Nobody is around to answer a prompt in an unattended turn.
+                permissionDeniedBySettings(UNATTENDED_DENIAL_REASON)
+            } else {
+                requestManualPermission(
+                    tool = tool,
+                    reviewContext = reviewContext,
+                    pendingRequestAlreadyCounted = pendingRequestAlreadyCounted,
+                )
+            }
     }
 
     /**
@@ -593,8 +667,11 @@ class ToolPermissionSystem private constructor(private val context: Context) {
      * stops and never answered a call from a stored score, so it stays strict until the user picks one
      * of the stops: that slider writes the level and the reuse level together.
      */
-    private suspend fun effectiveReviewMode(): PermissionReviewMode =
-        if (isLegacyAutoReviewLevel(context.toolPermissionsDataStore.data.first()[MASTER_SWITCH])) {
+    private suspend fun effectiveReviewMode(callerChatId: String?): PermissionReviewMode =
+        if (isOrbitChat(callerChatId)) {
+            // Orbit chats are fixed to the fast stop.
+            PermissionReviewMode.FAST
+        } else if (isLegacyAutoReviewLevel(context.toolPermissionsDataStore.data.first()[MASTER_SWITCH])) {
             PermissionReviewMode.STRICT
         } else {
             reviewPolicyStore.getReviewMode()
@@ -615,7 +692,7 @@ class ToolPermissionSystem private constructor(private val context: Context) {
         tool: AITool,
         reviewContext: ToolPermissionReviewContext,
     ): PermissionReviewDecision? {
-        if (effectiveReviewMode() != PermissionReviewMode.FAST) return null
+        if (effectiveReviewMode(reviewContext.callerChatId) != PermissionReviewMode.FAST) return null
         val deferral =
             PermissionRiskScorer.getInstance(context)
                 .resolveFastPath(
@@ -655,7 +732,7 @@ class ToolPermissionSystem private constructor(private val context: Context) {
         val action =
             PermissionReviewAction.fromTool(
                 tool = tool,
-                operationDescription = getOperationDescription(tool),
+                operationDescription = getOperationDescription(tool, reviewContext),
                 reviewContext = reviewContext,
                 targetId = reviewContext.targetId ?: reviewId,
             )
@@ -698,6 +775,7 @@ class ToolPermissionSystem private constructor(private val context: Context) {
                             requestPermissionInternal(
                                 tool = tool,
                                 conversationLabel = reviewContext.conversationLabel,
+                                operationDescriptionOverride = getOperationDescription(tool, reviewContext),
                             )
                         ) {
                             ToolPermissionDecision.Allowed
@@ -737,20 +815,53 @@ class ToolPermissionSystem private constructor(private val context: Context) {
         }
     }
 
+    /**
+     * Whether [tool] only touches the chat's bound workspace or, in an Orbit's chat, that Orbit's own
+     * folder. Orbit reads its folder all the time, so reviewing each read only costs tokens. Writes run
+     * unreviewed only on Orbit's own notes and files ([OrbitFiles.allowed]); the rest of the folder is
+     * state the app keeps (packages.json, approvals.json, the learning boundary, reactions) or documents
+     * with a history of their own (Soul, identity, memory.md, skills), and a write there is reviewed.
+     * This guards against slips, not against a determined model. Its vault lives elsewhere.
+     */
+    private suspend fun isInsideApprovedScope(tool: AITool, reviewContext: ToolPermissionReviewContext): Boolean {
+        if (WorkspaceToolPermissionPolicy.isAutoApproved(
+                context = context,
+                tool = tool,
+                workspacePath = reviewContext.workspacePath,
+                workspaceEnv = reviewContext.workspaceEnv,
+                callerChatId = reviewContext.callerChatId,
+            )) return true
+        val name = tool.name.lowercase()
+        val writes = name in ORBIT_FOLDER_WRITE_TOOLS
+        if (name !in ORBIT_FOLDER_READ_TOOLS && !writes) return false
+        // Cheap refusals before reading the Orbit settings.
+        val target = tool.parameters.firstOrNull { it.name == "path" }?.value?.takeIf { it.isNotBlank() }
+        if (writes && target == null) return false
+        val chatId = reviewContext.callerChatId?.takeIf { it.isNotBlank() } ?: return false
+        val preferences = com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context)
+        val orbit = preferences.current().ownerForChat(chatId) ?: return false
+        val orbitRoot = runCatching { preferences.orbitDir(orbit.id).canonicalPath }.getOrNull() ?: return false
+        if (!WorkspaceToolPermissionPolicy.isAutoApproved(
+                context = context,
+                tool = tool,
+                workspacePath = orbitRoot,
+                workspaceEnv = "android",
+                callerChatId = chatId,
+            )) return false
+        if (!writes) return true
+        // Inside the folder; a write is free only on one of Orbit's own notes or files.
+        val relative = runCatching { java.io.File(target!!).canonicalFile.relativeTo(java.io.File(orbitRoot)).invariantSeparatorsPath }
+            .getOrNull() ?: return false
+        return com.ai.assistance.operit.features.orbit.OrbitFiles.allowed(relative) &&
+            !com.ai.assistance.operit.features.orbit.OrbitFiles.isIndex(relative)
+    }
+
     private suspend fun resolveCurrentPermissionRoute(
         tool: AITool,
         reviewContext: ToolPermissionReviewContext,
     ): PermissionRoute {
-        val level = getEffectivePermissionLevel(tool.name)
-        val workspaceApproved =
-            level == PermissionLevel.AUTO_REVIEW &&
-                WorkspaceToolPermissionPolicy.isAutoApproved(
-                    context = context,
-                    tool = tool,
-                    workspacePath = reviewContext.workspacePath,
-                    workspaceEnv = reviewContext.workspaceEnv,
-                    callerChatId = reviewContext.callerChatId,
-                )
+        val level = getEffectivePermissionLevel(tool.name, reviewContext.callerChatId)
+        val workspaceApproved = level == PermissionLevel.AUTO_REVIEW && isInsideApprovedScope(tool, reviewContext)
         return resolvePermissionRoute(level, workspaceApproved)
     }
 
@@ -760,15 +871,7 @@ class ToolPermissionSystem private constructor(private val context: Context) {
         reviewContext: ToolPermissionReviewContext,
         onAsk: suspend () -> ToolPermissionDecision,
     ): ToolPermissionDecision {
-        val workspaceApproved =
-            level == PermissionLevel.AUTO_REVIEW &&
-                WorkspaceToolPermissionPolicy.isAutoApproved(
-                    context = context,
-                    tool = tool,
-                    workspacePath = reviewContext.workspacePath,
-                    workspaceEnv = reviewContext.workspaceEnv,
-                    callerChatId = reviewContext.callerChatId,
-                )
+        val workspaceApproved = level == PermissionLevel.AUTO_REVIEW && isInsideApprovedScope(tool, reviewContext)
 
         return when (resolvePermissionRoute(level, workspaceApproved)) {
             PermissionRoute.ALLOW -> ToolPermissionDecision.Allowed
@@ -835,7 +938,7 @@ class ToolPermissionSystem private constructor(private val context: Context) {
                     canonical =
                         PermissionReviewAction.fromTool(
                             tool = tool,
-                            operationDescription = getOperationDescription(tool),
+                            operationDescription = getOperationDescription(tool, reviewContext),
                             reviewContext = reviewContext,
                             targetId = "",
                         ),
@@ -847,7 +950,7 @@ class ToolPermissionSystem private constructor(private val context: Context) {
             .beginBatch(
                 callerChatId = callerChatId,
                 turnScopeId = timingScopeId,
-                reviewMode = effectiveReviewMode(),
+                reviewMode = effectiveReviewMode(callerChatId),
                 actions = actions,
                 workspacePath = workspacePath,
                 workspaceEnv = workspaceEnv,
@@ -1040,13 +1143,68 @@ internal fun resolveEffectivePermissionLevel(
 ): PermissionLevel = toolOverride ?: masterLevel
 
 /**
+ * The level a tool runs at in an Orbit's own chat, which is fixed to the automatic review. A tool
+ * the user always allows or forbids keeps that choice, and one set to ask is reviewed instead, so
+ * Orbit never waits on a prompt.
+ */
+internal fun orbitPermissionLevel(
+    storedToolLevel: PermissionLevel?,
+    defaultToolLevel: PermissionLevel?,
+): PermissionLevel =
+    when (storedToolLevel ?: defaultToolLevel) {
+        PermissionLevel.ALLOW -> PermissionLevel.ALLOW
+        PermissionLevel.FORBID -> PermissionLevel.FORBID
+        else -> PermissionLevel.AUTO_REVIEW
+    }
+
+/** Generic file tools that only read; in an Orbit's chat they run unreviewed inside its own folder. */
+private val ORBIT_FOLDER_READ_TOOLS = setOf(
+    "read_file", "read_file_part", "read_file_full", "read_file_binary",
+    "list_files", "grep_code", "file_exists", "file_info",
+)
+
+/**
+ * Generic file tools that write one path; in an Orbit's chat they run unreviewed only on its own notes
+ * and files. A recursive delete is never free (the workspace policy refuses it).
+ */
+private val ORBIT_FOLDER_WRITE_TOOLS = setOf(
+    "write_file", "write_file_binary", "create_file", "edit_file", "apply_file", "delete_file",
+)
+
+/** Key prefix of Orbit's own tool levels, kept apart from the main app's "tool_permission_". */
+internal const val ORBIT_TOOL_PERMISSION_PREFIX = "orbit_tool_permission_"
+
+/** Orbit's tool access level, chosen in Orbit's settings; the main app never reads it. */
+private val ORBIT_FULL_ACCESS = androidx.datastore.preferences.core.booleanPreferencesKey("orbit_full_access")
+
+/**
+ * Orbit's own tools: they only read and change Orbit's own things (its memory, notes, skills, vault,
+ * files, reminders and tasks, its name), so Orbit never waits on a review for them.
+ */
+internal fun isOrbitInternalTool(toolName: String): Boolean =
+    // A package's tools are named "package:tool"; only the built-in memory review package counts,
+    // so a package that merely calls itself "orbit_…" is reviewed like any other.
+    if (':' in toolName) toolName.startsWith("memory_review:")
+    else toolName.startsWith("orbit_") ||
+        toolName == "memory_review" ||
+        toolName == "use_package" || toolName == "search_chat_history" ||
+        defaultPermissionLevelFor(toolName, PermissionLevel.AUTO_REVIEW) == PermissionLevel.ALLOW
+
+/**
+ * The level a tool takes in Orbit's chats when the user has not changed it in Orbit's list. With
+ * [fullAccess] every tool runs unreviewed; otherwise only Orbit's own tools do.
+ */
+internal fun orbitDefaultPermissionLevel(toolName: String, fullAccess: Boolean): PermissionLevel =
+    if (fullAccess || isOrbitInternalTool(toolName)) PermissionLevel.ALLOW else PermissionLevel.AUTO_REVIEW
+
+/**
  * The level a tool takes when the user has not chosen one for it, or null when it simply follows the
  * [masterLevel].
  *
  * The agent's own collaboration tools are how one agent hands work to another. They touch no user
  * data themselves, and the work they start is reviewed as each of its own tool calls runs, so asking
- * about the hand-off as well only adds friction. Updating the current chat's todo list also needs no
- * separate review. A level the user stored for one of these tools still
+ * about the hand-off as well only adds friction. Updating the current chat's todo list, or Orbit
+ * renaming itself, also needs no separate review. A level the user stored for one of these tools still
  * wins, which is why this is a default rather than an exemption from the permission system. A global
  * "forbid" also wins: that setting is a deliberate whitelist, not a gap for a default to fill.
  */
@@ -1055,7 +1213,8 @@ internal fun defaultPermissionLevelFor(
     masterLevel: PermissionLevel,
 ): PermissionLevel? =
     if (masterLevel != PermissionLevel.FORBID &&
-        (CollaborationTools.isCollaborationTool(toolName) || toolName == "todowrite")) {
+        (CollaborationTools.isCollaborationTool(toolName) || toolName == "todowrite" ||
+            toolName == com.ai.assistance.operit.core.tools.OrbitTools.SET_NAME)) {
         PermissionLevel.ALLOW
     } else {
         null
@@ -1120,6 +1279,10 @@ internal fun resolvePermissionStop(
  * the UI can report the outcome instead; keep the prefixes in sync with the texts below.
  */
 internal const val SETTINGS_DENIAL_PREFIX = "Tool execution denied by permission settings."
+
+internal const val UNATTENDED_DENIAL_REASON =
+    "This turn runs in the background with nobody around to approve tools. Do without this tool, " +
+        "or mention it so the user can do it when they are back."
 internal const val USER_DENIAL_PREFIX = "Tool execution denied by user."
 internal const val AUTOMATIC_REVIEW_DENIAL_PREFIX = "Automatic permission review denied"
 internal const val AUTOMATIC_REVIEW_CANCEL_PREFIX =

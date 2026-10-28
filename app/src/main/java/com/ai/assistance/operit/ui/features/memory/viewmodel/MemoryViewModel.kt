@@ -541,7 +541,9 @@ class MemoryViewModel(
      */
     fun updateChunkContent(chunkId: Long, newContent: String) {
         viewModelScope.launch {
-            repository.updateChunk(chunkId, newContent)
+            com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.explicitEdit(context, profileId) {
+                repository.updateChunk(chunkId, newContent)
+            }
             // 可选：更新后刷新当前文档的区块列表
             val memoryId = _uiState.value.selectedMemory?.id ?: return@launch
             val chunks = repository.getChunksForMemory(memoryId)
@@ -615,6 +617,7 @@ class MemoryViewModel(
             try {
                 // 文档节点的内容不允许自由编辑，保持固定格式
                 val contentToUpdate = if (memory.isDocumentNode) memory.content else newContent
+                suspend fun applyEdit() {
                 repository.updateMemory(
                     memory = memory,
                     newTitle = newTitle,
@@ -626,6 +629,10 @@ class MemoryViewModel(
                     newFolderPath = newFolderPath.ifBlank { null }, // 空字符串视为未分类
                     newTags = newTags
                 )
+                }
+                if (newTitle != memory.title || contentToUpdate != memory.content)
+                    com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.explicitEdit(context, profileId) { applyEdit() }
+                else applyEdit()
                 val updatedGraph = refreshGraph()
                 // 刷新文件夹列表（如果记忆移动到新文件夹或从文件夹移出）
                 loadFolderPaths()
@@ -644,7 +651,9 @@ class MemoryViewModel(
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
             try {
-                repository.deleteMemory(memoryId)
+                com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.explicitEdit(context, profileId) {
+                    repository.deleteMemory(memoryId)
+                }
                 val updatedGraph = refreshGraph()
                 // 刷新文件夹列表（删除记忆可能导致文件夹变空）
                 loadFolderPaths()
@@ -687,7 +696,9 @@ class MemoryViewModel(
             _uiState.update { it.copy(isLoading = true, showBatchDeleteConfirm = false) }
             try {
                 com.ai.assistance.operit.util.AppLogger.d("MemoryViewModel", "Calling repository.deleteMemoriesByUuids with IDs: $selectedIds")
-                repository.deleteMemoriesByUuids(selectedIds)
+                com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.explicitEdit(context, profileId) {
+                    repository.deleteMemoriesByUuids(selectedIds)
+                }
                 val updatedGraph = refreshGraph()
                 com.ai.assistance.operit.util.AppLogger.d("MemoryViewModel", "Graph refreshed after deletion.")
                 // 刷新文件夹列表（批量删除可能导致文件夹变空）
@@ -738,7 +749,9 @@ class MemoryViewModel(
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, isEditingEdge = false, editingEdge = null) }
             try {
-                repository.updateLink(edge.id, type, weight, description)
+                com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.explicitEdit(context, profileId) {
+                    repository.updateLink(edge.id, type, weight, description)
+                }
                 val updatedGraph = refreshGraph()
                 _uiState.update {
                     it.copy(
@@ -758,7 +771,9 @@ class MemoryViewModel(
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
             try {
-                repository.deleteLink(edgeId)
+                com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.explicitEdit(context, profileId) {
+                    repository.deleteLink(edgeId)
+                }
                 val updatedGraph = refreshGraph()
                 _uiState.update { it.copy(isLoading = false, selectedEdge = null, graph = updatedGraph) }
             } catch (e: Exception) {

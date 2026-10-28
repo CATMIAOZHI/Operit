@@ -40,18 +40,34 @@ class LearningPromptSnapshotRepository internal constructor(root: File, chatId: 
     }
 
     /** Only a persisted successful summary starts a new prefix epoch. */
+    suspend fun bindMemoryScope(scope: String, identityRevision: String = "") = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val data = read()
+            if (data.optString("_memory_scope", "global") != scope ||
+                data.optString("_identity_revision") != identityRevision) {
+                write(JSONObject().put("_memory_scope", scope).put("_identity_revision", identityRevision))
+            }
+        }
+    }
+
     suspend fun beginEpoch(summary: String) = withContext(Dispatchers.IO) {
         mutex.withLock {
             val data = read()
             val epoch = LearnedSkillRepository.version(summary)
-            if (data.optString("_epoch") != epoch) write(JSONObject().put("_epoch", epoch))
+            if (data.optString("_epoch") != epoch)
+                write(JSONObject().put("_epoch", epoch).put("_memory_scope", data.optString("_memory_scope", "global"))
+                    .put("_identity_revision", data.optString("_identity_revision")))
         }
     }
 
     class IncompatiblePrefixException : IllegalStateException()
 
+    /**
+     * [sections] are labelled parts of [candidate], kept beside it so a page can show what one
+     * layer put into the prompt. They are saved only with a new prefix and never change it.
+     */
     suspend fun bindSystem(candidate: String, revisions: Map<String, String>, protocol: String = "",
-        lane: String = "main"): String =
+        lane: String = "main", sections: Map<String, String> = emptyMap()): String =
         withContext(Dispatchers.IO) {
             mutex.withLock {
                 val data = read()
@@ -66,11 +82,46 @@ class LearningPromptSnapshotRepository internal constructor(root: File, chatId: 
                     if (saved.optBoolean("incompatible")) { saved.put("incompatible", false); write(data) }
                     return@withLock saved.getString("system")
                 }
-                systems.put(lane, JSONObject().put("system", candidate).put("revisions", JSONObject(revisions)).put("protocol", protocol))
+                systems.put(lane, JSONObject().put("system", candidate).put("revisions", JSONObject(revisions))
+                    .put("protocol", protocol).put("sections", JSONObject(sections))
+                    .put("createdAt", System.currentTimeMillis()))
                 write(data)
                 candidate
             }
         }
+
+    /** A system prompt this chat already sent, with the sections saved beside it. */
+    data class SavedSystem(val system: String, val sections: Map<String, String>, val protocol: String, val createdAt: Long)
+
+    /**
+     * The system prompt this chat uses for text chat, or null before one is built. A chat also keeps
+     * prompts for other kinds of turns (voice in the floating window, a proxy card); one of those is
+     * shown only when there is no text chat prompt.
+     */
+    suspend fun latestSystem(roleCardId: String? = null): SavedSystem? = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val systems = read().optJSONObject("_systems") ?: return@withLock null
+            // Lane: roleCard|proxyCard|promptFunctionType|groupHint.
+            fun isTextChat(lane: String) = lane.split('|').let {
+                (roleCardId == null || it.getOrNull(0) == roleCardId) &&
+                    it.getOrNull(1).isNullOrEmpty() && it.getOrNull(2) == "CHAT" && it.getOrNull(3) != "true"
+            }
+            val lanes = systems.keys().asSequence().toList()
+            // With a role card given, only that card's text chat prompt counts.
+            (lanes.filter(::isTextChat).ifEmpty { if (roleCardId == null) lanes else emptyList() })
+                .map { systems.getJSONObject(it) }
+                .maxByOrNull { it.optLong("createdAt") }
+                ?.let { saved ->
+                    val sections = saved.optJSONObject("sections")
+                    SavedSystem(
+                        system = saved.getString("system"),
+                        sections = sections?.keys()?.asSequence()?.associateWith { sections.getString(it) }.orEmpty(),
+                        protocol = saved.optString("protocol"),
+                        createdAt = saved.optLong("createdAt"),
+                    )
+                }
+        }
+    }
 
     data class Status(val exists: Boolean, val needsRebuild: Boolean)
 

@@ -72,6 +72,7 @@ import com.ai.assistance.operit.ui.theme.isLiquidGlassSupported
 import com.ai.assistance.operit.ui.theme.isWaterGlassSupported
 import com.ai.assistance.operit.ui.theme.liquidGlass
 import com.ai.assistance.operit.ui.theme.waterGlass
+import com.ai.assistance.operit.util.ChatImageBitmapCache
 import com.ai.assistance.operit.util.ImageBitmapLimiter
 import com.ai.assistance.operit.util.ImagePoolManager
 import com.ai.assistance.operit.util.ChatMarkupRegex
@@ -116,21 +117,21 @@ fun UserMessageComposable(
             mutableStateOf(if (isHiddenPlaceholder) {
                 MessageParseResult(processedText = "", trailingAttachments = emptyList())
             } else {
-                parseMessageContent(context, message.content)
+                parseMessageContent(context, message.content).let { parsed ->
+                    // Pictures already decoded show at once.
+                    parsed.copy(imageLinks = parsed.imageLinks.map { image ->
+                        ChatImageBitmapCache.get(image.id)?.let { image.copy(bitmap = it, loading = false) } ?: image
+                    })
+                }
             })
         }
     LaunchedEffect(parsedState) {
         val initial = parsedState.value
-        if (initial.imageLinks.isNotEmpty()) {
+        if (initial.imageLinks.any { it.loading }) {
             val loaded = withContext(Dispatchers.IO) {
                 initial.imageLinks.map { image ->
-                    val data = ImagePoolManager.resolveImage(image.id, image.sourcePath)
-                    val bitmap = data?.let {
-                        runCatching {
-                            ImageBitmapLimiter.decodeDownsampledBitmap(Base64.decode(it.base64, Base64.DEFAULT))
-                        }.getOrNull()
-                    }
-                    image.copy(bitmap = bitmap, loading = false)
+                    if (!image.loading) image
+                    else image.copy(bitmap = ChatImageBitmapCache.load(image.id, image.sourcePath), loading = false)
                 }
             }
             parsedState.value = initial.copy(imageLinks = loaded)
@@ -182,7 +183,7 @@ fun UserMessageComposable(
                     Spacer(modifier = Modifier.width(4.dp))
 
                     Text(
-                        text = "${reply.sender}: ${reply.content}",
+                        text = if (reply.sender.isBlank()) reply.content else "${reply.sender}: ${reply.content}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,

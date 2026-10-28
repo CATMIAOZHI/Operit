@@ -51,6 +51,8 @@ object ModelConfigConnectionTester {
         modelConfigManager: ModelConfigManager,
         config: ModelConfigData,
         requestedModelIndex: Int = 0,
+        /** Only checks that the model answers; skips the tool-call case. */
+        chatOnly: Boolean = false,
         onActiveServiceChanged: (AIService?) -> Unit = {}
     ): ModelConnectionTestReport {
         val actualModelIndex = getValidModelIndex(config.modelName, requestedModelIndex)
@@ -99,7 +101,7 @@ object ModelConfigConnectionTester {
                 ).collect { }
             }
 
-            if (configForTest.enableToolCall) {
+            if (configForTest.enableToolCall && !chatOnly) {
                 runCase(ModelConnectionTestType.TOOL_CALL) {
                     val availableTools =
                         listOf(
@@ -145,7 +147,7 @@ object ModelConfigConnectionTester {
                 }
             }
 
-            if (configForTest.enableDirectImageProcessing) {
+            if (configForTest.enableDirectImageProcessing && !chatOnly) {
                 runCase(ModelConnectionTestType.IMAGE) {
                     val imageFile = AssetCopyUtils.copyAssetToCache(context, "test/1.jpg")
                     val imageId = ImagePoolManager.addImage(imageFile.absolutePath)
@@ -174,7 +176,7 @@ object ModelConfigConnectionTester {
                 }
             }
 
-            if (configForTest.enableDirectAudioProcessing) {
+            if (configForTest.enableDirectAudioProcessing && !chatOnly) {
                 runCase(ModelConnectionTestType.AUDIO) {
                     val audioFile = AssetCopyUtils.copyAssetToCache(context, "test/1.mp3")
                     val audioId = MediaPoolManager.addMedia(audioFile.absolutePath, "audio/mpeg")
@@ -203,7 +205,7 @@ object ModelConfigConnectionTester {
                 }
             }
 
-            if (configForTest.enableDirectVideoProcessing) {
+            if (configForTest.enableDirectVideoProcessing && !chatOnly) {
                 runCase(ModelConnectionTestType.VIDEO) {
                     val videoFile = AssetCopyUtils.copyAssetToCache(context, "test/1.mp4")
                     val videoId = MediaPoolManager.addMedia(videoFile.absolutePath, "video/mp4")

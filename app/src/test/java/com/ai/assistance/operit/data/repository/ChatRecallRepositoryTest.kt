@@ -13,13 +13,13 @@ class ChatRecallRepositoryTest {
         val dao=mock<ChatContentDao>()
         val text="<think>private</think>"+"x".repeat(160000)+" actualInputTokens "+"z".repeat(10000)
         val bytes=text.toByteArray()
-        whenever(dao.readRecallMessagePart(eq(1L),any(),any())).thenReturn(
+        whenever(dao.readRecallMessagePart(eq(1L),any(),any(),eq(0),eq(""))).thenReturn(
             ChatRecallPart(1,"chat","ai",1,"",text.length))
-        whenever(dao.readRecallMessageBytes(eq(1L),any())).thenAnswer {
+        whenever(dao.readRecallMessageBytes(eq(1L),any(),eq(0),eq(""))).thenAnswer {
             val from=it.getArgument<Long>(1).toInt()
             bytes.copyOfRange(from,minOf(from+32768,bytes.size))
         }
-        whenever(dao.searchRecallIndex(any(),any(),any(),any(),any(),any(),any(),any())).thenReturn(
+        whenever(dao.searchRecallIndex(any(),any(),any(),any(),any(),any(),any(),any(),eq(0),eq(""),eq(0L))).thenReturn(
             listOf(ChatRecallHit(1,"chat","Title","ai",1,"[actualInputTokens]")))
         val repo=ChatRecallRepository(dao)
         val found=repo.execute(mapOf("query" to "actualInputTokens"),true)

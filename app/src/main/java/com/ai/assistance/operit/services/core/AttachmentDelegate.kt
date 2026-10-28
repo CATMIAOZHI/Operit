@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import android.webkit.MimeTypeMap
 import java.io.File
@@ -32,7 +33,8 @@ import java.util.Locale
  * Manages attachment operations for the chat feature Handles adding, removing, and referencing
  * attachments
  */
-class AttachmentDelegate(private val context: Context, private val toolHandler: AIToolHandler) {
+class AttachmentDelegate(private val context: Context, private val toolHandler: AIToolHandler,
+    private val chatIdProvider: () -> String? = { null }) {
     companion object {
         private const val TAG = "AttachmentDelegate"
         private const val PACKAGE_ATTACHMENT_PREFIX = "package_attach:"
@@ -268,9 +270,30 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
                 }
             }
 
+    /** The Orbit whose chat is open, or null for an ordinary chat. Reads settings; call off the main thread. */
+    private fun orbitForCurrentChat(): String? =
+        try {
+            com.ai.assistance.operit.features.orbit.OrbitUploads.orbitFor(context, chatIdProvider())
+        } catch (e: Exception) {
+            AppLogger.w(TAG, "Could not tell whether this is an Orbit chat: ${e.message}")
+            null
+        }
+
     /** 从URI创建临时文件 */
     private suspend fun createTempFileFromUri(uri: Uri, fileName: String): java.io.File? =
             withContext(Dispatchers.IO) {
+                // In an Orbit chat the file goes to that Orbit's own folder, so it lasts.
+                val orbitId = orbitForCurrentChat()
+                if (orbitId != null) {
+                    return@withContext try {
+                        context.contentResolver.openInputStream(uri)?.use { input ->
+                            com.ai.assistance.operit.features.orbit.OrbitUploads.save(context, orbitId, fileName, input)
+                        }
+                    } catch (e: Exception) {
+                        AppLogger.e(TAG, "Failed to keep an Orbit upload", e)
+                        null
+                    }
+                }
                 try {
                     val fileExtension = fileName.substringAfterLast('.', "jpg")
 
@@ -313,11 +336,12 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
         }
 
         val packageManager = PackageManager.getInstance(context, toolHandler)
+        val chatId = chatIdProvider()
         val isStandardPackage =
             packageManager.getAvailablePackages().containsKey(packageName) &&
                 !packageManager.isToolPkgContainer(packageName)
         val isSkillPackage =
-            SkillRepository.getInstance(context.applicationContext).getAiVisibleSkillPackages().containsKey(packageName)
+            SkillRepository.forChat(context.applicationContext, chatId).getAiVisibleSkillPackages().containsKey(packageName)
         val isMcpPackage = packageManager.getAvailableServerPackages().containsKey(packageName)
 
         if (!isStandardPackage && !isSkillPackage && !isMcpPackage) {
@@ -326,10 +350,19 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
         }
 
         if (isStandardPackage) {
-            packageManager.enablePackage(packageName)
+            // In an Orbit chat the package goes on the Orbit's own list, not the main app's.
+            val orbit = runCatching {
+                com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context, chatId)
+            }.getOrNull()
+            if (orbit != null) {
+                com.ai.assistance.operit.features.orbit.OrbitPackages
+                    .setEnabled(context, orbit.id, packageManager, packageName, true)
+            } else {
+                packageManager.enablePackage(packageName)
+            }
         }
 
-        val packageContent = packageManager.usePackage(packageName)
+        val packageContent = packageManager.usePackage(packageName, chatId)
         if (isPackageAttachmentError(packageName, packageContent)) {
             AppLogger.w(TAG, "添加包附件失败: $packageName, reason=$packageContent")
             _toastEvent.emit(context.getString(R.string.attachment_package_failed, packageName))
@@ -561,6 +594,24 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
         }
     }
 
+    /**
+     * The user took an attachment out of the input box. Besides [removeAttachment], an upload an
+     * Orbit kept for it goes too: it was never sent. (Moving attachments into the send queue uses
+     * [removeAttachment] alone, so queued files stay.)
+     */
+    fun discardAttachment(filePath: String) {
+        removeAttachment(filePath)
+        discardScope.launch {
+            try {
+                com.ai.assistance.operit.features.orbit.OrbitUploads.discard(context, filePath)
+            } catch (e: Exception) {
+                AppLogger.w(TAG, "Could not remove an unsent Orbit upload: ${e.message}")
+            }
+        }
+    }
+
+    private val discardScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
+
     /** Clear all attachments */
     fun clearAttachments() {
         synchronized(attachmentListLock) {
@@ -610,12 +661,21 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
             }
             // Some capture backends reuse short filenames. An attachment must keep its own
             // snapshot until the model reads it, even after subsequent screen captures.
-            val snapshot = File.createTempFile(
-                "screen_attachment_", ".png", OperitPaths.cleanOnExitInternalDir(context)
-            )
-            attachmentFile = snapshot
-            file.inputStream().use { input ->
-                snapshot.outputStream().use { output -> input.copyTo(output) }
+            // In an Orbit chat it goes to that Orbit's Library instead, so it lasts.
+            val orbitId = orbitForCurrentChat()
+            val snapshot = if (orbitId != null) {
+                file.inputStream().use { input ->
+                    com.ai.assistance.operit.features.orbit.OrbitUploads.save(context, orbitId, "screenshot.png", input)
+                } ?: error("The screenshot is empty")
+            } else {
+                File.createTempFile(
+                    "screen_attachment_", ".png", OperitPaths.cleanOnExitInternalDir(context)
+                ).also { temp ->
+                    attachmentFile = temp
+                    file.inputStream().use { input ->
+                        temp.outputStream().use { output -> input.copyTo(output) }
+                    }
+                }
             }
             appendAttachment(AttachmentInfo(
                 filePath = snapshot.absolutePath,

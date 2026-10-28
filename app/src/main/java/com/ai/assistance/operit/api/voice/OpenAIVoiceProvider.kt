@@ -13,6 +13,7 @@ import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -204,6 +205,48 @@ class OpenAIVoiceProvider(
                 throw TtsException("OpenAI TTS speak failed", cause = e)
             }
         }
+    }
+
+    override suspend fun synthesizeToFile(text: String, out: File): Boolean = withContext(Dispatchers.IO) {
+        if (!isInitialized && !initialize()) return@withContext false
+        val profile = com.ai.assistance.operit.data.preferences.SpeechServiceProfilesPreferences(context.applicationContext)
+            .getCurrentTtsProfile()
+        val payload = OpenAiSpeechRequest(
+            model = model,
+            input = text,
+            voice = voiceId,
+            response_format = "mp3",
+            speed = profile.speechRate.toDouble().coerceIn(0.25, 4.0),
+        )
+        val request = Request.Builder()
+            .url(endpointUrl)
+            .post(Json.encodeToString(payload).toRequestBody("application/json".toMediaType()))
+            .addHeader("Authorization", "Bearer $apiKey")
+            .addHeader("Content-Type", "application/json")
+            .build()
+        val call = httpClient.newCall(request)
+        // Stopping the voice message stops the download too, not only after it finishes.
+        stopOnCancel(stop = { call.cancel() }) {
+            val response = try {
+                call.execute()
+            } catch (e: IOException) {
+                coroutineContext.ensureActive()
+                throw TtsException(context.getString(R.string.openai_tts_error_request_failed), cause = e)
+            }
+            response.use {
+                if (!it.isSuccessful) throw TtsException(
+                    message = "OpenAI TTS request failed with code ${it.code}",
+                    httpStatusCode = it.code, errorBody = it.body?.string())
+                val body = it.body ?: throw IOException("Speech response is empty")
+                try {
+                    body.byteStream().use { input -> FileOutputStream(out).use { output -> input.copyTo(output) } }
+                } catch (e: IOException) {
+                    coroutineContext.ensureActive()
+                    throw e
+                }
+            }
+        }
+        out.length() > 0
     }
 
      private suspend fun playAudioFileAndAwait(file: File, epoch: Long): Boolean {

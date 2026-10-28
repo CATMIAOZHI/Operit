@@ -87,6 +87,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.flow.first
 import okhttp3.OkHttpClient
 import org.json.JSONObject
 
@@ -103,6 +104,24 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
 
         private const val MAX_INLINE_VISIT_CONTENT_CHARS = 12_000
         private const val MAX_INLINE_VISIT_CONTENT_PREVIEW_CHARS = 8_000
+
+        /** How long a page may take to load before it is read as it is; redirects do not restart it. */
+        private const val LOAD_BUDGET_MS = 10_000L
+        /** Quiet time after a page finishes loading before it is read, so quick redirects settle. */
+        private const val SETTLE_MS = 800L
+        /** How long one read of the page may take. */
+        private const val JS_TIMEOUT_MS = 3_000L
+        /** The longest wait for lazy content the settings can ask for. */
+        private const val MAX_LAZY_WAIT_SECONDS = 10
+        /** Extra time on top of a visit's own deadline before the tool itself gives up. */
+        private const val OUTER_SLACK_MS = 10_000L
+
+        /** The latest a visit can end: loading, two reads, the wait, and a little slack. */
+        private fun totalBudgetMs(waitSeconds: Int): Long =
+                LOAD_BUDGET_MS + 2 * JS_TIMEOUT_MS + waitSeconds * 1000L + 2_000L
+
+        /** A failure the tool reports as an error, never as page content. */
+        private fun errorJson(message: String): String = JSONObject().put("error", message).toString()
 
         // Cache to store visit results
         private val visitCache = ConcurrentHashMap<String, VisitWebResultData>()
@@ -133,7 +152,8 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
 
     private val isExpandedState = mutableStateOf(false)
     private val isExpandedByUserState = mutableStateOf(false)
-    private val isCaptchaDetectedState = mutableStateOf(false)
+    /** The running visit works for an Orbit chat, so no floating button shows for it. */
+    @Volatile private var quietVisit = false
 
     override fun invoke(tool: AITool): ToolResult {
         val url = tool.parameters.find { it.name == "url" }?.value
@@ -225,7 +245,11 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
         val resolvedUserAgent = resolveUserAgent(userAgentPresetParam, userAgentParam)
 
         return try {
-            val pageContent = visitWebPage(targetUrl, headers, resolvedUserAgent, includeImageLinks)
+            // An Orbit's visit runs without the floating button: Orbit puts nothing on the screen.
+            val quiet = com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.caller(
+                com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserProfiles.callerChatId(tool)
+            ) != null
+            val pageContent = visitWebPage(targetUrl, headers, resolvedUserAgent, includeImageLinks, quiet)
             ToolResult(toolName = tool.name, success = true, result = pageContent, error = null)
         } catch (e: Exception) {
             AppLogger.e(TAG, "Error visiting web page", e)
@@ -377,9 +401,18 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
     }
 
     /** Visit web page and extract content */
-    private fun visitWebPage(url: String, headers: Map<String, String>, userAgent: String, includeImageLinks: Boolean): VisitWebResultData {
-        // Use WebView to visit the page and extract content
-        val extractedJson = runBlocking { loadWebPageAndExtractContent(url, headers, userAgent, includeImageLinks) }
+    private fun visitWebPage(
+        url: String, headers: Map<String, String>, userAgent: String, includeImageLinks: Boolean, quiet: Boolean = false,
+    ): VisitWebResultData {
+        // Use WebView to visit the page and extract content. The visit ends itself well before this;
+        // the outer limit only catches a main thread that never ran it, so the tool can never hang.
+        val extractedJson = runBlocking {
+            val waitSeconds = DisplayPreferencesManager.getInstance(context).visitWebWaitSeconds.first()
+                .coerceIn(0, MAX_LAZY_WAIT_SECONDS)
+            withTimeoutOrNull(totalBudgetMs(waitSeconds) + OUTER_SLACK_MS) {
+                loadWebPageAndExtractContent(url, headers, userAgent, includeImageLinks, waitSeconds, quiet)
+            } ?: errorJson("The page did not respond in time. Try again later or use another source.")
+        }
         webVisitFailure(extractedJson)?.let { throw IOException(it) }
 
         return try {
@@ -548,12 +581,22 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
     }
 
     /** 使用WebView加载页面并提取内容 */
-    private suspend fun loadWebPageAndExtractContent(url: String, headers: Map<String, String>, userAgent: String, includeImageLinks: Boolean): String {
+    private suspend fun loadWebPageAndExtractContent(
+            url: String,
+            headers: Map<String, String>,
+            userAgent: String,
+            includeImageLinks: Boolean,
+            waitSeconds: Int,
+            quiet: Boolean = false,
+    ): String {
         return suspendCancellableCoroutine { continuation ->
             AppLogger.d(TAG, "Starting to load web page: $url")
+            // Set once the visit has ended, either way, so a late cleanup never runs twice.
+            var run: VisitRun? = null
 
             // 确保UI操作在主线程上执行
             Handler(Looper.getMainLooper()).post {
+                if (!continuation.isActive) return@post
                 try {
                     val windowManager =
                             context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
@@ -570,7 +613,7 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
                     overlayLifecycleOwner = lifecycleOwner
                     isExpandedState.value = false
                     isExpandedByUserState.value = false
-                    isCaptchaDetectedState.value = false
+                    quietVisit = quiet
 
                     if (indicatorLayoutParams == null) {
                         indicatorLayoutParams = createIndicatorLayoutParams()
@@ -593,17 +636,7 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
                             }
                     overlayComposeView = composeView
 
-                    composeView.setContent {
-                        WebVisitUI(
-                                url = url,
-                                headers = headers,
-                                userAgent = userAgent,
-                                includeImageLinks = includeImageLinks,
-                                onWebViewCreated = { webView ->
-                                    // 存储WebView引用以便清理
-                                    webViewReference = webView
-                                },
-                                onContentExtracted = { content ->
+                    val visit = VisitRun(includeImageLinks, waitSeconds) { content ->
                                     AppLogger.d(TAG, "Content extracted, length: ${content.length}")
 
                                     // 在完成内容提取后进行资源清理
@@ -617,8 +650,13 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
                                                 Lifecycle.Event.ON_DESTROY
                                         )
 
-                                        // 清理WebView
-                                        cleanupWebView(webViewReference)
+                                        // 清理WebView. A WebView whose page crashed may refuse some calls;
+                                        // the content is still good, so that must not lose it.
+                                        try {
+                                            cleanupWebView(webViewReference)
+                                        } catch (e: Exception) {
+                                            AppLogger.w(TAG, "Error cleaning up WebView: ${e.message}")
+                                        }
 
                                         removeIndicatorWindow()
 
@@ -653,14 +691,22 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
                                     } catch (e: Exception) {
                                         AppLogger.e(TAG, "Error cleaning up resources: ${e.message}")
                                         if (continuation.isActive) {
-                                            continuation.resume(
-                                                    "Error extracting content: ${e.message}"
-                                            )
+                                            continuation.resume(content)
                                         }
                                     }
-                                },
-                                onCaptchaStateChanged = { isCaptcha ->
-                                    updateOverlayWindowLayout(isCaptcha)
+                    }
+                    run = visit
+
+                    composeView.setContent {
+                        WebVisitUI(
+                                url = url,
+                                headers = headers,
+                                userAgent = userAgent,
+                                visit = visit,
+                                onWebViewCreated = { webView ->
+                                    // 存储WebView引用以便清理
+                                    webViewReference = webView
+                                    visit.attach(webView)
                                 },
                                 isExpanded = isExpandedState,
                                 onMinimizeRequested = {
@@ -673,12 +719,15 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
                         windowManager.addView(composeView, params)
                         AppLogger.d(TAG, "Web browser window added")
 
-                        showIndicatorWindow()
+                        if (!quiet) showIndicatorWindow()
+                        visit.start()
 
                         // 添加取消回调以处理协程取消
                         continuation.invokeOnCancellation {
                             // 确保在主线程上执行UI操作
                             Handler(Looper.getMainLooper()).post {
+                                // Already finished and cleaned up: nothing is left to remove.
+                                if (!visit.stop()) return@post
                                 try {
                                     // 清理生命周期资源
                                     lifecycleOwner.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
@@ -707,11 +756,13 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
                         }
                     } catch (e: Exception) {
                         AppLogger.e(TAG, "Error showing web browser: ${e.message}")
-                        continuation.resume("Error displaying web browser: ${e.message}")
+                        visit.stop()
+                        if (continuation.isActive) continuation.resume(errorJson("Error displaying web browser: ${e.message}"))
                     }
                 } catch (e: Exception) {
                     AppLogger.e(TAG, "Error in loadWebPageAndExtractContent: ${e.message}")
-                    continuation.resume("General error: ${e.message}")
+                    run?.stop()
+                    if (continuation.isActive) continuation.resume(errorJson("General error: ${e.message}"))
                 }
             }
         }
@@ -876,16 +927,6 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
         updateOverlayWindowLayout()
     }
 
-    private fun updateOverlayWindowLayout(isCaptchaVerification: Boolean) {
-        isCaptchaDetectedState.value = isCaptchaVerification
-        if (isCaptchaVerification) {
-            isExpandedState.value = true
-        } else if (!isExpandedByUserState.value) {
-            isExpandedState.value = false
-        }
-        updateOverlayWindowLayout()
-    }
-
     private fun updateOverlayWindowLayout() {
         val windowManager = overlayWindowManager ?: return
         val view = overlayComposeView ?: return
@@ -912,7 +953,7 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
                             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                             WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
 
-            if (indicatorComposeView == null) {
+            if (indicatorComposeView == null && !quietVisit) {
                 showIndicatorWindow()
             }
 
@@ -961,99 +1002,29 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
         System.gc()
     }
 
-    /** Compose UI for the web browser */
+    /** Compose UI for the web browser. It only shows the visit; [VisitRun] decides when it ends. */
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
     private fun WebVisitUI(
             url: String,
             headers: Map<String, String>,
             userAgent: String,
-            includeImageLinks: Boolean,
+            visit: VisitRun,
             onWebViewCreated: (WebView) -> Unit,
-            onContentExtracted: (String) -> Unit,
-            onCaptchaStateChanged: (Boolean) -> Unit,
             isExpanded: State<Boolean>,
             onMinimizeRequested: () -> Unit
     ) {
-        // 页面状态
-        val isLoading = remember { mutableStateOf(true) } // 页面是否正在加载
-        val pageLoaded = remember { mutableStateOf(false) } // 页面是否已加载完成
         val currentUrl = remember { mutableStateOf(url) } // 当前URL
         val pageTitle = remember { mutableStateOf("") } // 页面标题
         val hasSslError = remember { mutableStateOf(false) }
-        val mainFrameFailed = remember { mutableStateOf(false) }
-
-        // 内容状态
-        val pageContent = remember { mutableStateOf("") } // 提取的页面内容
-        val hasExtractedContent = remember { mutableStateOf(false) } // 是否已提取内容
-
-        val extractionRequested = remember { mutableStateOf(false) }
-        val loadToken = remember { mutableStateOf(0) }
-        val displayPreferencesManager = remember { DisplayPreferencesManager.getInstance(context) }
-        val visitWebWaitSeconds by displayPreferencesManager.visitWebWaitSeconds.collectAsState(initial = 5)
-
-        // 自动模式状态
-        val autoModeEnabled = remember { mutableStateOf(true) } // 是否启用自动模式
-        val autoCountdownActive = remember { mutableStateOf(false) } // 倒计时是否激活
-        val autoCountdownSeconds = remember { mutableStateOf(0) } // 倒计时秒数
-        val isCaptchaVerification = remember { mutableStateOf(false) } // 是否需要人机验证
-
-        LaunchedEffect(isCaptchaVerification.value) {
-            onCaptchaStateChanged(isCaptchaVerification.value)
-        }
-
-        // 修改LaunchedEffect部分，使滚动和倒计时同时进行
-        LaunchedEffect(autoCountdownActive.value, isCaptchaVerification.value) {
-            if (autoCountdownActive.value) {
-                val countdownDuration = if (isCaptchaVerification.value) 10 else visitWebWaitSeconds
-                autoCountdownSeconds.value = countdownDuration
-
-                for (i in countdownDuration downTo 1) {
-                    autoCountdownSeconds.value = i
-                    delay(1000)
-
-                    if (!autoCountdownActive.value) {
-                        break
-                    }
-                }
-
-                if (autoCountdownActive.value) {
-                    autoCountdownActive.value = false
-                    if (pageContent.value.isNotEmpty() && !isCaptchaVerification.value) {
-                        onContentExtracted(pageContent.value)
-                    }
-                }
-            }
-        }
-
-        LaunchedEffect(loadToken.value) {
-            if (loadToken.value <= 0) return@LaunchedEffect
-            delay(10_000)
-            if (!pageLoaded.value &&
-                            !hasExtractedContent.value &&
-                            !extractionRequested.value &&
-                            autoModeEnabled.value &&
-                            !isCaptchaVerification.value
-            ) {
-                val webView = webViewReference
-                if (webView != null && webView.isAttachedToWindow) {
-                    AppLogger.w(TAG, "Page load timeout (10s), force content extraction: ${currentUrl.value}")
-                    pageLoaded.value = true
-                    extractionRequested.value = true
-                    isLoading.value = true
-                    extractPageContent(webView, includeImageLinks) { content ->
-                        isLoading.value = false
-                        hasExtractedContent.value = true
-                        pageContent.value = content
-
-                        if (autoModeEnabled.value) {
-                            autoCountdownActive.value = true
-                            autoScrollToBottom(webView, visitWebWaitSeconds) {
-                                AppLogger.d(TAG, "页面滚动完成")
-                            }
-                        }
-                    }
-                }
+        // Seconds left while waiting for lazy content, for the status line only.
+        val secondsLeft = remember { mutableStateOf(0) }
+        val phase = visit.phase.value
+        LaunchedEffect(phase) {
+            while (visit.phase.value == VisitPhase.WAITING) {
+                secondsLeft.value =
+                        ((visit.waitEndsAt - android.os.SystemClock.uptimeMillis() + 999) / 1000).toInt().coerceAtLeast(0)
+                delay(250)
             }
         }
 
@@ -1073,13 +1044,11 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
                             horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         val statusText =
-                                when {
-                                    !pageLoaded.value -> context.getString(R.string.webvisit_status_loading_page)
-                                    isLoading.value -> context.getString(R.string.webvisit_status_waiting_page)
-                                    isCaptchaVerification.value -> context.getString(R.string.webvisit_status_captcha, autoCountdownSeconds.value)
-                                    autoCountdownActive.value -> context.getString(R.string.webvisit_status_extracting, autoCountdownSeconds.value)
-                                    hasExtractedContent.value -> context.getString(R.string.webvisit_status_extracted_waiting)
-                                    else -> context.getString(R.string.webvisit_status_waiting_extraction)
+                                when (phase) {
+                                    VisitPhase.LOADING -> context.getString(R.string.webvisit_status_loading_page)
+                                    VisitPhase.READING -> context.getString(R.string.webvisit_status_waiting_extraction)
+                                    VisitPhase.WAITING -> context.getString(R.string.webvisit_status_extracting, secondsLeft.value)
+                                    VisitPhase.DONE -> context.getString(R.string.webvisit_status_waiting_extraction)
                                 }
 
                         // Header
@@ -1147,10 +1116,8 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
                                     )
                                 }
 
-                                Spacer(modifier = Modifier.height(2.dp))
-
                                 if (pageTitle.value.isNotEmpty()) {
-                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Spacer(modifier = Modifier.height(6.dp))
                                     Text(
                                             text = pageTitle.value,
                                             fontSize = 12.sp,
@@ -1171,12 +1138,8 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
                                         // Register created WebView instance for later cleanup
                                         onWebViewCreated(webView)
 
-                                        // Configure WebViewClient
                                         webView.webViewClient =
                                                 object : WebViewClient() {
-                                                    // 追踪上一个URL，用于检测重定向
-                                                    private var lastLoadedUrl: String = ""
-
                                                     override fun onPageStarted(
                                                             view: WebView,
                                                             startedUrl: String,
@@ -1185,10 +1148,7 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
                                                         super.onPageStarted(view, startedUrl, favicon)
                                                         currentUrl.value = startedUrl
                                                         hasSslError.value = false
-                                                        mainFrameFailed.value = false
-                                                        isLoading.value = true
-                                                        pageLoaded.value = false
-                                                        loadToken.value = loadToken.value + 1
+                                                        visit.onPageStarted()
                                                     }
 
                                                     override fun onPageFinished(
@@ -1196,82 +1156,17 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
                                                             loadedUrl: String
                                                     ) {
                                                         super.onPageFinished(view, loadedUrl)
-                                                        if (mainFrameFailed.value) return
                                                         AppLogger.d(TAG, "Loaded URL: $loadedUrl")
-
-                                                        // 检查是否是重定向或新页面
-                                                        val isNewPage = lastLoadedUrl != loadedUrl
-                                                        lastLoadedUrl = loadedUrl
-
                                                         currentUrl.value = loadedUrl
                                                         pageTitle.value = view.title ?: ""
-                                                        pageLoaded.value = true
 
-                                                        // 如果是重定向或新页面，重置提取状态
-                                                        if (isNewPage) {
-                                                            AppLogger.d(TAG, "页面发生重定向或加载了新页面，重置提取状态")
-                                                            isLoading.value = true
-                                                            hasExtractedContent.value = false
-                                                            extractionRequested.value = false
-                                                            pageContent.value = ""
-                                                            autoCountdownActive.value = false
-                                                            autoModeEnabled.value = true
-                                                            isCaptchaVerification.value = false
-                                                        }
-
-                                                        // 检查是否是Google人机验证页面
+                                                        // Google's block page never lets a robot through; say so at once.
                                                         if (loadedUrl.contains("google.com/sorry/index")) {
                                                             AppLogger.d(TAG, "Google CAPTCHA page detected, returning error.")
-                                                            onContentExtracted("{\"error\":\"Google CAPTCHA detected. Please try again later or solve it in a browser.\"}")
-                                                            return@onPageFinished
+                                                            visit.fail("Google blocked this visit with a CAPTCHA. Try again later or use another source.")
+                                                            return
                                                         }
-
-                                                        // 检查是否需要人机验证
-                                                        view.evaluateJavascript("(function() { return document.body.innerText.includes('人机验证') || document.body.innerHTML.includes('captcha'); })();") { result ->
-                                                            val isCaptcha = result?.toBoolean() ?: false
-                                                            if (isCaptcha && !isCaptchaVerification.value) {
-                                                                isCaptchaVerification.value = true
-                                                                autoModeEnabled.value = false // 需要手动验证，禁用自动模式
-                                                                autoCountdownActive.value = true // 开始10秒倒计时
-                                                            } else if (!isCaptcha && isCaptchaVerification.value) {
-                                                                // 用户完成了验证
-                                                                isCaptchaVerification.value = false
-                                                                autoModeEnabled.value = true
-                                                                // 重新触发内容提取和5秒倒计时
-                                                                triggerContentExtraction(view)
-                                                            }
-                                                        }
-
-                                                        // 页面加载完成后，如果不是人机验证模式，则延迟自动提取内容
-                                                        if (autoModeEnabled.value && !isCaptchaVerification.value) {
-                                                            triggerContentExtraction(view)
-                                                        }
-                                                    }
-
-                                                    private fun triggerContentExtraction(view: WebView) {
-                                                        Handler(Looper.getMainLooper()).postDelayed({
-                                                            if (!view.isAttachedToWindow) {
-                                                                AppLogger.d(TAG, "WebView不再附加到窗口，跳过提取")
-                                                                return@postDelayed
-                                                            }
-
-                                                            if (!mainFrameFailed.value && !hasExtractedContent.value && !extractionRequested.value && autoModeEnabled.value) {
-                                                                extractionRequested.value = true
-                                                                isLoading.value = true
-                                                                extractPageContent(view, includeImageLinks) { content ->
-                                                                    isLoading.value = false
-                                                                    hasExtractedContent.value = true
-                                                                    pageContent.value = content
-
-                                                                    if (autoModeEnabled.value) {
-                                                                        autoCountdownActive.value = true
-                                                                        autoScrollToBottom(view, visitWebWaitSeconds) {
-                                                                            AppLogger.d(TAG, "页面滚动完成")
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                        }, 800)
+                                                        visit.onPageFinished()
                                                     }
 
                                                     override fun shouldOverrideUrlLoading(
@@ -1290,9 +1185,6 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
 
                                                         currentUrl.value = newUrl
 
-                                                        isLoading.value = true
-                                                        pageLoaded.value = false
-
                                                         if (headers.isNotEmpty() && request.isForMainFrame) {
                                                             view.loadUrl(newUrl, headers)
                                                             return true
@@ -1310,16 +1202,11 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
                                                             AppLogger.w(TAG, "WebView subresource error: ${error.errorCode}")
                                                             return
                                                         }
-                                                        if (mainFrameFailed.value) return
-                                                        mainFrameFailed.value = true
-                                                        isLoading.value = false
-                                                        pageLoaded.value = true
-                                                        autoModeEnabled.value = false
-                                                        autoCountdownActive.value = false
                                                         AppLogger.e(TAG, "WebView main page failed: ${error.errorCode} - ${error.description}")
-                                                        onContentExtracted(JSONObject().put("error",
-                                                            "Page load failed (${error.errorCode}): ${error.description}. " +
-                                                                "Check the connection or try another source.").toString())
+                                                        visit.fail(
+                                                                "Page load failed (${error.errorCode}): ${error.description}. " +
+                                                                        "Check the connection or try another source."
+                                                        )
                                                     }
 
                                                     override fun onReceivedSslError(
@@ -1329,11 +1216,21 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
                                                     ) {
                                                         AppLogger.w(
                                                                 TAG,
-                                                                "visit_web SSL error, proceeding anyway. " +
-                                                                        "url=${error.url}, primaryError=${error.primaryError}"
+                                                                "visit_web certificate validation failed: ${error.primaryError}"
                                                         )
                                                         hasSslError.value = true
-                                                        handler.proceed()
+                                                        handler.cancel()
+                                                        visit.fail(context.getString(R.string.webvisit_certificate_error))
+                                                    }
+
+                                                    // The page's process died: end now instead of waiting on a dead page.
+                                                    override fun onRenderProcessGone(
+                                                            view: WebView,
+                                                            detail: android.webkit.RenderProcessGoneDetail
+                                                    ): Boolean {
+                                                        AppLogger.e(TAG, "visit_web renderer gone, crashed=${detail.didCrash()}")
+                                                        visit.fail("The page stopped responding while loading. Try again or use another source.")
+                                                        return true
                                                     }
                                                 }
 
@@ -1344,46 +1241,24 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
                                 update = { webView ->
                                     // 存储最新的WebView引用
                                     webViewReference = webView
-                                    // 只更新重要属性以避免重新创建
-                                    webView.requestFocus()
                                 }
                         )
 
                         Spacer(modifier = Modifier.height(10.dp))
 
-                        // 按钮区域 - 根据当前状态显示不同按钮
+                        // Everything runs by itself; the user can only stop it or shrink the window.
                         Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 verticalAlignment = Alignment.CenterVertically
                         ) {
-                            // 左侧按钮 - 根据状态变化
                             FilledTonalButton(
-                                    onClick = {
-                                        if (autoCountdownActive.value) {
-                                            // 如果正在倒计时，则取消倒计时
-                                            autoCountdownActive.value = false
-                                        } else if (!hasExtractedContent.value &&
-                                                        autoModeEnabled.value
-                                        ) {
-                                            // 如果尚未提取内容，且处于自动模式，则切换到手动模式
-                                            autoModeEnabled.value = false
-                                        } else {
-                                            // 其他情况为取消操作
-                                            onContentExtracted(context.getString(R.string.webvisit_cancelled))
-                                        }
-                                    }
-                            ,
+                                    onClick = { visit.fail("The user cancelled this visit.") },
                                     shape = RoundedCornerShape(12.dp),
                                     modifier = Modifier.weight(1f).heightIn(min = 42.dp)
                             ) {
                                 Text(
-                                        when {
-                                            autoCountdownActive.value -> context.getString(R.string.webvisit_button_cancel_countdown)
-                                            !hasExtractedContent.value &&
-                                                    autoModeEnabled.value -> context.getString(R.string.webvisit_button_cancel_auto)
-                                            else -> context.getString(R.string.webvisit_button_cancel)
-                                        },
+                                        context.getString(R.string.webvisit_button_cancel),
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                 )
@@ -1400,79 +1275,12 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
                                     )
                                 }
                             }
-
-                            // 右侧按钮 - 根据状态变化
-                            Button(
-                                    onClick = {
-                                        if (autoCountdownActive.value) {
-                                            // 如果正在倒计时，立即继续
-                                            autoCountdownActive.value = false
-                                            if (pageContent.value.isNotEmpty()) {
-                                                onContentExtracted(pageContent.value)
-                                            }
-                                        } else if (hasExtractedContent.value) {
-                                            // 如果已提取内容，直接继续
-                                            onContentExtracted(pageContent.value)
-                                        } else {
-                                            // 否则提取内容
-                                            webViewReference?.let { webView ->
-                                                // 显示正在提取提示
-                                                isLoading.value = true
-
-                                                AppLogger.d(TAG, "触发内容提取，当前页面: ${currentUrl.value}")
-
-                                                extractionRequested.value = true
-                                                extractPageContent(webView, includeImageLinks) { content ->
-                                                    isLoading.value = false
-                                                    hasExtractedContent.value = true
-                                                    pageContent.value = content
-
-                                                    // 如果是自动模式，开始倒计时
-                                                    if (autoModeEnabled.value) {
-                                                        autoCountdownActive.value = true
-                                                    }
-                                                }
-                                            }
-                                                    ?: onContentExtracted(context.getString(R.string.webvisit_webview_unavailable))
-                                        }
-                                    },
-                                    enabled = pageLoaded.value,
-                                    colors =
-                                            ButtonDefaults.buttonColors(
-                                                    containerColor = MaterialTheme.colorScheme.primary
-                                            ),
-                                    shape = RoundedCornerShape(12.dp),
-                                    modifier = Modifier.weight(1f).heightIn(min = 42.dp)
-                            ) {
-                                Text(
-                                        when {
-                                            autoCountdownActive.value ->
-                                                    context.getString(R.string.webvisit_button_continue_now, autoCountdownSeconds.value)
-                                            hasExtractedContent.value -> context.getString(R.string.webvisit_button_continue)
-                                            !autoModeEnabled.value -> context.getString(R.string.webvisit_button_manual_extract)
-                                            else -> context.getString(R.string.webvisit_button_extract)
-                                        },
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                )
-                            }
                         }
 
-                        Spacer(modifier = Modifier.height(4.dp))
-
-                        // 帮助文本
-                        val helperText =
-                                when {
-                                    !pageLoaded.value -> stringResource(R.string.webvisit_help_loading_page)
-                                    autoCountdownActive.value -> stringResource(R.string.webvisit_help_countdown)
-                                    !hasExtractedContent.value && !autoModeEnabled.value ->
-                                            stringResource(R.string.webvisit_help_manual_mode)
-                                    else -> ""
-                                }
-
-                        if (helperText.isNotEmpty()) {
+                        if (phase == VisitPhase.LOADING) {
+                            Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                    text = helperText,
+                                    text = stringResource(R.string.webvisit_help_loading_page),
                                     fontSize = 11.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     textAlign = TextAlign.Center,
@@ -1485,6 +1293,142 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
                 }
             }
         }
+    }
+
+    /**
+     * One visit's timing, apart from the UI so nothing on screen can hold it up. The page gets
+     * [LOAD_BUDGET_MS] to finish loading (counted once, not restarted by redirects); then, or as
+     * soon as it settles, its text is read. After waiting [waitSeconds] for lazy content it is read
+     * once more. Each read gives up after [JS_TIMEOUT_MS], and a hard deadline ends the visit with
+     * what was read so far. [finish] runs once, on the main thread.
+     */
+    private inner class VisitRun(
+            private val includeImageLinks: Boolean,
+            private val waitSeconds: Int,
+            private val finish: (String) -> Unit,
+    ) {
+        val phase = mutableStateOf(VisitPhase.LOADING)
+        /** When the wait for lazy content ends, in uptime millis; for the status line. */
+        @Volatile var waitEndsAt = 0L
+            private set
+
+        private val handler = Handler(Looper.getMainLooper())
+        private var webView: WebView? = null
+        private var done = false
+        private var reading = false
+        private var firstRead: String? = null
+
+        private val settle = Runnable { read() }
+        private val loadBudget = Runnable {
+            if (!reading) AppLogger.w(TAG, "visit_web: page still loading after ${LOAD_BUDGET_MS}ms, reading it as it is")
+            read()
+        }
+        private val deadline = Runnable {
+            AppLogger.w(TAG, "visit_web: hard deadline reached")
+            finishWith(firstRead ?: errorJson("The page did not respond in time. Try again later or use another source."))
+        }
+
+        fun attach(view: WebView) {
+            webView = view
+        }
+
+        fun start() {
+            handler.postDelayed(loadBudget, LOAD_BUDGET_MS)
+            handler.postDelayed(deadline, totalBudgetMs(waitSeconds))
+        }
+
+        fun onPageStarted() {
+            // A redirect before reading starts waits for the new page to settle.
+            handler.removeCallbacks(settle)
+        }
+
+        fun onPageFinished() {
+            if (done || reading) return
+            handler.removeCallbacks(settle)
+            handler.postDelayed(settle, SETTLE_MS)
+        }
+
+        fun fail(message: String) = finishWith(errorJson(message))
+
+        /** Ends the visit without [finish]; true when it was still going. */
+        fun stop(): Boolean {
+            if (done) return false
+            done = true
+            handler.removeCallbacksAndMessages(null)
+            phase.value = VisitPhase.DONE
+            return true
+        }
+
+        private fun finishWith(content: String) {
+            if (!stop()) return
+            finish(content)
+        }
+
+        private fun read() {
+            if (done || reading) return
+            reading = true
+            handler.removeCallbacks(settle)
+            handler.removeCallbacks(loadBudget)
+            phase.value = VisitPhase.READING
+            readOnce { first ->
+                if (done) return@readOnce
+                if (first == null) {
+                    finishWith(errorJson("Could not read the page. Try again later or use another source."))
+                    return@readOnce
+                }
+                firstRead = first
+                if (waitSeconds <= 0) {
+                    finishWith(first)
+                    return@readOnce
+                }
+                // Scroll down so lazy parts load, then read again; the second read wins if it worked.
+                webView?.let { autoScrollToBottom(it, 0) {} }
+                waitEndsAt = android.os.SystemClock.uptimeMillis() + waitSeconds * 1000L
+                phase.value = VisitPhase.WAITING
+                handler.postDelayed({
+                    if (done) return@postDelayed
+                    phase.value = VisitPhase.READING
+                    // The page script reports its own failure as {"error":...}; a prefix check keeps a
+                    // long page from being parsed on the main thread.
+                    readOnce { second -> finishWith(second?.takeUnless { it.startsWith("{\"error\"") } ?: first) }
+                }, waitSeconds * 1000L)
+            }
+        }
+
+        /** Reads the page once; null when it failed or did not answer within [JS_TIMEOUT_MS]. */
+        private fun readOnce(callback: (String?) -> Unit) {
+            val view = webView
+            if (view == null) {
+                callback(null)
+                return
+            }
+            var answered = false
+            val timeout = Runnable {
+                if (!answered) {
+                    answered = true
+                    AppLogger.w(TAG, "visit_web: reading the page timed out")
+                    callback(null)
+                }
+            }
+            handler.postDelayed(timeout, JS_TIMEOUT_MS)
+            try {
+                extractPageContent(view, includeImageLinks) { result ->
+                    if (answered) return@extractPageContent
+                    answered = true
+                    handler.removeCallbacks(timeout)
+                    val usable = result.isNotBlank() && result != "null" && !result.startsWith("Error")
+                    callback(result.takeIf { usable })
+                }
+            } catch (e: Exception) {
+                AppLogger.e(TAG, "visit_web: reading the page failed", e)
+                if (!answered) {
+                    answered = true
+                    handler.removeCallbacks(timeout)
+                    callback(null)
+                }
+            }
+        }
+
     }
 
     /** 创建优化的WebView实例，配置所有必要的设置 */
@@ -1851,6 +1795,9 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
         }
     }
 }
+
+/** Where one visit_web visit is. */
+private enum class VisitPhase { LOADING, READING, WAITING, DONE }
 
 @kotlinx.serialization.Serializable
 private data class ExtractedWebData(

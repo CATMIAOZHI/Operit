@@ -180,7 +180,7 @@ object CodexDrawBridge {
      * script image entries already use. The draw output directory is part of the allowlist so a
      * generated image can be edited again without copying it out of the app first.
      */
-    private fun inputImageRoots(context: Context): List<File> =
+    internal fun inputImageRoots(context: Context): List<File> =
         listOfNotNull(
             Environment.getExternalStorageDirectory(),
             OperitPaths.cleanOnExitInternalDir(context),

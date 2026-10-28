@@ -158,7 +158,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private val _isSpeechPaused = MutableStateFlow(false)
     val isSpeechPaused: StateFlow<Boolean> = _isSpeechPaused.asStateFlow()
 
-    private val pendingMessageQueueStore = PendingMessageQueueStore()
+    // A reply option whose queued message comes back has to be sent again before it can count.
+    private val pendingMessageQueueStore = PendingMessageQueueStore { chatId, messageId ->
+        com.ai.assistance.operit.features.orbit.OrbitOptions.backInQueue(chatId, messageId)
+    }
     internal val pendingMessageQueueStates: StateFlow<Map<String, PendingMessageQueueState>> =
         pendingMessageQueueStore.states
 
@@ -255,6 +258,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     private fun setupComposerPredictions() {
         viewModelScope.launch {
+            // The subagent store is read from disk the first time; never on the main thread.
+            val coordinator = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(context)
+            }
             // All invalidating state is observed; draft typing intentionally is not.
             combine(
                 currentChatId.map { Unit }, displayedChatId.map { Unit }, chatHistory.map { Unit },
@@ -262,8 +269,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 effectiveChatConfigTarget.map { Unit },
                 activeStreamingChatIds.map { Unit }, composerPredictionsEnabled.map { Unit },
                 messageProcessingDelegate.composerPredictionSnapshots.map { Unit },
-                com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(context)
-                    .composerPredictionRevision.map { Unit },
+                coordinator.composerPredictionRevision.map { Unit },
             ) { }.collect {
                 val key = currentPredictionContext()
                 composerPredictionContext = key
@@ -416,7 +422,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     // 会话隔离：仅当“当前聊天ID == 正在流式的聊天ID”时，才显示处理中/停止按钮
     val activeStreamingChatIds: StateFlow<Set<String>> by lazy { messageProcessingDelegate.activeStreamingChatIds }
+    val modelPreparingChatIds: StateFlow<Set<String>> by lazy { messageProcessingDelegate.modelPreparingChatIds }
     val activeRunStartedAt: StateFlow<Map<String, Long>> by lazy { messageProcessingDelegate.activeRunStartedAt }
+    val userWaitingChatIds: StateFlow<Set<String>> by lazy { messageProcessingDelegate.userWaitingChatIds }
     val currentChatIsLoading: StateFlow<Boolean> by lazy {
         kotlinx.coroutines.flow.combine(
             chatHistoryDelegate.currentChatId,
@@ -519,6 +527,14 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             messageCoordinationDelegate.isSendTriggeredSummarizing
         } else {
             MutableStateFlow(false)
+        }
+    }
+    /** Messages the user sent that wait for their chat's history summary, by chat. */
+    val summaryHeldSends: StateFlow<Map<String, com.ai.assistance.operit.services.core.MessageCoordinationDelegate.SummaryHeldSend>> by lazy {
+        if (::messageCoordinationDelegate.isInitialized) {
+            messageCoordinationDelegate.summaryHeldSends
+        } else {
+            MutableStateFlow(emptyMap())
         }
     }
 
@@ -738,6 +754,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     }
 
                     override fun getReplyToMessage(): ChatMessage? = replyToMessage.value
+
+                    override fun restoreReplyToMessage(message: ChatMessage) {
+                        this@ChatViewModel.setReplyToMessage(message)
+                    }
                 }
         )
         mainChatCore.setSpeakMessageHandler(::speakMessage)
@@ -1235,11 +1255,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 // 检查是否是群聊
                 val currentChat = chatHistoryDelegate.chatHistories.value.firstOrNull { it.id == currentChatId }
                 val isGroupChat = currentChat?.characterGroupId != null
-                val summaryConfig = messageCoordinationDelegate.readSummaryConfig()
+                val summaryConfig = messageCoordinationDelegate.readSummaryConfig(currentChatId)
 
                 val summaryMessage = AIMessageManager.summarizeMemory(
                     enhancedAiService!!,
                     messagesToSummarize,
+                    chatId = currentChatId,
                     autoContinue = false,
                     isGroupChat = isGroupChat,
                     summaryConfig = summaryConfig
@@ -1867,12 +1888,68 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     fun steeringTurnId(chatId: String): String? = messageProcessingDelegate.steeringTurnId(chatId)
 
+    /**
+     * Sends a reply option the user tapped in an Orbit chat as their next message. While Orbit is
+     * still replying it goes into the current turn, like a message typed then; if the turn cannot
+     * take it, it waits in the queue for the turn to end. False if it could not be sent at all.
+     */
+    /**
+     * Sends a tapped Orbit reply option as the user's message. Its arrival is seen where user
+     * messages are saved; while [waiting] stays true, [onLost] is called if the chat goes idle with
+     * the message neither saved nor queued, wherever the user is in the app by then.
+     */
+    fun sendOrbitOption(chatId: String, text: String, waiting: () -> Boolean, onLost: () -> Unit): Boolean {
+        val started = startOrbitOption(chatId, text)
+        if (started) watchOrbitOption(chatId, text, waiting, onLost)
+        return started
+    }
+
+    private fun startOrbitOption(chatId: String, text: String): Boolean {
+        if (currentChatId.value != chatId || isCurrentTranscriptReadOnly() || text.isBlank()) return false
+        if (!isChatBusy(chatId)) {
+            return messageCoordinationDelegate.trySendUserMessageToExistingChat(
+                promptFunctionType = PromptFunctionType.CHAT,
+                chatId = chatId,
+                messageText = text,
+                turnOptions = com.ai.assistance.operit.data.model.ChatTurnOptions(useComposerReply = false),
+            )
+        }
+        // The chat is busy now, so the queue is marked blocked and sends by itself once it is free.
+        val id = pendingMessageQueueStore.enqueue(chatId, text, true) ?: return false
+        com.ai.assistance.operit.features.orbit.OrbitOptions.queued(chatId, text, id) {
+            pendingMessageQueueStore.states.value[chatId]?.messages?.any { it.id == id && !it.isSteering } == true
+        }
+        val turnId = steeringTurnId(chatId) ?: return true
+        val item = pendingMessageQueueStore.remove(chatId, id) ?: return true
+        viewModelScope.launch {
+            if (!trySteerQueuedMessage(chatId, turnId, item)) pendingMessageQueueStore.restore(chatId, item)
+        }
+        return true
+    }
+
+    /** Watches for an option that was dropped: the chat idle for a while, nothing queued, still not saved. */
+    private fun watchOrbitOption(chatId: String, text: String, waiting: () -> Boolean, onLost: () -> Unit) {
+        viewModelScope.launch {
+            withTimeoutOrNull(30 * 60_000L) {
+                var idleSince = 0L
+                while (waiting()) {
+                    val queued = pendingMessageQueueStore.states.value[chatId]?.messages?.any { it.text == text } == true
+                    val now = System.currentTimeMillis()
+                    if (queued || isChatBusy(chatId)) idleSince = 0L
+                    else if (idleSince == 0L) idleSince = now
+                    else if (now - idleSince >= 3_000) { onLost(); break }
+                    delay(500)
+                }
+            }
+        }
+    }
+
     suspend fun trySteerQueuedMessage(chatId: String, expectedTurnId: String, item: PendingQueueMessageItem): Boolean {
         if (!pendingMessageQueueStore.isCurrentGeneration(chatId, item.chatGeneration)) return false
         if (chatId == currentChatId.value && isCurrentTranscriptReadOnly()) return false
         val preparedText = try {
             messageProcessingDelegate.prepareSteeringInput(
-                chatId, expectedTurnId, item.text, item.attachments
+                chatId, expectedTurnId, item.text, item.attachments, item.replyToMessage
             ) ?: return false
         } catch (e: CancellationException) {
             throw e
@@ -1883,6 +1960,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         if (!pendingMessageQueueStore.isCurrentGeneration(chatId, item.chatGeneration)) return false
         if (chatId == currentChatId.value && isCurrentTranscriptReadOnly()) return false
         pendingMessageQueueStore.restore(chatId, item.copy(isSteering = true))
+        com.ai.assistance.operit.features.orbit.OrbitOptions.dispatching(chatId, item.id)
         val accepted = messageProcessingDelegate.trySteerMessage(
             chatId,
             expectedTurnId,
@@ -1890,6 +1968,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 text = preparedText,
                 consumed = { pendingMessageQueueStore.remove(chatId, item.id) },
                 returned = { pendingMessageQueueStore.returnSteer(chatId, item) },
+                // The turn only paused to compact its context: send the message once it goes on.
+                returnedForSummary = { pendingMessageQueueStore.returnSteer(chatId, item, sendLater = true) },
             ),
         )
         if (!accepted) pendingMessageQueueStore.remove(chatId, item.id)
@@ -1903,8 +1983,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         if (currentChatId.value != owner.chatId || displayedChatId.value != owner.chatId ||
             isCurrentTranscriptReadOnly() || isChatBusy(owner.chatId) || text.length > 40_000) return false
         val message = chatHistory.value.firstOrNull { it.timestamp == owner.timestamp } ?: return false
-        if (message.sender != "ai" || message.isVariantPreview ||
-            message.selectedVariantIndex != owner.variant || message.content != owner.content) return false
+        if (message.sender != "ai" || message.isVariantPreview || message.selectedVariantIndex != owner.variant) return false
+        // An Orbit chat shows each reply cleaned (no thinking or tool steps, its tool cards after it);
+        // the card belongs to the message as shown now.
+        if (message.content != owner.content &&
+            com.ai.assistance.operit.ui.features.chat.components.OrbitSpeech.history(chatHistory.value)
+                .firstOrNull { it.timestamp == owner.timestamp }?.content != owner.content) return false
         return messageCoordinationDelegate.trySendUserMessageToExistingChat(
             promptFunctionType = PromptFunctionType.CHAT,
             chatId = owner.chatId,
@@ -1920,16 +2004,22 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         chatGeneration: Long,
         attachments: List<AttachmentInfo> = emptyList(),
         promptFunctionType: PromptFunctionType = PromptFunctionType.CHAT,
+        replyToMessage: ChatMessage? = null,
+        queueItemId: Long? = null,
     ): Boolean {
         if (!pendingMessageQueueStore.isCurrentGeneration(chatId, chatGeneration)) return false
         if (chatId == currentChatId.value && isCurrentTranscriptReadOnly()) return false
         if (isChatBusy(chatId)) return false
         hideMentionSuggestionPanel()
+        queueItemId?.let { com.ai.assistance.operit.features.orbit.OrbitOptions.dispatching(chatId, it) }
         return messageCoordinationDelegate.trySendUserMessageToExistingChat(
             promptFunctionType = promptFunctionType,
             chatId = chatId,
             messageText = text,
             attachments = attachments,
+            // A queued message took its quote (or none) along when it was queued.
+            turnOptions = com.ai.assistance.operit.data.model.ChatTurnOptions(useComposerReply = false),
+            replyToMessage = replyToMessage,
         )
     }
 
@@ -1945,19 +2035,35 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             sendTriggeredSummaryForThisChat
     }
 
-    fun enqueuePendingQueueMessage(chatId: String, text: String, isQueueBlocked: Boolean): Boolean {
+    /**
+     * Queues the composer's draft and its attachments; returns the queued item's id.
+     * The quoted message moves from the composer into the queued item, so it goes with this message.
+     */
+    fun enqueuePendingQueueMessage(chatId: String, text: String, isQueueBlocked: Boolean): Long? {
+        // The submitted draft remains visible until route preparation succeeds. It must not also
+        // become a queued/steered turn through a stale button or keyboard callback.
+        if (chatId in modelPreparingChatIds.value) return null
         val snapshot = attachmentDelegate.attachments.value.toList()
-        if (!pendingMessageQueueStore.enqueue(chatId, text, isQueueBlocked, snapshot)) return false
+        val reply = _replyToMessage.value
+        val id = pendingMessageQueueStore.enqueue(chatId, text, isQueueBlocked, snapshot, reply) ?: return null
         snapshot.forEach { attachmentDelegate.removeAttachment(it.filePath) }
-        return true
+        if (reply != null && _replyToMessage.value == reply) _replyToMessage.value = null
+        return id
     }
 
     fun restoreQueuedAttachments(item: PendingQueueMessageItem) {
         attachmentDelegate.addAttachments(item.attachments)
+        item.replyToMessage?.let { _replyToMessage.value = it }
     }
 
     fun removePendingQueueMessage(chatId: String, messageId: Long): PendingQueueMessageItem? =
         pendingMessageQueueStore.remove(chatId, messageId)
+
+    /** The user deleted or took back a queued message; a reply option it carried can be tapped again. */
+    fun cancelPendingQueueMessage(chatId: String, messageId: Long): PendingQueueMessageItem? =
+        pendingMessageQueueStore.remove(chatId, messageId)?.also {
+            com.ai.assistance.operit.features.orbit.OrbitOptions.queueCancelled(messageId)
+        }
 
     fun restorePendingQueueMessage(chatId: String, message: PendingQueueMessageItem) {
         pendingMessageQueueStore.restore(chatId, message)
@@ -2194,9 +2300,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
     }
 
-    /** Removes an attachment by its file path */
+    /** Removes an attachment the user took out of the input box, by its file path */
     fun removeAttachment(filePath: String) {
-        attachmentDelegate.removeAttachment(filePath)
+        attachmentDelegate.discardAttachment(filePath)
     }
 
     /** Inserts a reference to an attachment at the current cursor position in the user's message */

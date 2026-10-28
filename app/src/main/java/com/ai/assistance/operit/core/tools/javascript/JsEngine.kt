@@ -24,6 +24,7 @@ import com.ai.assistance.operit.core.tools.packTool.ToolPkgApiVersion
 import com.ai.assistance.operit.core.tools.packTool.TOOLPKG_EVENT_MESSAGE_PROCESSING
 import com.ai.assistance.operit.data.db.AppDatabase
 import com.ai.assistance.operit.features.draw.CodexDrawBridge
+import com.ai.assistance.operit.features.draw.GrokDrawBridge
 import com.ai.assistance.operit.data.preferences.CharacterCardManager
 import com.ai.assistance.operit.data.repository.SubagentRunRepository
 import com.ai.assistance.operit.features.reading.ReadingCompanionAudit
@@ -82,6 +83,8 @@ class JsEngine(private val context: Context) {
     companion object {
         private const val TAG = "JsEngine"
         private const val TOOLPKG_TAG = "ToolPkg"
+        /** How many finished calls keep their keys for masking late log lines. */
+        private const val MAX_ENDED_ENV = 32
         private const val BINARY_DATA_THRESHOLD = 32 * 1024
         private const val BINARY_HANDLE_PREFIX = "@binary_handle:"
         private const val DIRECT_SCRIPT_EXECUTION_FUNCTION = "__operit_run_inline_code__"
@@ -109,7 +112,7 @@ class JsEngine(private val context: Context) {
     private val engineScope = CoroutineScope(SupervisorJob() + quickJsDispatcher)
     private val nativeBridgeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val readingCompanionBridgeJobs = ConcurrentHashMap<String, Job>()
-    private val codexDrawBridgeJobs = ConcurrentHashMap<String, Job>()
+    private val drawBridgeJobs = ConcurrentHashMap<String, Job>()
     private val quickJsInitLock = Any()
     private val destroyed = AtomicBoolean(false)
 
@@ -142,6 +145,8 @@ class JsEngine(private val context: Context) {
     )
 
     private val activeExecutionSessions = ConcurrentHashMap<String, ExecutionSession>()
+    /** The script call each pending tool callback belongs to, so its result resumes that call. */
+    private val toolCallbackOwners = ConcurrentHashMap<String, String>()
     private val pendingJsBridgeCallbacks = ConcurrentLinkedQueue<PendingJsBridgeCallback>()
     private val pendingJsBridgeCallbackMap = ConcurrentHashMap<String, PendingJsBridgeCallback>()
     private var jsEnvironmentInitialized = false
@@ -219,6 +224,7 @@ class JsEngine(private val context: Context) {
 
     private fun ensureQuickJs() {
         check(!destroyed.get()) { "JsEngine already destroyed" }
+        quickJs?.takeIf { it.isUnusable }?.let(::retireUnusableQuickJs)
         if (quickJs != null) {
             return
         }
@@ -238,6 +244,21 @@ class JsEngine(private val context: Context) {
                 AppLogger.e(TAG, "Error initializing QuickJS: ${e.message}", e)
                 throw e
             }
+        }
+    }
+
+    /**
+     * Replaces a runtime whose leftover jobs could not be cleared (they could run under another
+     * chat's identity). Its script calls can no longer finish, so they fail now. Only [retired] is
+     * closed: another thread may already have replaced it.
+     */
+    private fun retireUnusableQuickJs(retired: OperitQuickJsEngine) {
+        synchronized(quickJsInitLock) {
+            if (quickJs !== retired) return
+            val reason = "QuickJS runtime was reset: queued jobs could not be cleared"
+            drainExecutionSessions(reason)
+            clearPendingJsBridgeCallbacks("java bridge callback canceled: $reason")
+            disposeQuickJsForReinit(reason)
         }
     }
 
@@ -269,6 +290,8 @@ class JsEngine(private val context: Context) {
             } finally {
                 quickJs = null
                 jsEnvironmentInitialized = false
+                // Callbacks registered in the closed runtime can no longer be delivered.
+                toolCallbackOwners.clear()
             }
         }
     }
@@ -290,7 +313,9 @@ class JsEngine(private val context: Context) {
     private fun launchQuickJsEvaluation(
         script: String,
         fileName: String = "<eval>",
-        onError: ((Exception) -> Unit)? = null
+        onError: ((Exception) -> Unit)? = null,
+        /** The script call this JavaScript belongs to, if known (see [callerRuntimeContext]). */
+        owner: String? = null,
     ) {
         if (!canScheduleQuickJsWork()) {
             return
@@ -302,7 +327,7 @@ class JsEngine(private val context: Context) {
                     if (!canScheduleQuickJsWork()) {
                         return@launch
                     }
-                    engine.evaluate<Any?>(script, fileName)
+                    engine.evaluate<Any?>(script, fileName, owner)
                 } catch (e: Exception) {
                     if (onError != null) {
                         onError(e)
@@ -319,19 +344,21 @@ class JsEngine(private val context: Context) {
         functionName: String,
         argsJson: String,
         callSite: String = "<call:$functionName>",
-        onError: ((Exception) -> Unit)? = null
+        onError: ((Exception) -> Unit)? = null,
+        owner: String? = null,
+        targetEngine: OperitQuickJsEngine? = null,
     ) {
         if (!canScheduleQuickJsWork()) {
             return
         }
-        val engine = quickJs ?: return
+        val engine = targetEngine ?: quickJs ?: return
         try {
             engineScope.launch {
                 try {
                     if (!canScheduleQuickJsWork()) {
                         return@launch
                     }
-                    engine.callFunction<Any?>(functionName, argsJson, callSite)
+                    engine.callFunction<Any?>(functionName, argsJson, callSite, owner)
                 } catch (e: Exception) {
                     if (onError != null) {
                         onError(e)
@@ -405,9 +432,19 @@ class JsEngine(private val context: Context) {
     private fun removeExecutionSession(callId: String): ExecutionSession? {
         val normalizedCallId = callId.trim()
         readingCompanionBridgeJobs.remove(normalizedCallId)?.cancel()
-        codexDrawBridgeJobs.remove(normalizedCallId)?.cancel()
-        return activeExecutionSessions.remove(normalizedCallId)
+        drawBridgeJobs.remove(normalizedCallId)?.cancel()
+        return activeExecutionSessions.remove(normalizedCallId)?.also { ended ->
+            // A script can still log after it finished; its keys stay masked for those late lines.
+            val values = ended.envOverrides.values.filter { it.length >= 4 }
+            if (values.isNotEmpty()) synchronized(endedEnv) {
+                endedEnv[normalizedCallId] = values
+                while (endedEnv.size > MAX_ENDED_ENV) endedEnv.remove(endedEnv.keys.first())
+            }
+        }
     }
+
+    /** Keys of the last few finished calls that had any, by call id; see [maskEnv]. */
+    private val endedEnv = LinkedHashMap<String, List<String>>()
 
     private fun clearPendingJsBridgeCallbacks(reason: String) {
         val pending = pendingJsBridgeCallbackMap.values.toList()
@@ -500,7 +537,7 @@ class JsEngine(private val context: Context) {
         activeExecutionSessions.clear()
         sessions.forEach { session ->
             readingCompanionBridgeJobs.remove(session.callId)?.cancel()
-            codexDrawBridgeJobs.remove(session.callId)?.cancel()
+            drawBridgeJobs.remove(session.callId)?.cancel()
             if (!session.future.isDone) {
                 session.future.complete(buildJsExecutionErrorPayload(reason))
             }
@@ -895,10 +932,17 @@ class JsEngine(private val context: Context) {
             )
         }
 
+        // A timeout must interrupt the runtime this call runs in, never a replacement built since.
+        val sessionEngine = quickJs ?: run {
+            removeExecutionSession(callId)
+            return buildJsExecutionErrorPayload("QuickJS runtime unavailable")
+        }
         launchQuickJsFunctionCall(
             functionName = TOOLPKG_EXECUTION_ENTRY_FUNCTION,
             argsJson = executionArgsJson,
             callSite = "quickjs/runtime/execute-script.call",
+            owner = callId,
+            targetEngine = sessionEngine,
             onError = { e ->
                 AppLogger.e(
                     TAG,
@@ -942,7 +986,11 @@ class JsEngine(private val context: Context) {
             ) {
                 // JS-side cancellation uses this engine's executor. Native interruption must
                 // happen first because a synchronous loop prevents the queued cancellation.
-                interruptQuickJs("callId=$callId, function=$functionName")
+                try {
+                    sessionEngine.interrupt()
+                } catch (interruptError: Exception) {
+                    AppLogger.e(TAG, "Error interrupting QuickJS: callId=$callId, ${interruptError.message}", interruptError)
+                }
             }
             if (e is InterruptedException) {
                 Thread.currentThread().interrupt()
@@ -1752,16 +1800,104 @@ class JsEngine(private val context: Context) {
                         )
                     }
                 } finally {
-                    codexDrawBridgeJobs.remove(normalizedCallId, coroutineContext[Job])
+                    drawBridgeJobs.remove(normalizedCallId, coroutineContext[Job])
                 }
             }
-            codexDrawBridgeJobs.put(normalizedCallId, job)?.cancel()
+            // Let the JS side drop its callback when cancelled, even before the job starts;
+            // the engine is reused across calls.
+            job.invokeOnCompletion { if (it is CancellationException) sendToolPkgIpcResult(callbackId, "Codex 绘图已取消", true) }
+            drawBridgeJobs.put(normalizedCallId, job)?.cancel()
+            job.start()
+        }
+
+        @JavascriptInterface
+        fun executeGrokDrawAsync(callId: String, callbackId: String, parametersJson: String) {
+            val normalizedCallId = callId.trim()
+            val session = resolveExecutionSession(normalizedCallId)?.takeIf {
+                it.packageName == "grok_draw" && boundToolPkgContainerName == null
+            }
+            if (session == null) {
+                sendToolPkgIpcResult(callbackId, "Grok 绘图仅供 Grok 绘图包使用", true)
+                return
+            }
+            val job = nativeBridgeScope.launch(start = CoroutineStart.LAZY) {
+                try {
+                    val result = GrokDrawBridge.execute(context, parametersJson)
+                    if (resolveExecutionSession(normalizedCallId) === session) {
+                        sendToolPkgIpcResult(callbackId, result, false)
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    if (resolveExecutionSession(normalizedCallId) === session) {
+                        sendToolPkgIpcResult(callbackId, error.message ?: "Grok 绘图失败", true)
+                    }
+                } finally {
+                    drawBridgeJobs.remove(normalizedCallId, coroutineContext[Job])
+                }
+            }
+            job.invokeOnCompletion { if (it is CancellationException) sendToolPkgIpcResult(callbackId, "Grok 绘图已取消", true) }
+            drawBridgeJobs.put(normalizedCallId, job)?.cancel()
             job.start()
         }
 
         @JavascriptInterface
         fun setEnv(key: String, value: String?) {
             JsNativeInterfaceDelegates.setEnv(context = context, key = key, value = value)
+        }
+
+        @JavascriptInterface
+        fun executeCodexSearchAsync(callId: String, callbackId: String, parametersJson: String) {
+            runAccountSearch(callId, callbackId, "codex_search", "Codex 搜索") {
+                com.ai.assistance.operit.features.search.CodexSearchBridge.execute(context, parametersJson)
+            }
+        }
+
+        /** [mode] is "web" or "x". */
+        @JavascriptInterface
+        fun executeGrokSearchAsync(callId: String, callbackId: String, mode: String, parametersJson: String) {
+            runAccountSearch(callId, callbackId, "grok_search", "Grok 搜索") {
+                com.ai.assistance.operit.features.search.GrokSearchBridge.execute(context, mode, parametersJson)
+            }
+        }
+
+        /** Runs a search bridge for its own package only, cancelled with the tool call like the draw bridges. */
+        private fun runAccountSearch(
+            callId: String,
+            callbackId: String,
+            packageName: String,
+            label: String,
+            block: suspend () -> String,
+        ) {
+            val normalizedCallId = callId.trim()
+            val session = resolveExecutionSession(normalizedCallId)?.takeIf {
+                it.packageName == packageName && boundToolPkgContainerName == null
+            }
+            if (session == null) {
+                sendToolPkgIpcResult(callbackId, "${label}仅供${label}包使用", true)
+                return
+            }
+            val job = nativeBridgeScope.launch(start = CoroutineStart.LAZY) {
+                try {
+                    val result = block()
+                    if (resolveExecutionSession(normalizedCallId) === session) {
+                        sendToolPkgIpcResult(callbackId, result, false)
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    if (resolveExecutionSession(normalizedCallId) === session) {
+                        sendToolPkgIpcResult(callbackId, error.message ?: "${label}失败", true)
+                    }
+                } finally {
+                    drawBridgeJobs.remove(normalizedCallId, coroutineContext[Job])
+                }
+            }
+            // Let the JS side drop its callback when cancelled, even before the job starts;
+            // the engine is reused across calls.
+            job.invokeOnCompletion { if (it is CancellationException) sendToolPkgIpcResult(callbackId, "${label}已取消", true) }
+            drawBridgeJobs.put(normalizedCallId, job)?.cancel()
+            job.start()
         }
 
         @JavascriptInterface
@@ -1788,14 +1924,6 @@ class JsEngine(private val context: Context) {
         @JavascriptInterface
         fun removePackage(packageName: String): String {
             return JsNativeInterfaceDelegates.removePackage(
-                    packageManager = packageManager,
-                    packageName = packageName
-            )
-        }
-
-        @JavascriptInterface
-        fun usePackage(packageName: String): String {
-            return JsNativeInterfaceDelegates.usePackage(
                     packageManager = packageManager,
                     packageName = packageName
             )
@@ -2875,17 +3003,20 @@ class JsEngine(private val context: Context) {
                 toolName: String,
                 paramsJson: String
         ) {
+            val owner = quickJs?.currentEntryOwner()
+            if (owner != null) toolCallbackOwners[callbackId] = owner
             JsNativeInterfaceDelegates.callToolAsync(
                 toolHandler = toolHandler,
                 callbackId = callbackId,
                 toolType = toolType,
                 toolName = toolName,
                 paramsJson = paramsJson,
+                runtimeContext = ownerRuntimeContext(owner),
                 binaryDataRegistry = binaryDataRegistry,
                 binaryHandlePrefix = BINARY_HANDLE_PREFIX,
                 binaryDataThreshold = BINARY_DATA_THRESHOLD,
                 sendToolResult = { callback, result, isError ->
-                    sendToolResult(callback, result, isError)
+                    sendToolResult(callback, result, isError, toolCallbackOwners.remove(callback))
                 }
             )
         }
@@ -2898,6 +3029,11 @@ class JsEngine(private val context: Context) {
                 toolName: String,
                 paramsJson: String
         ) {
+            val owner = quickJs?.currentEntryOwner()
+            if (owner != null) {
+                toolCallbackOwners[callbackId] = owner
+                toolCallbackOwners[intermediateCallbackId] = owner
+            }
             JsNativeInterfaceDelegates.callToolAsyncStreaming(
                 toolHandler = toolHandler,
                 callbackId = callbackId,
@@ -2905,20 +3041,33 @@ class JsEngine(private val context: Context) {
                 toolType = toolType,
                 toolName = toolName,
                 paramsJson = paramsJson,
+                runtimeContext = ownerRuntimeContext(owner),
                 binaryDataRegistry = binaryDataRegistry,
                 binaryHandlePrefix = BINARY_HANDLE_PREFIX,
                 binaryDataThreshold = BINARY_DATA_THRESHOLD,
                 sendToolResult = { callback, result, isError ->
-                    sendToolResult(callback, result, isError)
+                    toolCallbackOwners.remove(intermediateCallbackId)
+                    sendToolResult(callback, result, isError, toolCallbackOwners.remove(callback))
                 },
                 sendIntermediateResult = { callback, result, isError ->
-                    sendToolResult(callback, result, isError)
+                    sendToolResult(callback, result, isError, toolCallbackOwners[callback])
                 }
             )
         }
 
+        /**
+         * The chat a script's tool call runs as, so chat-scoped tools (an Orbit's chats) see the
+         * space of the chat that called the script. [owner] is the script call the running
+         * JavaScript entry belongs to (its start, a result delivered to it, or a timer it set);
+         * its context is used only while that call is still running. JavaScript that cannot be
+         * traced to a running call (a timer left behind by a finished call, other callbacks)
+         * runs with no context, so one chat's context is never handed to another chat's work.
+         */
+        private fun ownerRuntimeContext(owner: String?): ToolExecutionManager.ToolRuntimeContext? =
+            owner?.let { resolveExecutionSession(it)?.toolRuntimeContext }
+
         /** 向JavaScript发送工具调用结果 */
-        private fun sendToolResult(callbackId: String, result: String, isError: Boolean) {
+        private fun sendToolResult(callbackId: String, result: String, isError: Boolean, owner: String? = null) {
             if (!canScheduleQuickJsWork()) {
                 return
             }
@@ -2934,7 +3083,9 @@ class JsEngine(private val context: Context) {
                     script = jsCode,
                     onError = { e ->
                         AppLogger.e(TAG, "Error sending tool result to JavaScript: ${e.message}", e)
-                    }
+                    },
+                    // Code resumed by this result belongs to the call that asked for it.
+                    owner = owner,
                 )
             } catch (e: Exception) {
                 AppLogger.e(TAG, "Error sending tool result to JavaScript: ${e.message}", e)
@@ -3007,9 +3158,9 @@ class JsEngine(private val context: Context) {
                 }
 
                 val logMessage = extractErrorLogMessage(error)
-                val enrichedLogMessage = withToolPkgCodeContext(session, logMessage)
+                val enrichedLogMessage = maskEnv(session, withToolPkgCodeContext(session, logMessage)).orEmpty()
                 AppLogger.e(TOOLPKG_TAG, withToolPkgPluginTag(session, "JS ERROR: $enrichedLogMessage"))
-                session.executionListener?.onFailed(callId, logMessage)
+                session.executionListener?.onFailed(callId, maskEnv(session, logMessage).orEmpty())
 
                 completeCallFuture(
                     session = session,
@@ -3061,31 +3212,34 @@ class JsEngine(private val context: Context) {
 
         @JavascriptInterface
         fun logInfo(message: String) {
-            AppLogger.i(TOOLPKG_TAG, withToolPkgPluginTag(message))
+            AppLogger.i(TOOLPKG_TAG, withToolPkgPluginTag(maskAllEnv(message)))
         }
 
         @JavascriptInterface
-        fun logWarnForCall(callId: String, message: String) {
+        fun logWarnForCall(callId: String, raw: String) {
             val session = resolveExecutionSession(callId)
+            val message = maskEnv(session, raw, callId) ?: return
             session?.executionListener?.onCallLog(callId, "warn", message)
             AppLogger.w(TOOLPKG_TAG, withToolPkgPluginTag(session, message))
         }
 
         @JavascriptInterface
-        fun logInfoForCall(callId: String, message: String) {
+        fun logInfoForCall(callId: String, raw: String) {
             val session = resolveExecutionSession(callId)
+            val message = maskEnv(session, raw, callId) ?: return
             session?.executionListener?.onCallLog(callId, "info", message)
             AppLogger.i(TOOLPKG_TAG, withToolPkgPluginTag(session, message))
         }
 
         @JavascriptInterface
         fun logError(message: String) {
-            AppLogger.e(TOOLPKG_TAG, withToolPkgPluginTag(message))
+            AppLogger.e(TOOLPKG_TAG, withToolPkgPluginTag(maskAllEnv(message)))
         }
 
         @JavascriptInterface
-        fun logErrorForCall(callId: String, message: String) {
+        fun logErrorForCall(callId: String, raw: String) {
             val session = resolveExecutionSession(callId)
+            val message = maskEnv(session, raw, callId) ?: return
             session?.executionListener?.onCallLog(callId, "error", message)
             AppLogger.e(TOOLPKG_TAG, withToolPkgPluginTag(session, message))
         }
@@ -3104,7 +3258,7 @@ class JsEngine(private val context: Context) {
             AppLogger.e(
                     TOOLPKG_TAG,
                     withToolPkgPluginTag(
-                        "DETAILED JS ERROR: \nType: $errorType\nMessage: $errorMessage\nLine: $errorLine\nStack: $errorStack"
+                        maskAllEnv("DETAILED JS ERROR: \nType: $errorType\nMessage: $errorMessage\nLine: $errorLine\nStack: $errorStack")
                     )
             )
         }
@@ -3118,15 +3272,43 @@ class JsEngine(private val context: Context) {
                 errorStack: String
         ) {
             val session = resolveExecutionSession(callId)
+            val masked = maskEnv(session, "DETAILED JS ERROR: \nType: $errorType\nMessage: $errorMessage\nLine: $errorLine\nStack: $errorStack", callId)
+                ?: return
             AppLogger.e(
                     TOOLPKG_TAG,
                     withToolPkgPluginTag(
                         session,
-                        "DETAILED JS ERROR: \nType: $errorType\nMessage: $errorMessage\nLine: $errorLine\nStack: $errorStack"
+                        masked
                     )
             )
         }
     }
+
+    /**
+     * Keys handed to this call as its environment (an Orbit's saved package keys) never reach the
+     * log or the trace as they are.
+     */
+    /**
+     * [message] with the call's keys masked. A line from a call that is no longer known (it ended
+     * long ago) gives null and is dropped, since its keys can no longer be told apart.
+     */
+    private fun maskEnv(session: ExecutionSession?, message: String, callId: String? = null): String? {
+        val values = session?.envOverrides?.values?.filter { it.length >= 4 }
+            ?: callId?.let { id -> synchronized(endedEnv) { endedEnv[id.trim()] } }
+            ?: return null
+        return mask(values, message)
+    }
+
+    /** For lines not tied to a call: every key a running or just finished call holds. */
+    private fun maskAllEnv(message: String): String {
+        val values = activeExecutionSessions.values.flatMap { it.envOverrides.values } +
+            synchronized(endedEnv) { endedEnv.values.flatten() }
+        return mask(values.filter { it.length >= 4 }, message)
+    }
+
+    private fun mask(values: List<String>, message: String): String =
+        if (values.isEmpty()) message
+        else values.distinct().sortedByDescending { it.length }.fold(message) { text, value -> text.replace(value, "***") }
 
     /** 销毁引擎资源 */
     fun destroy() {
@@ -3165,6 +3347,7 @@ class JsEngine(private val context: Context) {
             // 清理二进制数据注册表
             binaryDataRegistry.clear()
             javaObjectRegistry.clear()
+            toolCallbackOwners.clear()
 
         } catch (e: Exception) {
             AppLogger.e(TAG, "Error during JsEngine destruction: ${e.message}", e)

@@ -178,6 +178,8 @@ import com.ai.assistance.operit.util.ChatUtils
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.layout
 
 @Composable
 fun AgentChatInputSection(
@@ -279,7 +281,15 @@ fun AgentChatInputSection(
             inputState is InputProcessingState.Summarizing ||
             inputState is InputProcessingState.Receiving
     if (showTokenLimitDialog.value) {
-        AlertDialog(
+        if (com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current) {
+            com.ai.assistance.operit.ui.features.orbit.OrbitConfirmDialog(
+                title = stringResource(R.string.token_limit_warning),
+                message = stringResource(R.string.token_limit_warning_message),
+                confirmLabel = stringResource(R.string.continue_send),
+                onConfirm = { showTokenLimitDialog.value = false; onSendMessage() },
+                onDismiss = { showTokenLimitDialog.value = false },
+            )
+        } else AlertDialog(
             onDismissRequest = {
                 showTokenLimitDialog.value = false
             },
@@ -398,10 +408,11 @@ fun AgentChatInputSection(
     }
     val activeProfileId by userPreferencesManager.activeMemorySpaceIdFlow.collectAsState(initial = "default")
     var preferenceProfiles by remember { mutableStateOf<List<MemorySpace>>(emptyList()) }
+    val orbitChatModel = com.ai.assistance.operit.ui.features.orbit.rememberOrbitChatModel(currentChatId, configSummaries)
     val currentConfigMapping =
-        configMappingWithIndex[FunctionType.CHAT]
+        orbitChatModel?.mapping ?: configMappingWithIndex[FunctionType.CHAT]
             ?: FunctionConfigMapping(FunctionalConfigManager.DEFAULT_CONFIG_ID, 0)
-    val isModelSelectionLockedByCharacterCard = !characterCardBoundChatModelConfigId.isNullOrBlank()
+    val isModelSelectionLockedByCharacterCard = orbitChatModel == null && !characterCardBoundChatModelConfigId.isNullOrBlank()
     val isMemorySelectionLockedByCharacterCard = !characterCardBoundMemoryProfileId.isNullOrBlank()
     val effectiveConfigMapping =
         if (isModelSelectionLockedByCharacterCard) {
@@ -441,10 +452,13 @@ fun AgentChatInputSection(
         configSummaries.find { it.id == effectiveConfigMapping.configId }
     val mappedModelName =
         activeConfigSummary?.let { config ->
-            getModelList(config.modelName).getOrNull(effectiveConfigMapping.modelIndex)
+            com.ai.assistance.operit.data.preferences.OrbitModelRef
+                .fromSelection(config, effectiveConfigMapping.modelIndex)?.modelName
         }
     val displayModelName =
-        if (isModelSelectionLockedByCharacterCard) {
+        if (mappedModelName == "") {
+            stringResource(R.string.orbit_model_plugin_default)
+        } else if (isModelSelectionLockedByCharacterCard) {
             mappedModelName?.takeIf { it.isNotBlank() } ?: stringResource(R.string.not_selected)
         } else {
             mappedModelName?.takeIf { it.isNotBlank() } ?: stringResource(R.string.functional_model_reselect)
@@ -489,9 +503,23 @@ fun AgentChatInputSection(
 
     val hasDraftText = userMessage.text.isNotBlank()
     val canSendMessage = hasDraftText || attachments.isNotEmpty()
-    val showQueueAction = isProcessing && canSendMessage
-    val showCancelAction = isProcessing && !showQueueAction
-    val sendButtonEnabled = true
+    val modelPreparingChatIds by actualViewModel.modelPreparingChatIds.collectAsState()
+    val isPreparingModel = currentChatId in modelPreparingChatIds
+    val showQueueAction = isProcessing && canSendMessage && !isPreparingModel
+    // Orbit has no voice conversation (it would open the floating window and show its tool calls).
+    // With nothing to send, its round button slides away and only the microphone stays.
+    val orbitPreferences = remember { com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context) }
+    val orbitSettings by orbitPreferences.settingsFlow.collectAsState(initial = orbitPreferences.snapshot)
+    val isOrbitChat = orbitSettings.orbitForChat(currentChatId) != null
+    val userWaitingChatIds by actualViewModel.userWaitingChatIds.collectAsState()
+    val showCancelAction = isProcessing && !showQueueAction && (!isOrbitChat || currentChatId in userWaitingChatIds)
+    val hideVoiceEntry = isOrbitChat && !showCancelAction && !showQueueAction && !canSendMessage
+    val actionSlot by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (hideVoiceEntry) 0f else 1f,
+        animationSpec = androidx.compose.animation.core.tween(180),
+        label = "actionSlot",
+    )
+    val sendButtonEnabled = !hideVoiceEntry
     val tokenLimitWarning: @Composable () -> Unit = {
         if (isOverTokenLimit && canSendMessage && !showQueueAction) {
             Text(
@@ -535,7 +563,7 @@ fun AgentChatInputSection(
     }
 
     fun handleEnterSendAction() {
-        if (!canSendMessage) return
+        if (!canSendMessage || isPreparingModel) return
         if (showQueueAction) {
             onQueueMessage()
             setShowAttachmentPanel(false)
@@ -601,7 +629,15 @@ fun AgentChatInputSection(
         }
 
     val onSelectModel: (String, Int) -> Unit = { selectedId, modelIndex ->
-        if (isModelSelectionLockedByCharacterCard) {
+        if (orbitChatModel != null) {
+            val name = configSummaries.firstOrNull { it.id == selectedId }?.let {
+                com.ai.assistance.operit.data.preferences.OrbitModelRef.fromSelection(it, modelIndex)?.modelName
+            }
+            if (name != null) scope.launch {
+                com.ai.assistance.operit.ui.features.orbit.selectOrbitChatModel(context, orbitChatModel.orbitId, selectedId, name)
+                showModelSelectorPopup.value = false
+            }
+        } else if (isModelSelectionLockedByCharacterCard) {
             val currentModelIndex = configSummaries.find { it.id == effectiveConfigMapping.configId }?.let { config ->
                 getValidModelIndex(config.modelName, effectiveConfigMapping.modelIndex)
             } ?: effectiveConfigMapping.modelIndex.coerceAtLeast(0)
@@ -737,6 +773,8 @@ fun AgentChatInputSection(
 
                         val previewText =
                             message.content
+                                .replace(Regex("```(?:a2ui|orbit-card)[^\\n]*\\n[\\s\\S]*?(?:```|$)"),
+                                    "[" + context.getString(R.string.ai_message_quoted_card) + "]")
                                 .replace(Regex("<[^>]*>"), "")
                                 .trim()
                                 .let { if (it.length > 50) it.take(50) + "..." else it }
@@ -1050,12 +1088,12 @@ fun AgentChatInputSection(
                             )
                         }
 
-                        Spacer(modifier = Modifier.width(6.dp))
+                        Spacer(modifier = Modifier.width(6.dp * actionSlot))
 
                         val actionButtonBackground =
                             when {
                                 showCancelAction -> MaterialTheme.colorScheme.error
-                                showQueueAction -> MaterialTheme.colorScheme.tertiary
+                                showQueueAction -> if (isOrbitChat) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary
                                 canSendMessage ->
                                     if (isOverTokenLimit) {
                                         MaterialTheme.colorScheme.secondary
@@ -1068,7 +1106,7 @@ fun AgentChatInputSection(
                         val actionButtonIconTint =
                             when {
                                 showCancelAction -> MaterialTheme.colorScheme.onError
-                                showQueueAction -> MaterialTheme.colorScheme.onTertiary
+                                showQueueAction -> if (isOrbitChat) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onTertiary
                                 canSendMessage ->
                                     if (isOverTokenLimit) {
                                         MaterialTheme.colorScheme.onSecondary
@@ -1079,7 +1117,7 @@ fun AgentChatInputSection(
                             }
 
                         Box(
-                            modifier = Modifier.size(40.dp),
+                            modifier = Modifier.collapseWidth(actionSlot).size(40.dp),
                             contentAlignment = Alignment.Center,
                         ) {
                             if (showProcessingStatus) {
@@ -1131,14 +1169,14 @@ fun AgentChatInputSection(
                                     imageVector =
                                         when {
                                             showCancelAction -> Icons.Default.Close
-                                            showQueueAction -> Icons.Default.Add
+                                            showQueueAction -> if (isOrbitChat) Icons.AutoMirrored.Filled.Send else Icons.Default.Add
                                             canSendMessage -> Icons.AutoMirrored.Filled.Send
                                             else -> Icons.Rounded.GraphicEq
                                         },
                                     contentDescription =
                                         when {
                                             showCancelAction -> context.getString(R.string.cancel)
-                                            showQueueAction -> context.getString(R.string.chat_queue_add_message)
+                                            showQueueAction -> context.getString(if (isOrbitChat) R.string.chat_steer_turn else R.string.chat_queue_add_message)
                                             canSendMessage -> context.getString(R.string.send)
                                             else -> context.getString(R.string.voice_conversation_entry)
                                         },
@@ -1358,12 +1396,12 @@ fun AgentChatInputSection(
                                 )
                             }
 
-                            Spacer(modifier = Modifier.width(6.dp))
+                            Spacer(modifier = Modifier.width(6.dp * actionSlot))
 
                             val actionButtonBackground =
                                 when {
                                     showCancelAction -> MaterialTheme.colorScheme.error
-                                    showQueueAction -> MaterialTheme.colorScheme.tertiary
+                                    showQueueAction -> if (isOrbitChat) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary
                                     canSendMessage ->
                                         if (isOverTokenLimit) {
                                             MaterialTheme.colorScheme.secondary
@@ -1376,7 +1414,7 @@ fun AgentChatInputSection(
                             val actionButtonIconTint =
                                 when {
                                     showCancelAction -> MaterialTheme.colorScheme.onError
-                                    showQueueAction -> MaterialTheme.colorScheme.onTertiary
+                                    showQueueAction -> if (isOrbitChat) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onTertiary
                                     canSendMessage ->
                                         if (isOverTokenLimit) {
                                             MaterialTheme.colorScheme.onSecondary
@@ -1387,7 +1425,7 @@ fun AgentChatInputSection(
                                 }
 
                             Box(
-                                modifier = Modifier.size(40.dp),
+                                modifier = Modifier.collapseWidth(actionSlot).size(40.dp),
                                 contentAlignment = Alignment.Center,
                             ) {
                                 if (showProcessingStatus) {
@@ -1439,14 +1477,14 @@ fun AgentChatInputSection(
                                         imageVector =
                                             when {
                                                 showCancelAction -> Icons.Default.Close
-                                                showQueueAction -> Icons.Default.Add
+                                                showQueueAction -> if (isOrbitChat) Icons.AutoMirrored.Filled.Send else Icons.Default.Add
                                                 canSendMessage -> Icons.AutoMirrored.Filled.Send
                                                 else -> Icons.Rounded.GraphicEq
                                             },
                                         contentDescription =
                                             when {
                                                 showCancelAction -> context.getString(R.string.cancel)
-                                                showQueueAction -> context.getString(R.string.chat_queue_add_message)
+                                                showQueueAction -> context.getString(if (isOrbitChat) R.string.chat_steer_turn else R.string.chat_queue_add_message)
                                                 canSendMessage -> context.getString(R.string.send)
                                                 else -> context.getString(R.string.voice_conversation_entry)
                                             },
@@ -1531,6 +1569,7 @@ fun AgentChatInputSection(
             )
 
             AttachmentSelectorPopupPanel(
+                chatId = currentChatId,
                 visible = showAttachmentPanel,
                 containerColor = popupContainerColor,
                 onAttachImage = { filePath -> onAttachmentRequest(filePath) },
@@ -1710,7 +1749,8 @@ private fun AgentModelSelectorPopup(
                             onInfoClick = { title, description -> infoPopupContent = title to description },
                         )
                     }
-                    AgentMaxContextSettingItem(
+                    // Orbit runs one long chat with its own compression: no Max mode there.
+                    if (!com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current) AgentMaxContextSettingItem(
                         enableMaxContextMode = enableMaxContextMode,
                         onToggleEnableMaxContextMode = onToggleEnableMaxContextMode,
                         onInfoClick = {
@@ -1765,6 +1805,23 @@ private fun AgentModelSelectorPopup(
         }
     }
 }
+
+/**
+ * Shows [fraction] of this slot's width while its content keeps its full size and fades and
+ * shrinks in place, so a button can slide shut without squeezing into an oval.
+ */
+internal fun Modifier.collapseWidth(fraction: Float): Modifier =
+    this
+        .layout { measurable, constraints ->
+            val placeable = measurable.measure(constraints.copy(minWidth = 0))
+            val width = (placeable.width * fraction).roundToInt()
+            layout(width, placeable.height) { placeable.place((width - placeable.width) / 2, 0) }
+        }
+        .graphicsLayer {
+            alpha = fraction
+            scaleX = 0.6f + 0.4f * fraction
+            scaleY = 0.6f + 0.4f * fraction
+        }
 
 @Composable
 private fun AgentThinkingSettingsItem(
@@ -2121,8 +2178,10 @@ private fun AgentModelSelectorItem(
     var expandedConfigId by remember { mutableStateOf<String?>(null) }
     val currentModelName =
         currentConfig?.let { config ->
-            getModelList(config.modelName).getOrNull(currentConfigMapping.modelIndex)
-        } ?: stringResource(R.string.functional_model_reselect)
+            com.ai.assistance.operit.data.preferences.OrbitModelRef
+                .fromSelection(config, currentConfigMapping.modelIndex)?.modelName
+        }?.ifEmpty { stringResource(R.string.orbit_model_plugin_default) }
+            ?: stringResource(R.string.functional_model_reselect)
 
     Row(
         modifier =
@@ -2161,7 +2220,7 @@ private fun AgentModelSelectorItem(
         )
         Spacer(modifier = Modifier.width(8.dp))
         Text(
-            text = currentModelName.ifEmpty { stringResource(R.string.not_selected) },
+            text = currentModelName,
             fontSize = 13.sp,
             color = MaterialTheme.colorScheme.primary,
             maxLines = 2,
@@ -2267,7 +2326,10 @@ private fun AgentModelSelectorItem(
                 @Composable
                 fun AgentConfigItem(config: ModelConfigSummary) {
                     val isSelected = config.id == currentConfigMapping.configId
-                    val modelList = getModelList(config.modelName)
+                    val modelList = getModelList(config.modelName).ifEmpty {
+                        if (com.ai.assistance.operit.data.preferences.OrbitModelRef.fromSelection(config, 0)?.modelName == "")
+                            listOf("") else emptyList()
+                    }
                     val hasMultipleModels = modelList.size > 1
                     val isExpanded = expandedConfigId == config.id
 
@@ -2287,7 +2349,7 @@ private fun AgentModelSelectorItem(
                                     Text(text = stringResource(R.string.chat_model_count, modelList.size), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp)
                                     Icon(imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                                 } else {
-                                    Text(text = config.modelName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(text = modelList.firstOrNull()?.ifEmpty { stringResource(R.string.orbit_model_plugin_default) } ?: config.modelName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     Icon(imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
@@ -2316,8 +2378,8 @@ private fun AgentModelSelectorItem(
                                             .padding(horizontal = 8.dp, vertical = 4.dp),
                                         verticalAlignment = Alignment.CenterVertically,
                                     ) {
-                                        Text(text = modelName, fontSize = 12.sp, fontWeight = if (isModelSelected) FontWeight.Bold else FontWeight.Normal, color = if (isModelSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                                        IconButton(onClick = { onToggleFavorite(config.id, modelName) }, modifier = Modifier.size(24.dp)) {
+                                        Text(text = modelName.ifEmpty { stringResource(R.string.orbit_model_plugin_default) }, fontSize = 12.sp, fontWeight = if (isModelSelected) FontWeight.Bold else FontWeight.Normal, color = if (isModelSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                                        if (modelName.isNotEmpty()) IconButton(onClick = { onToggleFavorite(config.id, modelName) }, modifier = Modifier.size(24.dp)) {
                                             Icon(
                                                 if (isModelFav) Icons.Filled.Star else Icons.Outlined.StarOutline,
                                                 contentDescription = if (isModelFav) stringResource(R.string.remove_model_from_favorites) else stringResource(R.string.add_model_to_favorites),
@@ -2434,43 +2496,13 @@ private fun AgentExtraSettingsPopup(
 
     // The detail is finished inside a suspend lambda, which cannot read resources, so the strings are
     // resolved here and later formatted with the locale those resources use.
-    val memoryAutoSaveLocale = LocalConfiguration.current.locales[0]
-    val memoryAutoSaveStatusText = stringResource(R.string.memory_auto_update_runtime_status)
-    val memoryAutoSavePausedText = stringResource(R.string.memory_auto_update_runtime_paused)
-    val memoryAutoSavePausedMasterText =
-        stringResource(R.string.memory_auto_update_runtime_paused_master)
-    val memoryAutoSaveAbandonedText = stringResource(R.string.memory_auto_update_runtime_abandoned)
+    val memoryLearningOnText = stringResource(R.string.memory_auto_update_runtime_new_on)
+    val memoryLearningOffText = stringResource(R.string.memory_auto_update_runtime_new_off)
 
+    // The old memory graph is read-only, so there is no queue or countdown left to describe.
     val buildMemoryAutoSaveDetail: suspend () -> String = {
-        val candidates = MemoryAutoSaveCandidateRepository(context, currentProfileId)
-        val pendingCandidateCount = candidates.countPendingAndFailedCandidates()
-        // The countdown describes the graph path alone, so it must not be shown while that path is
-        // switched off: the numbers would read as work that is about to happen when nothing will run.
-        val api = ApiPreferences.getInstance(context)
-        val masterEnabled = api.enableMemoryAutoUpdateFlow.first()
-        val graphEnabled = masterEnabled && api.enableLegacyMemoryExtractionFlow.first()
-        val detail = when {
-            // The master switch stops notes and skills as well, so it must not read as a graph-only
-            // pause; the graph path has its own way of being off.
-            !masterEnabled -> memoryAutoSavePausedMasterText.format(
-                memoryAutoSaveLocale, pendingCandidateCount)
-            !graphEnabled -> memoryAutoSavePausedText.format(
-                memoryAutoSaveLocale, pendingCandidateCount)
-            else -> {
-                val minutesUntilNextSave =
-                    MemoryAutoSaveScheduler.getInstance()?.getMinutesUntilNextRun(currentProfileId)
-                        ?: MemorySearchSettingsPreferences(context, currentProfileId).loadAutoSaveIntervalMinutes().toLong()
-                memoryAutoSaveStatusText.format(
-                    memoryAutoSaveLocale,
-                    pendingCandidateCount,
-                    minutesUntilNextSave
-                )
-            }
-        }
-        // Abandoned candidates are silently skipped by the queue, so the count is the only signal.
-        val abandoned = candidates.countAbandonedCandidates()
-        if (abandoned > 0) detail + " " + memoryAutoSaveAbandonedText.format(memoryAutoSaveLocale, abandoned)
-        else detail
+        if (ApiPreferences.getInstance(context).enableMemoryAutoUpdateFlow.first()) memoryLearningOnText
+        else memoryLearningOffText
     }
 
     Popup(
@@ -2519,7 +2551,9 @@ private fun AgentExtraSettingsPopup(
                             .padding(vertical = 4.dp)
                             .verticalScroll(rememberScrollState()),
                 ) {
-                    AgentMemorySelectorItem(
+                    // Orbit always remembers on its own, into its own memory: nothing to pick or turn off.
+                    val orbitMenu = com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current
+                    if (!orbitMenu) AgentMemorySelectorItem(
                         preferenceProfiles = preferenceProfiles,
                         currentProfileId = currentProfileId,
                         onSelectMemory = onSelectMemory,
@@ -2558,7 +2592,7 @@ private fun AgentExtraSettingsPopup(
                         },
                     )
 
-                    inputMenuTogglesBySlot[InputMenuToggleSlots.MEMORY].orEmpty().forEach { toggle ->
+                    if (!orbitMenu) inputMenuTogglesBySlot[InputMenuToggleSlots.MEMORY].orEmpty().forEach { toggle ->
                         AgentInputMenuToggleSettingItem(
                             toggle = toggle,
                             onInfoClick = { title, description -> infoPopupContent = title to description },
@@ -2885,7 +2919,9 @@ private fun AgentToolsPermissionGroupItem(
     onManageTools: () -> Unit,
     onInfoClick: () -> Unit,
 ) {
-    val effectiveStop = if (enableTools) permissionStop else ToolPermissionStop.FORBID
+    val effectiveStop =
+        com.ai.assistance.operit.ui.permissions.rememberMainChatOrbitLockedStop()
+            ?: if (enableTools) permissionStop else ToolPermissionStop.FORBID
     val valueText = stringResource(effectiveStop.labelRes)
 
     AgentSettingsGroupHeader(
@@ -2905,18 +2941,24 @@ private fun AgentToolsPermissionGroupItem(
                     .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.5f))
                     .padding(horizontal = 12.dp, vertical = 8.dp),
         ) {
-            AgentPermissionStopSlider(
-                enableTools = enableTools,
-                permissionStop = permissionStop,
-                onSelectPermissionStop = onSelectPermissionStop,
-            )
+            // Orbit has its own two stops, kept apart from the main app's five.
+            if (com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current) {
+                com.ai.assistance.operit.ui.permissions.OrbitAccessSlider()
+            } else {
+                AgentPermissionStopSlider(
+                    enableTools = enableTools,
+                    permissionStop = permissionStop,
+                    onSelectPermissionStop = onSelectPermissionStop,
+                )
+            }
             toolSlotToggles.forEach { toggle ->
                 AgentInputMenuToggleSettingItem(
                     toggle = toggle,
                     onInfoClick = onToggleInfoClick,
                 )
             }
-            Box(
+            // Orbit keeps its own tools on; the main app's tool manager is not offered there.
+            if (!com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current) Box(
                 modifier =
                     Modifier
                         .fillMaxWidth()
@@ -2956,6 +2998,7 @@ private fun AgentPermissionStopSlider(
         Spacer(modifier = Modifier.height(6.dp))
         PermissionStopSlider(
             stop = if (enableTools) permissionStop else ToolPermissionStop.FORBID,
+            lockedStop = com.ai.assistance.operit.ui.permissions.rememberMainChatOrbitLockedStop(),
             onStopSelected = onSelectPermissionStop,
         )
     }

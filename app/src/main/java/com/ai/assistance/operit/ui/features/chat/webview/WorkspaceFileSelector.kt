@@ -125,16 +125,15 @@ fun MentionSuggestionPanel(
     val packageManager = remember {
         ToolPackageManager.getInstance(context.applicationContext, toolHandler)
     }
-    val skillRepository = remember { SkillRepository.getInstance(context.applicationContext) }
-
     val allPackageSuggestions by
-        produceState<List<MentionPackageSuggestion>?>(initialValue = null) {
+        produceState<List<MentionPackageSuggestion>?>(initialValue = null, currentChatId) {
+            value = null
             value =
                 withContext(Dispatchers.IO) {
                     buildMentionPackageOptions(
                         context = context.applicationContext,
                         packageManager = packageManager,
-                        skillRepository = skillRepository,
+                        skillRepository = SkillRepository.forChat(context.applicationContext, currentChatId),
                     )
                 }
         }
@@ -594,7 +593,7 @@ private fun buildMentionPackageOptions(
 ): List<MentionPackageSuggestion> {
     val options = linkedMapOf<String, MentionPackageSuggestion>()
 
-    packageManager.getAvailablePackages().toSortedMap().forEach { (packageName, toolPackage) ->
+    packageManager.withoutOrbitCopies(packageManager.getAvailablePackages()).toSortedMap().forEach { (packageName, toolPackage) ->
         if (packageManager.isToolPkgContainer(packageName)) {
             return@forEach
         }

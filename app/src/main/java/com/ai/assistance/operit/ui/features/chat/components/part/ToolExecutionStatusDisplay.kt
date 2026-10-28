@@ -65,10 +65,12 @@ import com.ai.assistance.operit.data.model.SubagentRunStatus
 import com.ai.assistance.operit.data.model.ToolExecutionState
 import com.ai.assistance.operit.data.repository.SubagentRunRepository
 import com.ai.assistance.operit.ui.features.chat.components.LocalTranscriptRuns
+import com.ai.assistance.operit.ui.features.chat.components.LocalSubagentChatHost
 import com.ai.assistance.operit.ui.features.chat.components.SubagentAgentCard
 import com.ai.assistance.operit.ui.features.chat.components.SubagentCardStatus
 import com.ai.assistance.operit.ui.features.chat.components.TranscriptJumpHost
 import com.ai.assistance.operit.ui.features.chat.components.agentBadgeSeed
+import com.ai.assistance.operit.ui.features.chat.components.collaborationRunAt
 import com.ai.assistance.operit.ui.features.chat.components.subagentAgentIdentity
 import com.ai.assistance.operit.ui.features.chat.components.subagentInterruptionHintRes
 import com.ai.assistance.operit.ui.permissions.PermissionReviewEventRepository
@@ -339,6 +341,8 @@ internal fun ToolExecutionStatusDisplay(
         SubagentCallStatusDisplay(
             callKind = callKind,
             callId = liveExecution?.callId ?: persistedExecution?.callId,
+            // The assistant message's time: the agent the call addressed already existed then.
+            rowTime = timingScopeId?.toLongOrNull(),
             fallbackState = state,
             executionSuccess = success,
             executionResultText =
@@ -1075,24 +1079,50 @@ internal fun findCallRun(
     runs: List<SubagentRunEntity>,
     callId: String?,
     target: String?,
+    agentId: String? = null,
+    at: Long? = null,
 ): SubagentRunEntity? {
+    // The call's own generation is found among every run first (archived ones too), and only then
+    // checked for being open: filtering archived runs first would hand the row of an archived agent
+    // to an older agent that wore the same name.
     val candidates =
         runs.filter {
             it.externalOwnerType == CollaborationCoordinator.OWNER_TYPE &&
-                it.archivedAt == null &&
                 it.agentProfileId != AgentProfileRepository.PERMISSION_REVIEWER_ID
         }
+    return findCallGeneration(candidates, callId, target, agentId, at)?.takeIf { it.archivedAt == null }
+}
+
+private fun findCallGeneration(
+    candidates: List<SubagentRunEntity>,
+    callId: String?,
+    target: String?,
+    agentId: String?,
+    at: Long?,
+): SubagentRunEntity? {
     val call = callId?.takeIf { it.isNotBlank() }
     if (call != null) {
         candidates.lastOrNull { it.parentToolCallId == call }?.let { return it }
     }
+    // The call says which chat it reached; a name can belong to several agents over time, so a
+    // chat that is gone links nowhere rather than to another agent of the same name.
+    agentId?.takeIf { it.isNotBlank() }?.let { id ->
+        return candidates.lastOrNull { it.childChatId == id }
+    }
     val name = target?.takeIf { it.isNotBlank() } ?: return null
     val seed = agentBadgeSeed(name)
-    return candidates.lastOrNull {
+    val named = candidates.filter {
         val owner = it.externalOwnerId
         !owner.isNullOrBlank() && agentBadgeSeed(owner) == seed
     }
+    // Older calls do not say which chat they reached; they keep the agent that wore the name when
+    // their message began, and link nowhere when none did.
+    return if (at == null) named.lastOrNull { it.archivedAt == null } else collaborationRunAt(named, at)
 }
+
+/** The chat a send or follow-up call reports it reached, read from its result. */
+internal fun collaborationCallAgentId(resultText: String?): String? =
+    resultText?.let { Regex("\"agent_id\"\\s*:\\s*\"([^\"]+)\"").find(it)?.groupValues?.get(1) }
 
 /**
  * The call side of a v2 collaboration: the row keeps the addressed agent's badge and says what the
@@ -1103,6 +1133,7 @@ internal fun findCallRun(
 private fun SubagentCallStatusDisplay(
     callKind: SubagentCallKind,
     callId: String?,
+    rowTime: Long?,
     fallbackState: ToolExecutionState,
     executionSuccess: Boolean,
     executionResultText: String,
@@ -1118,7 +1149,9 @@ private fun SubagentCallStatusDisplay(
         remember(context) {
             ChatRuntimeHolder.getInstance(context.applicationContext).getCore(ChatRuntimeSlot.MAIN)
         }
-    val parentChatId by chatCore.currentChatId.collectAsState()
+    val host = LocalSubagentChatHost.current
+    val mainChatId by chatCore.currentChatId.collectAsState()
+    val parentChatId = host?.parentChatId ?: mainChatId
     val sharedRuns = LocalTranscriptRuns.current?.takeIf { it.chatId == parentChatId }
     val runsFlow =
         remember(parentChatId, repository) {
@@ -1128,8 +1161,11 @@ private fun SubagentCallStatusDisplay(
         sharedRuns?.runs
             ?: (runsFlow ?: flowOf(emptyList())).collectAsState(initial = emptyList()).value
     val run =
-        remember(runs, callId, requestedAgentName) {
-            findCallRun(runs, callId, requestedAgentName)
+        remember(runs, callId, requestedAgentName, executionResultText, rowTime) {
+            findCallRun(
+                runs, callId, requestedAgentName,
+                agentId = collaborationCallAgentId(executionResultText), at = rowTime,
+            )
         }
     val childChatId = run?.childChatId
     val agentPath =
@@ -1147,7 +1183,9 @@ private fun SubagentCallStatusDisplay(
         if (childChatId.isNullOrBlank()) {
             null
         } else {
-            { chatCore.switchChat(childChatId, scrollToBottom = false) }
+            {
+                host?.open?.invoke(childChatId) ?: chatCore.switchChat(childChatId, scrollToBottom = false)
+            }
         }
 
     Column(modifier = modifier) {
@@ -1207,7 +1245,9 @@ private fun SubagentTaskStatusDisplay(
             ChatRuntimeHolder.getInstance(context.applicationContext)
                 .getCore(ChatRuntimeSlot.MAIN)
         }
-    val parentChatId by chatCore.currentChatId.collectAsState()
+    val host = LocalSubagentChatHost.current
+    val mainChatId by chatCore.currentChatId.collectAsState()
+    val parentChatId = host?.parentChatId ?: mainChatId
     val runFlow =
         remember(parentChatId, callId, requestedSubagentTaskId) {
             when (
@@ -1476,10 +1516,8 @@ private fun SubagentTaskStatusDisplay(
             primaryActionLabel = stringResource(R.string.subagent_open_conversation),
             onPrimaryAction = {
                 showResultDialog = false
-                chatCore.switchChat(
-                    resolvedRun.childChatId,
-                    scrollToBottom = false,
-                )
+                host?.open?.invoke(resolvedRun.childChatId)
+                    ?: chatCore.switchChat(resolvedRun.childChatId, scrollToBottom = false)
             },
         )
     }
@@ -1494,10 +1532,8 @@ private fun SubagentTaskStatusDisplay(
             if (isTerminal) {
                 showResultDialog = true
             } else {
-                chatCore.switchChat(
-                    resolvedRun.childChatId,
-                    scrollToBottom = false,
-                )
+                host?.open?.invoke(resolvedRun.childChatId)
+                    ?: chatCore.switchChat(resolvedRun.childChatId, scrollToBottom = false)
             }
         },
     )

@@ -207,6 +207,24 @@ open class HttpVoiceProvider(
         )
     }
 
+    override suspend fun synthesizeToFile(text: String, out: File): Boolean = synthesizeAudio(text, out, emptyMap())
+
+    /** The audio for [text] written to [out], with [extraParams] filled into the request like [speak]'s. */
+    internal suspend fun synthesizeAudio(text: String, out: File, extraParams: Map<String, String>): Boolean =
+        withContext(Dispatchers.IO) {
+            if (!isInitialized && !initialize()) return@withContext false
+            val profile = com.ai.assistance.operit.data.preferences.SpeechServiceProfilesPreferences(context.applicationContext)
+                .getCurrentTtsProfile()
+            val audio = fetchAudioFromServer(text, profile.speechRate, profile.pitch, currentVoiceId, extraParams)
+                ?: return@withContext false
+            try {
+                audio.copyTo(out, overwrite = true)
+            } finally {
+                audio.delete()
+            }
+            out.length() > 0
+        }
+
     private suspend fun fetchAudioFile(request: QueuedTtsPlayback.Request): File? {
         // 检查初始化状态
         if (!isInitialized) {
@@ -586,6 +604,8 @@ open class HttpVoiceProvider(
         requestLabel: String
     ): BinaryPayload = withContext(Dispatchers.IO) {
         try {
+          // Cancelling stops the download of the body too, not only the wait for its headers.
+          stopOnCancel(stop = { activeCalls[request]?.cancel() }) {
           val response = executeRequest(request)
           response.use { safeResponse ->
             val responseBody = safeResponse.body
@@ -602,11 +622,12 @@ open class HttpVoiceProvider(
             }
 
             val mediaType = responseBody.contentType()
-            return@withContext BinaryPayload(
+            BinaryPayload(
                 bytes = responseBody.bytes(),
                 contentType = mediaType?.toString(),
                 charset = mediaType?.charset(Charsets.UTF_8) ?: Charsets.UTF_8
             )
+          }
           }
         } finally { activeCalls.remove(request) }
     }

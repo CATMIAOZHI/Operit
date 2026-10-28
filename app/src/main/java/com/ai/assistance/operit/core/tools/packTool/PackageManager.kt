@@ -79,6 +79,8 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
         private const val TAG = "PackageManager"
         private const val TOOLPKG_TAG = "ToolPkg"
         private const val PACKAGES_DIR = "packages" // Directory for packages
+        /** Inside the packages folder: packages the main app deleted that an Orbit still has. */
+        private const val ORBIT_COPIES_DIR = ".orbit_copies"
         private const val ASSETS_PACKAGES_DIR = "packages" // Directory in assets for packages
         private const val PACKAGE_PREFS = "com.ai.assistance.operit.core.tools.PackageManager"
         private const val ENABLED_PACKAGES_KEY = "imported_packages"
@@ -931,6 +933,11 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
                     }
                 }
                 addAll(enabledContainerNames)
+                // Plugins an Orbit has switched on keep their files even while the main app has them off.
+                addAll(
+                    com.ai.assistance.operit.features.orbit.OrbitPackages.containersInUse(context, this@PackageManager)
+                        .filter(toolPkgContainers::containsKey)
+                )
             }
 
             val expectedCacheDirNames = retainedContainerNames.map(::toolPkgCacheDirName).toSet()
@@ -1278,11 +1285,10 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
             }
         val previousCache = externalPackageScanCache
         val nextCache = LinkedHashMap<String, ExternalPackageScanCacheEntry>()
-        val candidateResults =
-            externalFiles.map { file ->
+        fun scanFile(file: File): PackageScanCandidateResult {
                 val rejectionMessage = pluginDenylistRejection(file)
                 if (rejectionMessage != null) {
-                    return@map PackageScanCandidateResult(
+                    return PackageScanCandidateResult(
                         phase = "external",
                         packageLoadErrors =
                             mapOf(
@@ -1313,13 +1319,94 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
                         signature = signature,
                         result = result
                     )
-                result
-            }
+                return result
+        }
+        val candidateResults = externalFiles.map(::scanFile)
         externalPackageScanCache = nextCache
-        return mergePackageScanCandidateResults(
+        val mainSnapshot = mergePackageScanCandidateResults(
             candidateResults = candidateResults,
             baseSnapshot = baseSnapshot
         )
+        // Copies kept for Orbit of packages the main app deleted. One the main app has again (it
+        // was reinstalled) is no longer needed: the main app's runtime serves Orbit too.
+        val copies = LinkedHashMap<String, Set<String>>()
+        val copyResults = orbitCopyFiles().mapNotNull { file ->
+            val result = scanFile(file).copy(phase = "orbit_copy")
+            val names = scannedNames(result)
+            when {
+                names.isEmpty() -> null
+                names.any { it in mainSnapshot.availablePackages } -> {
+                    if (file.delete()) AppLogger.d(TAG, "Dropped Orbit copy now back in the app: ${file.name}")
+                    null
+                }
+                else -> result.also { copies[file.absolutePath] = names }
+            }
+        }
+        externalPackageScanCache = nextCache
+        orbitCopies = copies
+        orbitCopyNames = copies.values.flatten().toSet()
+        if (copyResults.isEmpty()) return mainSnapshot
+        return mergePackageScanCandidateResults(candidateResults = copyResults, baseSnapshot = mainSnapshot)
+    }
+
+    /** Every package a scanned file gives: a package, or a plugin with its subpackages. */
+    private fun scannedNames(result: PackageScanCandidateResult): Set<String> =
+        listOfNotNull(result.toolPackage?.name).toSet() +
+            result.toolPkgLoadResult?.let { load ->
+                listOf(load.containerPackage.name) + load.subpackagePackages.map { it.name }
+            }.orEmpty()
+
+    // ---- Copies kept for Orbit ----
+
+    /** Packages the main app deleted while an Orbit had them imported; only Orbit sees these. */
+    private val orbitCopiesDir: File
+        get() = File(externalPackagesDir, ORBIT_COPIES_DIR).also { if (!it.exists()) it.mkdirs() }
+
+    private fun orbitCopyFiles(): List<File> =
+        File(externalPackagesDir, ORBIT_COPIES_DIR).listFiles()?.filter(File::isFile).orEmpty()
+
+    /** Each copy file with the packages it gives. */
+    @Volatile private var orbitCopies: Map<String, Set<String>> = emptyMap()
+    @Volatile private var orbitCopyNames: Set<String> = emptySet()
+
+    /** Whether [packageName] is only here as Orbit's copy: the main app does not show or use it. */
+    fun isOrbitCopy(packageName: String): Boolean {
+        ensureInitialized()
+        return normalizePackageName(packageName) in orbitCopyNames
+    }
+
+    /** [packages] as the main app lists them, without Orbit's copies. */
+    fun <V> withoutOrbitCopies(packages: Map<String, V>): Map<String, V> {
+        ensureInitialized()
+        val copies = orbitCopyNames
+        return if (copies.isEmpty()) packages else packages.filterKeys { it !in copies }
+    }
+
+    /**
+     * Instead of deleting [file], moves it among Orbit's copies when an Orbit imported any package
+     * it gives ([names]). True if it was kept.
+     */
+    private fun keepForOrbit(file: File, names: Collection<String>): Boolean {
+        val imported = runCatching {
+            com.ai.assistance.operit.features.orbit.OrbitPackages.importedByAnyOrbit(context)
+        }.getOrElse { return false }
+        if (names.none { it in imported }) return false
+        val dir = orbitCopiesDir
+        var target = File(dir, file.name)
+        var n = 1
+        while (target.exists()) target = File(dir, "${file.nameWithoutExtension}-${n++}.${file.extension}")
+        val moved = file.renameTo(target) || runCatching { file.copyTo(target); file.delete() }.getOrDefault(false)
+        if (moved) AppLogger.d(TAG, "Kept ${file.name} as an Orbit copy")
+        return moved
+    }
+
+    /** Deletes the copies no Orbit has imported any more ([inUse] is every Orbit's imports). */
+    fun pruneOrbitCopies(inUse: Set<String>) {
+        ensureInitialized()
+        val unused = orbitCopies.filterValues { names -> names.none { it in inUse } }.keys
+        if (unused.isEmpty()) return
+        unused.forEach { path -> File(path).delete() }
+        loadAvailablePackages(refreshExternalOnly = true)
     }
 
     fun resolvePackageForDisplay(packageName: String): ToolPackage? {
@@ -1590,8 +1677,8 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
         ensureInitialized()
         val normalizedContainerPackageName = normalizePackageName(containerPackageName)
         val runtime = toolPkgContainers[normalizedContainerPackageName] ?: return null
-        val enabledSet = getEnabledPackageNameSetInternal()
-        if (!enabledSet.contains(runtime.packageName)) {
+        // An Orbit may use a plugin the main app has switched off.
+        if (!isToolPkgContainerUsable(runtime.packageName)) {
             return null
         }
         if (runtime.mainEntry.isBlank()) {
@@ -2373,10 +2460,15 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
             return false
         }
 
-        if (targetFile.exists() && (!targetFile.isFile || !targetFile.delete())) {
+        val givenNames = externalPackageScanCache.entries
+            .firstOrNull { runCatching { File(it.key).canonicalPath }.getOrNull().equals(targetCanonicalPath, ignoreCase = true) }
+            ?.value?.result?.let(::scannedNames).orEmpty()
+        val kept = targetFile.isFile && givenNames.isNotEmpty() && keepForOrbit(targetFile, givenNames)
+        if (!kept && targetFile.exists() && (!targetFile.isFile || !targetFile.delete())) {
             AppLogger.e(TAG, "Failed to delete external package source: $targetCanonicalPath")
             return false
         }
+        if (kept) givenNames.forEach { disablePackage(it) }
         externalPackageScanCache =
             externalPackageScanCache.filterKeys { cachedPath ->
                 val cachedCanonicalPath =
@@ -2430,6 +2522,9 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
         // 为了更易读，改成Android/data/包名/files/packages的形式
         return "Android/data/${context.packageName}/files/packages"
     }
+
+    /** Where imported package files are kept, by file name. */
+    fun externalPackagesFolder(): File = externalPackagesDir
 
     fun getPluginConfigDirPath(pluginId: String): String {
         val candidate = pluginId.trim()
@@ -3002,6 +3097,10 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
         if (!availablePackages.containsKey(normalizedPackageName)) {
             return "Package not found in available packages: $normalizedPackageName"
         }
+        // The main app deleted it; only Orbit keeps it.
+        if (normalizedPackageName in orbitCopyNames) {
+            return "Package not found in available packages: $normalizedPackageName"
+        }
         val archivedOwnerPackageName =
             archivedBuiltInOwnerPackageName(
                 normalizedPackageName = normalizedPackageName,
@@ -3109,7 +3208,8 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
      * @param packageName The name of the enabled package to use
      * @return Package description and tools for AI prompt enhancement, or error message
      */
-    fun usePackage(packageName: String): String {
+    fun usePackage(packageName: String, callerChatId: String? =
+        com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager.currentToolRuntimeContext()?.callerChatId): String {
         ensureInitialized()
         val normalizedPackageName = normalizePackageName(packageName)
 
@@ -3118,15 +3218,22 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
             return "ToolPkg container '$normalizedPackageName' is not a package and cannot be activated."
         }
 
-        // First check if packageName is a standard enabled package (priority)
         val enabledPackageNames = getEnabledPackageNames()
+        // An Orbit chat uses the Orbit's own package list; any other caller uses the main app's.
+        val orbitPackages = orbitPackagesFor(callerChatId)
         val subpackageRuntime = toolPkgSubpackageByPackageName[normalizedPackageName]
-        if (subpackageRuntime != null &&
+        // An Orbit's list stands on its own: a plugin subpackage it switched on works even while the
+        // plugin is off in the main app (its files are prepared on demand).
+        if (subpackageRuntime != null && orbitPackages == null &&
             !enabledPackageNames.contains(subpackageRuntime.containerPackageName)
         ) {
             return "ToolPkg container '${subpackageRuntime.containerPackageName}' is not enabled. Package '$normalizedPackageName' is inactive."
         }
-        if (enabledPackageNames.contains(normalizedPackageName)) {
+        if (orbitPackages != null && availablePackages.containsKey(normalizedPackageName) &&
+            normalizedPackageName !in orbitPackages) {
+            return "Package '$normalizedPackageName' is switched off for this Orbit."
+        }
+        if (orbitPackages?.contains(normalizedPackageName) ?: enabledPackageNames.contains(normalizedPackageName)) {
             // Load the full package data for a standard package
             val toolPackage =
                 getPackageTools(normalizedPackageName)
@@ -3134,6 +3241,8 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
 
             // Validate required environment variables, if any
             if (toolPackage.env.isNotEmpty()) {
+                // An Orbit chat also has the keys the user saved for this package in its vault.
+                val orbitEnv = if (orbitPackages != null) orbitPackageEnvFor(callerChatId, normalizedPackageName) else emptyMap()
                 val missingRequiredEnv = mutableListOf<String>()
                 val missingOptionalEnv = mutableListOf<Pair<String, String>>() // env name, default value
 
@@ -3142,7 +3251,7 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
                     if (envName.isEmpty()) return@forEach
 
                     val value = try {
-                        envPreferences.getEnv(envName)
+                        orbitEnv[envName]?.takeIf { it.isNotEmpty() } ?: envPreferences.getEnv(envName)
                     } catch (e: Exception) {
                         AppLogger.e(
                             TAG,
@@ -3189,6 +3298,11 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
                             append(": ")
                             append(missingRequiredEnv.joinToString(", "))
                             append(". Please set them before using this package.")
+                            if (orbitPackages != null) {
+                                append(" Ask the user for it with orbit_vault request_api_key, package_name '")
+                                append(normalizedPackageName)
+                                append("' and env_name set to the variable above; never ask for the value in chat.")
+                            }
                         }
                     AppLogger.w(TAG, msg)
                     return msg
@@ -3214,14 +3328,21 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
         }
 
         // Then check if it's a Skill package
-        if (skillManager.getAvailableSkills().containsKey(normalizedPackageName) &&
-            !skillVisibilityPreferences.isSkillVisibleToAi(normalizedPackageName)
-        ) {
+        val scopedSkills = kotlinx.coroutines.runBlocking {
+            com.ai.assistance.operit.data.skill.SkillRepository.forChat(context, callerChatId)
+        }
+        // One directory scan serves the visibility check and the prompt.
+        val isSkill = scopedSkills.getAvailableSkillPackages().containsKey(normalizedPackageName)
+        if (isSkill && !scopedSkills.skillVisibilityPreferences.isSkillVisibleToAi(normalizedPackageName)) {
             return "Skill '$normalizedPackageName' is set to not show to AI"
         }
 
-        val skillPrompt = skillManager.getSkillSystemPrompt(normalizedPackageName)
+        val skillPrompt = if (isSkill) scopedSkills.getSkillSystemPrompt(normalizedPackageName, refresh = false) else null
         if (skillPrompt != null) {
+            // A learned Orbit skill that gets loaded is in use: its idle-archive clock restarts.
+            scopedSkills.memorySpaceId?.let { space ->
+                com.ai.assistance.operit.data.preferences.LearnedSkillRepository.touchLater(context, space, normalizedPackageName)
+            }
             return skillPrompt
         }
 
@@ -3243,7 +3364,15 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
      * Wrapper for tool execution: builds ToolResult for the 'use_package' tool.
      * Keeps registration site minimal by centralizing result construction here.
      */
-    fun executeUsePackageTool(toolName: String, packageName: String): ToolResult {
+    fun executeUsePackageTool(toolName: String, packageName: String): ToolResult =
+        kotlinx.coroutines.runBlocking { executeUsePackageToolSuspending(toolName, packageName) }
+
+    /**
+     * [executeUsePackageTool] as a suspend call, so stopping the chat also stops waiting for an
+     * Orbit's MCP server to start.
+     */
+    suspend fun executeUsePackageToolSuspending(toolName: String, packageName: String): ToolResult {
+        val callerChatId = com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager.currentToolRuntimeContext()?.callerChatId
         if (packageName.isBlank()) {
             return ToolResult(
                 toolName = toolName,
@@ -3263,8 +3392,9 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
             )
         }
 
-        if (skillManager.getAvailableSkills().containsKey(normalizedPackageName) &&
-            !skillVisibilityPreferences.isSkillVisibleToAi(normalizedPackageName)
+        val scopedSkills = com.ai.assistance.operit.data.skill.SkillRepository.forChat(context, callerChatId)
+        if (!scopedSkills.skillVisibilityPreferences.isSkillVisibleToAi(normalizedPackageName) &&
+            scopedSkills.getAvailableSkillPackages().containsKey(normalizedPackageName)
         ) {
             return ToolResult(
                 toolName = toolName,
@@ -3274,7 +3404,37 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
             )
         }
 
-        val text = usePackage(normalizedPackageName)
+        // In an Orbit chat an MCP server is started here when it is not up yet, or the reason it
+        // cannot be used is returned instead.
+        val gate = com.ai.assistance.operit.features.orbit.OrbitMcp.gate(context, callerChatId, normalizedPackageName)
+        if (gate is com.ai.assistance.operit.features.orbit.OrbitMcp.Gate.Blocked) {
+            return ToolResult(
+                toolName = toolName,
+                success = false,
+                result = StringResultData(""),
+                error = gate.why
+            )
+        }
+
+        val text = usePackage(normalizedPackageName, callerChatId)
+        if (gate is com.ai.assistance.operit.features.orbit.OrbitMcp.Gate.Go) {
+            // useMCPServer reports a failed connection as text; for Orbit it is a failure it can act on.
+            val failed = text.takeIf {
+                it.startsWith("Cannot connect to MCP server") || it.startsWith("Cannot get MCP server configuration") ||
+                    (it.startsWith("MCP server '") && (it.contains("does not exist or is not registered") ||
+                        it.contains("is disabled or unavailable")))
+            }
+            com.ai.assistance.operit.features.orbit.OrbitMcp.connected(context, gate.id, failed)
+            if (failed != null) {
+                return ToolResult(
+                    toolName = toolName,
+                    success = false,
+                    result = StringResultData(""),
+                    error = "$failed Retry with orbit_mcp start; if it keeps failing, tell the user the reason " +
+                        "and to check it in the app's MCP settings."
+                )
+            }
+        }
         return ToolResult(
             toolName = toolName,
             success = true,
@@ -3344,7 +3504,10 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
                             if (isPhoneControlPackage) {
                                 // Native execution retains the host's turn identity; the legacy
                                 // JavaScript bridge cannot securely supply it.
-                                if (!isPackageEnabled(toolPackage.name)) {
+                                // An Orbit chat follows its own package list, any other chat the main app's.
+                                val callerChatId = com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
+                                    .currentToolRuntimeContext()?.callerChatId
+                                if (!isPackageOnForChat(toolPackage.name, callerChatId)) {
                                     return ToolResult(toolName = tool.name, success = false,
                                         result = StringResultData(""), error = "Phone control package is disabled.")
                                 }
@@ -3716,6 +3879,13 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
 
     internal fun unregisterPackageTools(packageName: String) {
         if (packageName == com.ai.assistance.operit.core.tools.phone.PhoneControlTools.PACKAGE_NAME) {
+            // An Orbit keeps its own switch: switching the package off in the main app must not cut
+            // into an Orbit that is controlling the phone and still has the package on.
+            val owner = com.ai.assistance.operit.core.tools.phone.PhoneControlTools.activeSessionChatId()
+            if (owner != null && orbitPackagesFor(owner)?.contains(packageName) == true) {
+                AppLogger.d(TAG, "Keeping phone_control for the Orbit chat that is using it")
+                return
+            }
             com.ai.assistance.operit.core.tools.phone.PhoneControlTools.setPackageAvailable(false)
         }
         val activeTools = activePackageToolNames.remove(packageName).orEmpty()
@@ -3741,6 +3911,57 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
         val normalizedPackageName = normalizePackageName(packageName)
         val toolPackage = availablePackages[normalizedPackageName] ?: return null
         return selectToolPackageState(toolPackage)
+    }
+
+    /** The Orbit's own package list when [chatId] belongs to an Orbit, otherwise null. */
+    private fun orbitPackagesFor(chatId: String?): Set<String>? {
+        if (chatId.isNullOrBlank()) return null
+        return kotlinx.coroutines.runBlocking {
+            com.ai.assistance.operit.features.orbit.OrbitPackages.scopeFor(context, this@PackageManager, chatId)
+        }
+    }
+
+    /** The keys an Orbit's vault holds for [packageName], when [chatId] is that Orbit's chat. */
+    private fun orbitPackageEnvFor(chatId: String?, packageName: String): Map<String, String> {
+        if (chatId.isNullOrBlank()) return emptyMap()
+        return runCatching {
+            kotlinx.coroutines.runBlocking {
+                com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context, chatId)?.let {
+                    com.ai.assistance.operit.features.orbit.OrbitVault.packageEnv(context, it.id, packageName)
+                }.orEmpty()
+            }
+        }.getOrDefault(emptyMap())
+    }
+
+    /** Whether a package is on in [chatId]: an Orbit chat's own list, any other chat the main app's. */
+    private fun isPackageOnForChat(packageName: String, chatId: String?): Boolean =
+        orbitPackagesFor(chatId)?.contains(normalizePackageName(packageName)) ?: isPackageEnabled(packageName)
+
+    /** Whether a plugin's files and scripts may be used: on in the main app, or used by an Orbit. */
+    internal fun isToolPkgContainerUsable(containerName: String): Boolean =
+        getEnabledPackageNameSetInternal().contains(containerName) ||
+            com.ai.assistance.operit.features.orbit.OrbitPackages.usesContainer(context, this, containerName)
+
+    /** The plugin a package belongs to, or the name itself when it is a plugin; null otherwise. */
+    internal fun toolPkgContainerOf(packageName: String): String? {
+        val normalized = normalizePackageName(packageName)
+        return toolPkgSubpackageByPackageName[normalized]?.containerPackageName
+            ?: normalized.takeIf(toolPkgContainers::containsKey)
+    }
+
+    /**
+     * Everything an Orbit must also switch on for [packageName] to work: the plugins it requires and
+     * their default subpackages. Throws with a readable reason when a requirement is missing.
+     */
+    internal fun orbitRequiredPackages(packageName: String): List<String> {
+        ensureInitialized()
+        val required = collectRequiredToolPkgPackages(normalizePackageName(packageName))
+        val result = linkedSetOf<String>()
+        required.forEach { name ->
+            result += name
+            toolPkgContainers[name]?.subpackages?.filter { it.enabledByDefault }?.forEach { result += it.packageName }
+        }
+        return result.toList()
     }
 
     /** Checks if a package is enabled */
@@ -3788,8 +4009,12 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
             saveEnabledPackageNames(currentPackages.toList())
             saveToolPkgSubpackageStates(subpackageStates)
             addToDisabledIfDefaultEnabled(normalizedPackageName)
-            deleteToolPkgCacheDir(normalizedPackageName)
-            destroyToolPkgExecutionEngines(normalizedPackageName)
+            // An Orbit keeps its own switches: while one still uses this plugin, its files and running
+            // engines stay so the Orbit's tools keep working.
+            if (!com.ai.assistance.operit.features.orbit.OrbitPackages.usesContainer(context, this, normalizedPackageName)) {
+                deleteToolPkgCacheDir(normalizedPackageName)
+                destroyToolPkgExecutionEngines(normalizedPackageName)
+            }
             ReadingCompanionAutoCommentary.cancelIfDisabledPackage(
                 context = context,
                 packageName = normalizedPackageName,
@@ -3958,6 +4183,16 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
         }
 
         AppLogger.d(TAG, "Found package file to delete: ${packageFile.absolutePath}")
+
+        // An Orbit that imported it keeps a copy; the main app no longer has it.
+        val givenNames = toolPkgContainers[normalizedPackageName]?.subpackages?.map { it.packageName }.orEmpty() +
+            normalizedPackageName
+        if (keepForOrbit(packageFile, givenNames)) {
+            disablePackage(normalizedPackageName)
+            removeFromCachesAfterDelete(normalizedPackageName)
+            loadAvailablePackages(refreshExternalOnly = true)
+            return true
+        }
 
         val fileDeleted = packageFile.delete()
 

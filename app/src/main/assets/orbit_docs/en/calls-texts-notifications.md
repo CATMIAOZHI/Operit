@@ -1,0 +1,97 @@
+# Calls, Texts, and Notifications
+
+At the user's request, you can read SMS and notifications on this Android phone, arrange change monitoring, and notify the user through the app.
+Reading private messages requires an explicit user request and the relevant permission. Report only task-related content; do not save numbers or messages in memory unless asked.
+
+## Calls and sending texts
+
+You cannot answer calls for the user, take part in phone conversations, or send SMS directly.
+The SMS commands in `orbit_device` read messages; they offer no dialing or sending command.
+With the `daily_life` package imported and enabled, `make_phone_call` opens the dialer and `send_message` opens the SMS editor with the number and text filled in; the user still taps call or send.
+Without that package, you can draft a text, look up a contact's number with permission, and ask the user to take the action themselves.
+Opening one of those screens, finding a number, drafting content, or saving a reminder does not mean a call was placed or a text was sent.
+
+When the user says “message me a reminder later,” normally create an `orbit_task`. Its result reaches chat and may notify the user according to app settings; this is not an actual SMS.
+The WeChat channel also connects only the user and their dedicated bot. It cannot message other contacts; see [weixin.md](weixin.md).
+
+## Read SMS
+
+First use `orbit_device action=describe` to check available commands, parameters, and authorization. Then use `action=invoke`, with the command in `command` and a JSON object in `params`.
+
+- `sms.search`: search message text or sender/recipient numbers. Optional `query` allows up to 80 characters; `limit` is 1–30, default 10.
+- When `has_more=true`, pass `next_before` unchanged as the next call's `params.before` to read older messages.
+- Search shows up to 1000 characters of each body. If `cut=true`, use `sms.read` with the message `id` to read its full content.
+- `sms.read` returns up to 20000 characters per call. If `next_start_char` is present, pass it as the next call's `params.start_char` to continue.
+
+Results come from the phone's current SMS database, with times in the phone's local time zone.
+Without permission, a foreground invocation may open a system permission prompt. You cannot approve for a user who is outside the app.
+After a denial, do not retry or find a workaround. If the user later needs access, you can place a `permission=sms` card.
+
+## Read other apps' notifications
+
+When available in the current tools, use `get_notifications` to inspect phone notifications. `limit` controls the number returned; `include_ongoing` controls whether ongoing notifications are included, defaulting to false.
+This needs notification reading access. If missing, use `orbit_permission_card permission=notification_read`.
+Reading notifications does not provide other apps' chat history, accounts, or every private message.
+An app may hide content, the user may clear a notification, or only part of a message may be visible. An empty result does not prove no message arrived.
+
+## Notification history
+
+`get_notifications` only sees what is in the tray right now. To look back, use the notification history commands of `orbit_device`:
+while notification reading is on and an Orbit exists, the app keeps the notifications other apps post in the background (those already in the tray when it was turned on are added too) for 30 days, even after the user clears the tray.
+Ongoing notifications (music, downloads, running services) and group summaries are not kept; an update that repeats the same content is kept once.
+
+- `notifications.search`: look back in time, newest first. `hours` is 1-720, default 24 (168 is a week, 720 a month); `app` takes an app name or package; `query` searches the title and text, up to 80 characters; `limit` is 1-50, default 20.
+- `notifications.apps`: lists the apps that posted in a time window, with counts, so you know what to put in `app`.
+- When `has_more=true`, put `next_before` unchanged into the next `params.before`; text over 1000 characters is marked `cut=true`, and `notifications.read` with its `id` returns it in full; up to 4000 characters are kept per notification, and `stored_cut=true` means the original was longer and the rest was not kept.
+
+Notifications cleared before the permission was turned on are not recorded. When a result says `recording=false`, new notifications are not being kept right now, and `recording_note` says why. Finding nothing does not prove nothing arrived: the app may not have posted one, or showed only part of it.
+Use what you read only for the current task and do not save it to memory unless the user asks. Deleting the Orbit clears the history.
+
+## See your own permissions
+
+`permissions` in `orbit_device action=describe` lists whether each permission is on, using the same names as `orbit_permission_card`; `notification_history` shows whether the history is recording and when its oldest entry arrived.
+The app reads these itself, with no ADB, Shizuku or terminal needed; check them there instead of running terminal commands.
+
+## Watch phone messages and events
+
+When the user asks to hear about a kind of message, use `orbit_task action=create` with `kind=WATCH`, `schedule_mode=INTERVAL`, and `notify_policy=CHANGES`.
+Set `title` to the task name, explain the relevant changes and reporting behavior in `instruction`, and use at least 15 for `interval_minutes`.
+Check existing tasks first to avoid duplicates.
+
+`watch` accepts:
+
+- `notifications`, or `notifications:package,package` to check only named apps.
+- `sms`, or `sms:sender` to inspect recent inbox messages, optionally filtering by number or sender text.
+- `calendar`, or `calendar:days` to inspect the next 1–30 days of calendar events, default 7. Calendar permission is required.
+
+These are periodic reads and change checks, not real-time triggers for every incoming message.
+Notification watches inspect notifications still present at check time, excluding this app and ongoing notifications. SMS and notification watches each take at most 50 items, with up to 500 characters per item.
+Fleeting notifications and messages outside these bounds can be missed. Do not promise a complete record.
+After a change wakes you, still decide whether it matches the user's request. Do not copy unrelated private content.
+See [scheduling-and-watching.md](scheduling-and-watching.md) for location arrival/departure and script conditions. Do not assume arbitrary phone event subscriptions exist.
+
+## Notify the user and describe delivery
+
+Task reminders and background results first return to their source chat for you to tell the user. If that chat was deleted, they return to the main chat.
+After you speak proactively, the app marks the chat unread. When the app is not open, system notifications are allowed and the “Message notifications” switch is on, the app attempts to show your messages (proactive or replies) as a notification with your picture that opens the chat.
+“Message notifications” is your own switch (Settings → Notifications, or `message_notifications` in `orbit_settings`), separate from the system notification permission: the permission only decides whether Operit can post notifications, and the switch decides whether your messages also get their own notification. When it is off, messages stay in the chat only.
+A saved task, a completed task, a result in chat, a displayed notification, and the user having seen it are different states.
+Tool success alone does not prove the user received or read a notification.
+
+“Notifications” in Orbit settings offers a night quiet-hours switch (22:00–08:00) and reporting intervals of immediate, 15 minutes, or 60 minutes.
+Task wakes and result delivery also follow quiet hours, intervals, and daily digest policy. A task wake explicitly requested with “run now” does not wait for these arrangements.
+Use `notify_policy=ALWAYS` for every-run reports, `CHANGES` for useful changes, and `DIGEST` for daily roundups.
+These policies do not guarantee bypassing system Do Not Disturb, notification channel settings, battery restrictions, force-stop, lost connectivity, or a powered-off phone.
+
+If the user explicitly needs an immediate system notification and the tool is available, use `send_notification`, with required `message` and optional `title`.
+It does not pass through Orbit's task reporting queue or quiet hours. Do not use it to bypass the user's notification preferences or replace a saved future reminder.
+A successful result confirms the call completed, not that the user saw the notification.
+
+## Permission cards
+
+Relevant `permission` values for `orbit_permission_card` are `sms` (read texts), `notification_read` (read other apps' notifications), `notify` (post system notifications), `calendar` (read calendar), and `keep_alive` (background keep-alive and battery-optimization exemption).
+Reading and posting notifications need different access. Permission to run a task does not mean permission to display system notifications.
+Offer a card only when the user's task needs it, explain why, place at most one per turn, and end that turn with one short line.
+Already enabled permissions produce no card. A placed card does not mean permission was granted.
+After the user opens settings through a card, only a verified off-to-on change sends a hidden note to the original chat. Denial or no change is not consent.
+Do not repeatedly offer cards the user ignored or declined. Continue according to actual authorization results.

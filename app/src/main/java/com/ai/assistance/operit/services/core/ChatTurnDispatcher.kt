@@ -99,6 +99,9 @@ data class ChatTurnSession(
 ) {
     fun currentState(): InputProcessingState = currentStateProvider()
 
+    /** Waits for the turn's own end signal; unlike [awaitOutcome] it does not need a persisted reply. */
+    suspend fun awaitTerminalSignal(): ChatTurnTerminalSignal = terminalSignal.await()
+
     suspend fun awaitOutcome(): ChatTurnOutcome {
         val signal =
             try {
@@ -343,7 +346,9 @@ class ChatTurnDispatcher {
                         val state =
                             core.inputProcessingStateByChatId.value[resolvedChatId]
                                 ?: InputProcessingState.Idle
-                        if (state is InputProcessingState.Error) {
+                        // Model preparation can finish with an error/cancellation before a stream
+                        // exists; consume that terminal result instead of waiting for a timeout.
+                        if (state is InputProcessingState.Error || terminalSignal.isCompleted) {
                             val terminal = terminalSignal.await()
                             when (terminal) {
                                 is ChatTurnTerminalSignal.Failed ->

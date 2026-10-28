@@ -114,5 +114,10 @@ object PermissionReviewInternalTools {
      * part of what the agent is doing and must not be classified.
      */
     fun bypassesPermissionCheck(toolName: String): Boolean =
-        toolName in names || AgentRunObservers.isCapabilityTool(toolName)
+        toolName in names || AgentRunObservers.isCapabilityTool(toolName) ||
+            // The handler accepts only a live task's host-owned caller/token. It cannot execute
+            // arbitrary operations, select another task or deliver to a model-selected chat.
+            toolName == com.ai.assistance.operit.features.orbit.OrbitTaskRunner.FINISH ||
+            // Reads the Orbit's own chats for its review and writes only that review's notes.
+            toolName == com.ai.assistance.operit.features.orbit.OrbitReviewReader.TOOL
 }

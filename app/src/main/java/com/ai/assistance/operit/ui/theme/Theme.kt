@@ -25,6 +25,8 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
@@ -63,6 +65,10 @@ import io.github.fletchmckee.liquid.rememberLiquidState
 // Overlay hosts can suspend media while retaining their conversation composition.
 val LocalBackgroundPlaybackEnabled = staticCompositionLocalOf { true }
 
+/** An opaque page can own its system bars and suspend media hidden behind it. Scoped to this theme. */
+internal data class OpaquePageAppearance(val background: Color, val dark: Boolean)
+internal val LocalOpaquePageAppearance = staticCompositionLocalOf<MutableState<OpaquePageAppearance?>?> { null }
+
 @SuppressLint("UnusedBoxWithConstraintsScope")
 @Composable
 fun OperitTheme(updateSystemBars: Boolean = true, content: @Composable () -> Unit) {
@@ -74,6 +80,8 @@ fun OperitTheme(updateSystemBars: Boolean = true, content: @Composable () -> Uni
     val colorScheme = appThemeStyle.colorScheme
     val customTypography = appThemeStyle.typography
     val darkTheme = appThemeStyle.darkTheme
+    val pageAppearanceState = remember { mutableStateOf<OpaquePageAppearance?>(null) }
+    val pageAppearance = pageAppearanceState.value
 
     // 获取背景图片设置
     val useBackgroundImage by preferencesManager.useBackgroundImage.collectAsState(initial = false)
@@ -166,6 +174,14 @@ fun OperitTheme(updateSystemBars: Boolean = true, content: @Composable () -> Uni
                 // isAppearanceLightNavigationBars = false 表示图标为浅色（适用于深色背景）
                 insetsController?.isAppearanceLightNavigationBars = isColorLight(colorScheme.background)
             }
+            // A single owner applies the page override after app preferences, including recompositions.
+            pageAppearance?.let { page ->
+                window.statusBarColor = page.background.toArgb()
+                window.navigationBarColor = page.background.toArgb()
+                insetsController?.isAppearanceLightStatusBars = !page.dark
+                insetsController?.isAppearanceLightNavigationBars = !page.dark
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) window.isNavigationBarContrastEnforced = false
+            }
         }
     }
 
@@ -246,7 +262,7 @@ fun OperitTheme(updateSystemBars: Boolean = true, content: @Composable () -> Uni
     }
 
     // Visibility and lifecycle both own playback; a hidden overlay keeps its composition.
-    val backgroundPlaybackEnabled = LocalBackgroundPlaybackEnabled.current
+    val backgroundPlaybackEnabled = LocalBackgroundPlaybackEnabled.current && pageAppearance == null
     if (exoPlayer != null) {
         val lifecycleOwner = LocalLifecycleOwner.current
         DisposableEffect(lifecycleOwner, exoPlayer, backgroundPlaybackEnabled) {
@@ -270,6 +286,7 @@ fun OperitTheme(updateSystemBars: Boolean = true, content: @Composable () -> Uni
         val waterGlassState = if (isWaterGlassSupported()) rememberLiquidState() else null
 
         CompositionLocalProvider(
+            LocalOpaquePageAppearance provides pageAppearanceState,
             LocalLiquidGlassBackdrop provides liquidGlassBackdrop,
             LocalWaterGlassState provides waterGlassState,
         ) {

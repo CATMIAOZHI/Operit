@@ -13,10 +13,13 @@ class MemoryLearningActions(
     private val notesEnabled: Boolean, private val skillsEnabled: Boolean,
     private val background: Boolean,
     private val stagedChanges: MutableList<MemoryReviewChange>? = null,
-    private val onCreated: () -> Unit = {}
+    private val onCreated: () -> Unit = {},
+    private val learningGuard: com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.Guard? = null,
+    private val evidence: String = ""
 ) {
-    private val skills = LearnedSkillRepository(context)
-    private val reviews = MemoryReviewRepository(context,profileId,stagedChanges)
+    private val skills = LearnedSkillRepository(context, profileId)
+    private val reviews = MemoryReviewRepository(context,profileId,stagedChanges,
+        if (background) learningGuard?.generation ?: 0 else null, evidence)
     /**
      * Versions this space has already read, kept across instances because the foreground package tool
      * builds a new [MemoryLearningActions] for every call and a per-instance map would leave it with
@@ -32,22 +35,75 @@ class MemoryLearningActions(
                     size > READ_VERSION_LIMIT
             })
     }
-    private fun readVersion(target: String): String? = readVersions["$profileId\u0000$target"]
+    /**
+     * One chat's reads, kept apart from another chat's and from the background review's: a version
+     * someone else read says nothing about what this caller has seen.
+     */
+    private fun versionKey(target: String) =
+        "$profileId\u0000$sourceChatId\u0000${if (background) "review" else "chat"}\u0000$target"
+    private fun readVersion(target: String): String? = readVersions[versionKey(target)]
     private fun rememberVersion(target: String, version: String) {
-        readVersions["$profileId\u0000$target"] = version
+        readVersions[versionKey(target)] = version
     }
-    private fun forgetVersion(target: String) { readVersions.remove("$profileId\u0000$target") }
+    private fun forgetVersion(target: String) { readVersions.remove(versionKey(target)) }
+    /** An Orbit's memory.md is sectioned; null for every other space. */
+    private val notesFormat = MemoryNotesRepository.sectionFormat(context, profileId)
+    /** People, circles and the lessons book: only a background review of an Orbit maintains them here. */
+    private suspend fun orbitNotes(): com.ai.assistance.operit.features.orbit.OrbitFiles {
+        check(notesEnabled) { "Note extraction is not scheduled for this run. Do not retry memory operations; continue skill work or finish." }
+        check(background && notesFormat != null) {
+            "People, circles and lessons are maintained by the Orbit's memory review; in a chat use orbit_file"
+        }
+        val owner = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.privateOwner(context, profileId)
+            ?: error("This memory space has no Orbit files")
+        return com.ai.assistance.operit.features.orbit.OrbitFiles.of(context, owner)
+    }
+    private fun stagedOrbitFile(path: String) =
+        stagedChanges?.lastOrNull { it.kind == MemoryReviewRepository.ORBIT_FILE && it.title == path }
+    /** Lessons staged on this page: each change holds only the line it appends, not the whole book. */
+    private fun stagedLessons(): List<String> = stagedChanges.orEmpty().filter {
+        it.kind == MemoryReviewRepository.ORBIT_FILE && it.title == com.ai.assistance.operit.features.orbit.OrbitFiles.LESSONS &&
+            it.addition.isNotEmpty()
+    }.map { it.addition }
+    /** LESSONS.md as it will read once this page is saved. */
+    private suspend fun lessonsBook(files: com.ai.assistance.operit.features.orbit.OrbitFiles): String {
+        val p = com.ai.assistance.operit.features.orbit.OrbitFiles.LESSONS
+        val base = files.readStored(p) ?: files.template(p).orEmpty()
+        return stagedLessons().fold(base) { book, line -> (book.trimEnd() + "\n" + line + "\n").trimStart('\n') }
+    }
     suspend fun execute(action: String, args: Map<String,String>): JSONObject {
         fun arg(name:String) = args[name].orEmpty()
+        /** memory.md unless target says user; anything else is a mistake, not a silent memory edit. */
+        fun userTarget(): Boolean = when (arg("target").trim().lowercase().removeSuffix(".md")) {
+            "", "memory" -> false
+            "user" -> true
+            else -> throw IllegalArgumentException("target must be memory (memory.md) or user (user.md), got \"${arg("target").take(40)}\"")
+        }
         val name = arg("name")
         val path = arg("path").ifBlank { "SKILL.md" }
         return when(action) {
-            "history" -> ChatRecallRepository(context).execute(args, filterAssistantThinking = true,
-                includeThinking = MemorySearchSettingsPreferences(context, profileId).shouldIncludeThinking())
+            "history" -> {
+                val boundary = if (background)
+                    com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.forSpace(context, profileId) else null
+                // Thinking only on request (mostly for skill work), and only where the space allows it.
+                val wantsThinking = arg("include_thinking").trim().lowercase() == "true"
+                val thinkingAllowed = MemorySearchSettingsPreferences(context, profileId).shouldIncludeThinking()
+                val run = suspend {
+                    ChatRecallRepository(context, sourceChatId, if (background) (learningGuard?.cutoff ?: 0) + 1 else 0,
+                        if (background && (learningGuard?.generation ?: 0) > 0) learningGuard!!.cutoffTimestamp + 1 else 0)
+                        .execute(args - "include_thinking", filterAssistantThinking = true,
+                            includeThinking = wantsThinking && thinkingAllowed)
+                        .apply {
+                            if (wantsThinking && !thinkingAllowed) put("thinking_unavailable",
+                                "This memory space does not allow reading thinking; the result has visible text only.")
+                        }
+                }
+                if (boundary == null) run() else boundary.learn(learningGuard?.generation ?: 0, run)
+            }
             "memory_read" -> {
                 check(notesEnabled) { "Note extraction is not scheduled for this run. Do not retry memory operations; continue skill work or finish." }
-                val user = arg("target")=="user"
-                val disk = if(user) UserProfileDocumentRepository.getInstance(context).load()
+                val user = userTarget()
+                val disk = if(user) UserProfileDocumentRepository.forMemorySpace(context, profileId).load()
                     else MemoryNotesRepository(context,profileId).load().markdown
                 val staged = stagedDocument(stagedChanges, user)
                 val content = staged?.body ?: disk
@@ -63,13 +119,18 @@ class MemoryLearningActions(
                         put("sections", JSONObject().put("profile", sections.profile)
                             .put("preferences", sections.preferences)
                             .put("interaction_rules", sections.interactionRules))
+                    } else if (notesFormat != null) {
+                        // content already shows every section under its heading; only the sizes are added.
+                        put("section_chars", JSONObject().apply {
+                            MemoryNoteSections.parse(content).bodies().forEach { (key, body) -> put(key, body.length) }
+                        })
                     }
                 }
             }
             "memory_change" -> {
                 check(notesEnabled) { "Note extraction is not scheduled for this run. Do not retry memory operations; continue skill work or finish." }
-                val user = arg("target")=="user"
-                val disk = if(user) UserProfileDocumentRepository.getInstance(context).load()
+                val user = userTarget()
+                val disk = if(user) UserProfileDocumentRepository.forMemorySpace(context, profileId).load()
                     else MemoryNotesRepository(context,profileId).load().markdown
                 val key = if(user) "user" else "memory"
                 // The version this run already read is the authority; an explicit argument is only a
@@ -78,18 +139,22 @@ class MemoryLearningActions(
                     "Read the current document with memory_read before changing it"
                 }
                 val operation = arg("operation")
-                val section = arg("section")
+                val section = arg("section").trim().lowercase()
                 val content = stripInvisibleCharacters(arg("content"))
+                if (!user && notesFormat != null && operation == "add") {
+                    require(section in MemoryNoteSections.WRITABLE) { MemoryNoteSections.SECTION_HINT }
+                }
                 val base = stagedDocument(stagedChanges, user)?.body ?: disk
                 val after = if (user && section.isNotBlank()) {
                     val sections = UserProfileSections.parse(base)
                     sections.with(section, editText(sections.get(section), operation,
                         content, arg("old_text"))).markdown()
                 } else if (user) editText(base,operation,content,arg("old_text"))
-                else notesEdit(base,operation,content,arg("old_text"))
+                else notesEdit(base,operation,content,arg("old_text"),section,notesFormat)
                 // Emptying a whole document is never what a review meant to express, and it is the
-                // one edit whose result cannot be told apart from a lost file afterwards.
-                require(disk.isBlank() || after.isNotBlank()) {
+                // one edit whose result cannot be told apart from a lost file afterwards. A sectioned
+                // memory.md may lose its last entry by a named remove, when the last old note moves out.
+                require(disk.isBlank() || after.isNotBlank() || (!user && notesFormat != null && operation == "remove")) {
                     "Refusing to empty ${if (user) "user.md" else "memory.md"}; remove the wrong entries " +
                         "instead of the whole document"
                 }
@@ -105,25 +170,107 @@ class MemoryLearningActions(
                     require(after.length<=MemoryNotesRepository.MAX_CHARS) {
                         memoryCapacityError("memory.md",base.length,after.length,MemoryNotesRepository.MAX_CHARS)
                     }
-                    reviews.proposeNotes(before,after,if(operation=="add") content else "",sourceChatId,onCreated)
+                    reviews.proposeNotes(before,after,if(operation=="add") content else "",sourceChatId,onCreated,
+                        section = if (operation == "add") section else "")
                 }
                 val applied = reviews.applyAutomaticDecision(context, change)
                 if (stagedChanges==null) forgetVersion(key)
                 reviews.toModelJson(applied)
             }
+            "people_list" -> {
+                val files = orbitNotes()
+                val stored = files.listPeople().filter { isPeopleNote(it.path) }.associateBy { it.path }
+                val staged = stagedChanges.orEmpty().filter {
+                    it.kind == MemoryReviewRepository.ORBIT_FILE && isPeopleNote(it.title)
+                }.associateBy { it.title }
+                fun entries(dir: String) = JSONArray().apply {
+                    (stored.keys + staged.keys).filter { it.startsWith("$dir/") }.sorted().forEach { path ->
+                        put(JSONObject().put("path", path)
+                            .put("title", stored[path]?.title ?: path.substringAfterLast('/').removeSuffix(".md"))
+                            .put("staged", path in staged))
+                    }
+                }
+                JSONObject().put("people", entries("memory/people")).put("circles", entries("memory/groups"))
+                    .put("hint", "Read a file with people_read before writing it; a new file is created by people_write.")
+            }
+            "people_read" -> {
+                val files = orbitNotes()
+                val p = orbitNotePath(arg("path"), lessons = true)
+                if (p == com.ai.assistance.operit.features.orbit.OrbitFiles.LESSONS) {
+                    // The book can grow far past a tool result, so it is read a page at a time.
+                    val book = lessonsBook(files)
+                    val offset = arg("offset").ifBlank { "0" }.toInt().coerceIn(0, book.length)
+                    val limit = arg("limit").ifBlank { "$LESSON_PAGE_CHARS" }.toInt().coerceIn(1, LESSON_PAGE_CHARS)
+                    val end = (offset + limit).coerceAtMost(book.length)
+                    return JSONObject().put("path", p).put("exists", files.readStored(p) != null || stagedLessons().isNotEmpty())
+                        .put("content", book.substring(offset, end)).put("offset", offset)
+                        .put("total_chars", book.length).put("staged_lessons", stagedLessons().size)
+                        .put("next_offset", if (end < book.length) end else JSONObject.NULL)
+                        .put("max_chars", com.ai.assistance.operit.features.orbit.OrbitFiles.MAX_TEXT)
+                }
+                val disk = files.readStored(p)
+                val staged = stagedOrbitFile(p)
+                val content = staged?.body ?: disk.orEmpty()
+                rememberVersion("orbit:$p", LearnedSkillRepository.version(disk.orEmpty()))
+                JSONObject().put("path", p).put("exists", disk != null || staged != null).put("content", content)
+                    .put("staged", staged != null).put("current_chars", content.length)
+                    .put("max_chars", PEOPLE_NOTE_MAX_CHARS)
+            }
+            "people_write" -> {
+                val files = orbitNotes()
+                val p = orbitNotePath(arg("path"), lessons = false)
+                val disk = files.readStored(p)
+                check(readVersion("orbit:$p") == LearnedSkillRepository.version(disk.orEmpty())) {
+                    "Read the file with people_read before writing it (a new file too); it may have changed since"
+                }
+                val content = stripInvisibleCharacters(arg("content")).trim()
+                require(content.isNotEmpty()) { "content is the whole new file text; it must not be empty" }
+                require(content.length <= PEOPLE_NOTE_MAX_CHARS) {
+                    "$p would have ${content.length} characters; keep a person or circle note under $PEOPLE_NOTE_MAX_CHARS"
+                }
+                val base = stagedOrbitFile(p)?.body ?: disk.orEmpty()
+                val text = content + "\n"
+                if (text == base) return JSONObject().put("path", p).put("unchanged", true)
+                    .put("message", "$p already holds this text; nothing staged")
+                val change = reviews.proposeOrbitFile(p, disk.orEmpty(), text, sourceChatId = sourceChatId, onCreated = onCreated)
+                reviews.toModelJson(reviews.applyAutomaticDecision(context, change)).put("path", p)
+                    .put("created", disk == null).put("chars_before", base.length).put("chars_after", text.length)
+                    .put("message", "Staged the whole new text of $p; it is saved when this page is committed")
+            }
+            "lesson_add" -> {
+                val files = orbitNotes()
+                val p = com.ai.assistance.operit.features.orbit.OrbitFiles.LESSONS
+                val text = stripInvisibleCharacters(arg("content")).replace(Regex("\\s+"), " ").trim()
+                    .removePrefix("- ").trim()
+                require(text.isNotEmpty()) { "content is one lesson line, such as what to do instead next time" }
+                require(text.length <= LESSON_MAX_CHARS) { "Keep one lesson under $LESSON_MAX_CHARS characters" }
+                val line = "- $text"
+                val book = lessonsBook(files)
+                if (book.lines().any { it.trim() == line }) return JSONObject().put("path", p).put("unchanged", true)
+                    .put("message", "LESSONS.md already has this lesson; nothing staged")
+                require(book.trimEnd().length + line.length + 2 <= com.ai.assistance.operit.features.orbit.OrbitFiles.MAX_TEXT) {
+                    "LESSONS.md is full; skip this lesson"
+                }
+                // The record keeps only the appended line; applying it appends that line once.
+                val change = reviews.proposeOrbitFile(p, "", line, addition = line,
+                    sourceChatId = sourceChatId, onCreated = onCreated)
+                reviews.toModelJson(reviews.applyAutomaticDecision(context, change)).put("path", p)
+                    .put("added_line", line)
+                    .put("message", "Staged one line at the end of LESSONS.md; it is saved when this page is committed")
+            }
             "skill_list" -> {
                 check(skillsEnabled) { "Skill extraction is not scheduled for this run. Do not retry skill operations; continue note work or finish." }
                 val owned = skills.owned(profileId)
-                JSONObject().put("skills",JSONArray().apply {
-                    SkillManager.getInstance(context).getAvailableSkills().values.forEach {
-                        put(JSONObject().put("name",it.name).put("description",it.description)
-                            .put("learned_in_this_space",it.name in owned))
-                    }
-                    stagedChanges?.filter { it.kind=="skill" }?.forEach {
-                        put(JSONObject().put("name",it.title).put("description",it.description)
-                            .put("learned_in_this_space",true).put("staged",true))
-                    }
-                })
+                val drafts = stagedChanges.orEmpty().filter { it.kind == "skill" }.associateBy { it.title }
+                val catalog = SkillManager.forMemorySpace(context, profileId).getAvailableSkills()
+                    .mapValues { it.value.description } + drafts.mapValues { it.value.description }
+                val page = com.ai.assistance.operit.features.orbit.OrbitSkillCatalog.page(catalog,
+                    arg("query"), arg("offset").ifBlank { "0" }.toInt(), arg("limit").ifBlank { "20" }.toInt())
+                JSONObject().put("skills",JSONArray(page.entries.map {
+                    JSONObject().put("name", it.name).put("description", it.description)
+                        .put("learned_in_this_space", it.name in owned || it.name in drafts)
+                        .put("staged", it.name in drafts)
+                })).put("total", page.total).put("next_offset", page.nextOffset ?: JSONObject.NULL)
             }
             "skill_read" -> {
                 check(skillsEnabled) { "Skill extraction is not scheduled for this run. Do not retry skill operations; continue note work or finish." }
@@ -161,7 +308,7 @@ class MemoryLearningActions(
                 val parsed = parseSkillDrafts(JSONArray().put(JSONObject().put("name",name)
                     .put("description",arg("description")).put("body",body)),sourceChatId)
                 require(parsed.size==1) { "Invalid skill draft" }
-                check(SkillManager.getInstance(context).getAvailableSkills()[name]==null) { "Update the existing skill instead" }
+                check(SkillManager.forMemorySpace(context, profileId).getAvailableSkills()[name]==null) { "Update the existing skill instead" }
                 reviews.toModelJson(reviews.applyAutomaticDecision(context, reviews.proposeSkill(parsed.single(),onCreated,
                     stagedSkillCreate(stagedChanges,name)?.files.orEmpty())))
             }
@@ -241,9 +388,10 @@ class MemoryLearningActions(
  * Note edits use the repository's own rules, so the extraction tool and the direct writer cannot
  * disagree about duplicates, ambiguity or empty text. Only the failure wording is local.
  */
-private fun notesEdit(base: String, operation: String, content: String, oldText: String): String =
+private fun notesEdit(base: String, operation: String, content: String, oldText: String,
+    section: String = "", format: MemoryNotesRepository.SectionFormat? = null): String =
     try {
-        MemoryNotesRepository.applyEdit(base, operation, content, oldText)
+        MemoryNotesRepository.applyEdit(base, operation, content, oldText, section, format)
     } catch (e: MemoryNotesRepository.NotesException) {
         // Kept as IllegalArgumentException: that is the type the notes path raised before this was
         // single-sourced, and the surrounding tool layers only ever catch the message.
@@ -251,12 +399,32 @@ private fun notesEdit(base: String, operation: String, content: String, oldText:
             MemoryNotesRepository.Failure.EMPTY ->
                 if (operation == "add") "content is required" else "old_text and content are required"
             MemoryNotesRepository.Failure.NOT_UNIQUE -> exactEditError(
-                stripInvisibleCharacters(base),stripInvisibleCharacters(oldText))
+                stripInvisibleCharacters(base),stripInvisibleCharacters(oldText), sectioned = format != null)
             MemoryNotesRepository.Failure.CONFLICT -> "memory.md changed while this batch ran; read it again"
             MemoryNotesRepository.Failure.FULL -> MemoryNotesRepository.OVERFLOW_MESSAGE
             MemoryNotesRepository.Failure.INVALID -> "Use add/replace/remove"
+            MemoryNotesRepository.Failure.SECTION -> MemoryNoteSections.SECTION_HINT
         })
     }
+
+/** A person or circle note an Orbit's review may write; INDEX.md is kept by the app. */
+internal const val PEOPLE_NOTE_MAX_CHARS = 8_000
+internal const val LESSON_MAX_CHARS = 400
+/** One page of LESSONS.md in a people_read result. */
+internal const val LESSON_PAGE_CHARS = 12_000
+private val PEOPLE_NOTE = Regex("memory/(people|groups)/[^/]{1,80}\\.md")
+internal fun isPeopleNote(path: String) = PEOPLE_NOTE.matches(path) && !path.endsWith("/INDEX.md")
+private fun orbitNotePath(path: String, lessons: Boolean): String {
+    val p = com.ai.assistance.operit.features.orbit.OrbitFiles.normalize(path.ifBlank { error(
+        "path is required: memory/people/<name>.md or memory/groups/<circle>.md" +
+            if (lessons) ", or LESSONS.md" else "") })
+    if (lessons && p == com.ai.assistance.operit.features.orbit.OrbitFiles.LESSONS) return p
+    require(isPeopleNote(p)) {
+        "Use memory/people/<name>.md for a person or memory/groups/<circle>.md for a circle" +
+            if (lessons) ", or LESSONS.md" else "; add to LESSONS.md with lesson_add"
+    }
+    return p
+}
 
 /** What this batch staged for a skill file, so reads and revisions see it instead of the disk copy. */
 internal fun stagedSkillFile(changes: List<MemoryReviewChange>?, name: String, path: String) =
@@ -308,7 +476,18 @@ internal fun memoryCapacityError(document: String, before: Int, after: Int, limi
         "over_by=${after-limit}. Read the latest staged content with memory_read, then shorten or remove " +
         "existing text by at least ${after-limit} characters before retrying. A replacement can also exceed the limit."
 
-internal fun exactEditError(current: String, old: String): String {
+internal fun exactEditError(current: String, old: String, sectioned: Boolean = false): String {
+    if (sectioned && old.isNotEmpty()) {
+        // A sectioned memory.md is matched inside each section's entries, never across its headings.
+        val bodies = MemoryNoteSections.parse(current).bodies().map { it.second }
+        val found = bodies.sumOf { body -> generateSequence(body.indexOf(old).takeIf { it >= 0 }) { at ->
+            body.indexOf(old, at + 1).takeIf { it >= 0 } }.count() }
+        if (found == 0 && current.contains(old)) return "old_text must lie inside one section's entries: leave out " +
+            "section headings and markers and copy only the entry line(s) to change, then retry."
+        return "old_text must match exactly once inside one section; found ${if (found == 0) "0" else "more than 1"} " +
+            "matches. Read the latest staged content with memory_read and copy an exact, unique entry line " +
+            "(include more of the line if ambiguous), or name its section."
+    }
     val match = if (old.isEmpty() || !current.contains(old)) "0" else "more than 1"
     return "old_text must match exactly once; found $match matches. Read the latest staged content with " +
         "memory_read or skill_read and copy an exact, unique span (include more surrounding text if ambiguous)."

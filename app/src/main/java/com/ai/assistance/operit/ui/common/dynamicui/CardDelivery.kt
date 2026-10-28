@@ -11,7 +11,7 @@ import kotlinx.serialization.json.*
  * The UUID stays internal because live surfaces and state files are keyed by it across turns.
  */
 internal object CardDelivery {
-    private data class Revision(val document: String, val source: String) {
+    private class Revision(val document: String, val source: String) {
         val size get() = document.length + source.length
     }
     private val runs = mutableMapOf<String, MutableMap<String, Revision>>()
@@ -50,24 +50,35 @@ internal object CardDelivery {
     }
     @Synchronized fun resolve(run: String, reference: String): String? {
         val id = canonical(run, reference) ?: return null
-        val document = runs[run]?.get(id)?.document ?: return null
+        val revision = runs[run]?.get(id) ?: return null
         if (!CardLiveStore.publish(run, id)) return null
-        return document
+        return revision.document
     }
     @Synchronized fun source(run: String, reference: String): String? =
         canonical(run, reference)?.let { runs[run]?.get(it)?.source?.takeIf(String::isNotEmpty) }
     private val SHORT_NAME = Regex("card-(\\d{1,2})")
+    /** The model-facing name, kept on a shown card so history can give the model back its own words. */
+    fun shortName(reference: String): String? = reference.trim().lowercase().takeIf { SHORT_NAME.matches(it) }
     val REFERENCE = Regex("[0-9a-f-]{36}|card-\\d{1,2}", RegexOption.IGNORE_CASE)
 }
 
 /**
- * Model-facing form of an expanded card. History keeps the full document for rendering, but
- * sending it back each turn costs tokens and shows the model JSON it never wrote. The summary
- * keeps visible text and data so later turns can still discuss the card. Deterministic, so the
- * same message always produces the same prompt prefix.
+ * Model-facing forms of an expanded card. History keeps the full document for rendering, but
+ * sending it back each turn costs tokens and shows the model JSON it never wrote.
+ *
+ * [forModel] gives the model back exactly what it wrote in its answer: the a2ui-ref fence. The
+ * card's content is already in the history as the arguments of the prepare call just before it.
+ * An app-written summary in the model's own words taught the model to write that summary instead
+ * of placing a card, so the chat history never contains one.
+ *
+ * [forReview] is for readers that are not continuing the chat (summaries, memory learning, other
+ * roles' messages): the reference means nothing there, so they get the card's visible text.
+ * Both are deterministic, so the same message always produces the same prompt prefix.
  */
 internal object CardTranscript {
-    private val block = Regex("(?m)^```a2ui\\r?\\n([\\s\\S]*?)\\r?\\n```[ \\t]*$")
+    /** A shown card: "```a2ui" or "```a2ui card-2" (the name the model placed), its document, "```". */
+    private val block = Regex("(?m)^```a2ui(?:[ \\t]+(card-\\d{1,2}))?[ \\t]*\\r?\\n([\\s\\S]*?)\\r?\\n```[ \\t]*$")
+    private const val REVIEW_HEAD = "[Dynamic UI card shown to the user here"
     private const val MAX_SUMMARY = 1200
     private val structural = setOf(
         "version", "surfaceId", "catalogId", "id", "component", "child", "children", "path", "call",
@@ -77,11 +88,30 @@ internal object CardTranscript {
     )
     private val markup = Regex("<(style|script)\\b[\\s\\S]*?</\\1\\s*>|<[^>]*>", RegexOption.IGNORE_CASE)
 
-    /** [maxSummary] bounds chat prompts; memory learning passes a larger bound to keep the whole card. */
-    fun forModel(content: String, maxSummary: Int = MAX_SUMMARY): String {
+    /**
+     * The answer as the model wrote it: each shown card goes back to its reference. Cards stored
+     * before the name was kept are numbered in order, which is how a turn names them.
+     * Any other text, including lines an older build let the model copy, goes back unchanged.
+     */
+    fun forModel(content: String): String {
+        if (!content.contains("```a2ui")) return content
+        var ordinal = 0
+        return block.replace(content) { match ->
+            ordinal++
+            "```a2ui-ref\n" + match.groupValues[1].ifEmpty { "card-$ordinal" } + "\n```"
+        }
+    }
+
+    /**
+     * [maxSummary] bounds summary prompts; memory learning passes a larger bound to keep the whole
+     * card. [label] turns the card's visible text (maybe empty) into the line that replaces it; the
+     * chat summary, which the user reads, passes a line in the user's language.
+     */
+    fun forReview(content: String, maxSummary: Int = MAX_SUMMARY, label: ((String) -> String)? = null): String {
         if (!content.contains("```a2ui")) return content
         return block.replace(content) { match ->
-            "[Dynamic UI card shown to the user here" + summary(match.groupValues[1], maxSummary) + "]"
+            val text = summary(match.groupValues[2], maxSummary)
+            label?.invoke(text) ?: (REVIEW_HEAD + (if (text.isEmpty()) "" else ". Visible content: $text") + "]")
         }
     }
 
@@ -96,7 +126,7 @@ internal object CardTranscript {
         }
         if (parts.isEmpty()) return ""
         val text = parts.joinToString("; ")
-        return ". Visible content: " + if (text.length <= maxSummary) text else text.take(maxSummary) + "…"
+        return if (text.length <= maxSummary) text else text.take(maxSummary) + "…"
     }
 
     private fun flatten(element: JsonElement): String = when (element) {
@@ -117,10 +147,10 @@ internal object CardTranscript {
  * possible fence header / short reference is buffered. It runs before ALL transcript sinks.
  * An unresolved reference stays as its a2ui-ref fence; the renderer shows a short notice and the
  * model later sees exactly what it wrote.
+ * A resolved reference becomes "```a2ui card-N": the document to draw, plus the name the model
+ * wrote, which [CardTranscript.forModel] gives back to the model in later requests.
  */
-internal class CardReferenceExpander(
-    private val resolve: (String) -> String?,
-) {
+internal class CardReferenceExpander(private val resolve: (String) -> String?) {
     private data class Snapshot(
         val pending: String, val reference: String?, val start: Boolean,
         val fence: Char?, val fenceLength: Int, val tag: String, val hidden: Int, val expanded: Int,
@@ -212,7 +242,8 @@ internal class CardReferenceExpander(
             val source = if (id.matches(CardDelivery.REFERENCE)) resolve(id) else null
             if (source == null || expanded + source.length > 524_288) return "```a2ui-ref\n$id\n$raw"
             expanded += source.length
-            return "```a2ui\n$source\n```" + if (start) "\n" else ""
+            val name = CardDelivery.shortName(id)?.let { " $it" }.orEmpty()
+            return "```a2ui$name\n$source\n```" + if (start) "\n" else ""
         }
         reference += raw
         if (reference!!.length > 128) {

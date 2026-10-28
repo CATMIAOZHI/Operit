@@ -1,6 +1,7 @@
 package com.ai.assistance.operit.api.chat.llmprovider
 
 import android.content.Context
+import com.ai.assistance.operit.core.chat.LlmBodyStages
 import com.ai.assistance.operit.core.chat.hooks.PromptTurn
 import com.ai.assistance.operit.core.chat.hooks.PromptTurnKind
 import com.ai.assistance.operit.data.model.ApiProviderType
@@ -75,7 +76,7 @@ open class KimiProvider(
             val jsonObject =
                 super.createRequestBodyInternal(context, chatHistory, automaticReasoning.modelParameters, stream, availableTools, preserveThinkInHistory)
             applyThinkingParams(jsonObject)
-            return createJsonRequestBody(jsonObject.toString())
+            return createJsonRequestBody(jsonObject)
         }
 
         val jsonObject = JSONObject()
@@ -141,19 +142,23 @@ open class KimiProvider(
                 toolsJson = tools.toString()
             }
         }
+        LlmBodyStages.lap("工具定义")
 
         val providerReadyHistory = prepareHistoryForProvider(chatHistory, effectiveEnableToolCall)
+        LlmBodyStages.lap("历史整理")
         calculateAndStoreInputTokens(
             providerReadyHistory,
             toolsJson,
             preserveThinkInHistory = true
         )
+        LlmBodyStages.lap("token计数")
         val messagesArray =
             buildMessagesWithReasoning(
                 context,
                 providerReadyHistory,
                 effectiveEnableToolCall
             )
+        LlmBodyStages.lap("消息组装")
         jsonObject.put("messages", messagesArray)
 
         logRequestBodyForDebugging("ReasoningChatProvider",
@@ -161,7 +166,7 @@ open class KimiProvider(
             jsonObject
         }
 
-        return createJsonRequestBody(jsonObject.toString())
+        return createJsonRequestBody(jsonObject)
     }
 
     private fun buildMessagesWithReasoning(

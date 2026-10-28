@@ -269,7 +269,22 @@ class ChatHistoryDelegate(
         }.map { ChatMessage(timestamp = it.timestamp, sender = it.sender, content = "") }
         val page = if (after != null) takeOldestDisplayPages(candidates, pageCount)
             else takeNewestDisplayPages(candidates, pageCount)
-        return chatHistoryManager.loadChatMessagesByTimestamps(chatId, page.map { it.timestamp })
+        val timestamps = page.map { it.timestamp }
+        // An Orbit chat draws every row as something Orbit said, with no process to fold: what it
+        // said (and the cards it sent) before the user spoke up mid-reply is a row of that reply's
+        // process, so it comes along with the reply.
+        val isOrbitChat = try {
+            com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context).current().orbitForChat(chatId) != null
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            false
+        }
+        val withProcess = if (!isOrbitChat) timestamps else {
+            val finals = timestamps.toHashSet()
+            timestamps + structure.turns.filter { it.finalTimestamp in finals }.flatMap { it.memberTimestamps }
+        }
+        return chatHistoryManager.loadChatMessagesByTimestamps(chatId, withProcess)
     }
 
     suspend fun loadTranscriptProcess(key: Long) {
@@ -590,7 +605,23 @@ class ChatHistoryDelegate(
         when (selectionMode) {
             ChatSelectionMode.FOLLOW_GLOBAL -> {
                 coroutineScope.launch {
+                    var firstRestore = true
                     chatHistoryManager.currentChatIdFlow.collect { chatId ->
+                        // On start, a saved Orbit chat (left when the app closed on the Orbit page) is
+                        // swapped for the latest normal chat before it is ever shown. The Orbit page
+                        // opens its own chat itself.
+                        // Only the very first value is the restored one; later values (even after a
+                        // null start) are the user's own choice, such as opening the Orbit page.
+                        val restoring = firstRestore
+                        firstRestore = false
+                        if (restoring && chatId != null) {
+                            val replacement = normalChatInsteadOfOrbit(chatId)
+                            if (replacement != chatId) {
+                                if (replacement != null) chatHistoryManager.setCurrentChatId(replacement)
+                                else chatHistoryManager.clearCurrentChatId()
+                                return@collect
+                            }
+                        }
                         if (chatId != null && chatId != _currentChatId.value) {
                             if (!chatHistoryManager.chatExists(chatId)) {
                                 AppLogger.w(TAG, "currentChatId不存在于数据库，已清除: $chatId")
@@ -620,15 +651,16 @@ class ChatHistoryDelegate(
                         AppLogger.d(TAG, "本地会话初始化时没有 currentChatId")
                         return@launch
                     }
+                    val startChatId = normalChatInsteadOfOrbit(initialChatId) ?: return@launch
 
-                    if (!chatHistoryManager.chatExists(initialChatId)) {
-                        AppLogger.w(TAG, "初始 currentChatId 不存在，跳过本地会话初始化: $initialChatId")
+                    if (!chatHistoryManager.chatExists(startChatId)) {
+                        AppLogger.w(TAG, "初始 currentChatId 不存在，跳过本地会话初始化: $startChatId")
                         return@launch
                     }
 
-                    AppLogger.d(TAG, "本地会话初始化 currentChatId: $initialChatId")
-                    _currentChatId.value = initialChatId
-                    loadChatMessages(initialChatId)
+                    AppLogger.d(TAG, "本地会话初始化 currentChatId: $startChatId")
+                    _currentChatId.value = startChatId
+                    loadChatMessages(startChatId)
                 }
             }
         }
@@ -641,6 +673,24 @@ class ChatHistoryDelegate(
                     syncOpeningStatementIfNoUserMessage(chatId)
                 }
             }
+        }
+    }
+
+    /** [chatId], or when it belongs to an Orbit, the most recently updated normal chat (null if none). */
+    private suspend fun normalChatInsteadOfOrbit(chatId: String): String? {
+        // A failure here only keeps the saved chat; it must never stop the chat-id collector.
+        return try {
+            val settings = com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context).current()
+            val orbitChats = com.ai.assistance.operit.features.orbit.OrbitChatVisibility.orbitChatIds(settings)
+            if (chatId !in orbitChats) return chatId
+            chatHistoryManager.getVisibleChatHistoriesSnapshot()
+                .filter { it.chatKind != com.ai.assistance.operit.data.model.ChatKind.SUBAGENT.name && it.id !in orbitChats }
+                .maxByOrNull { it.updatedAt }?.id
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            AppLogger.w(TAG, "Could not check the restored chat against Orbit: ${e.message}")
+            chatId
         }
     }
 
@@ -707,6 +757,14 @@ class ChatHistoryDelegate(
 
     private suspend fun syncOpeningStatementIfNoUserMessage(chatId: String) {
         AppLogger.d(TAG, "开始同步开场白，聊天ID: $chatId")
+        // An Orbit chat keeps the opening it was made with; later role card edits do not reach it.
+        if (
+            com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context)
+                .current()
+                .orbitForChat(chatId) != null
+        ) {
+            return
+        }
 
         historyUpdateMutex.withLock {
             val chatMeta = _chatHistories.value.firstOrNull { it.id == chatId }
@@ -885,7 +943,9 @@ class ChatHistoryDelegate(
         inheritGroupFromCurrent: Boolean = true,
         setAsCurrentChat: Boolean = true,
         characterCardId: String? = null,
+        withOpeningMessage: Boolean = true,
         onCreated: ((String) -> Unit)? = null,
+        chatId: String? = null,
     ) {
         coroutineScope.launch {
             val (inputTokens, outputTokens, windowSize) = getChatStatistics()
@@ -910,10 +970,11 @@ class ChatHistoryDelegate(
                 inheritGroupFromChatId = inheritGroupFromChatId,
                 characterCardName = target.characterCardName,
                 characterGroupId = target.characterGroupId,
-                setAsCurrentChat = shouldSyncCurrentChatToGlobal
+                setAsCurrentChat = shouldSyncCurrentChatToGlobal,
+                chatId = chatId,
             )
 
-            target.openingMessage?.let { chatHistoryManager.addMessage(newChat.id, it) }
+            if (withOpeningMessage) target.openingMessage?.let { chatHistoryManager.addMessage(newChat.id, it) }
             
             // 等待数据库Flow更新，确保新对话在列表中（最多等待500ms）
             withTimeoutOrNull(500) {
@@ -1564,6 +1625,15 @@ class ChatHistoryDelegate(
 
             val isCurrentChat = (targetChatId == _currentChatId.value)
 
+            // A tapped Orbit reply option counts as sent once its user message is stored.
+            suspend fun persist() {
+                chatHistoryManager.updateMessage(targetChatId, message, clearTodosAfterUpdate)
+                if (message.sender == "user") {
+                    com.ai.assistance.operit.features.orbit.OrbitOptions.onUserMessageSaved(
+                        targetChatId, message.content, message.timestamp)
+                }
+            }
+
             if (message.isVariantPreview) {
                 if (isCurrentChat) {
                     upsertCurrentChatMessageInMemory(message)
@@ -1577,13 +1647,13 @@ class ChatHistoryDelegate(
                     TAG,
                     "当前会话正在切换，跳过内存刷新但继续持久化消息: timestamp=${message.timestamp}"
                 )
-                chatHistoryManager.updateMessage(targetChatId, message, clearTodosAfterUpdate)
+                persist()
                 return@withLock
             }
 
             if (!isCurrentChat) {
                     // 非当前会话：使用“更新或插入”语义，避免每个chunk都插入新消息
-                chatHistoryManager.updateMessage(targetChatId, message, clearTodosAfterUpdate)
+                persist()
                 return@withLock
             }
 
@@ -1593,7 +1663,7 @@ class ChatHistoryDelegate(
                     _chatHistory.value.any { it.timestamp == message.timestamp }
 
             if (didUpdateVisibleMessage) {
-                chatHistoryManager.updateMessage(targetChatId, message, clearTodosAfterUpdate)
+                persist()
             } else {
                 AppLogger.d(
                     TAG,
@@ -1601,10 +1671,10 @@ class ChatHistoryDelegate(
                 )
                 if (isVisibleNewMessage) {
                     // Absence from the paged display window does not mean absence from storage.
-                    chatHistoryManager.updateMessage(targetChatId, message, clearTodosAfterUpdate)
+                    persist()
                     refreshCurrentChatDisplayFlags(targetChatId)
                 } else {
-                    chatHistoryManager.updateMessage(targetChatId, message, clearTodosAfterUpdate)
+                    persist()
                 }
             }
         }

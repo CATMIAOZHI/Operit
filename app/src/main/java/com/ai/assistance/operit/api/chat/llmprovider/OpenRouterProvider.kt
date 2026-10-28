@@ -79,7 +79,7 @@ open class OpenRouterProvider(
             jsonObject
         }
 
-        return createJsonRequestBody(jsonObject.toString())
+        return createJsonRequestBody(jsonObject)
     }
 
     private fun applyOpenRouterReasoning(

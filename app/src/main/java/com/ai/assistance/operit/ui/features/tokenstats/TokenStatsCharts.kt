@@ -95,7 +95,10 @@ internal fun TokenStatsStackedBarChart(
     },
     unknownNote: (TokenStatsTrendBucket) -> String? = { null },
     legendItems: List<Pair<String, Color>> = emptyList(),
+    /** The bucket's time in the details and the spoken summary; by default its start, by [granularity]. */
+    timeLabel: ((TokenStatsTrendBucket) -> String)? = null,
 ) {
+    val labelOf: (TokenStatsTrendBucket) -> String = timeLabel ?: { bucketTimeLabel(it.bucketStartMs, granularity, zone) }
     if (buckets.isEmpty()) {
         ChartEmptyText(emptyText, modifier)
         return
@@ -136,7 +139,7 @@ internal fun TokenStatsStackedBarChart(
                         val summary = String.format(
                             summaryTemplate,
                             chartLabel,
-                            bucketTimeLabel(selected.bucketStartMs, granularity, zone),
+                            labelOf(selected),
                             positionText,
                             formatValue(stackTotalSelector(selected)),
                         )
@@ -225,7 +228,7 @@ internal fun TokenStatsStackedBarChart(
             val selected = buckets[selectedIndex]
             val stacks = stackSelector(selected)
             ChartTooltip(
-                title = bucketTimeLabel(selected.bucketStartMs, granularity, zone),
+                title = labelOf(selected),
                 rows = stacks.mapIndexedNotNull { index, (value, color) ->
                     val label = stackLabels(selected).getOrNull(index) ?: ""
                     if (value > 0.0 || label.isNotEmpty()) {
@@ -253,7 +256,10 @@ internal fun TokenStatsLineChart(
     chartLabel: String = "",
     valueSelector: (TokenStatsTrendBucket) -> Double?,
     unknownNote: (TokenStatsTrendBucket) -> String? = { null },
+    /** The bucket's time in the details and the spoken summary; by default its start, by [granularity]. */
+    timeLabel: ((TokenStatsTrendBucket) -> String)? = null,
 ) {
+    val labelOf: (TokenStatsTrendBucket) -> String = timeLabel ?: { bucketTimeLabel(it.bucketStartMs, granularity, zone) }
     if (buckets.isEmpty()) {
         ChartEmptyText(emptyText, modifier)
         return
@@ -294,7 +300,7 @@ internal fun TokenStatsLineChart(
                         val summary = String.format(
                             summaryTemplate,
                             chartLabel,
-                            bucketTimeLabel(selected.bucketStartMs, granularity, zone),
+                            labelOf(selected),
                             positionText,
                             if (value == null) "" else formatValue(value),
                         )
@@ -380,7 +386,7 @@ internal fun TokenStatsLineChart(
             val selected = buckets[selectedIndex]
             val value = valueSelector(selected)
             ChartTooltip(
-                title = bucketTimeLabel(selected.bucketStartMs, granularity, zone),
+                title = labelOf(selected),
                 rows = value?.let { listOf(Triple(colors.chartAccent, "", formatValue(it))) } ?: emptyList(),
                 total = if (value == null) null else formatValue(value),
                 unknownNote = unknownNote(selected),

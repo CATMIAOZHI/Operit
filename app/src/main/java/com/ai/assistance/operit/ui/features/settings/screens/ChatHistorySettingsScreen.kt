@@ -1914,21 +1914,7 @@ private fun ChatHistoryBatchSelectorCard(
                                 showBatchManagementSheet = true
                             }
                 )
-                ListItem(
-                    headlineContent = { Text(stringResource(R.string.chat_memory_rebuild_title)) },
-                    supportingContent = { Text(stringResource(R.string.chat_memory_rebuild_subtitle)) },
-                    leadingContent = { Icon(Icons.Default.Memory, contentDescription = null) },
-                    trailingContent = {
-                        Icon(Icons.Default.ChevronRight, contentDescription = null)
-                    },
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                showSelectedChatActionsDialog = false
-                                showMemoryRebuildConfirmDialog = true
-                            }
-                )
+                // Rebuilding memory from history wrote only the old memory graph, which is read-only now.
             }
         }
     }

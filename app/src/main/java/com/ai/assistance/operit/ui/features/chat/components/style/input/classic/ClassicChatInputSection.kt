@@ -96,9 +96,11 @@ import com.ai.assistance.operit.ui.features.chat.components.style.input.common.H
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.SuppressFieldLongPress
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.holdToTalk
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.rememberKeyboardDown
+import com.ai.assistance.operit.ui.features.chat.components.style.input.agent.collapseWidth
 import androidx.compose.ui.layout.onGloballyPositioned
 import kotlinx.coroutines.delay
 import com.ai.assistance.operit.data.preferences.ApiPreferences
+import com.ai.assistance.operit.data.preferences.OrbitPreferences
 import com.ai.assistance.operit.ui.features.chat.viewmodel.ChatViewModel
 import com.ai.assistance.operit.ui.floating.FloatingMode
 import com.ai.assistance.operit.ui.theme.isLiquidGlassSupported
@@ -163,6 +165,11 @@ fun ClassicChatInputSection(
     val showTokenLimitDialog = remember { mutableStateOf(false) }
     val showFullscreenInput = remember { mutableStateOf(false) }
     val context = LocalContext.current
+    // Orbit's permission is fixed to fast auto-review (ToolPermissionSystem enforces it).
+    val orbitPreferences = remember { OrbitPreferences.getInstance(context) }
+    val orbitSettings by orbitPreferences.settingsFlow.collectAsState(initial = orbitPreferences.snapshot)
+    val currentChatIdForPermission by actualViewModel.currentChatId.collectAsState()
+    val isOrbitChat = orbitSettings.orbitForChat(currentChatIdForPermission) != null
     val isProcessing =
         isLoading ||
             inputState is InputProcessingState.Connecting ||
@@ -174,7 +181,15 @@ fun ClassicChatInputSection(
             inputState is InputProcessingState.Receiving
 
     if (showTokenLimitDialog.value) {
-        AlertDialog(
+        if (com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current) {
+            com.ai.assistance.operit.ui.features.orbit.OrbitConfirmDialog(
+                title = stringResource(R.string.token_limit_warning),
+                message = stringResource(R.string.token_limit_warning_message),
+                confirmLabel = stringResource(R.string.continue_send),
+                onConfirm = { showTokenLimitDialog.value = false; onSendMessage() },
+                onDismiss = { showTokenLimitDialog.value = false },
+            )
+        } else AlertDialog(
             onDismissRequest = {
                 showTokenLimitDialog.value = false
             },
@@ -256,14 +271,20 @@ fun ClassicChatInputSection(
     val holdArea = remember { HoldToTalkArea() }
     val keyboardDown = rememberKeyboardDown()
 
-    val showQueueAction = isProcessing && canSendMessage
-    val showCancelAction = isProcessing && !showQueueAction
-    val sendButtonEnabled =
-        when {
-            isProcessing -> true // Queue / Cancel button
-            canSendMessage -> true // Send button is always enabled if there's content
-            else -> true // Mic button
-        }
+    val modelPreparingChatIds by actualViewModel.modelPreparingChatIds.collectAsState()
+    val isPreparingModel = currentChatIdForPermission in modelPreparingChatIds
+    val showQueueAction = isProcessing && canSendMessage && !isPreparingModel
+    val userWaitingChatIds by actualViewModel.userWaitingChatIds.collectAsState()
+    val showCancelAction = isProcessing && !showQueueAction && (!isOrbitChat || currentChatIdForPermission in userWaitingChatIds)
+    // Orbit has no voice conversation (it would open the floating window and show its tool calls).
+    // With nothing to send, its round button slides away and only the microphone stays.
+    val hideVoiceEntry = isOrbitChat && !showCancelAction && !showQueueAction && !canSendMessage
+    val actionSlot by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (hideVoiceEntry) 0f else 1f,
+        animationSpec = androidx.compose.animation.core.tween(180),
+        label = "actionSlot",
+    )
+    val sendButtonEnabled = !hideVoiceEntry
 
     val voicePermissionLauncher =
         rememberLauncherForActivityResult(
@@ -298,7 +319,7 @@ fun ClassicChatInputSection(
         onAttachmentPanelStateChange?.invoke(showAttachmentPanel)
     }
     fun handleEnterSendAction() {
-        if (!canSendMessage) return
+        if (!canSendMessage || isPreparingModel) return
         if (showQueueAction) {
             onQueueMessage()
             setShowAttachmentPanel(false)
@@ -920,13 +941,16 @@ fun ClassicChatInputSection(
                     )
                 }
 
-                        Spacer(modifier = Modifier.width(6.dp))
-                        ComposerPermissionControl(
-                            enableTools = enableTools,
-                            permissionStop = permissionStop,
-                            onSetPermissionStop = onSetPermissionStop,
-                            onToggleTools = onToggleTools,
-                        )
+                        // Orbit's permission is fixed, so its chat has nothing to choose here.
+                        if (!isOrbitChat) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            ComposerPermissionControl(
+                                enableTools = enableTools,
+                                permissionStop = permissionStop,
+                                onSetPermissionStop = onSetPermissionStop,
+                                onToggleTools = onToggleTools,
+                            )
+                        }
 
                         Spacer(modifier = Modifier.weight(1f))
 
@@ -952,12 +976,13 @@ fun ClassicChatInputSection(
                             )
                         }
 
-                        Spacer(modifier = Modifier.width(6.dp))
+                        Spacer(modifier = Modifier.width(6.dp * actionSlot))
 
                         // Send button (发送按钮) - 确保圆形
                         Box(
                     modifier =
                     Modifier
+                        .collapseWidth(actionSlot)
                         .size(36.dp)
                         .clip(CircleShape)
                         .background(
@@ -967,7 +992,8 @@ fun ClassicChatInputSection(
                                         .colorScheme
                                         .error
                                 showQueueAction ->
-                                    MaterialTheme.colorScheme.tertiary
+                                    if (isOrbitChat) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.tertiary
 
                                 canSendMessage ->
                                     if (isOverTokenLimit)
@@ -1020,7 +1046,7 @@ fun ClassicChatInputSection(
                     val iconTint =
                         when {
                             showCancelAction -> MaterialTheme.colorScheme.onError
-                            showQueueAction -> MaterialTheme.colorScheme.onTertiary
+                            showQueueAction -> if (isOrbitChat) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onTertiary
                             canSendMessage ->
                                 if (isOverTokenLimit)
                                     MaterialTheme.colorScheme.onSecondary
@@ -1033,14 +1059,14 @@ fun ClassicChatInputSection(
                         imageVector =
                         when {
                             showCancelAction -> Icons.Default.Close
-                            showQueueAction -> Icons.Default.Add
+                            showQueueAction -> if (isOrbitChat) Icons.AutoMirrored.Filled.Send else Icons.Default.Add
                             canSendMessage -> Icons.AutoMirrored.Filled.Send
                             else -> Icons.Rounded.GraphicEq
                         },
                         contentDescription =
                         when {
                             showCancelAction -> context.getString(R.string.cancel)
-                            showQueueAction -> context.getString(R.string.chat_queue_add_message)
+                            showQueueAction -> context.getString(if (isOrbitChat) R.string.chat_steer_turn else R.string.chat_queue_add_message)
                             canSendMessage -> context.getString(R.string.send)
                             else -> context.getString(R.string.voice_conversation_entry)
                         },
@@ -1073,6 +1099,7 @@ fun ClassicChatInputSection(
             }
 
             AttachmentSelectorPanel(
+                chatId = currentChatIdForPermission,
                 visible = showAttachmentPanel,
                 onAttachImage = { filePath ->
                     onAttachmentRequest(filePath)

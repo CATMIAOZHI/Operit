@@ -382,11 +382,11 @@ fun PackageManagerScreen(
                                             val errorsBeforeImport = packageManager.getPackageLoadErrors()
                                             val importMessage = packageManager.addPackageFileFromExternalStorage(tempFile.absolutePath)
 
-                                            val available = packageManager.getExecutableAvailablePackages(forceRefresh = true)
-                                            val allAvailable = packageManager.getAvailablePackages()
+                                            val available = packageManager.withoutOrbitCopies(packageManager.getExecutableAvailablePackages(forceRefresh = true))
+                                            val allAvailable = packageManager.withoutOrbitCopies(packageManager.getAvailablePackages())
                                             val plugins =
                                                 packageManager
-                                                    .getToolPkgPluginContainerDetails(context)
+                                                    .getToolPkgPluginContainerDetails(context).filterNot { packageManager.isOrbitCopy(it.packageName) }
                                                     .associateBy { it.packageName }
                                             val imported = packageManager.getEnabledPackageNames()
                                             val errors = packageManager.getPackageLoadErrors()
@@ -470,11 +470,11 @@ fun PackageManagerScreen(
         try {
             val loadResult =
                 withContext(Dispatchers.IO) {
-                    val available = packageManager.getExecutableAvailablePackages(forceRefresh = true)
-                    val allAvailable = packageManager.getAvailablePackages()
+                    val available = packageManager.withoutOrbitCopies(packageManager.getExecutableAvailablePackages(forceRefresh = true))
+                    val allAvailable = packageManager.withoutOrbitCopies(packageManager.getAvailablePackages())
                     val plugins =
                         packageManager
-                            .getToolPkgPluginContainerDetails(context)
+                            .getToolPkgPluginContainerDetails(context).filterNot { packageManager.isOrbitCopy(it.packageName) }
                             .associateBy { it.packageName }
                     val imported = packageManager.getEnabledPackageNames()
                     val errors = packageManager.getPackageLoadErrors()
@@ -995,11 +995,11 @@ fun PackageManagerScreen(
                             isLoading = true
                             val loadResult =
                                 withContext(Dispatchers.IO) {
-                                    val available = packageManager.getExecutableAvailablePackages(forceRefresh = true)
-                                    val allAvailable = packageManager.getAvailablePackages()
+                                    val available = packageManager.withoutOrbitCopies(packageManager.getExecutableAvailablePackages(forceRefresh = true))
+                                    val allAvailable = packageManager.withoutOrbitCopies(packageManager.getAvailablePackages())
                                     val plugins =
                                         packageManager
-                                            .getToolPkgPluginContainerDetails(context)
+                                            .getToolPkgPluginContainerDetails(context).filterNot { packageManager.isOrbitCopy(it.packageName) }
                                             .associateBy { it.packageName }
                                     val imported = packageManager.getEnabledPackageNames()
                                     PackageManagerSnapshot(
@@ -1097,11 +1097,11 @@ fun PackageManagerScreen(
                             val refreshed =
                                 withContext(Dispatchers.IO) {
                                     PackageManagerSnapshot(
-                                        availablePackages = packageManager.getExecutableAvailablePackages(forceRefresh = true),
-                                        allAvailablePackages = packageManager.getAvailablePackages(),
+                                        availablePackages = packageManager.withoutOrbitCopies(packageManager.getExecutableAvailablePackages(forceRefresh = true)),
+                                        allAvailablePackages = packageManager.withoutOrbitCopies(packageManager.getAvailablePackages()),
                                         pluginContainers =
                                             packageManager
-                                                .getToolPkgPluginContainerDetails(context)
+                                                .getToolPkgPluginContainerDetails(context).filterNot { packageManager.isOrbitCopy(it.packageName) }
                                                 .associateBy { it.packageName },
                                         importedPackages = packageManager.getEnabledPackageNames(),
                                         archivedBuiltInPackageNames = packageManager.getArchivedBuiltInPackageNames(),

@@ -18,6 +18,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.coroutineScope
@@ -39,6 +41,8 @@ class MemoryAutoSaveScheduler(
         private const val MAX_MESSAGES_PER_BATCH = 48
         private const val MAX_CANDIDATES_PER_RUN_PER_CHAT = 20
         private const val MIN_TOTAL_CANDIDATES_TO_EXTRACT = 5
+        /** How often an Orbit's learned skills are checked for long disuse. */
+        private const val SKILL_ARCHIVE_SWEEP_MS = 6 * 60 * 60 * 1000L
 
         @Volatile
         private var instance: MemoryAutoSaveScheduler? = null
@@ -52,6 +56,26 @@ class MemoryAutoSaveScheduler(
     @Volatile private var automaticJob: Job? = null
     fun cancelAutomaticExtraction() { automaticJob?.cancel() }
     private val nextRunAtMsByProfileId = ConcurrentHashMap<String, Long>()
+    private val lastSkillSweepAtByProfileId = ConcurrentHashMap<String, Long>()
+
+    /**
+     * Puts away an Orbit's learned skills that went unused for a long time: they are switched off
+     * for the AI (so the skill index stays short) and kept on disk, ready to be switched back on.
+     */
+    private suspend fun archiveIdleLearnedSkills(profileId: String, nowMs: Long) {
+        if (!profileId.startsWith("orbit_")) return
+        val last = lastSkillSweepAtByProfileId[profileId]
+        if (last != null && nowMs - last < SKILL_ARCHIVE_SWEEP_MS) return
+        lastSkillSweepAtByProfileId[profileId] = nowMs
+        val orbitId = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.privateOwner(context, profileId) ?: return
+        val visibility = com.ai.assistance.operit.data.preferences.SkillVisibilityPreferences.forOrbit(context, orbitId)
+        val archived = com.ai.assistance.operit.data.preferences.LearnedSkillRepository(context, profileId)
+            .archiveIdle(profileId, nowMs, com.ai.assistance.operit.data.preferences.LearnedSkillRepository.IDLE_ARCHIVE_MS) {
+                visibility.isSkillVisibleToAi(it)
+            }
+        archived.forEach { visibility.setSkillVisibleToAi(it, false) }
+        if (archived.isNotEmpty()) AppLogger.i(TAG, "Archived idle learned skills: profileId=$profileId, count=${archived.size}")
+    }
 
     fun start() {
         if (loopJob?.isActive == true) return
@@ -96,16 +120,25 @@ class MemoryAutoSaveScheduler(
     }
 
     private suspend fun scanAndProcessCandidates() {
-        val profileIds = preferencesManager.memorySpaceListFlow.first()
+        val profileIds = preferencesManager.allMemorySpaceIdsFlow.first()
         if (profileIds.isEmpty()) return
 
         val nowMs = System.currentTimeMillis()
 
         for (profileId in profileIds) {
+            try {
+            try {
+                archiveIdleLearnedSkills(profileId, nowMs)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AppLogger.w(TAG, "Idle skill archive failed: $profileId", e)
+            }
+            MemoryLibrary.withSpaceOperation(profileId) {
             val intervalMs = intervalMsForProfile(profileId)
             val nextRunAtMs = getOrInitNextRunAtMs(profileId, nowMs)
             if (nowMs < nextRunAtMs) {
-                continue
+                return@withSpaceOperation
             }
 
             val repository = MemoryAutoSaveCandidateRepository(context, profileId)
@@ -117,7 +150,7 @@ class MemoryAutoSaveScheduler(
                     "候选总条数不足，继续累计并重置下次执行时间: profileId=$profileId, totalCandidates=${allCandidates.size}, nextRunAt=$nextRunAt"
                 )
                 scheduleNextRun(profileId, nextRunAt)
-                continue
+                return@withSpaceOperation
             }
             val groupedCandidates =
                 allCandidates
@@ -126,7 +159,7 @@ class MemoryAutoSaveScheduler(
 
             if (groupedCandidates.isEmpty()) {
                 scheduleNextRun(profileId, System.currentTimeMillis() + intervalMs)
-                continue
+                return@withSpaceOperation
             }
 
             // The tool handle and the memory service are only resolved once there is real work, so an
@@ -188,6 +221,13 @@ class MemoryAutoSaveScheduler(
                 }
             }
             scheduleNextRun(profileId, System.currentTimeMillis() + intervalMs)
+            }
+            } catch (e: CancellationException) {
+                // Deleting one space cancels only its child operation, not this polling loop.
+                currentCoroutineContext().ensureActive()
+            } catch (e: Exception) {
+                AppLogger.w(TAG, "Memory space scan failed: $profileId", e)
+            }
         }
     }
 
@@ -234,9 +274,15 @@ class MemoryAutoSaveScheduler(
         val extractGraph = isSelectedUserBatch ||
             (api.enableMemoryAutoUpdateFlow.first() && api.enableLegacyMemoryExtractionFlow.first())
         if (!extractGraph) return
+        // These candidates feed the memory graph, which an Orbit does not have.
+        if (com.ai.assistance.operit.data.preferences.MemorySearchSettingsPreferences.isOrbitSpace(profileId)) {
+            repository.deleteCandidates(candidateIds)
+            return
+        }
         repository.markProcessing(candidateIds)
 
         try {
+            val learningGuard = com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.guard(context, profileId)
             val messages =
                 if (isSelectedUserBatch) {
                     val selectedMessages =
@@ -246,7 +292,8 @@ class MemoryAutoSaveScheduler(
                                     chatContentDao.getMessageByTimestamp(
                                         chatId = chatId,
                                         timestamp = candidate.triggerMessageTimestamp
-                                    )?.toChatMessage()
+                                    )?.takeIf { it.messageId > learningGuard.cutoff &&
+                                        it.timestamp > learningGuard.cutoffTimestamp }?.toChatMessage()
                                 }
                         }
                     selectedMessages
@@ -260,7 +307,8 @@ class MemoryAutoSaveScheduler(
                             maxTimestamp = latestTriggerTimestamp,
                             limit = MAX_MESSAGES_PER_BATCH
                         )
-                    }.asReversed().map { it.toChatMessage() }
+                    }.asReversed().filter { it.messageId > learningGuard.cutoff &&
+                        it.timestamp > learningGuard.cutoffTimestamp }.map { it.toChatMessage() }
                 }
 
             if (messages.isEmpty()) {
@@ -317,6 +365,7 @@ class MemoryAutoSaveScheduler(
                 includeNotes = false,
                 includeSkills = false,
                 sourceChatId = chatId,
+                learningGuard = learningGuard,
                 propagateFailure = true
             )
             repository.deleteCandidates(candidateIds)

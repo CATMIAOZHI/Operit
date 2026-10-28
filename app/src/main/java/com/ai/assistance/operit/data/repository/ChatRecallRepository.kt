@@ -9,32 +9,71 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
-class ChatRecallRepository internal constructor(private val dao: com.ai.assistance.operit.data.dao.ChatContentDao) {
-    constructor(context: Context) : this(AppDatabase.getDatabase(context).chatContentDao())
+/** One SQLite parameter, even with thousands of chats. Hex keeps delimiters and Unicode unambiguous. */
+internal fun encodeRecallScope(ids: Collection<String>): String = buildString {
+    val hex = "0123456789ABCDEF"
+    if (ids.isNotEmpty()) append(',')
+    for (id in ids) {
+        for (byte in id.toByteArray(Charsets.UTF_8)) {
+            val value = byte.toInt() and 0xff
+            append(hex[value ushr 4])
+            append(hex[value and 15])
+        }
+        append(',')
+    }
+}
+
+class ChatRecallRepository internal constructor(
+    private val dao: com.ai.assistance.operit.data.dao.ChatContentDao,
+    private val minimumMessageId: Long = 0,
+    private val minimumTimestamp: Long = 0,
+    private val scope: suspend () -> Pair<Int, String> = { 0 to "" }
+) {
+    constructor(context: Context, callerChatId: String? = null, minimumMessageId: Long = 0,
+        minimumTimestamp: Long = 0) : this(
+        AppDatabase.getDatabase(context).chatContentDao(),
+        minimumMessageId,
+        minimumTimestamp,
+        {
+            val (own, ids) = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.recallScope(
+                context, callerChatId, sqlEligibleOnly = true)
+            (if (own) 1 else 2) to encodeRecallScope(ids)
+        }
+    )
     suspend fun search(query: String, offset: Int = 0, role: String = "", profile: String = "",
         chatId: String = "", after: Long = 0, before: Long = Long.MAX_VALUE,
         literal: Boolean = false): List<ChatRecallHit> = withContext(Dispatchers.IO) {
-        require(query.trim().length in 1..200)
-        require(role in setOf("", "user", "ai") && after <= before && offset >= 0)
+        require(query.trim().length in 1..200) { "query must be 1 to 200 characters" }
+        require(role in setOf("", "user", "ai")) { "role must be user or ai" }
+        require(after <= before) { "after is later than before" }
+        require(offset >= 0) { "offset must not be negative" }
+        val (mode, ids) = scope()
         // unicode61 treats an uninterrupted CJK sentence as one token; substring search is
         // required for ordinary Chinese/Japanese keywords.
         if (literal || recallUsesLiteral(query))
-            dao.searchRecallLiteral(query.trim(),role,profile,chatId,after,before,20,offset)
+            dao.searchRecallLiteral(query.trim(),role,profile,chatId,maxOf(after,minimumTimestamp),before,20,offset,mode,ids,minimumMessageId)
         else dao.searchRecallIndex(query.trim().split(Regex("\\s+")).joinToString(" OR ") {
             "\"${it.replace("\"", "\"\"")}\""
-        },role,profile,chatId,after,before,20,offset)
+        },role,profile,chatId,maxOf(after,minimumTimestamp),before,20,offset,mode,ids,minimumMessageId)
     }
     suspend fun context(messageId: Long, window: Int = 5): List<ChatRecallHit> = withContext(Dispatchers.IO) {
-        require(messageId > 0)
-        dao.readRecallContext(messageId, window.coerceIn(1,50)*2+1).sortedWith(compareBy<ChatRecallHit> { it.timestamp }.thenBy { it.messageId })
+        require(messageId > 0) { "message_id must be a positive number" }
+        val (mode, ids) = scope()
+        dao.readRecallContext(messageId, window.coerceIn(1,50)*2+1,mode,ids,minimumMessageId,minimumTimestamp).sortedWith(compareBy<ChatRecallHit> { it.timestamp }.thenBy { it.messageId })
     }
     suspend fun browse(profile: String = "", after: Long = 0, before: Long = Long.MAX_VALUE, offset: Int = 0) =
-        dao.browseRecallSessions(profile, after, before, 20, offset.coerceAtLeast(0))
+        scope().let { (mode, ids) -> dao.browseRecallSessions(profile, after, before, 20, offset.coerceAtLeast(0),mode,ids,minimumMessageId,minimumTimestamp) }
     suspend fun session(chatId: String, offset: Int = 0, role: String = "", after: Long = 0, before: Long = Long.MAX_VALUE) =
-        dao.readRecallSession(chatId, role, after, before, 20, offset.coerceAtLeast(0))
+        scope().let { (mode, ids) -> dao.readRecallSession(chatId, role, maxOf(after,minimumTimestamp), before, 20, offset.coerceAtLeast(0),mode,ids,minimumMessageId) }
+    private suspend fun readPart(id: Long, offset: Int, limit: Int) =
+        if (id < minimumMessageId) null else scope().let { (mode, ids) ->
+            dao.readRecallMessagePart(id, offset, limit,mode,ids)?.takeIf { it.timestamp >= minimumTimestamp } }
+    private suspend fun readBytes(id: Long, offset: Long) =
+        if (id < minimumMessageId || minimumTimestamp > 0 && readPart(id, 0, 1) == null) null
+        else scope().let { (mode, ids) -> dao.readRecallMessageBytes(id, offset,mode,ids) }
     suspend fun message(id: Long, charOffset: Int = 0): com.ai.assistance.operit.data.dao.ChatRecallPart? {
         val start = charOffset.coerceAtLeast(0)
-        val part = dao.readRecallMessagePart(id, start, 8000) ?: return null
+        val part = readPart(id, start, 8000) ?: return null
         if (!part.containsNull) return part
         // SQLite text LENGTH/SUBSTR stop at NUL. Scan bounded UTF-8 chunks only for these
         // messages, retaining at most one requested page and never a whole large body.
@@ -43,7 +82,7 @@ class ChatRecallRepository internal constructor(private val dao: com.ai.assistan
         val page = StringBuilder()
         while (true) {
             kotlinx.coroutines.currentCoroutineContext().ensureActive()
-            val bytes = dao.readRecallMessageBytes(id, byteOffset) ?: return null
+            val bytes = readBytes(id, byteOffset) ?: return null
             if (bytes.isEmpty()) break
             var length = bytes.size
             if (bytes.size == 32768) {
@@ -67,18 +106,27 @@ class ChatRecallRepository internal constructor(private val dao: com.ai.assistan
 
     /** Same bounded operations for UI, foreground tools and isolated learning runs. */
     suspend fun execute(args: Map<String,String>, filterAssistantThinking: Boolean = false, includeThinking: Boolean = false): JSONObject {
+        // The access scope is worked out once per call: filtering reads a long message chunk by chunk,
+        // and each chunk must not rebuild it from every chat again.
+        val fixed = scope()
+        return ChatRecallRepository(dao, minimumMessageId, minimumTimestamp) { fixed }
+            .run(args, filterAssistantThinking, includeThinking)
+    }
+
+    private suspend fun run(args: Map<String,String>, filterAssistantThinking: Boolean, includeThinking: Boolean): JSONObject {
         val offset = args["offset"]?.toIntOrNull()?.coerceAtLeast(0) ?: 0
         val after = parseRecallTime(args["after"].orEmpty(), false)
         val before = parseRecallTime(args["before"].orEmpty(), true)
         val role = args["role"].orEmpty().let { if (it == "assistant") "ai" else it }
-        require(role in setOf("", "user", "ai") && after <= before)
+        require(role in setOf("", "user", "ai")) { "role must be user or ai" }
+        require(after <= before) { "after is later than before" }
         val id = args["message_id"]?.toLongOrNull()
         val chatId = args["session_id"].orEmpty()
         val query = args["query"].orEmpty()
         val result = JSONObject()
         when {
             id != null && args["mode"] == "message" -> {
-                val probe = if (filterAssistantThinking) dao.readRecallMessagePart(id, 0, 1) else null
+                val probe = if (filterAssistantThinking) readPart(id, 0, 1) else null
                 val part = if (probe?.sender in setOf("ai", "assistant")) probe
                     else message(id, args["char_offset"]?.toIntOrNull() ?: 0)
                 val start = args["char_offset"]?.toIntOrNull()?.coerceAtLeast(0) ?: 0
@@ -115,7 +163,7 @@ class ChatRecallRepository internal constructor(private val dao: com.ai.assistan
             suspend fun clean(item: JSONObject, start: Int, limit: Int) {
                 val messageId = item.optLong("message_id", item.optLong("id"))
                 if (messageId <= 0) return
-                val raw = dao.readRecallMessagePart(messageId, 0, 1)
+                val raw = readPart(messageId, 0, 1)
                 if (raw == null) {
                     item.remove("content"); item.remove("excerpt")
                     item.put("unavailable", true)
@@ -125,7 +173,7 @@ class ChatRecallRepository internal constructor(private val dao: com.ai.assistan
                     if (args["literal"] == "true" || recallUsesLiteral(query)) listOf(query.trim())
                     else query.trim().split(Regex("\\s+"))
                 } else emptyList()
-                val page = RecallEvidenceReader.read({ dao.readRecallMessageBytes(messageId, it) },
+                val page = RecallEvidenceReader.read({ readBytes(messageId, it) },
                     raw.sender in setOf("ai", "assistant"), includeThinking, start, limit, terms,
                     fts=args["literal"]!="true" && !recallUsesLiteral(query))
                 if (page == null) {
@@ -163,14 +211,21 @@ private fun recallUsesLiteral(query: String) = query.any {
 }
 
 internal fun parseRecallTime(raw: String, end: Boolean): Long {
-    if (raw.isBlank()) return if (end) Long.MAX_VALUE else 0
-    Regex("(\\d+)([hdw])").matchEntire(raw)?.let {
+    val text = raw.trim()
+    if (text.isEmpty()) return if (end) Long.MAX_VALUE else 0
+    Regex("(\\d+)([hdw])").matchEntire(text)?.let {
         val unit = when(it.groupValues[2]) { "h" -> 3_600_000L; "d" -> 86_400_000L; else -> 604_800_000L }
         return System.currentTimeMillis() - Math.multiplyExact(it.groupValues[1].toLong(),unit)
     }
-    raw.toLongOrNull()?.let { return it }
+    text.toLongOrNull()?.let { return it }
     val zone = java.time.ZoneId.systemDefault()
-    return if (raw.length==10) java.time.LocalDate.parse(raw).let {
+    if (text.length == 10) return java.time.LocalDate.parse(text).let {
         (if(end) it.plusDays(1) else it).atStartOfDay(zone).toInstant().toEpochMilli() - if(end) 1 else 0
-    } else java.time.Instant.parse(raw).toEpochMilli()
+    }
+    // Times with a zone or offset are exact; plain "2026-10-26 12:12:36" (how the app writes times
+    // in its own sources) is local time.
+    runCatching { return java.time.OffsetDateTime.parse(text).toInstant().toEpochMilli() }
+    runCatching { return java.time.Instant.parse(text).toEpochMilli() }
+    return java.time.LocalDateTime.parse(text.replace(' ', 'T'))
+        .atZone(zone).toInstant().toEpochMilli()
 }

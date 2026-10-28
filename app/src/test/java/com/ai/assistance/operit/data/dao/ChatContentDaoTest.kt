@@ -18,6 +18,108 @@ import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
 
 class ChatContentDaoTest {
+    @Test fun `Orbit fork metadata respects cutoff visibility and selected variant`() = runBlocking {
+        database.chatDao().insertChat(ChatEntity(id="fork", title="Fork"))
+        database.chatDao().insertChat(ChatEntity(id="other", title="Other"))
+        val rows = listOf(
+            MessageEntity(chatId="fork", sender="user", content="Earlier", timestamp=1, orderIndex=0),
+            MessageEntity(chatId="fork", sender="ai", content="Sealed", timestamp=2, orderIndex=1,
+                displayMode="ASSISTANT_INTERMEDIATE", selectedVariantIndex=2),
+            MessageEntity(chatId="fork", sender="user", content="Hidden", timestamp=3, orderIndex=2,
+                displayMode="HIDDEN_PLACEHOLDER"),
+            MessageEntity(chatId="fork", sender="user", content="Later", timestamp=4, orderIndex=3),
+            MessageEntity(chatId="other", sender="user", content="Other chat", timestamp=2, orderIndex=0),
+        )
+        rows.forEach { database.messageDao().insertMessage(it) }
+        val result = database.messageDao().getOrbitForkSources("fork", 3, 80)
+        assertEquals(listOf(2L, 1L), result.map { it.timestamp })
+        assertEquals(2, result.first().selectedVariantIndex)
+        assertEquals(listOf(2L), database.messageDao().getOrbitForkSources("fork", 3, 1).map { it.timestamp })
+    }
+
+    @Test fun `learning cutoff filters before pagination and direct reads but not ordinary history`() = runBlocking {
+        val dao = database.chatContentDao()
+        database.chatDao().insertChat(ChatEntity(id="learning",title="Learning"))
+        val old = (0..24).map { index ->
+            database.messageDao().insertMessage(MessageEntity(chatId="learning",sender="user",
+                content="needle old",timestamp=index.toLong(),orderIndex=index))
+        }
+        val fresh = database.messageDao().insertMessage(MessageEntity(chatId="learning",sender="user",
+            content="needle new",timestamp=30,orderIndex=30))
+        val copied = database.messageDao().insertMessage(MessageEntity(chatId="learning",sender="user",
+            content="needle copied old",timestamp=5,orderIndex=31))
+        val learner = com.ai.assistance.operit.data.repository.ChatRecallRepository(dao, minimumMessageId=fresh,
+            minimumTimestamp=26)
+        assertEquals(listOf(fresh), learner.search("needle").map { it.messageId })
+        assertEquals(listOf(fresh), learner.search("needle",literal=true).map { it.messageId })
+        assertEquals(listOf(fresh), learner.session("learning").map { it.messageId })
+        assertEquals(listOf(fresh), learner.context(fresh).map { it.messageId })
+        assertEquals(emptyList<ChatRecallHit>(), learner.context(old.first()))
+        assertEquals(null, learner.message(old.first()))
+        assertEquals(null, learner.message(copied))
+        assertEquals(true, com.ai.assistance.operit.data.repository.ChatRecallRepository(dao).message(old.first()) != null)
+        assertEquals(copied, dao.memoryLearningHorizon())
+    }
+    @Test fun `Orbit recall isolates every mode before pagination in both directions`() = runBlocking {
+        val dao = database.chatContentDao()
+        val ids = mutableMapOf<String, Long>()
+        for (chat in listOf("global", "orbit-a", "orbit-b")) {
+            database.chatDao().insertChat(ChatEntity(id=chat,title=chat,updatedAt=10))
+            ids[chat] = database.messageDao().insertMessage(MessageEntity(chatId=chat,sender="ai",
+                content="needle $chat",timestamp=10,orderIndex=0))
+        }
+        val a = com.ai.assistance.operit.data.repository.ChatRecallRepository(dao) { 1 to com.ai.assistance.operit.data.repository.encodeRecallScope(listOf("orbit-a")) }
+        val global = com.ai.assistance.operit.data.repository.ChatRecallRepository(dao) { 2 to com.ai.assistance.operit.data.repository.encodeRecallScope(listOf("orbit-a","orbit-b")) }
+        for ((repo, expected) in listOf(a to "orbit-a", global to "global")) {
+            assertEquals(listOf(expected), repo.browse().map { it.chatId })
+            assertEquals(listOf(expected), repo.search("needle").map { it.chatId })
+            assertEquals(listOf(expected), repo.search("needle", literal=true).map { it.chatId })
+            assertEquals(emptyList<ChatRecallHit>(), repo.search("needle", offset=1))
+            for ((chat,id) in ids) {
+                assertEquals(chat==expected, repo.session(chat).isNotEmpty())
+                assertEquals(chat==expected, repo.context(id).isNotEmpty())
+                assertEquals(chat==expected, repo.message(id)!=null)
+                assertEquals(chat==expected, dao.readRecallMessageBytes(id,0,
+                    if(expected=="global") 2 else 1,
+                    com.ai.assistance.operit.data.repository.encodeRecallScope(if(expected=="global") listOf("orbit-a","orbit-b") else listOf("orbit-a")))!=null)
+            }
+        }
+        assertEquals(emptyList<ChatRecallHit>(), com.ai.assistance.operit.data.repository.ChatRecallRepository(dao) {
+            1 to ""
+        }.search("needle"))
+    }
+    @Test fun `large recall scopes keep exact membership and filter before paging`() = runBlocking {
+        val dao = database.chatContentDao()
+        val unusual = "用户,😀\u0000scope"
+        val scoped = (0 until 1200).map { "scope-$it" } + unusual
+        val encoded = com.ai.assistance.operit.data.repository.encodeRecallScope(scoped)
+        val messageIds = listOf("scope-1199", unusual, "outside", "scope-11990", "").associateWith { chat ->
+            database.chatDao().insertChat(ChatEntity(id = chat, title = chat, updatedAt = 10))
+            database.messageDao().insertMessage(MessageEntity(chatId = chat, sender = "user",
+                content = "needle", timestamp = 10, orderIndex = 0))
+        }
+        for ((mode, expected) in listOf(1 to setOf("scope-1199", unusual), 2 to setOf("outside", "scope-11990", ""))) {
+            val repo = com.ai.assistance.operit.data.repository.ChatRecallRepository(dao) { mode to encoded }
+            assertEquals(expected, repo.search("needle").map { it.chatId }.toSet())
+            assertEquals(expected, repo.search("needle", literal = true).map { it.chatId }.toSet())
+            assertEquals(expected, repo.browse().map { it.chatId }.toSet())
+            assertEquals(expected, expected.indices.flatMap {
+                dao.browseRecallSessions("", 0, Long.MAX_VALUE, 1, it, mode, encoded)
+            }.map { it.chatId }.toSet())
+            assertEquals(expected, dao.searchRecallMessages("needle", 20, 0, mode, encoded).map { it.chatId }.toSet())
+            for ((chat, id) in messageIds) {
+                assertEquals(chat in expected, repo.session(chat).isNotEmpty())
+                assertEquals(chat in expected, repo.context(id).isNotEmpty())
+                assertEquals(chat in expected, repo.message(id) != null)
+                assertEquals(chat in expected, dao.readRecallMessageBytes(id, 0, mode, encoded) != null)
+            }
+        }
+        assertEquals(listOf(""), dao.browseRecallSessions("", 0, Long.MAX_VALUE, 20, 0,
+            1, com.ai.assistance.operit.data.repository.encodeRecallScope(listOf(""))).map { it.chatId })
+        assertEquals(emptyList<String>(), dao.browseRecallSessions("", 0, Long.MAX_VALUE, 20, 0,
+            1, com.ai.assistance.operit.data.repository.encodeRecallScope(emptyList())).map { it.chatId })
+    }
+
     private lateinit var tempDir: File
     private lateinit var database: AppDatabase
 

@@ -36,6 +36,7 @@ private class GifCompletion { var enabled = false }
 internal fun PetGif(
     assetId: String, animate: Boolean, loop: Boolean, restartKey: Int,
     onFinished: () -> Unit, modifier: Modifier,
+    placeholder: (@Composable () -> Unit)? = null,
 ) {
     val context = LocalContext.current.applicationContext
     val finished by rememberUpdatedState(onFinished)
@@ -90,6 +91,8 @@ internal fun PetGif(
     Box(modifier) {
         if (drawable?.isFailure == true) {
             PetMediaError(Modifier.fillMaxSize())
+        } else if (image == null && placeholder != null) {
+            placeholder()
         } else {
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
@@ -104,11 +107,13 @@ internal fun PetGif(
 internal fun PetVideo(
     assetId: String, animate: Boolean, loop: Boolean, restartKey: Int,
     onFinished: () -> Unit, modifier: Modifier,
+    placeholder: (@Composable () -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val finished by rememberUpdatedState(onFinished)
     val looping by rememberUpdatedState(loop)
     var failed by remember(assetId) { mutableStateOf(false) }
+    var rendered by remember(assetId) { mutableStateOf(false) }
     val exoPlayer = remember(assetId) {
         ExoPlayer.Builder(context.applicationContext).build().apply {
             volume = 0f
@@ -118,6 +123,7 @@ internal fun PetVideo(
     DisposableEffect(exoPlayer) {
         val listener = object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) { failed = true }
+            override fun onRenderedFirstFrame() { rendered = true }
             override fun onPlaybackStateChanged(state: Int) {
                 if (state == Player.STATE_ENDED && !looping) finished()
             }
@@ -147,6 +153,7 @@ internal fun PetVideo(
                 },
                 update = { if (it.player !== exoPlayer) it.player = exoPlayer },
             )
+            if (!rendered) placeholder?.invoke()
         }
     }
 }

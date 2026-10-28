@@ -11,7 +11,7 @@
     "zh": "让当前 Operit 通过局域网 HTTP API 调用另一台设备上的 Operit。",
     "en": "Let the current Operit call another Operit device over the LAN HTTP API."
   },
-  "enabled_by_default": true,
+  "enabled_by_default": false,
   "subpackages": [
     {
       "id": "remote_operit",

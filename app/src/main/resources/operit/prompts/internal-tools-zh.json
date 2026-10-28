@@ -459,7 +459,7 @@
       },
       {
         "name": "browser_drag",
-        "description": "在两个页面元素之间执行拖拽。",
+        "description": "在两个页面元素之间拖拽。拖不动时换 mode 再试。",
         "parameters": "",
         "parametersStructured": [
           {
@@ -489,6 +489,13 @@
             "description": "目标元素 ref",
             "required": true,
             "default": null
+          },
+          {
+            "name": "mode",
+            "type": "string",
+            "description": "可选，auto（默认）/mouse（真实鼠标）/touch（真实手指）/html5（HTML 拖放事件）",
+            "required": false,
+            "default": "auto"
           }
         ],
         "details": "",
@@ -651,13 +658,13 @@
       },
       {
         "name": "browser_press_key",
-        "description": "在当前页面按下一个键盘按键。",
+        "description": "像真实键盘一样按下按键或组合键，Enter 会真的提交，Tab 会真的切换焦点。",
         "parameters": "",
         "parametersStructured": [
           {
             "name": "key",
             "type": "string",
-            "description": "按键名，例如 ArrowLeft 或 a",
+            "description": "按键名，例如 Enter、ArrowDown、a；组合键用 + 连接，例如 Control+A",
             "required": true,
             "default": null
           }
@@ -690,13 +697,13 @@
       },
       {
         "name": "browser_run_code",
-        "description": "运行 Playwright 风格的代码片段。",
+        "description": "在当前标签页运行有限的 Playwright 风格代码，并非完整 Playwright。",
         "parameters": "",
         "parametersStructured": [
           {
             "name": "code",
             "type": "string",
-            "description": "Playwright 风格 JavaScript 代码片段",
+            "description": "一个接收 page 的函数，例如 async (page) => { await page.locator('#login').click(); }；或直接写函数体，可用 await 和 return",
             "required": true,
             "default": null
           }
@@ -772,7 +779,7 @@
           {
             "name": "type",
             "type": "string",
-            "description": "可选，图片类型：png 或 jpeg",
+            "description": "png、jpeg 或 pdf；pdf 存整页（图片式，文字不可选），不能与 ref 同时使用",
             "required": false,
             "default": "png"
           },
@@ -801,6 +808,101 @@
             "name": "fullPage",
             "type": "boolean",
             "description": "可选，是否整页截图；元素截图时不可使用",
+            "required": false,
+            "default": "false"
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "browser_mouse_click_xy",
+        "description": "按页面截图上的像素坐标点按页面，也能长按、滑动或右键。先用 browser_take_screenshot 截取当前页面（不带 fullPage 和 ref），再用图上的坐标。",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "x",
+            "type": "number",
+            "description": "横坐标，截图左边为 0",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "y",
+            "type": "number",
+            "description": "纵坐标，截图上边为 0",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "doubleClick",
+            "type": "boolean",
+            "description": "可选，是否连点两下",
+            "required": false,
+            "default": "false"
+          },
+          {
+            "name": "holdMs",
+            "type": "number",
+            "description": "可选，按住多少毫秒再松开，用于长按，最多 10000",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "endX",
+            "type": "number",
+            "description": "可选，滑动终点横坐标，需与 endY 一起给",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "endY",
+            "type": "number",
+            "description": "可选，滑动终点纵坐标，需与 endX 一起给",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "button",
+            "type": "string",
+            "description": "可选，left/right/middle；滑动只能用 left",
+            "required": false,
+            "default": "left"
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "browser_devtools",
+        "description": "向当前标签页发送一条 Chrome DevTools 协议命令并返回结果；events=true 时附带最近收到的事件（WebSocket 帧、Console、Page 等，最多 200 条）。只能用当前页面范围内的域；Target、Browser、Storage、Fetch 不可用。取响应内容前，先用 browser_network_requests 查到 requestId。",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "method",
+            "type": "string",
+            "description": "命令名，格式 Domain.command；只读事件时可省略",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "params",
+            "type": "string",
+            "description": "可选，命令参数，JSON 对象",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "filename",
+            "type": "string",
+            "description": "可选，结果太长时保存到这个文件",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "events",
+            "type": "boolean",
+            "description": "可选，为 true 时附带最近事件；只读事件时可以不填 method",
             "required": false,
             "default": "false"
           }
@@ -854,7 +956,7 @@
       },
       {
         "name": "browser_wait_for",
-        "description": "等待文本出现、消失，或等待指定时长。",
+        "description": "等待文本出现、消失，等待元素出现或消失，或等待指定时间。会查找同源 iframe 和 Shadow DOM。",
         "parameters": "",
         "parametersStructured": [
           {
@@ -877,6 +979,27 @@
             "description": "可选，等待消失的文本",
             "required": false,
             "default": null
+          },
+          {
+            "name": "selector",
+            "type": "string",
+            "description": "可选，要等待的元素选择器",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "state",
+            "type": "string",
+            "description": "可选，配合 selector：visible/hidden/attached/detached",
+            "required": false,
+            "default": "visible"
+          },
+          {
+            "name": "timeout",
+            "type": "number",
+            "description": "可选，最多等多少秒，1 到 60",
+            "required": false,
+            "default": "10"
           }
         ],
         "details": "",
@@ -884,13 +1007,13 @@
       },
       {
         "name": "browser_tabs",
-        "description": "使用 0-based 索引列出、创建、切换或关闭浏览器 tab。",
+        "description": "使用 0-based 索引列出、创建、切换或关闭浏览器 tab；页面崩溃后可用 restore 重新打开。",
         "parameters": "",
         "parametersStructured": [
           {
             "name": "action",
             "type": "string",
-            "description": "list/create/select/close 之一",
+            "description": "list/create/select/close/restore 之一",
             "required": true,
             "default": null
           },
@@ -900,6 +1023,96 @@
             "description": "可选，select 或 close 使用的 tab 索引",
             "required": false,
             "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "browser_downloads",
+        "description": "查看和管理本登录空间的下载：列出、查看状态、等待完成、取消或重试。点下载链接后结果里会给出 downloadId。",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "action",
+            "type": "string",
+            "description": "可选，list/status/wait/cancel/retry",
+            "required": false,
+            "default": "list"
+          },
+          {
+            "name": "downloadId",
+            "type": "string",
+            "description": "status/wait/cancel/retry 时必填",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "timeout",
+            "type": "number",
+            "description": "可选，wait 最多等多少秒，1 到 120",
+            "required": false,
+            "default": "60"
+          },
+          {
+            "name": "offset",
+            "type": "number",
+            "description": "可选，list 时跳过最新的多少条，用来翻看更早的下载",
+            "required": false,
+            "default": "0"
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "browser_clipboard",
+        "description": "在页面和手机剪贴板之间复制粘贴。paste 会先交给页面自己处理，适合编辑器和分格验证码框。",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "action",
+            "type": "string",
+            "description": "read（读页面选中内容和剪贴板）/copy（复制页面选中内容）/write（把 text 放进剪贴板）/paste（粘贴到光标处）",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "text",
+            "type": "string",
+            "description": "write 必填；paste 可选，不填则粘贴剪贴板内容",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "browser_permissions",
+        "description": "按网站保存摄像头、麦克风、定位等权限的答案，网站再次请求时直接按保存的答案处理。",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "action",
+            "type": "string",
+            "description": "可选，list/allow/block/reset",
+            "required": false,
+            "default": "list"
+          },
+          {
+            "name": "origin",
+            "type": "string",
+            "description": "可选，网站地址，例如 https://example.com；默认当前页面",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "permission",
+            "type": "string",
+            "description": "可选，all/camera/microphone/location/protected_media/midi",
+            "required": false,
+            "default": "all"
           }
         ],
         "details": "",

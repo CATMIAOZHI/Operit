@@ -26,6 +26,7 @@ import com.ai.assistance.operit.data.backup.OperitBackupDirs
 import com.ai.assistance.operit.data.dao.ChatDao
 import com.ai.assistance.operit.data.dao.ChatFolderDao
 import com.ai.assistance.operit.data.db.AppDatabase
+import com.ai.assistance.operit.data.db.appendOrbitDelivery
 import com.ai.assistance.operit.data.model.ChatEntity
 import com.ai.assistance.operit.data.model.ChatKind
 import com.ai.assistance.operit.data.model.ChatFolderEntity
@@ -3019,6 +3020,22 @@ class ChatHistoryManager private constructor(private val context: Context) {
         }
     }
 
+    /** The message and its outbox acknowledgement must commit together, under the normal chat lock. */
+    suspend fun appendOrbitDelivery(deliveryId: String): com.ai.assistance.operit.data.model.OrbitDeliveryEntity? {
+        val outbox = database.orbitTaskDao()
+        val pending = outbox.delivery(deliveryId) ?: return null
+        return chatMutex(pending.chatId).withLock {
+            database.appendOrbitDelivery(deliveryId, System.currentTimeMillis())
+        }
+    }
+
+    suspend fun appendOrbitDeliveryBatch(ids: List<String>, roleName: String = ""): List<com.ai.assistance.operit.data.model.OrbitDeliveryEntity> {
+        val first = ids.firstOrNull()?.let { database.orbitTaskDao().delivery(it) } ?: return emptyList()
+        return chatMutex(first.chatId).withLock {
+            database.orbitTaskDao().appendDeliveryBatch(ids, System.currentTimeMillis(), database.chatDao(), database.messageDao(), roleName)
+        }
+    }
+
     suspend fun setMessageFavorite(chatId: String, timestamp: Long, isFavorite: Boolean) {
         chatMutex(chatId).withLock {
             try {
@@ -3299,6 +3316,16 @@ class ChatHistoryManager private constructor(private val context: Context) {
 
     // 删除聊天历史
     suspend fun deleteChatHistory(chatId: String): Boolean {
+        // WeChat messages land in this Orbit side chat; every delete path keeps it until the user
+        // disconnects WeChat (a whole Orbit being deleted is already gone from the list here).
+        val linkedOrbit = com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context)
+            .current().orbitForChat(chatId)?.takeUnless { it.deleting }
+        if (linkedOrbit != null &&
+            com.ai.assistance.operit.features.orbit.OrbitWeixin.boundChatId(context, linkedOrbit.id) == chatId
+        ) {
+            AppLogger.w(TAG, "Chat $chatId is linked to WeChat; skip deletion")
+            return false
+        }
         chatMutex(chatId).withLock {
             try {
                 val chat = chatDao.getChatById(chatId)
@@ -3342,6 +3369,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
         characterCardName: String?,
         characterGroupId: String?,
         contextPolicyJson: String,
+        chatId: String? = null,
     ): ChatHistory {
         val dateTime = LocalDateTime.now()
         val formattedTime =
@@ -3351,6 +3379,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
         val localizedContext = LocaleUtils.getLocalizedContext(context)
 
         return ChatHistory(
+            id = chatId ?: java.util.UUID.randomUUID().toString(),
             title = "${localizedContext.getString(R.string.new_conversation)} $formattedTime",
             messages = emptyList(),
             inputTokens = 0,
@@ -3368,7 +3397,9 @@ class ChatHistoryManager private constructor(private val context: Context) {
         inheritGroupFromChatId: String? = null,
         characterCardName: String? = null,
         characterGroupId: String? = null,
-        setAsCurrentChat: Boolean = true
+        setAsCurrentChat: Boolean = true,
+        /** A caller that must find the chat again after a crash picks its id up front. */
+        chatId: String? = null,
     ): ChatHistory {
         val contextPolicy = com.ai.assistance.operit.data.preferences.ChatContextPreferences(context)
             .defaults.first().encode()
@@ -3384,6 +3415,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
                     characterCardName = characterCardName,
                     characterGroupId = characterGroupId,
                     contextPolicyJson = contextPolicy,
+                    chatId = chatId,
                 )
             }
         releaseLegacyFolderReservations(listOf(newHistory.folderId))
@@ -3821,6 +3853,10 @@ class ChatHistoryManager private constructor(private val context: Context) {
 
                 // Card selections and live data live beside the chat, keyed by message timestamp.
                 copyResult.copiedChatIds.forEach { (sourceId, targetId) ->
+                    com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context, sourceId)?.let {
+                        com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context)
+                            .rememberChatOwner(targetId, it.id)
+                    }
                     runCatching {
                         com.ai.assistance.operit.ui.common.dynamicui.DynamicUiStateStore.copyChat(context, sourceId, targetId)
                     }.onFailure { AppLogger.w(TAG, "Failed to copy card state into branch $targetId", it) }
@@ -4372,6 +4408,16 @@ class ChatHistoryManager private constructor(private val context: Context) {
     ): List<com.ai.assistance.operit.data.model.ChatMessageProcessMetadata> =
         withContext(Dispatchers.IO) { messageDao.getProcessMetadata(chatId) }
 
+    /** Replies of a chat that may hold tool calls or thinking, by message time. */
+    suspend fun loadWorkReplyTimestamps(chatId: String): List<Long> =
+        withContext(Dispatchers.IO) { messageDao.getWorkReplyTimestamps(chatId) }
+
+    /** Of [timestamps], the assistant rows whose shown version may hold a tool call. */
+    suspend fun loadToolReplyTimestamps(chatId: String, timestamps: List<Long>): List<Long> =
+        withContext(Dispatchers.IO) {
+            timestamps.distinct().chunked(400).flatMap { messageDao.getToolReplyTimestamps(chatId, it) }
+        }
+
     suspend fun loadChatMessagesByTimestamps(chatId: String, timestamps: List<Long>): List<ChatMessage> =
         withContext(Dispatchers.IO) {
             timestamps.distinct().chunked(400).flatMap { chunk ->
@@ -4443,6 +4489,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
         chatId: String,
         afterTimestampExclusive: Long,
         limit: Int,
+        throwOnError: Boolean = false,
     ): List<ChatMessage> {
         return withContext(Dispatchers.IO) {
             try {
@@ -4454,6 +4501,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
                     )
                 hydrateMessages(chatId, messageEntities)
             } catch (e: Exception) {
+                if (throwOnError) throw e
                 AppLogger.e(TAG, "按起始时间后分页加载聊天消息失败", e)
                 emptyList()
             }

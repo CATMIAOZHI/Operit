@@ -22,9 +22,23 @@ class OperitQuickJsEngine : Closeable {
     private val runtimeExecutor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "OperitQuickJsRuntime").apply { isDaemon = true }
     }
+    /**
+     * Who the JavaScript now running belongs to, as given by the host for each entry (a script
+     * call starting, a result delivered to it) and inherited by the timers scheduled meanwhile.
+     * Only read and written on the runtime thread.
+     */
+    @Volatile
+    private var entryOwner: String? = null
+    /** Owner and repeat flag of each scheduled timer whose scheduling entry had an owner. */
+    private val timerOwners = ConcurrentHashMap<Int, Pair<String, Boolean>>()
     private val hostDispatcher = QuickJsNativeHostDispatcher(
         dispatchTimer = ::dispatchTimerOnRuntimeThread,
-        forwardCall = ::dispatchNativeCall
+        forwardCall = ::dispatchNativeCall,
+        onTimerScheduled = { timerId, repeat ->
+            val owner = entryOwner
+            if (owner != null) timerOwners[timerId] = owner to repeat else timerOwners.remove(timerId)
+        },
+        onTimerCancelled = { timerId -> timerOwners.remove(timerId) },
     )
     private val runtime = runOnRuntimeThread {
         QuickJsNativeRuntime.create(hostDispatcher).also { quickJs ->
@@ -39,12 +53,35 @@ class OperitQuickJsEngine : Closeable {
         methodCache.clear()
     }
 
+    /** The owner of the entry now running; meaningful only on the runtime thread (native calls). */
+    fun currentEntryOwner(): String? = entryOwner
+
+    /** True once leftover microtasks could not be cleared; the host must close and recreate it. */
+    val isUnusable: Boolean
+        get() = runtime.unusable
+
+    private fun checkUsable() {
+        check(!runtime.unusable) { "QuickJS runtime retired: queued jobs could not be cleared" }
+    }
+
+    private inline fun <T> withEntryOwner(owner: String?, block: () -> T): T {
+        val previous = entryOwner
+        entryOwner = owner
+        try {
+            return block()
+        } finally {
+            entryOwner = previous
+        }
+    }
+
     @Suppress("UNCHECKED_CAST")
-    fun <T> evaluate(script: String, fileName: String = "<eval>"): T? {
+    fun <T> evaluate(script: String, fileName: String = "<eval>", owner: String? = null): T? {
         check(!closed.get()) { "QuickJS engine already closed" }
         return runOnRuntimeThread {
-            val result = runtime.eval(script, fileName)
-            runtime.executePendingJobs()
+            checkUsable()
+            val result = withEntryOwner(owner) {
+                runtime.eval(script, fileName).also { runtime.drainPendingJobs() }
+            }
             if (!result.success) {
                 error(result.describeFailure("QuickJS evaluation failed"))
             }
@@ -56,12 +93,15 @@ class OperitQuickJsEngine : Closeable {
     fun <T> callFunction(
         functionName: String,
         argsJson: String,
-        callSite: String = "<call:$functionName>"
+        callSite: String = "<call:$functionName>",
+        owner: String? = null,
     ): T? {
         check(!closed.get()) { "QuickJS engine already closed" }
         return runOnRuntimeThread {
-            val result = runtime.callFunction(functionName, argsJson, callSite)
-            runtime.executePendingJobs()
+            checkUsable()
+            val result = withEntryOwner(owner) {
+                runtime.callFunction(functionName, argsJson, callSite).also { runtime.drainPendingJobs() }
+            }
             if (!result.success) {
                 error(result.describeFailure("QuickJS function call failed"))
             }
@@ -81,6 +121,7 @@ class OperitQuickJsEngine : Closeable {
         // not queue behind JavaScript that never yields.
         interrupt()
         runCatching { runOnRuntimeThread { runtime.clearAllTimers() } }
+        timerOwners.clear()
         hostDispatcher.close()
         runtime.close()
         runtimeExecutor.shutdownNow()
@@ -98,9 +139,15 @@ class OperitQuickJsEngine : Closeable {
                 if (closed.get()) {
                     return@execute
                 }
+                if (runtime.unusable) {
+                    return@execute
+                }
                 runCatching {
-                    val result = runtime.dispatchTimer(timerId)
-                    runtime.executePendingJobs()
+                    val owned = timerOwners[timerId]
+                    if (owned != null && !owned.second) timerOwners.remove(timerId)
+                    val result = withEntryOwner(owned?.first) {
+                        runtime.dispatchTimer(timerId).also { runtime.drainPendingJobs() }
+                    }
                     if (!result.success) {
                         error(result.describeFailure("QuickJS timer callback failed"))
                     }

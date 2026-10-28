@@ -37,6 +37,16 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
         private const val TAG = "MemoryQueryToolExecutor"
         private const val MAX_QUERY_SNAPSHOTS_PER_PROFILE = 32
         private const val DEFAULT_RELEVANCE_THRESHOLD = 0.0
+        /** Tools that read or change the memory graph. */
+        private val GRAPH_TOOLS = setOf(
+            "query_memory", "get_memory_by_title", "create_memory", "update_memory", "delete_memory",
+            "move_memory", "link_memories", "query_memory_links", "update_memory_link", "delete_memory_link",
+        )
+        /** Tools that changed the old memory graph; it is read-only now, so they are refused. */
+        val LEGACY_GRAPH_WRITE_TOOLS = setOf(
+            "create_memory", "update_memory", "delete_memory", "move_memory",
+            "link_memories", "update_memory_link", "delete_memory_link",
+        )
 
         private data class QuerySnapshotState(
             val id: String,
@@ -88,10 +98,23 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
         }
     }
 
+    /**
+     * The chat that called this tool. A ToolPkg such as memory_review calls these native tools from
+     * its own thread, where the runtime context is gone; it passes the host-filled chat ID under the
+     * reserved package parameter, which the host strips from model arguments. Without it an Orbit's
+     * memory package calls would read and write the main memory.
+     */
+    private fun resolveCallerChatId(tool: AITool): String? =
+        ToolExecutionManager.currentToolRuntimeContext()?.callerChatId?.takeIf { it.isNotBlank() }
+            ?: tool.parameters.find { it.name == "__operit_package_chat_id" }?.value?.trim()?.takeIf { it.isNotBlank() }
+
     private suspend fun resolveActiveProfileId(tool: AITool): String {
-        return ToolExecutionManager.currentToolRuntimeContext()?.resolvedMemorySpaceId?.takeIf { it.isNotBlank() }
+        val runtime = ToolExecutionManager.currentToolRuntimeContext()
+        val requested = runtime?.resolvedMemorySpaceId?.takeIf { it.isNotBlank() }
             ?: resolveRoleCardProfileId(resolveCallerCardId(tool))
             ?: resolveGlobalActiveProfileId()
+        return com.ai.assistance.operit.features.orbit.OrbitMemoryScope.resolve(
+            context, resolveCallerChatId(tool), requested) ?: requested
     }
 
     private fun getMemoryRepository(profileId: String): MemoryRepository =
@@ -190,6 +213,29 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
 
     override fun invoke(tool: AITool): ToolResult {
         return kotlinx.coroutines.runBlocking {
+            // An Orbit's memory is memory.md only; it has no memory graph to read or change.
+            if (tool.name in GRAPH_TOOLS &&
+                com.ai.assistance.operit.data.preferences.MemorySearchSettingsPreferences.isOrbitSpace(resolveActiveProfileId(tool))
+            ) {
+                return@runBlocking ToolResult(
+                    toolName = tool.name,
+                    success = false,
+                    result = StringResultData(""),
+                    error = "Orbit has no memory graph. Its memory is memory.md: read and edit it with memory_notes, " +
+                        "and use search_chat_history to look through earlier conversations."
+                )
+            }
+            // The old memory graph only answers queries now; nothing is added to or changed in it.
+            if (tool.name in LEGACY_GRAPH_WRITE_TOOLS) {
+                return@runBlocking ToolResult(
+                    toolName = tool.name,
+                    success = false,
+                    result = StringResultData(""),
+                    error = "${tool.name} is no longer available: the old memory graph is read-only (query_memory, " +
+                        "get_memory_by_title and query_memory_links still work). To remember something, use the new " +
+                        "memory: the memory_review package, memory_notes for memory.md and user.md."
+                )
+            }
             return@runBlocking when (tool.name) {
                 "query_memory" -> executeQueryMemory(tool)
                 "get_memory_by_title" -> executeGetMemoryByTitle(tool)
@@ -584,7 +630,8 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
     }
 
     private suspend fun executeUpdateMemory(tool: AITool): ToolResult {
-        val memoryRepository = getMemoryRepository(resolveActiveProfileId(tool))
+        val space = resolveActiveProfileId(tool)
+        val memoryRepository = getMemoryRepository(space)
         val oldTitle = tool.parameters.find { it.name == "old_title" }?.value
         
         if (oldTitle.isNullOrBlank()) {
@@ -620,7 +667,7 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
             val tagsParam = tool.parameters.find { it.name == "tags" }?.value
             val newTags = tagsParam?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
             
-            val updatedMemory = memoryRepository.updateMemory(
+            val applyEdit = suspend { memoryRepository.updateMemory(
                 memory = memory,
                 newTitle = newTitle,
                 newContent = newContent,
@@ -630,7 +677,10 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
                 newImportance = newImportance,
                 newFolderPath = newFolderPath,
                 newTags = newTags
-            )
+            ) }
+            val updatedMemory = if (newTitle != memory.title || newContent != memory.content)
+                com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.explicitEdit(context, space, applyEdit)
+                else applyEdit()
             
             if (updatedMemory != null) {
                 val message = "Successfully updated memory from '$oldTitle' to '$newTitle'"
@@ -660,7 +710,8 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
     }
 
     private suspend fun executeDeleteMemory(tool: AITool): ToolResult {
-        val memoryRepository = getMemoryRepository(resolveActiveProfileId(tool))
+        val space = resolveActiveProfileId(tool)
+        val memoryRepository = getMemoryRepository(space)
         val title = tool.parameters.find { it.name == "title" }?.value
         
         if (title.isNullOrBlank()) {
@@ -685,7 +736,9 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
                 )
             }
 
-            val deleted = memoryRepository.deleteMemory(memory.id)
+            val deleted = com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.explicitEdit(context, space) {
+                memoryRepository.deleteMemory(memory.id)
+            }
             
             if (deleted) {
                 val message = "Successfully deleted memory: '$title'"
@@ -716,14 +769,30 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
 
     private suspend fun executeChatRecall(tool: AITool): ToolResult {
         return try {
-            val repository = com.ai.assistance.operit.data.repository.ChatRecallRepository(context)
-            val json = repository.execute(tool.parameters.associate { it.name to it.value })
+            val repository = com.ai.assistance.operit.data.repository.ChatRecallRepository(
+                context, resolveCallerChatId(tool))
+            val args = tool.parameters.associate { it.name to it.value }
+            // The assistant's thinking is left out unless asked for: it is long, crowds out the reply
+            // within the per-message limit, and is not what anyone said.
+            val thinking = args["include_thinking"]?.trim()?.lowercase() == "true"
+            val json = repository.execute(args, filterAssistantThinking = true, includeThinking = thinking)
             ToolResult(toolName = tool.name, success = true, result = StringResultData(json.toString()))
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
-        } catch (e: Exception) {
+        } catch (e: java.time.format.DateTimeParseException) {
+            // Bad input says what to fix; a generic "retry" only repeats the same call.
             ToolResult(toolName = tool.name, success = false, result = StringResultData(""),
-                error = context.getString(R.string.chat_recall_error))
+                error = context.getString(R.string.chat_recall_bad_args, "cannot read time \"${e.parsedString}\""))
+        } catch (e: IllegalArgumentException) {
+            ToolResult(toolName = tool.name, success = false, result = StringResultData(""),
+                error = context.getString(R.string.chat_recall_bad_args, e.message ?: "invalid value"))
+        } catch (e: ArithmeticException) {
+            ToolResult(toolName = tool.name, success = false, result = StringResultData(""),
+                error = context.getString(R.string.chat_recall_bad_args, "relative time too large"))
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "Chat recall failed", e)
+            ToolResult(toolName = tool.name, success = false, result = StringResultData(""),
+                error = context.getString(R.string.chat_recall_failed, e.message ?: e.javaClass.simpleName))
         }
     }
 
@@ -733,7 +802,7 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
         val params = json.keys().asSequence().associateWith { json.get(it).toString() }
         val actions = com.ai.assistance.operit.api.chat.library.MemoryLearningActions(
             context,resolveActiveProfileId(tool),
-            ToolExecutionManager.currentToolRuntimeContext()?.callerChatId.orEmpty(),
+            resolveCallerChatId(tool).orEmpty(),
             notesEnabled=true,skillsEnabled=true,background=false)
         val result = actions.execute(args["action"].orEmpty(),params)
         ToolResult(toolName=tool.name,success=true,result=StringResultData(result.toString()))
@@ -750,18 +819,35 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
             val action = tool.parameters.find { it.name == "action" }?.value ?: "read"
             if (action != "read") {
                 val content = tool.parameters.find { it.name == "content" }?.value.orEmpty()
+                val section = tool.parameters.find { it.name == "section" }?.value.orEmpty().trim().lowercase()
+                // An Orbit's memory.md is sectioned; its unsorted part only ever shrinks.
+                if (repository.sectioned && action == "add" &&
+                    section !in com.ai.assistance.operit.data.preferences.MemoryNoteSections.WRITABLE) {
+                    throw MemoryNotesRepository.NotesException(MemoryNotesRepository.Failure.SECTION)
+                }
                 val proposal = repository.preview(action, content,
-                    tool.parameters.find { it.name == "old_text" }?.value.orEmpty())
+                    tool.parameters.find { it.name == "old_text" }?.value.orEmpty(), section)
                 val review = com.ai.assistance.operit.data.preferences.MemoryReviewRepository(context, profileId)
                 val change = review.applyAutomaticDecision(context,
                     review.proposeNotes(proposal.before, proposal.after, if (action == "add") content else "",
-                        ToolExecutionManager.currentToolRuntimeContext()?.callerChatId.orEmpty())
+                        resolveCallerChatId(tool).orEmpty(), section = if (action == "add") section else "")
                 )
+                // Same shape as manage's memory_change, plus the size so the model knows what changed.
                 return ToolResult(toolName = tool.name, success = true,
-                    result = StringResultData(org.json.JSONObject().put("change_id", change.id)
-                        .put("status", change.status).put("message", context.getString(
-                            if (change.status == "approved") R.string.memory_review_auto_applied
-                            else R.string.memory_review_staged)).toString()))
+                    result = StringResultData(review.toModelJson(change).put("change_id", change.id)
+                        .put("action", action).put("target", "memory.md")
+                        .apply { if (repository.sectioned && section.isNotEmpty()) put("section", section) }
+                        .put("chars_before", proposal.before.markdown.length).put("chars_after", proposal.after.length)
+                        .put("max_chars", MemoryNotesRepository.MAX_CHARS)
+                        .put("message", when {
+                            change.status == "approved" -> context.getString(R.string.memory_review_auto_applied)
+                            // Dropped, not waiting: saying "pending review" would make Orbit tell the user it is saved.
+                            change.status == "superseded" ->
+                                "Not saved: ${change.reason.ifBlank { "memory changed after this was proposed" }}. Nothing was written."
+                            change.status == "pending" && change.reason.isNotEmpty() ->
+                                "Not saved: the write failed (${change.reason}). Read memory.md again, then retry once."
+                            else -> context.getString(R.string.memory_review_staged)
+                        }).toString()))
             }
             val snapshot = repository.load()
             ToolResult(
@@ -775,12 +861,26 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
             throw e
         } catch (e: MemoryNotesRepository.NotesException) {
             ToolResult(toolName = tool.name, success = false, result = StringResultData(""),
-                error = context.getString(when (e.reason) {
+                error = if (e.reason == MemoryNotesRepository.Failure.SECTION)
+                    com.ai.assistance.operit.data.preferences.MemoryNoteSections.SECTION_HINT
+                else if (e.reason == MemoryNotesRepository.Failure.NOT_UNIQUE && repository.sectioned)
+                    com.ai.assistance.operit.api.chat.library.exactEditError(
+                        com.ai.assistance.operit.data.preferences.stripInvisibleCharacters(
+                            runCatching { repository.load().markdown }.getOrDefault("")),
+                        com.ai.assistance.operit.data.preferences.stripInvisibleCharacters(
+                            tool.parameters.find { it.name == "old_text" }?.value.orEmpty()),
+                        sectioned = true)
+                else context.getString(when (e.reason) {
                     MemoryNotesRepository.Failure.FULL -> R.string.memory_notes_full
                     MemoryNotesRepository.Failure.CONFLICT -> R.string.memory_notes_conflict
                     MemoryNotesRepository.Failure.NOT_UNIQUE -> R.string.memory_notes_not_unique
                     else -> R.string.memory_notes_invalid
                 }))
+        } catch (e: IllegalArgumentException) {
+            // A rule the change broke (for example something the user had Orbit forget): retrying
+            // later will not help, so the reason is given as it is.
+            ToolResult(toolName = tool.name, success = false, result = StringResultData(""),
+                error = e.message?.takeIf { it.isNotBlank() } ?: context.getString(R.string.memory_notes_invalid))
         } catch (e: Exception) {
             ToolResult(toolName = tool.name, success = false, result = StringResultData(""),
                 error = context.getString(R.string.memory_notes_io_error))
@@ -844,9 +944,9 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
                 "user.md exceeds the character limit"
             }
             val review = com.ai.assistance.operit.data.preferences.MemoryReviewRepository(context, resolveActiveProfileId(tool))
-            val before = UserProfileDocumentRepository.getInstance(context).load()
+            val before = UserProfileDocumentRepository.forMemorySpace(context, resolveActiveProfileId(tool)).load()
             val change = review.applyAutomaticDecision(context, review.proposeUser(before, markdown,
-                ToolExecutionManager.currentToolRuntimeContext()?.callerChatId.orEmpty()))
+                resolveCallerChatId(tool).orEmpty()))
             val message = "user.md change ${change.id}: ${change.status}"
             AppLogger.d(TAG, message)
             
@@ -895,7 +995,7 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
         }
 
         return try {
-            val repository = UserProfileDocumentRepository.getInstance(context)
+            val repository = UserProfileDocumentRepository.forMemorySpace(context, resolveActiveProfileId(tool))
             val change = withContext(Dispatchers.IO) {
                 val current = repository.load()
                 val importedSection =
@@ -908,7 +1008,7 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
                 val after = sections.copy(profile = sections.profile.trimEnd() + "\n\n" + importedSection).markdown()
                 val review = com.ai.assistance.operit.data.preferences.MemoryReviewRepository(context, resolveActiveProfileId(tool))
                 review.applyAutomaticDecision(context, review.proposeUser(current, after,
-                    ToolExecutionManager.currentToolRuntimeContext()?.callerChatId.orEmpty()))
+                    resolveCallerChatId(tool).orEmpty()))
             }
             ToolResult(
                 toolName = tool.name,
@@ -1204,7 +1304,8 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
     }
 
     private suspend fun executeUpdateMemoryLink(tool: AITool): ToolResult {
-        val memoryRepository = getMemoryRepository(resolveActiveProfileId(tool))
+        val space = resolveActiveProfileId(tool)
+        val memoryRepository = getMemoryRepository(space)
         val linkId = tool.parameters.find { it.name == "link_id" }?.value?.toLongOrNull()
         val sourceTitle = tool.parameters.find { it.name == "source_title" }?.value
         val targetTitle = tool.parameters.find { it.name == "target_title" }?.value
@@ -1279,12 +1380,13 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
                 )
             }
 
-            val updated = memoryRepository.updateLink(
+            val updated = com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.explicitEdit(context, space) {
+                memoryRepository.updateLink(
                 linkId = link.id,
                 type = newLinkType ?: link.type,
                 weight = (newWeight ?: link.weight).coerceIn(0.0f, 1.0f),
                 description = newDescription ?: link.description
-            )
+            ) }
 
             if (updated == null) {
                 return ToolResult(
@@ -1321,7 +1423,8 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
     }
 
     private suspend fun executeDeleteMemoryLink(tool: AITool): ToolResult {
-        val memoryRepository = getMemoryRepository(resolveActiveProfileId(tool))
+        val space = resolveActiveProfileId(tool)
+        val memoryRepository = getMemoryRepository(space)
         val linkId = tool.parameters.find { it.name == "link_id" }?.value?.toLongOrNull()
         val sourceTitle = tool.parameters.find { it.name == "source_title" }?.value
         val targetTitle = tool.parameters.find { it.name == "target_title" }?.value
@@ -1381,7 +1484,9 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
                 }
             }
 
-            val deleted = memoryRepository.deleteLink(resolvedLinkId)
+            val deleted = com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.explicitEdit(context, space) {
+                memoryRepository.deleteLink(resolvedLinkId)
+            }
             if (!deleted) {
                 return ToolResult(
                     toolName = tool.name,

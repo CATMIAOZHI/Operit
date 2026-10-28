@@ -58,6 +58,7 @@ import com.ai.assistance.operit.util.LocaleUtils
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.first
 import org.json.JSONObject
@@ -326,6 +327,8 @@ object ToolExecutionManager {
         val callerName: String? = null,
         val callerChatId: String? = null,
         val callerCardId: String? = null,
+        /** MCP server names; null when they could not be read, which keeps unloaded packages fail-closed. */
+        val mcpServerNames: Set<String>? = null,
     ) {
         val hasHostContext: Boolean
             get() =
@@ -342,7 +345,10 @@ object ToolExecutionManager {
          * receives internal conversation metadata. Rejecting per exact tool name (instead of per
          * prefix) keeps colliding JS/MCP prefixes from vetoing tools that genuinely belong to the
          * JavaScript package. Advice-only tools are never registered and therefore never
-         * injected. A not-yet-registered tool fails closed (no injection).
+         * injected. A package that is only loaded on its first call (the executor auto-activates
+         * it) counts too when no MCP server uses its name, so that first call already carries
+         * its chat; otherwise a not-yet-registered tool fails closed (no injection). The proxy
+         * executor strips the values again if the final executor is not a package executor.
          */
         fun isJsPackageTool(toolName: String): Boolean {
             val toolNameParts = toolName.split(':', limit = 2)
@@ -360,7 +366,9 @@ object ToolExecutionManager {
             if (!declaredExecutableTools.contains(targetToolName)) {
                 return false
             }
-            return toolHandler.getToolExecutor(toolName) is JsPackageToolExecutorMarker
+            val executor = toolHandler.getToolExecutor(toolName)
+            if (executor is JsPackageToolExecutorMarker) return true
+            return executor == null && mcpServerNames != null && packageName !in mcpServerNames
         }
     }
 
@@ -410,6 +418,7 @@ object ToolExecutionManager {
             callerName = callerName,
             callerChatId = callerChatId,
             callerCardId = callerCardId,
+            mcpServerNames = runCatching { packageManager.getAvailableServerPackages().keys.toSet() }.getOrNull(),
         )
     }
 
@@ -429,10 +438,24 @@ object ToolExecutionManager {
         if (value.isNullOrBlank()) {
             return
         }
-        if (params.any { it.name == name }) {
-            return
+        val existingIndex = params.indexOfFirst { it.name == name }
+        if (existingIndex >= 0) {
+            params[existingIndex] = ToolParameter(name, value)
+        } else {
+            params.add(ToolParameter(name, value))
         }
-        params.add(ToolParameter(name, value))
+    }
+
+    private fun stripReservedPackageContextParams(invocation: ToolInvocation): ToolInvocation {
+        val parameters = invocation.tool.parameters
+        if (parameters.none { it.name in reservedPackageContextParams }) {
+            return invocation
+        }
+        return invocation.copy(
+            tool = invocation.tool.copy(
+                parameters = parameters.filterNot { it.name in reservedPackageContextParams }
+            )
+        )
     }
 
     private fun injectPackageCallContext(
@@ -449,7 +472,7 @@ object ToolExecutionManager {
         addPackageContextParamIfMissing(updatedParams, PACKAGE_CHAT_ID_PARAM, hostContext.callerChatId)
         addPackageContextParamIfMissing(updatedParams, PACKAGE_CALLER_CARD_ID_PARAM, hostContext.callerCardId)
 
-        if (updatedParams.size == invocation.tool.parameters.size) {
+        if (updatedParams == invocation.tool.parameters) {
             return invocation
         }
 
@@ -594,17 +617,41 @@ object ToolExecutionManager {
         )
     }
 
-    private fun isEnglishLanguage(context: Context): Boolean {
-        return LocaleUtils.getCurrentLanguage(context).lowercase().startsWith("en")
+    /** The package a call loads or runs a tool from, or null for a built-in tool. */
+    private fun packageSourceOf(invocation: ToolInvocation): String? {
+        val toolName = invocation.tool.name.trim()
+        fun sourceOf(tool: AITool): String? {
+            val name = tool.name.trim()
+            return when {
+                name == "use_package" -> getParameterValue(tool, "package_name")
+                name.contains(':') -> name.substringBefore(':')
+                else -> null
+            }
+        }
+        val source = when (toolName) {
+            PACKAGE_PROXY_TOOL_NAME, CliToolModeSupport.PROXY_TOOL_NAME -> sourceOf(resolveToolTarget(invocation.tool).tool)
+            else -> sourceOf(invocation.tool)
+        }
+        return source?.trim()?.takeIf { it.isNotEmpty() }
     }
 
-    private fun buildToolExposureDeniedResult(
+    private fun isEnglishLanguage(context: Context): Boolean {
+        return LocaleUtils.usesEnglishPrompt(context)
+    }
+
+    private suspend fun buildToolExposureDeniedResult(
         context: Context,
         invocation: ToolInvocation,
-        toolExposureMode: ToolExposureMode
+        toolExposureMode: ToolExposureMode,
+        callerChatId: String?,
     ): ToolResult? {
         val toolName = invocation.tool.name.trim()
-        if (PermissionReviewInternalTools.bypassesPermissionCheck(toolName)) {
+        if (PermissionReviewInternalTools.bypassesPermissionCheck(toolName) ||
+            com.ai.assistance.operit.features.orbit.OrbitTaskExecution.isTaskCapability(toolName)) {
+            return null
+        }
+        if (toolName in com.ai.assistance.operit.core.agent.collaboration.CollaborationTools.names &&
+            com.ai.assistance.operit.features.orbit.OrbitTaskExecution.resolve(context, callerChatId) != null) {
             return null
         }
         val useEnglish = isEnglishLanguage(context)
@@ -734,7 +781,9 @@ object ToolExecutionManager {
             }
         }
 
-        return executor.invokeAndStream(invocation.tool).catch { e ->
+        // Built lazily: an executor's default invokeAndStream runs the tool while building the flow,
+        // so an error it throws would otherwise escape this catch and crash the chat.
+        return flow { emitAll(executor.invokeAndStream(invocation.tool)) }.catch { e ->
             AppLogger.e(TAG, "Tool execution error: ${invocation.tool.name}", e)
             toolHandler?.notifyToolExecutionError(invocation.tool, e)
             emit(
@@ -897,7 +946,10 @@ object ToolExecutionManager {
                         tool = bindProxyContextParameters(repaired.tool, hostContext)
                     )
                 } else {
-                    repaired
+                    // Direct `package:tool` calls must never carry model-supplied host context:
+                    // package code trusts these names, so strip them before review and let
+                    // injectPackageCallContext add the real host values afterwards.
+                    stripReservedPackageContextParams(repaired)
                 }
             }
         // Exact-repeat detection must fingerprint the model's raw call, never the bound copy:
@@ -1047,7 +1099,7 @@ object ToolExecutionManager {
                                 invocation.tool.name == CliToolModeSupport.PROXY_TOOL_NAME
                             )
                 val effectivePermission =
-                    permissionSystem.getEffectivePermissionLevel(resolvedTool.name)
+                    permissionSystem.getEffectivePermissionLevel(resolvedTool.name, callerChatId)
                 if (!isCliPublicTool && effectivePermission == PermissionLevel.FORBID) {
                     // The normal permission path will reject this call without offering an override.
                     continue
@@ -1074,7 +1126,7 @@ object ToolExecutionManager {
                     resolveApprovalDecisionWithPermanentOverride(
                         approvalGranted = approvedByPrompt,
                         latestEffectiveLevel =
-                            permissionSystem.getEffectivePermissionLevel(resolvedTool.name),
+                            permissionSystem.getEffectivePermissionLevel(resolvedTool.name, callerChatId),
                     )
                 if (!approved) {
                     throw SubagentLoopRejectedException(
@@ -1089,12 +1141,22 @@ object ToolExecutionManager {
         }
 
         val roleCardToolAccess = if (callerCardId.isNullOrBlank()) {
-            null
+            // No role card: only the chat's package list applies (an Orbit has its own). A batch of
+            // built-in tools touches no package, so it skips the lookup.
+            if (boundInvocations.none { packageSourceOf(it) != null }) {
+                null
+            } else {
+                runCatching {
+                    CharacterCardToolAccessResolver.getInstance(context).resolvePackageScope(packageManager, callerChatId)
+                }.onFailure { error ->
+                    AppLogger.e(TAG, "包范围解析失败: callerChatId=$callerChatId", error)
+                }.getOrNull()
+            }
         } else {
             runCatching {
                 CharacterCardToolAccessResolver
                     .getInstance(context)
-                    .resolve(callerCardId, packageManager)
+                    .resolve(callerCardId, packageManager, chatId = callerChatId)
             }.onFailure { error ->
                 AppLogger.e(TAG, "角色卡工具权限解析失败: callerCardId=$callerCardId", error)
             }.getOrNull()
@@ -1136,7 +1198,7 @@ object ToolExecutionManager {
                         error = "Subagents cannot invoke tools that start nested AI turns.",
                     )
                 } else {
-                    buildToolExposureDeniedResult(context, invocation, toolExposureMode)
+                    buildToolExposureDeniedResult(context, invocation, toolExposureMode, callerChatId)
                 }
             if (deniedResult == null) {
                 toolExposurePermittedInvocations.add(invocation)
@@ -1161,7 +1223,25 @@ object ToolExecutionManager {
         val roleCardPermittedInvocations = mutableListOf<ToolInvocation>()
         val roleCardDeniedResults = mutableListOf<ToolResult>()
         for (invocation in toolExposurePermittedInvocations) {
-            val deniedResult = if (roleCardToolAccess?.customEnabled == true &&
+            // A package switched off for this chat (an Orbit has its own list) is refused for any
+            // role card; the rest of the role card rules apply only to custom role cards.
+            val packageOff = roleCardToolAccess?.let { access ->
+                packageSourceOf(invocation)?.takeIf { !access.isPackageInScope(it) }
+            }
+            val deniedResult = if (packageOff != null) {
+                ToolResult(
+                    toolName = resolveDisplayToolName(invocation.tool),
+                    success = false,
+                    result = StringResultData(""),
+                    error = if (roleCardToolAccess?.knownMcpNames?.contains(packageOff) == true) {
+                        com.ai.assistance.operit.features.orbit.OrbitMcp.explain(packageOff,
+                            com.ai.assistance.operit.features.orbit.OrbitMcp.Status(
+                                com.ai.assistance.operit.features.orbit.OrbitMcp.State.OFF_IN_ORBIT))
+                    } else {
+                        context.getString(R.string.tool_package_off_in_chat, packageOff)
+                    }
+                )
+            } else if (roleCardToolAccess?.customEnabled == true &&
                 !isInvocationAllowedForRoleCard(invocation, roleCardToolAccess)
             ) {
                 buildRoleCardDeniedResult(context, invocation)
@@ -1271,7 +1351,7 @@ object ToolExecutionManager {
         val permissionSystem = toolHandler.getToolPermissionSystem()
         val candidateLevels =
             permissionCandidates.map { (_, _, interceptionTool) ->
-                permissionSystem.getEffectivePermissionLevel(interceptionTool.name)
+                permissionSystem.getEffectivePermissionLevel(interceptionTool.name, callerChatId)
             }
         val reviewsInOrder = batchNeedsReviewOrder(candidateLevels)
 
@@ -1386,7 +1466,10 @@ object ToolExecutionManager {
         // completed before execution, so previously approved siblings have not started yet and can
         // still be cancelled atomically instead of partially executing a suspicious model turn.
         if (shouldInterruptPendingToolBatch(permissionDeniedResults)) {
-            toolHandler.getToolPermissionSystem().showAutomaticReviewCircuitBreakerWarning()
+            // An unattended turn has nobody to show the warning to; the model still gets the reason.
+            if (!com.ai.assistance.operit.ui.permissions.UnattendedChats.contains(callerChatId)) {
+                toolHandler.getToolPermissionSystem().showAutomaticReviewCircuitBreakerWarning()
+            }
             val interruptedApprovedResults =
                 permittedInvocations.map { invocation ->
                     val interrupted =
@@ -1459,6 +1542,7 @@ object ToolExecutionManager {
             deferredResultSink: java.util.concurrent.ConcurrentMap<ToolInvocation, ToolResult>? = null,
         ): ToolResult =
             executeAndEmitTool(
+                context = context,
                 invocation = invocation,
                 toolHandler = toolHandler,
                 packageManager = packageManager,
@@ -1715,6 +1799,7 @@ object ToolExecutionManager {
      * 封装单个工具的执行、实时输出和结果聚合的辅助函数
      */
     private suspend fun executeAndEmitTool(
+        context: Context,
         invocation: ToolInvocation,
         toolHandler: AIToolHandler,
         packageManager: PackageManager,
@@ -1731,6 +1816,12 @@ object ToolExecutionManager {
             var startedAtElapsedMs: Long? = null
             val collectedResults = BoundedToolResultAccumulator()
             var diagnosticError: String? = null
+            // Keys the user let into an Orbit's terminal are masked wherever a command's output goes:
+            // the result Orbit reads, a cancelled run's partial output, and the error log.
+            var envKeys: List<String> = emptyList()
+            fun masked(text: String?): String? =
+                if (text == null || envKeys.isEmpty()) text
+                else com.ai.assistance.operit.features.orbit.OrbitVault.redact(text, envKeys)
             // Parallel group members run with a deferred result sink and publish later from the
             // single driver coroutine so the shared collector, round manager and hook
             // notifications stay strictly ordered. The sink also captures cancellation/failure
@@ -1744,6 +1835,12 @@ object ToolExecutionManager {
                 emitFinalResult(collector, result)
             }
             try {
+                com.ai.assistance.operit.features.orbit.OrbitTaskExecution.checkBeforeTool(
+                    context, runtimeContext.callerChatId)
+                envKeys = try {
+                    com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context, runtimeContext.callerChatId)
+                        ?.let { com.ai.assistance.operit.features.orbit.OrbitVault.envKeys(context, it.id) }.orEmpty()
+                } catch (e: CancellationException) { throw e } catch (e: Exception) { emptyList() }
                 val executor = toolHandler.getToolExecutorOrActivate(toolName)
                 if (executor == null) {
                     // 如果仍然为 null，则构建错误消息
@@ -1836,7 +1933,7 @@ object ToolExecutionManager {
                 }
 
                 val lastResultSuccess = requireNotNull(collectedResults.lastResultSuccess)
-                val combinedResultString = collectedResults.combinedResultText()
+                val combinedResultString = masked(collectedResults.combinedResultText()).orEmpty()
 
                 val durationMs =
                     (SystemClock.elapsedRealtime() - executionStartedAtMs).coerceAtLeast(0L)
@@ -1845,7 +1942,7 @@ object ToolExecutionManager {
                         toolName = displayToolName,
                         success = lastResultSuccess,
                         result = StringResultData(combinedResultString),
-                        error = collectedResults.lastResultError,
+                        error = masked(collectedResults.lastResultError),
                         interruptTurn = collectedResults.anyInterruptTurn,
                     ).withExecutionMetadata(
                         invocation = invocation,
@@ -1859,7 +1956,7 @@ object ToolExecutionManager {
                     durationMs = durationMs,
                     state = ToolExecutionState.COMPLETED,
                 )
-                recordDiagnostic(invocation, finalResult.copy(error = diagnosticError))
+                recordDiagnostic(invocation, finalResult.copy(error = masked(diagnosticError)))
                 publishResult(finalResult)
                 return@withContext finalResult
             } catch (cancellation: CancellationException) {
@@ -1872,7 +1969,7 @@ object ToolExecutionManager {
                             displayToolName = displayToolName,
                             invocation = invocation,
                             durationMs = durationMs,
-                            partialResultText = collectedResults.combinedResultText(),
+                            partialResultText = masked(collectedResults.combinedResultText()).orEmpty(),
                         )
                     withContext(NonCancellable) {
                         ToolExecutionTimingRepository.markFinished(

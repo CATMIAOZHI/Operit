@@ -517,6 +517,14 @@ interface SkipLoadingCallback {
  * 用于管理插件加载过程中的各种状态
  */
 class PluginLoadingState {
+    companion object {
+        /**
+         * The one loading state of this process. The main screen shows it; Orbit uses it to start
+         * MCP when no screen is open, so both share one start at a time.
+         */
+        val process: PluginLoadingState by lazy { PluginLoadingState() }
+    }
+
     private data class McpStartupResult(
         val successCount: Int,
         val totalCount: Int,
@@ -842,6 +850,9 @@ class PluginLoadingState {
 
     internal fun reserveInitialization(): PluginInitializationGuard.Lease? =
         initializationGuard.tryStart()
+
+    /** True while a start (app startup or an MCP restart) is running. */
+    internal fun isInitializing(): Boolean = initializationGuard.isBusy()
 
     internal fun snapshot(): PluginLoadingSnapshot = synchronized(pluginStateLock) {
         PluginLoadingSnapshot(
@@ -1251,6 +1262,8 @@ internal class PluginInitializationGuard {
     }
 
     fun isActive(lease: Lease): Boolean = synchronized(this) { activeLease === lease }
+
+    fun isBusy(): Boolean = synchronized(this) { activeLease != null }
 
     fun <T> withActive(lease: Lease, block: () -> T): T? = synchronized(this) {
         if (activeLease !== lease) return@synchronized null

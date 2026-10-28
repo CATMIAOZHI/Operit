@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="orbit_decision_chat_failed">%1$s was woken, but its reply failed (most likely a model problem)</string>
+    <string name="orbit_reminder_fallback">Reminder: %1$s\n(%2$s couldn\'t reply this time; the model may have failed.)</string>
+    <string name="orbit_run_model_failed_skipped">This run didn\'t go through: %1$s It will try again at the next scheduled time.</string>
+    <string name="orbit_run_model_failed_paused">This run didn\'t go through and the task is paused: %1$s Once it\'s fixed, resume it from the task.</string>
+    <string name="orbit_page_card_weixin_title">Connect WeChat</string>
+    <string name="orbit_page_card_weixin_sub">Scan a code, then you can reach me in WeChat</string>
+    <string name="orbit_page_card_weixin_open">Connect</string>
+    <string name="orbit_page_card_roles_title">Role cards</string>
+    <string name="orbit_page_card_roles_sub">Import or manage role cards, then go back to return here</string>
+    <string name="orbit_page_card_roles_open">Open role cards</string>
+    <string name="orbit_page_card_models_title">Model settings</string>
+    <string name="orbit_page_card_models_sub">Change API keys, endpoints and models here; keys never enter the chat</string>
+    <string name="orbit_page_card_models_open">Open model settings</string>
+    <string name="orbit_page_card_access_title">Full access</string>
+    <string name="orbit_page_card_access_sub">You decide whether Orbit may use tools without asking each time</string>
+    <string name="orbit_page_card_access_open">Open full access</string>
+    <string name="orbit_page_card_tools_title">Tool permissions</string>
+    <string name="orbit_page_card_tools_sub">You decide whether each tool asks first, runs, or is blocked</string>
+    <string name="orbit_page_card_tools_open">Open tool permissions</string>
+    <string name="orbit_page_card_orbit_models_title">Models</string>
+    <string name="orbit_page_card_orbit_models_sub">Pick the models Orbit uses for chat, background work and pictures</string>
+    <string name="orbit_page_card_orbit_models_open">Open models</string>
+    <string name="orbit_page_card_notify_title">Notifications</string>
+    <string name="orbit_page_card_notify_sub">Notification switch, quiet hours at night, how often reports come</string>
+    <string name="orbit_page_card_notify_open">Open notification settings</string>
+    <string name="orbit_login_card_relogin_sub">The sign-in seems to have stopped working; sign in again</string>
+    <string name="orbit_login_card_relogin">Sign in again</string>
+</resources>

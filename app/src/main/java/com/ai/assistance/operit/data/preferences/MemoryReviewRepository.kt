@@ -75,22 +75,61 @@ data class MemoryReviewChange(
     val path: String = "SKILL.md",
     val operation: String = "write",
     val automatic: Boolean = false,
-    val files: Map<String, String> = emptyMap()
+    val files: Map<String, String> = emptyMap(),
+    val origin: String = "legacy",
+    val learningGeneration: Long = 0,
+    val evidence: String = "",
+    val restoredFrom: String = "",
+    /**
+     * A new skill written by the background review: applied automatically it is installed archived
+     * and stays off until the independent scorer passes it. A user's approval switches it on directly.
+     */
+    val holdForScore: Boolean = false,
+    /** Key of the conversation excerpt the scorer reads for this change (one per change, never per name). */
+    val scoreEvidence: String = ""
 )
+
+internal fun skillFileRestoreTarget(change: MemoryReviewChange, beforeChange: Boolean): Pair<String, Boolean> {
+    require(change.kind == "skill_file" && change.status == "approved") { "Only approved file versions can be restored" }
+    val remove = if (beforeChange) change.baseVersion == LearnedSkillRepository.version("absent")
+        else change.operation == "remove"
+    return (if (beforeChange) change.before else change.body) to remove
+}
 
 class MemoryReviewRepository internal constructor(
     private val root: File, val profileId: String,
     private val autoApprovalEnabled: () -> Boolean = { false },
-    private val staged: MutableList<MemoryReviewChange>? = null
+    private val staged: MutableList<MemoryReviewChange>? = null,
+    private val boundary: suspend () -> com.ai.assistance.operit.features.orbit.OrbitLearningBoundary? = { null },
+    private val learningGeneration: Long? = null,
+    private val evidence: String = "",
+    /** Set for an Orbit, whose record lives in its own memory folder: where older versions kept it. */
+    private val legacyRoot: File? = null,
+    /** True when a text holds something the user had this Orbit forget; such changes are refused. */
+    private val forgotten: suspend (String) -> Boolean = { false },
 ) {
-    constructor(context: Context, profileId: String, staged: MutableList<MemoryReviewChange>? = null) :
-        this(File(context.filesDir, "memory_reviews"), profileId,
-        { MemorySearchSettingsPreferences(context, profileId).shouldAutoApproveChanges() }, staged)
+    constructor(context: Context, profileId: String, staged: MutableList<MemoryReviewChange>? = null,
+        learningGeneration: Long? = null, evidence: String = "") :
+        this(MemorySearchSettingsPreferences.orbitMemoryDir(context.filesDir, profileId)
+            ?: File(context.filesDir, "memory_reviews"), profileId,
+        { MemorySearchSettingsPreferences(context, profileId).shouldAutoApproveChanges() }, staged,
+        { com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.forSpace(context, profileId) },
+        learningGeneration, evidence,
+        File(context.filesDir, "memory_reviews").takeIf { MemorySearchSettingsPreferences.isOrbitSpace(profileId) },
+        { text ->
+            MemorySearchSettingsPreferences.isOrbitSpace(profileId) &&
+                com.ai.assistance.operit.features.orbit.OrbitForget.orbitForSpace(context, profileId)
+                    ?.let { com.ai.assistance.operit.features.orbit.OrbitForget.containsForgotten(context, it, text) } == true
+        })
     companion object {
         private val locks = ConcurrentHashMap<String, Mutex>()
         private val skillInstallMutex = Mutex()
         /** How many undecided proposals may wait for review. */
         internal const val PENDING_LIMIT = 30
+        /** A sectioned memory.md add stores its section as `add:<section>` in [MemoryReviewChange.operation]. */
+        internal const val NOTES_ADD_PREFIX = "add:"
+        /** One of an Orbit's own note files (a person, a circle, the lessons book); the title is its path. */
+        const val ORBIT_FILE = "orbit_file"
         private fun hash(value: String) = MessageDigest.getInstance("SHA-256")
             .digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
         /** A skill's directory entry and its files are one target, so a batch cannot stage both. */
@@ -111,9 +150,11 @@ class MemoryReviewRepository internal constructor(
             return unfinished + finished.take(HISTORY_LIMIT)
         }
     }
-    private val file = File(root, "${hash(profileId)}.json")
+    private val legacyFile = File(legacyRoot ?: root, "${hash(profileId)}.json")
+    private val file = if (legacyRoot != null) File(root, "changes.json") else legacyFile
     private val mutex = locks.computeIfAbsent(file.absolutePath) { Mutex() }
     private fun read(): List<MemoryReviewChange> {
+        MemorySearchSettingsPreferences.moveLegacyFile(legacyFile, file)
         if (!file.exists()) return emptyList()
         val array = JSONArray(file.readText())
         return (0 until array.length()).map { i ->
@@ -124,7 +165,9 @@ class MemoryReviewRepository internal constructor(
                 obj.getLong("createdAt"), obj.getString("status"), obj.optLong("reviewedAt"),
                 obj.optString("reviewer"), obj.optString("reason"), obj.optString("audits"),
                 obj.optString("path","SKILL.md"),obj.optString("operation","write"),obj.optBoolean("automatic"),
-                readFiles(obj))
+                readFiles(obj), obj.optString("origin", "legacy"), obj.optLong("learningGeneration"),
+                obj.optString("evidence"), obj.optString("restoredFrom"),
+                holdForScore = obj.optBoolean("holdForScore"), scoreEvidence = obj.optString("scoreEvidence"))
         }
     }
     private fun write(items: List<MemoryReviewChange>) {
@@ -140,13 +183,29 @@ class MemoryReviewRepository internal constructor(
         } finally { temp.delete() }
         syncDirectory(file.parentFile!!)
     }
+    /** Call under the review mutex. Obsolete proposals must not occupy the pending quota. */
+    private suspend fun readCurrent(): List<MemoryReviewChange> {
+        val items = read()
+        val guard = boundary() ?: return items
+        val refreshed = items.map {
+            if (it.status in setOf("pending", "applying") && !guard.accepts(it.learningGeneration,
+                    if (it.origin == "foreground") it.id else ""))
+                it.copy(status = "superseded", reviewedAt = System.currentTimeMillis(),
+                    reason = "Memory was corrected after this proposal was created") else it
+        }
+        if (refreshed != items) write(refreshed)
+        return refreshed
+    }
     fun toJson(d: MemoryReviewChange): JSONObject = JSONObject().put("id", d.id).put("kind", d.kind)
         .put("title", d.title).put("body", d.body).put("description", d.description).put("before", d.before)
         .put("baseVersion", d.baseVersion).put("addition", d.addition).put("sourceChatId", d.sourceChatId)
         .put("createdAt", d.createdAt).put("status", d.status).put("reviewedAt", d.reviewedAt)
         .put("reviewer", d.reviewer).put("reason", d.reason).put("audits", d.audits)
         .put("path",d.path).put("operation",d.operation).put("automatic",d.automatic)
-        .put("files", JSONObject(d.files))
+        .put("files", JSONObject(d.files)).put("origin", d.origin)
+        .put("learningGeneration", d.learningGeneration).put("evidence", d.evidence).put("restoredFrom", d.restoredFrom)
+        .put("holdForScore", d.holdForScore)
+        .put("scoreEvidence", d.scoreEvidence)
 
     /**
      * What a learning run is told about its own proposal. The full before/after snapshots stay on
@@ -166,7 +225,39 @@ class MemoryReviewRepository internal constructor(
         }.orEmpty()
 
     suspend fun list(): List<MemoryReviewChange> = withContext(Dispatchers.IO) {
-        mutex.withLock { read().sortedByDescending { maxOf(it.createdAt, it.reviewedAt) } }
+        mutex.withLock { readCurrent().sortedByDescending { maxOf(it.createdAt, it.reviewedAt) } }
+    }
+
+    private fun texts(d: MemoryReviewChange) = listOf(d.title, d.body, d.description, d.before, d.addition,
+        d.reason, d.audits, d.evidence) + d.files.values
+
+    /** Forget flow, read only: the records whose stored text contains a line [matches] finds. */
+    internal suspend fun idsMatching(matches: (String) -> Boolean): List<String> = withContext(Dispatchers.IO) {
+        mutex.withLock { read().filter { d -> texts(d).any { t -> t.lines().any(matches) } }.map { it.id } }
+    }
+
+    /**
+     * Forget flow: strips every line [matches] finds from the stored snapshots, and stops undecided
+     * proposals that carry it so they cannot write it back. Returns the ids changed.
+     */
+    internal suspend fun forgetLines(matches: (String) -> Boolean): List<String> = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            fun clean(text: String) = if (text.lines().none(matches)) text else text.lines().filterNot(matches).joinToString("\n")
+            val changed = mutableListOf<String>()
+            val next = read().map { d ->
+                if (texts(d).none { t -> t.lines().any(matches) }) return@map d
+                changed += d.id
+                val undecided = d.status in setOf("pending", "applying")
+                d.copy(title = clean(d.title).ifBlank { "-" }, body = clean(d.body), description = clean(d.description),
+                    before = clean(d.before), addition = clean(d.addition), reason = if (undecided)
+                        "Removed because the user asked Orbit to forget it" else clean(d.reason),
+                    audits = clean(d.audits), evidence = clean(d.evidence), files = d.files.mapValues { clean(it.value) },
+                    status = if (undecided) "superseded" else d.status,
+                    reviewedAt = if (undecided) System.currentTimeMillis() else d.reviewedAt)
+            }
+            if (changed.isNotEmpty()) write(next)
+            changed
+        }
     }
     /** Only AI proposal call sites use this; manual edits and old pending items are not swept. */
     suspend fun applyAutomaticDecision(context: Context, change: MemoryReviewChange): MemoryReviewChange {
@@ -174,7 +265,22 @@ class MemoryReviewRepository internal constructor(
         if (!MemorySearchSettingsPreferences(context, profileId).shouldAutoApproveChanges()) return change
         return decide(context, change.id, true, "automatic", "Auto-approval enabled for this memory space")
     }
-    suspend fun propose(change: MemoryReviewChange, onCreated: () -> Unit = {}): MemoryReviewChange = withContext(Dispatchers.IO) {
+
+    /** What a change would add (its addition, or the new text's lines that were not there) touches the forgotten list. */
+    private suspend fun mentionsForgotten(change: MemoryReviewChange): Boolean {
+        val added = change.addition.ifBlank {
+            val old = change.before.lines().toSet()
+            (change.body.lines().filterNot { it in old } + change.files.values).joinToString("\n")
+        }
+        return forgotten(added) || forgotten(change.title) || forgotten(change.description)
+    }
+    suspend fun propose(candidate: MemoryReviewChange, onCreated: () -> Unit = {}): MemoryReviewChange = withContext(Dispatchers.IO) {
+        require(!mentionsForgotten(candidate)) {
+            "This change contains information the user asked Orbit to forget; leave that information out"
+        }
+        val change = candidate.copy(origin = if (learningGeneration != null) "learning" else "foreground",
+            learningGeneration = learningGeneration ?: boundary()?.snapshot()?.generation ?: 0,
+            evidence = evidence)
         staged?.let { pending ->
             if (change.kind == "skill_delete") {
                 // Delete supersedes earlier edits of every file in the directory. Applying those
@@ -188,7 +294,7 @@ class MemoryReviewRepository internal constructor(
                 // The export stage checks the store's undecided total, so this must count the same
                 // rows: a batch that fills its own slots on top of an existing backlog would be
                 // rejected only after the model had already done all of its work.
-                val undecided = read().count { it.status in setOf("pending", "applying") }
+                val undecided = mutex.withLock { readCurrent().count { it.status in setOf("pending", "applying") } }
                 require(undecided + pending.size < PENDING_LIMIT || autoApprovalEnabled()) {
                     "Pending review limit reached; the user must review the existing proposals before more can be added"
                 }
@@ -203,6 +309,14 @@ class MemoryReviewRepository internal constructor(
                 else "This batch already staged a ${previous.kind} change for ${change.title}; resubmit it as " +
                     "${previous.kind} instead of ${change.kind}."
             }
+            // A lessons append carries only its lines, so a later one on the same page joins them; it
+            // is still applied as one append, never as a rewrite of the whole book.
+            if (change.kind == ORBIT_FILE && change.addition.isNotEmpty() && previous.addition.isNotEmpty()) {
+                val joined = previous.addition.trimEnd() + "\n" + change.addition.trim()
+                return@withContext change.copy(id = previous.id, before = previous.before, body = joined,
+                    baseVersion = previous.baseVersion, addition = joined, createdAt = previous.createdAt)
+                    .also { pending[index] = it }
+            }
             // The replacement carries the whole target text, so an accumulated notes addition must not
             // be appended on top of it.
             return@withContext change.copy(id = previous.id, before = previous.before,
@@ -210,7 +324,7 @@ class MemoryReviewRepository internal constructor(
                 .also { pending[index] = it }
         }
         mutex.withLock {
-            val items = read().toMutableList()
+            val items = readCurrent().toMutableList()
             // A row stored before the write points stripped invisible characters can describe the same
             // edit with a different body, so both sides are normalized before they are compared;
             // otherwise the same change is staged twice instead of matching its own earlier proposal.
@@ -222,7 +336,9 @@ class MemoryReviewRepository internal constructor(
                 it.description == change.description && it.baseVersion == change.baseVersion &&
                 stripInvisibleCharacters(it.addition) == addition &&
                 it.path==change.path && it.operation==change.operation &&
-                it.automatic==change.automatic && it.files==change.files }?.let { return@withLock it }
+                it.automatic==change.automatic && it.files==change.files &&
+                it.origin==change.origin && it.learningGeneration==change.learningGeneration &&
+                it.restoredFrom==change.restoredFrom }?.let { return@withLock it }
             // Old pending items must not block newly enabled automatic saving.
             require(items.count { it.status in setOf("pending", "applying") } < PENDING_LIMIT || autoApprovalEnabled()) {
                 "Pending review limit reached"
@@ -238,10 +354,16 @@ class MemoryReviewRepository internal constructor(
     /** Replay of an atomically completed learning batch preserves IDs, including decided items. */
     internal suspend fun importCompletedBatch(changes: List<MemoryReviewChange>) = withContext(Dispatchers.IO) {
         mutex.withLock {
-            val items = read().toMutableList()
+            val items = readCurrent().toMutableList()
             val ids = items.mapTo(mutableSetOf()) { it.id }
-            val additions = changes.filter { ids.add(it.id) }
-            require(items.count { it.status in setOf("pending","applying") } + additions.size <= PENDING_LIMIT ||
+            val generation = boundary()?.snapshot()?.generation ?: 0
+            val additions = changes.filter { ids.add(it.id) }.map {
+                if (it.learningGeneration != generation) it.copy(status = "superseded",
+                    reviewedAt = System.currentTimeMillis(),
+                    reason = "Memory was corrected after this evidence was read") else it
+            }
+            require(items.count { it.status in setOf("pending","applying") } +
+                additions.count { it.status in setOf("pending","applying") } <= PENDING_LIMIT ||
                 autoApprovalEnabled()) { "Pending review limit reached; review existing proposals before continuing" }
             items.addAll(additions)
             write(items)
@@ -254,7 +376,10 @@ class MemoryReviewRepository internal constructor(
         baseVersion=obj.optString("baseVersion"), addition=obj.optString("addition"),
         sourceChatId=obj.optString("sourceChatId"), createdAt=obj.getLong("createdAt"),
         path=obj.optString("path","SKILL.md"), operation=obj.optString("operation","write"),
-        automatic=obj.optBoolean("automatic"), files=readFiles(obj)
+        automatic=obj.optBoolean("automatic"), files=readFiles(obj),
+        origin=obj.optString("origin","legacy"), learningGeneration=obj.optLong("learningGeneration"),
+        evidence=obj.optString("evidence"), restoredFrom=obj.optString("restoredFrom"),
+        holdForScore=obj.optBoolean("holdForScore"), scoreEvidence=obj.optString("scoreEvidence")
     )
 
     suspend fun proposeSkill(draft: SkillDraft, onCreated: () -> Unit = {},
@@ -270,6 +395,17 @@ class MemoryReviewRepository internal constructor(
             id = "",kind="skill_file",title=name,body=body,before=before.text,baseVersion=before.version,
             path=path,operation=if(remove) "remove" else "write",automatic=automatic,sourceChatId=sourceChatId
         ),onCreated)
+
+    /** Restore a reviewed file through a new proposal; never replay an old target version blindly. */
+    suspend fun proposeSkillFileRestore(context: Context, id: String, beforeChange: Boolean): MemoryReviewChange {
+        val change = list().single { it.id == id }
+        val target = skillFileRestoreTarget(change, beforeChange)
+        val current = LearnedSkillRepository(context, profileId).read(change.title, change.path)
+        return propose(MemoryReviewChange(id = "", kind = "skill_file", title = change.title,
+            path = change.path, body = target.first, before = current.text, baseVersion = current.version,
+            operation = if (target.second) "remove" else "write",
+            restoredFrom = "$id:${if (beforeChange) "before" else "after"}"))
+    }
 
     suspend fun proposeUser(before: String, after: String, sourceChatId: String = "",
         onCreated: () -> Unit = {}): MemoryReviewChange {
@@ -288,7 +424,7 @@ class MemoryReviewRepository internal constructor(
 
     suspend fun proposeNotes(
         before: MemoryNotesRepository.Snapshot, after: String, addition: String = "", sourceChatId: String = "",
-        onCreated: () -> Unit = {}
+        onCreated: () -> Unit = {}, section: String = ""
     ): MemoryReviewChange {
         // Same reason as user.md: the proposal holds the text that will actually be stored, so an
         // interrupted apply can be retried and is recognised as already done.
@@ -296,8 +432,22 @@ class MemoryReviewRepository internal constructor(
         val added = stripInvisibleCharacters(addition)
         return propose(MemoryReviewChange(
             id = hash("notes:${before.version}:$text"), kind = "notes", title = "memory.md", body = text,
-            before = before.markdown, baseVersion = before.version, addition = added, sourceChatId = sourceChatId
+            before = before.markdown, baseVersion = before.version, addition = added, sourceChatId = sourceChatId,
+            operation = if (added.isNotEmpty() && section.isNotBlank()) NOTES_ADD_PREFIX + section else "write"
         ), onCreated)
+    }
+
+    /**
+     * A change to one of an Orbit's note files. [addition] is one line appended on apply (the
+     * lessons book), which survives a concurrent edit; otherwise [after] replaces [before] only if
+     * the file still reads [before].
+     */
+    suspend fun proposeOrbitFile(path: String, before: String, after: String, addition: String = "",
+        sourceChatId: String = "", onCreated: () -> Unit = {}): MemoryReviewChange {
+        val text = stripInvisibleCharacters(after)
+        return propose(MemoryReviewChange(id = "", kind = ORBIT_FILE, title = path, body = text, before = before,
+            baseVersion = LearnedSkillRepository.version(before), addition = stripInvisibleCharacters(addition),
+            sourceChatId = sourceChatId), onCreated)
     }
 
     suspend fun audit(id: String, note: String, reviewer: String): MemoryReviewChange = withContext(Dispatchers.IO) {
@@ -334,14 +484,31 @@ class MemoryReviewRepository internal constructor(
                 JSONObject().put("name", previous.title).put("description", description).put("body", body)
             ), previous.sourceChatId).isNotEmpty())
             if (previous.body == body && previous.description == description) return@withLock previous
+            // A lessons append holds only its lines; an edit of it stays an append of the edited lines.
+            val append = previous.kind == ORBIT_FILE && previous.addition.isNotEmpty()
+            if (append) require(body.isNotBlank()) { "A lesson cannot be empty; reject it instead" }
             val revised = previous.copy(id = java.util.UUID.randomUUID().toString(),
-                body = body, description = description, addition = "", audits = "",
-                createdAt = System.currentTimeMillis(), reason = "")
+                body = body, description = description,
+                addition = if (append) stripInvisibleCharacters(body).trim() else "", audits = "",
+                createdAt = System.currentTimeMillis(), reason = "", origin = "foreground",
+                learningGeneration = boundary()?.snapshot()?.generation ?: 0)
             items[index] = previous.copy(status = "superseded", reviewer = "user",
                 reviewedAt = System.currentTimeMillis(), reason = "Edited in memory library")
             items.add(revised)
             write(items)
             revised
+        }
+    }
+
+    /** Settles an undecided change without applying it, saying why; a decided one is left as it is. */
+    internal suspend fun holdBack(id: String, reason: String) = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val items = read().toMutableList()
+            val index = items.indexOfFirst { it.id == id }
+            if (index < 0 || items[index].status != "pending") return@withLock
+            items[index] = items[index].copy(status = "superseded", reviewer = "automatic",
+                reviewedAt = System.currentTimeMillis(), reason = reason.take(2000))
+            write(items)
         }
     }
 
@@ -355,6 +522,29 @@ class MemoryReviewRepository internal constructor(
             val index = items.indexOfFirst { it.id == id }
             require(index >= 0) { "Change not found" }
             val change = items[index]
+            check(!approve || change.restoredFrom.isBlank() || reviewer == "user") {
+                "A restored file version requires the user's approval"
+            }
+            if (change.status == "superseded") return@withLock change
+            // The user may have had Orbit forget something after this was proposed (a staged batch,
+            // an import replay): it is checked again right before it would be written.
+            if (approve && change.status in setOf("pending", "applying") && mentionsForgotten(change)) {
+                val dropped = change.copy(status = "superseded", reviewedAt = System.currentTimeMillis(),
+                    reason = "Removed because the user asked Orbit to forget it")
+                items[index] = dropped
+                write(items)
+                return@withLock dropped
+            }
+            val governance = boundary()
+            if (approve && change.status in setOf("pending", "applying") &&
+                governance != null && !governance.accepts(change.learningGeneration,
+                    if (change.origin == "foreground") change.id else "")) {
+                val outdated = change.copy(status = "superseded", reviewedAt = System.currentTimeMillis(),
+                    reason = "Memory was corrected after this proposal was created")
+                items[index] = outdated
+                write(items)
+                return@withLock outdated
+            }
             if (change.status !in setOf("pending", "applying")) {
                 check(change.status == if (approve) "approved" else "rejected") { "Change was already decided differently" }
                 return@withLock change
@@ -365,46 +555,84 @@ class MemoryReviewRepository internal constructor(
                 write(items)
                 var skillInstalled = false
                 val previousSkillDescription = if (change.kind == "skill_file")
-                    SkillManager.getInstance(context).getAvailableSkills()[change.title]?.description else null
+                    SkillManager.forMemorySpace(context, profileId).getAvailableSkills()[change.title]?.description else null
                 try {
+                    suspend fun applyTarget() {
                     if (change.kind == "notes") {
                         val notes = MemoryNotesRepository(context, profileId)
-                        if (change.addition.isNotEmpty()) notes.mutate("add", change.addition)
+                        // A sectioned add names its section in the operation; an older one has none and
+                        // lands in the unsorted section rather than failing forever.
+                        if (change.addition.isNotEmpty()) notes.mutate("add", change.addition,
+                            section = change.operation.removePrefix(NOTES_ADD_PREFIX)
+                                .takeIf { change.operation.startsWith(NOTES_ADD_PREFIX) }
+                                ?: if (notes.sectioned) MemoryNoteSections.UNSORTED else "")
                         else if (notes.load().markdown != change.body) notes.save(change.body, change.baseVersion)
                         // The learner's own writes invalidate a frozen prefix too: memory.md is part of
                         // the prefix, so the library must offer the refresh instead of silently serving
                         // the older text. Skill catalog changes are marked the same way below.
                         LearningPromptSnapshotRepository.markChanged(context, "notes-content:$profileId")
                     } else if(change.kind=="user") {
-                        UserProfileDocumentRepository.getInstance(context).saveIfUnchanged(change.body,change.before)
+                        UserProfileDocumentRepository.forMemorySpace(context, profileId).saveIfUnchanged(change.body,change.before)
+                    } else if (change.kind == ORBIT_FILE) {
+                        val owner = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.privateOwner(context, profileId)
+                            ?: error("This memory space has no Orbit files")
+                        val files = com.ai.assistance.operit.features.orbit.OrbitFiles.of(context, owner)
+                        if (change.addition.isNotEmpty()) files.appendOnce(change.title, change.addition)
+                        else files.writeIfUnchanged(change.title, change.before, change.body)
                     } else if(change.kind=="skill_delete") {
-                        LearnedSkillRepository(context).delete(change.title,change.baseVersion)
+                        LearnedSkillRepository(context, profileId).delete(change.title,change.baseVersion)
                     } else if (change.kind=="skill_file") {
-                        LearnedSkillRepository(context).apply(profileId,change.title,change.path,change.body,
+                        LearnedSkillRepository(context, profileId).apply(profileId,change.title,change.path,change.body,
                             change.baseVersion,change.operation=="remove",change.automatic)
                     } else skillInstallMutex.withLock {
                         if (change.status == "pending") {
-                            check(SkillManager.getInstance(context).getAvailableSkills()[change.title] == null) {
+                            check(SkillManager.forMemorySpace(context, profileId).getAvailableSkills()[change.title] == null) {
                                 context.getString(com.ai.assistance.operit.R.string.skill_draft_duplicate)
                             }
                         }
+                        val held = change.holdForScore && reviewer != "user"
+                        // Switched off before it exists, so no crash can leave a held skill shown to the AI.
+                        if (held) check(com.ai.assistance.operit.data.skill.SkillRepository.forMemorySpace(context, profileId)
+                            .skillVisibilityPreferences.setSkillVisibleToAi(change.title, false, durable = true)) {
+                            "Could not switch the new skill off"
+                        }
                         installSkill(context, change)
                         skillInstalled = true
-                        LearnedSkillRepository(context).register(change.title,profileId)
+                        LearnedSkillRepository(context, profileId).register(change.title,profileId)
+                        if (held) LearnedSkillRepository(context, profileId).holdForScore(change.title, change.scoreEvidence)
                     }
                     // Any catalog change invalidates a frozen prefix, including one the background
                     // learner made: without this the new skill is invisible to existing chats.
                     if (change.kind in setOf("skill", "skill_delete") ||
                         (change.kind == "skill_file" &&
-                            previousSkillDescription != SkillManager.getInstance(context).getAvailableSkills()[change.title]?.description))
-                        LearningPromptSnapshotRepository.markChanged(context, "settings")
+                            previousSkillDescription != SkillManager.forMemorySpace(context, profileId).getAvailableSkills()[change.title]?.description))
+                        LearningPromptSnapshotRepository.markChanged(context,
+                            if (com.ai.assistance.operit.features.orbit.OrbitMemoryScope.privateOwner(context, profileId) == null)
+                                "settings" else "skills:$profileId")
+                    }
+                    val correction = change.origin == "foreground" && (change.restoredFrom.isNotBlank() || change.kind == "skill_delete" ||
+                        change.before.isNotBlank() && change.before != change.body && change.addition.isBlank())
+                    when {
+                        governance == null -> applyTarget()
+                        correction -> governance.edit(change.id, change.learningGeneration) { applyTarget() }
+                        else -> governance.learn(change.learningGeneration) { applyTarget() }
+                    }
                 } catch (e: MemoryNotesRepository.NotesException) {
                     // A rejected CAS/capacity check made no write; it is safe to return to pending.
                     items[index] = change.copy(status = "pending", reason = e.reason.name)
                     write(items)
                     throw e
                 } catch (e: Exception) {
-                    if (!skillInstalled && change.kind in setOf("skill", "skill_file", "skill_delete", "user", "notes")) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    if (governance != null && !governance.accepts(change.learningGeneration,
+                            if (change.origin == "foreground") change.id else "")) {
+                        val outdated = change.copy(status = "superseded", reviewedAt = System.currentTimeMillis(),
+                            reason = "Memory changed while this proposal was being applied")
+                        items[index] = outdated
+                        write(items)
+                        return@withLock outdated
+                    }
+                    if (!skillInstalled && change.kind in setOf("skill", "skill_file", "skill_delete", "user", "notes", ORBIT_FILE)) {
                         // Import returned no success: keep the proposal editable/rejectable.
                         items[index] = change.copy(status = "pending", reason = e.javaClass.simpleName)
                         write(items)
@@ -421,9 +649,17 @@ class MemoryReviewRepository internal constructor(
             decided
         }
     }
-    suspend fun delete() = withContext(Dispatchers.IO) { mutex.withLock { Files.deleteIfExists(file.toPath()); Unit } }
+    suspend fun delete() = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            Files.deleteIfExists(file.toPath())
+            Files.deleteIfExists(legacyFile.toPath())
+            // An Orbit's memory folder goes once it is empty; File.delete leaves a folder with files in it.
+            if (legacyRoot != null) file.parentFile?.delete()
+            Unit
+        }
+    }
 
-    private fun installSkill(context: Context, draft: MemoryReviewChange) {
+    private suspend fun installSkill(context: Context, draft: MemoryReviewChange) {
         val validated = parseSkillDrafts(JSONArray().put(JSONObject().put("name", draft.title)
             .put("description", draft.description).put("body", draft.body)), draft.sourceChatId)
         require(validated.size == 1) { context.getString(com.ai.assistance.operit.R.string.skill_draft_invalid) }
@@ -433,7 +669,7 @@ class MemoryReviewRepository internal constructor(
         try {
             // JSON quoted strings are valid YAML scalars; names are restricted path-safe slugs.
             val markdown = "---\nname: ${skill.name}\ndescription: ${JSONObject.quote(skill.description)}\n---\n\n${skill.body}\n"
-            val manager = SkillManager.getInstance(context)
+            val manager = SkillManager.forMemorySpace(context, profileId)
             // Retry after installation but before the decision journal was finalized.
             val files = draft.files.mapValues { (_, text) -> stripInvisibleCharacters(text) }
             validateDraftFiles(files)

@@ -7,15 +7,60 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 /** Ownership lives outside importable skill archives, so an imported file cannot opt into auto-editing. */
-class LearnedSkillRepository(private val context: Context) {
+class LearnedSkillRepository(private val context: Context, private val memorySpaceId: String? = null) {
     companion object {
         private val mutex = Mutex()
+        private const val LAST_USED = "lastUsed"
+        private const val ARCHIVED_AT = "archivedAt"
+        /** A new skill's grade from the independent scorer; see [holdForScore]. */
+        private const val SCORE = "score"
+        const val SCORE_PENDING = "pending"
+        const val SCORE_PASSED = "passed"
+        const val SCORE_FAILED = "failed"
+        /** The scorer never managed to grade it; it stays archived like a failed one. */
+        const val SCORE_UNSCORED = "unscored"
+        /** The user switched it on themselves; a later grade no longer moves it. */
+        const val SCORE_USER = "user"
+        /** Below this on any of the three, a new skill stays archived. */
+        const val PASSING_SCORE = 3
+        /** Failed scorer runs before a waiting skill is given up on and left archived. */
+        const val MAX_SCORE_ATTEMPTS = 3
+        /** A learned skill nobody loaded for this long is archived: hidden from the AI, kept on disk. */
+        const val IDLE_ARCHIVE_MS = 28L * 24 * 60 * 60 * 1000
+        /** Archiving counts in weeks, so a use only needs writing down a few times a day. */
+        private const val TOUCH_EVERY_MS = 6L * 60 * 60 * 1000
+        private val lastTouchAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+        private val touchScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
+
+        /**
+         * Records that [name] was loaded, without making the load wait for the disk. Skills that are
+         * not learned in [memorySpaceId] are left alone by [touch].
+         */
+        fun touchLater(context: Context, memorySpaceId: String, name: String) {
+            val key = "$memorySpaceId/$name"
+            val now = System.currentTimeMillis()
+            val last = lastTouchAt[key]
+            if (last != null && now - last < TOUCH_EVERY_MS) return
+            lastTouchAt[key] = now
+            val appContext = context.applicationContext
+            touchScope.launch {
+                try {
+                    LearnedSkillRepository(appContext, memorySpaceId).touch(name)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    lastTouchAt.remove(key)
+                    com.ai.assistance.operit.util.AppLogger.w("LearnedSkillRepository", "Could not record skill use: $name", e)
+                }
+            }
+        }
         /** Creation bounds for a new skill: short enough to stay scannable and cheap to read. */
         const val MIN_SKILL_BODY_CHARS = 50
         const val MAX_SKILL_BODY_CHARS = 6_000
@@ -33,9 +78,32 @@ class LearnedSkillRepository(private val context: Context) {
             .joinToString("") { "%02x".format(it) }
     }
     data class Snapshot(val text: String, val version: String, val exists: Boolean)
-    private val registry = File(context.filesDir, "learned_skill_ownership.json")
-    private val manager get() = SkillManager.getInstance(context)
-    private fun registry() = if (registry.isFile) JSONObject(registry.readText()) else JSONObject()
+    /** What the scorer said about a new skill. Ratings are 0 until it has graded it. */
+    data class Score(val state: String, val reuse: Int = 0, val verified: Int = 0, val substance: Int = 0,
+        val reason: String = "", val attempts: Int = 0,
+        /** Key of the conversation excerpt the scorer reads; empty once graded. */
+        val evidence: String = "") {
+        val passed get() = listOf(reuse, verified, substance).all { it >= PASSING_SCORE }
+        internal fun json(): JSONObject = JSONObject().put("state", state).put("reuse", reuse)
+            .put("verified", verified).put("substance", substance).put("reason", reason).put("attempts", attempts)
+            .put("evidence", evidence)
+        companion object {
+            internal fun of(json: JSONObject?) = json?.let {
+                Score(it.optString("state"), it.optInt("reuse"), it.optInt("verified"), it.optInt("substance"),
+                    it.optString("reason"), it.optInt("attempts"), it.optString("evidence"))
+            }
+        }
+    }
+    private suspend fun manager() = memorySpaceId?.let { SkillManager.forMemorySpace(context, it) }
+        ?: SkillManager.getInstance(context)
+    private suspend fun registryFile(): File {
+        val manager = manager()
+        return if (memorySpaceId != null &&
+            com.ai.assistance.operit.features.orbit.OrbitMemoryScope.privateOwner(context, memorySpaceId) != null)
+            File(File(manager.getSkillsDirectoryPath()).parentFile, "learned_skill_ownership.json")
+        else File(context.filesDir, "learned_skill_ownership.json")
+    }
+    private suspend fun registry() = registryFile().let { if (it.isFile) JSONObject(it.readText()) else JSONObject() }
     private fun atomic(file: File, text: String) {
         file.parentFile!!.mkdirs()
         val tmp = File.createTempFile(".learning-", ".tmp", file.parentFile)
@@ -45,31 +113,200 @@ class LearnedSkillRepository(private val context: Context) {
         } finally { tmp.delete() }
         syncDirectory(file.parentFile!!)
     }
-    suspend fun owned(profileId: String? = null): Set<String> = withContext(Dispatchers.IO) {
+    /** [installed] is a list the caller just scanned; without it this scans once for the whole list. */
+    suspend fun owned(profileId: String? = null, installed: Map<String, com.ai.assistance.operit.core.tools.skill.SkillPackage>? = null): Set<String> = withContext(Dispatchers.IO) {
         mutex.withLock {
+            val installed = installed ?: manager().getAvailableSkills()
             val data = registry()
             data.keys().asSequence().filter { (profileId == null || data.getJSONObject(it).getString("profile")==profileId)
-                && manager.getAvailableSkills()[it]?.directory?.canonicalPath ==
+                && installed[it]?.directory?.canonicalPath ==
                     data.getJSONObject(it).optString("directory") }.toSet()
         }
     }
     suspend fun register(name: String, profileId: String) = withContext(Dispatchers.IO) {
         mutex.withLock {
+            val manager = manager()
+            val registry = registryFile()
             val data = registry()
             val skill = manager.getAvailableSkills()[name] ?: error("Skill not installed")
             require(skill.directory.canonicalFile.parentFile == File(manager.getSkillsDirectoryPath()).canonicalFile)
             require(!data.has(name) || data.getJSONObject(name).getString("profile")==profileId)
-            data.put(name,JSONObject().put("profile",profileId).put("directory",skill.directory.canonicalPath))
+            data.put(name,JSONObject().put("profile",profileId).put("directory",skill.directory.canonicalPath)
+                .put(LAST_USED,System.currentTimeMillis()))
             atomic(registry,data.toString())
         }
     }
+
+    /**
+     * A learned skill was loaded: its idle clock starts again. Other skills are not tracked. An
+     * archived skill stays archived (only [unarchive] brings it back), so a load racing the sweep
+     * cannot leave a skill hidden from the AI yet missing from the archive folder.
+     */
+    suspend fun touch(name: String) = mark(name, unarchive = false)
+
+    private suspend fun mark(name: String, unarchive: Boolean) = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val registry = registryFile()
+            val data = registry()
+            val entry = data.optJSONObject(name) ?: return@withLock
+            entry.put(LAST_USED, System.currentTimeMillis())
+            if (unarchive) {
+                entry.remove(ARCHIVED_AT)
+                // Switched on by hand: the user's choice stands over any grade, given or still to come.
+                Score.of(entry.optJSONObject(SCORE))?.let { entry.put(SCORE, it.copy(state = SCORE_USER).json()) }
+            }
+            atomic(registry, data.toString())
+        }
+    }
+
+    /**
+     * A skill the background review just installed waits archived, off for the AI, until the
+     * independent scorer has graded it. The caller has already switched it off for the AI.
+     */
+    suspend fun holdForScore(name: String, evidence: String) = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val registry = registryFile()
+            val data = registry()
+            val entry = data.optJSONObject(name) ?: error("Skill is not registered")
+            entry.put(ARCHIVED_AT, System.currentTimeMillis())
+                .put(SCORE, Score(SCORE_PENDING, evidence = evidence).json())
+            atomic(registry, data.toString())
+        }
+    }
+
+    /** Skills of [profileId] still waiting for a grade, with their evidence keys. */
+    suspend fun waitingForScore(profileId: String): Map<String, String> = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val data = registry()
+            data.keys().asSequence().mapNotNull { name ->
+                val entry = data.optJSONObject(name) ?: return@mapNotNull null
+                val score = Score.of(entry.optJSONObject(SCORE))
+                if (entry.optString("profile") == profileId && score?.state == SCORE_PENDING) name to score.evidence
+                else null
+            }.toMap()
+        }
+    }
+
+    /** Every grade on record, for the skill pages. */
+    suspend fun scores(): Map<String, Score> = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val data = registry()
+            data.keys().asSequence().mapNotNull { name ->
+                Score.of(data.optJSONObject(name)?.optJSONObject(SCORE))?.let { name to it }
+            }.toMap()
+        }
+    }
+
+    /**
+     * Records the scorer's grade for a waiting skill. A pass takes it out of the archive with a fresh
+     * idle clock, a fail leaves it archived. [setVisible] writes the switch to match, durably, under
+     * the same lock and before the grade: a crash in between leaves it waiting, so it is graded again
+     * and the switch set again. Returns null when it was no longer waiting (deleted, or switched on
+     * by the user), so nothing changed.
+     */
+    suspend fun recordScore(name: String, score: Score, setVisible: (Boolean) -> Unit): Boolean? = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val registry = registryFile()
+            val data = registry()
+            val entry = data.optJSONObject(name) ?: return@withLock null
+            if (Score.of(entry.optJSONObject(SCORE))?.state != SCORE_PENDING) return@withLock null
+            val pass = score.state == SCORE_PASSED
+            setVisible(pass)
+            entry.put(SCORE, score.copy(evidence = "").json())
+            if (pass) {
+                entry.remove(ARCHIVED_AT)
+                entry.put(LAST_USED, System.currentTimeMillis())
+            }
+            atomic(registry, data.toString())
+            pass
+        }
+    }
+
+    /**
+     * One scorer attempt failed. Returns true once [MAX_SCORE_ATTEMPTS] are used up: it stays
+     * archived ungraded and [switchOff] runs under the same lock first, so it is off whatever a crash
+     * left behind. False to try again, null when it is no longer waiting (the user's choice stands).
+     */
+    suspend fun scoreAttemptFailed(name: String, reason: String, switchOff: () -> Unit): Boolean? = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val registry = registryFile()
+            val data = registry()
+            val entry = data.optJSONObject(name) ?: return@withLock null
+            val current = Score.of(entry.optJSONObject(SCORE))?.takeIf { it.state == SCORE_PENDING } ?: return@withLock null
+            val attempts = current.attempts + 1
+            val givenUp = attempts >= MAX_SCORE_ATTEMPTS
+            if (givenUp) switchOff()
+            entry.put(SCORE, current.copy(state = if (givenUp) SCORE_UNSCORED else SCORE_PENDING,
+                attempts = attempts, reason = reason.take(300), evidence = if (givenUp) "" else current.evidence).json())
+            atomic(registry, data.toString())
+            givenUp
+        }
+    }
+
+    /** Learned skills that were put away for not being used. */
+    suspend fun archived(): Set<String> = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val data = registry()
+            data.keys().asSequence().filter { data.optJSONObject(it)?.has(ARCHIVED_AT) == true }.toSet()
+        }
+    }
+
+    /** The user switched an archived skill back on: it counts as just used. */
+    suspend fun unarchive(name: String) = mark(name, unarchive = true)
+
+    /**
+     * Marks the learned skills of [profileId] that went [idleMs] without being loaded as archived
+     * and returns them; the caller hides them from the AI. The clock only runs while a skill is
+     * shown to the AI: one the user hid starts again when shown, and an archived one the user
+     * switched back on counts as used. Entries from before the clock existed start it now.
+     */
+    suspend fun archiveIdle(profileId: String, now: Long, idleMs: Long, isVisible: (String) -> Boolean): List<String> =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                val manager = manager()
+                val registry = registryFile()
+                val data = registry()
+                val installed = manager.getAvailableSkills()
+                val archived = mutableListOf<String>()
+                var changed = false
+                data.keys().asSequence().toList().forEach { name ->
+                    val entry = data.optJSONObject(name) ?: return@forEach
+                    if (entry.optString("profile") != profileId ||
+                        installed[name]?.directory?.canonicalPath != entry.optString("directory")) return@forEach
+                    // A new skill waiting for its grade is the scorer's to switch on or keep off.
+                    if (Score.of(entry.optJSONObject(SCORE))?.state == SCORE_PENDING) return@forEach
+                    val visible = isVisible(name)
+                    // A load whose write is still on its way counts as use, so it is never archived.
+                    val pendingUse = memorySpaceId?.let { lastTouchAt["$it/$name"] }
+                        ?.takeIf { it > entry.optLong(LAST_USED, 0L) }
+                    when {
+                        entry.has(ARCHIVED_AT) -> if (visible) {
+                            entry.remove(ARCHIVED_AT); entry.put(LAST_USED, now); changed = true
+                        }
+                        !visible || entry.optLong(LAST_USED, 0L) <= 0L -> {
+                            entry.put(LAST_USED, now); changed = true
+                        }
+                        pendingUse != null -> {
+                            entry.put(LAST_USED, pendingUse); changed = true
+                        }
+                        now - entry.getLong(LAST_USED) >= idleMs -> {
+                            entry.put(ARCHIVED_AT, now); archived += name; changed = true
+                        }
+                    }
+                }
+                if (changed) atomic(registry, data.toString())
+                archived
+            }
+        }
     suspend fun forget(name: String) = withContext(Dispatchers.IO) {
         mutex.withLock {
+            val registry = registryFile()
             val data = registry()
             if(data.has(name)) { data.remove(name); atomic(registry,data.toString()) }
         }
     }
-    private fun target(name: String, path: String): File {
+    private suspend fun target(name: String, path: String): File {
+        val manager = manager()
         validatePath(path)
         val skill = manager.getAvailableSkills()[name] ?: error("Skill not found")
         val root = skill.directory.canonicalFile
@@ -87,11 +324,13 @@ class LearnedSkillRepository(private val context: Context) {
         }
     }
     suspend fun files(name: String): List<String> = withContext(Dispatchers.IO) {
+        val manager = manager()
         val root = manager.getAvailableSkills()[name]?.directory?.canonicalFile ?: error("Skill not found")
         root.walkTopDown().maxDepth(5).filter { it.isFile && it.canonicalFile.toPath().startsWith(root.toPath()) }
             .take(100).map { it.relativeTo(root).invariantSeparatorsPath }.toList()
     }
-    private fun directoryManifest(name: String): String {
+    private suspend fun directoryManifest(name: String): String {
+        val manager = manager()
         val root = manager.getAvailableSkills()[name]?.directory?.canonicalFile ?: error("Skill not found")
         val files = root.walkTopDown().onEnter { it.canonicalFile.toPath().startsWith(root.toPath()) }
             .filter { it.isFile }.take(1001).toList()
@@ -111,6 +350,8 @@ class LearnedSkillRepository(private val context: Context) {
     }
     suspend fun delete(name: String, expectedVersion: String) = withContext(Dispatchers.IO) {
         mutex.withLock {
+            val manager = manager()
+            val registry = registryFile()
             val skill=manager.getAvailableSkills()[name]
             if (skill==null) {
                 val data=registry(); data.remove(name); atomic(registry,data.toString())
@@ -125,6 +366,7 @@ class LearnedSkillRepository(private val context: Context) {
     suspend fun apply(profileId: String, name: String, path: String, body: String, expectedVersion: String,
         remove: Boolean = false, automatic: Boolean = false) = withContext(Dispatchers.IO) {
         mutex.withLock {
+            val manager = manager()
             val file = target(name,path)
             val skill = manager.getAvailableSkills()[name] ?: error("Skill not found")
             require(skill.directory.canonicalFile.parentFile == File(manager.getSkillsDirectoryPath()).canonicalFile) {

@@ -63,10 +63,23 @@ class ModelProtocolCatalog private constructor(private val providers: List<Provi
                     modelId to ModelProtocolSettings(protocol, override?.text("api").orEmpty(), reasoningEfforts)
                 }?.toMap().orEmpty()
                 if (models.isEmpty()) null else Provider(id, endpoint, models)
+            }.flatMap { provider ->
+                // Go moved to a new address; accounts saved with the old one still match its models
+                // and keep sending to the address they were saved with.
+                if (provider.id == "opencode-go" && provider.endpoint.trimEnd('/') != GO_LEGACY_ENDPOINT) {
+                    listOf(provider, provider.copy(
+                        endpoint = GO_LEGACY_ENDPOINT,
+                        models = provider.models.mapValues { (_, settings) ->
+                            if ("/inference/go/" in settings.endpoint) settings.copy(endpoint = "") else settings
+                        },
+                    ))
+                } else listOf(provider)
             }
             require(providers.isNotEmpty()) { "Model protocol catalog contains no usable providers" }
             return ModelProtocolCatalog(providers)
         }
+
+        private const val GO_LEGACY_ENDPOINT = "https://opencode.ai/zen/go/v1"
 
         private fun JsonObject.text(name: String): String? =
             (get(name) as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }

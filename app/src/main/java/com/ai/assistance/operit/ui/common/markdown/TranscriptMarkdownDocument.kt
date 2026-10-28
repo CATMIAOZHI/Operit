@@ -33,3 +33,6 @@ internal data class TranscriptMarkdownSlice(
 )
 
 internal val LocalTranscriptMarkdownSlice = compositionLocalOf<TranscriptMarkdownSlice?> { null }
+
+/** The nodes of the markdown being drawn; a node's index points into it. */
+internal val LocalMarkdownCanvasNodes = compositionLocalOf<List<MarkdownNodeStable>?> { null }

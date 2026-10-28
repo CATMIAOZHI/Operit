@@ -534,6 +534,11 @@ class MCPManager(private val context: Context) {
         return connectionFailureReasons[serverName]
     }
 
+    /** A later connection to [serverName] worked, so the failure kept from before is out of date. */
+    fun clearConnectionFailure(serverName: String) {
+        connectionFailureReasons.remove(serverName)
+    }
+
     /**
      * 获取或创建MCP桥接客户端
      *

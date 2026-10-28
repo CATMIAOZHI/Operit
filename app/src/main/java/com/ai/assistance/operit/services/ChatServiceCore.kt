@@ -100,7 +100,8 @@ class ChatServiceCore(
         // 初始化附件委托
         attachmentDelegate = AttachmentDelegate(
             context = context,
-            toolHandler = AIToolHandler.getInstance(context)
+            toolHandler = AIToolHandler.getInstance(context),
+            chatIdProvider = { currentChatId.value }
         )
 
         // 初始化聊天历史委托
@@ -301,6 +302,14 @@ class ChatServiceCore(
         messageProcessingDelegate.updateUserMessage(message)
     }
 
+    /** Fills the input box of [chatId] with [text], cursor at the end, without sending. */
+    fun setDraftForChat(chatId: String, text: String) {
+        messageProcessingDelegate.setDraftForChat(
+            chatId, androidx.compose.ui.text.input.TextFieldValue(text, androidx.compose.ui.text.TextRange(text.length)))
+    }
+
+    fun draftForChat(chatId: String): String = messageProcessingDelegate.draftForChat(chatId)
+
     fun getResponseStream(chatId: String): SharedStream<String>? {
         return messageProcessingDelegate.getResponseStream(chatId)
     }
@@ -355,7 +364,9 @@ class ChatServiceCore(
         inheritGroupFromCurrent: Boolean = true,
         setAsCurrentChat: Boolean = true,
         characterCardId: String? = null,
+        withOpeningMessage: Boolean = true,
         onCreated: ((String) -> Unit)? = null,
+        chatId: String? = null,
     ) {
         chatHistoryDelegate.createNewChat(
             characterCardName = characterCardName,
@@ -363,7 +374,9 @@ class ChatServiceCore(
             inheritGroupFromCurrent = inheritGroupFromCurrent,
             setAsCurrentChat = setAsCurrentChat,
             characterCardId = characterCardId,
+            withOpeningMessage = withOpeningMessage,
             onCreated = onCreated,
+            chatId = chatId,
         )
     }
 
@@ -389,6 +402,11 @@ class ChatServiceCore(
     }
 
     /** 删除聊天历史 */
+    suspend fun prepareChatDeletion(chatId: String) {
+        messageCoordinationDelegate.cancelSummaryForDestructiveMutation(chatId)
+        messageProcessingDelegate.cancelMessageForDestructiveMutation(chatId)
+    }
+
     fun deleteChatHistory(chatId: String) {
         chatHistoryDelegate.deleteChatHistory(chatId)
     }
@@ -472,6 +490,28 @@ class ChatServiceCore(
 
     val isSummarizing: StateFlow<Boolean>
         get() = messageCoordinationDelegate.isSummarizing
+
+    /** A summary started by a send, which holds that message until it is done. */
+    val isSendTriggeredSummarizing: StateFlow<Boolean>
+        get() = messageCoordinationDelegate.isSendTriggeredSummarizing
+
+    /**
+     * Sends a message to an existing chat and says whether it was taken. A refused send (the chat
+     * is busy or summarizing) returns false and touches nothing else.
+     */
+    fun trySendUserMessageToExistingChat(
+        chatId: String,
+        messageText: String,
+        turnOptions: ChatTurnOptions,
+        attachments: List<AttachmentInfo> = emptyList(),
+    ): Boolean =
+        messageCoordinationDelegate.trySendUserMessageToExistingChat(
+            promptFunctionType = PromptFunctionType.CHAT,
+            chatId = chatId,
+            messageText = messageText,
+            attachments = attachments,
+            turnOptions = turnOptions,
+        )
 
     // 聊天历史相关
     val chatHistory: StateFlow<List<ChatMessage>>

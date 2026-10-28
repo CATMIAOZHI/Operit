@@ -137,6 +137,9 @@ object OnDemandResources {
             listOf(DownloadItem(File(context.filesDir, "downloaded_resources/templates-v1/${windowsTemplate.id}"), windowsTemplate))),
     )
 
+    /** The id of the terminal environment in [componentGroups]. */
+    internal val terminalComponentId: String get() = ubuntu.id
+
     internal fun terminalInstalled(context: Context): Boolean {
         val root = File(context.filesDir, "usr/var/lib/proot-distro/installed-rootfs/ubuntu")
         return File(root, ".operit_installed_ok").isFile || File(root, "etc/issue.net").isFile
@@ -244,8 +247,16 @@ object OnDemandResources {
     }
     internal suspend fun ensureVoiceModel(context: Context, id: String, directory: File,
                                          files: List<DownloadResource>): File {
-        ensureGroup(context, DownloadGroup("voice-$id", R.string.voice_local_models,
-            files.map { DownloadItem(File(directory, it.id), it) }))
+        try {
+            ensureGroup(context, DownloadGroup("voice-$id", R.string.voice_local_models,
+                files.map { DownloadItem(File(directory, it.id), it) }))
+            speechFailure = null
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            speechFailure = FreshMessage(speechFailureMessage(context, e), SystemClock.elapsedRealtime())
+            throw e
+        }
         return directory
     }
     private const val CONFIRM_TIMEOUT_MS = 3 * 60 * 1000L
@@ -334,11 +345,16 @@ object OnDemandResources {
         } catch (e: Throwable) {
             // Speech runs from a floating window that cannot show the progress card, so the
             // reason is parked here for the caller that is about to report the failure.
-            speechFailure = FreshMessage(failureMessage(context, e), SystemClock.elapsedRealtime())
+            speechFailure = FreshMessage(speechFailureMessage(context, e), SystemClock.elapsedRealtime())
             throw e
         }
         return directory
     }
+
+    /** A declined download says how to get it after all: tapping the microphone asks again. */
+    private fun speechFailureMessage(context: Context, e: Throwable): String =
+        if (e is ResourceDownloadDeclinedException) context.getString(R.string.resource_speech_declined)
+        else failureMessage(context, e)
 
     /**
      * Why the offline speech model was last unusable, but only while that is still current: the
@@ -424,6 +440,14 @@ object OnDemandResources {
         val deferred = synchronized(approvalLock) { approvals[id] }
         declinedAt[id] = SystemClock.elapsedRealtime()
         deferred?.complete(false)
+    }
+
+    /**
+     * The user just tapped the microphone themselves. A recent "no" to the speech download only
+     * keeps automatic attempts quiet; a fresh tap asks again, or the feature would be a dead end.
+     */
+    fun userAskedForSpeech() {
+        declinedAt.keys.removeAll { it == SPEECH_DIRECTORY || it.startsWith("voice-") }
     }
 
     /** Stops a running download; the waiting feature reports a plain "cancelled" message. */

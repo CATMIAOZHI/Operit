@@ -36,10 +36,14 @@ fun MemoryNotesDialog(profileId: String, onDismiss: () -> Unit) {
     val conflictError = stringResource(R.string.memory_notes_conflict)
     val fullError = stringResource(R.string.memory_notes_full)
     val manualEditReason = stringResource(R.string.memory_review_manual_edit)
+    // An Orbit's memory.md is edited as its section headings, without the app's marker lines.
+    val opened = remember(base) { base?.let { repository.editorText(it.markdown) } }
+    // The stored length, markers included, is what the limit applies to.
+    val storedLength = remember(draft) { repository.fromEditor(draft.orEmpty()).length }
     LaunchedEffect(repository) {
         try {
             base = repository.load()
-            if (draft == null) draft = base!!.markdown
+            if (draft == null) draft = repository.editorText(base!!.markdown)
             if (openedVersion != null && openedVersion != base!!.version) {
                 conflict = base
                 error = conflictError
@@ -53,7 +57,7 @@ fun MemoryNotesDialog(profileId: String, onDismiss: () -> Unit) {
     }
     fun dismiss() {
         if (!busy) {
-            if (draft != null && draft != base?.markdown) confirmDiscard = true else onDismiss()
+            if (draft != null && draft != opened) confirmDiscard = true else onDismiss()
         }
     }
     fun save(version: String) {
@@ -65,8 +69,13 @@ fun MemoryNotesDialog(profileId: String, onDismiss: () -> Unit) {
                     MemoryNotesRepository.Failure.CONFLICT
                 )
                 val reviews = com.ai.assistance.operit.data.preferences.MemoryReviewRepository(context, profileId)
-                val change = reviews.proposeNotes(latest, draft.orEmpty())
-                reviews.decide(context, change.id, true, "user", manualEditReason)
+                val stored = repository.fromEditor(draft.orEmpty())
+                if (stored.length > MemoryNotesRepository.MAX_CHARS) throw MemoryNotesRepository.NotesException(
+                    MemoryNotesRepository.Failure.FULL
+                )
+                val change = reviews.proposeNotes(latest, stored)
+                if (reviews.decide(context, change.id, true, "user", manualEditReason).status != "approved")
+                    throw MemoryNotesRepository.NotesException(MemoryNotesRepository.Failure.CONFLICT)
                 onDismiss()
             } catch (e: CancellationException) {
                 throw e
@@ -87,7 +96,9 @@ fun MemoryNotesDialog(profileId: String, onDismiss: () -> Unit) {
             }
         }
     }
-    MemoryLibraryPage(stringResource(R.string.memory_notes_title), profileId, ::dismiss) {
+    MemoryLibraryPage(stringResource(R.string.memory_notes_title), profileId, ::dismiss,
+        backEnabled = !busy,
+        interceptBack = busy || (draft != null && draft != opened)) {
         Box(Modifier.fillMaxSize()) {
             Column(
                 Modifier.fillMaxSize().padding(20.dp)
@@ -108,20 +119,20 @@ fun MemoryNotesDialog(profileId: String, onDismiss: () -> Unit) {
                     enabled = base != null && !busy,
                     modifier = Modifier.fillMaxWidth(),
                     minLines = 12, maxLines = 24,
-                    isError = draft.orEmpty().length > MemoryNotesRepository.MAX_CHARS,
+                    isError = storedLength > MemoryNotesRepository.MAX_CHARS,
                     supportingText = {
-                        Text("${draft.orEmpty().length} / ${MemoryNotesRepository.MAX_CHARS}")
+                        Text("$storedLength / ${MemoryNotesRepository.MAX_CHARS}")
                     }
                 )
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 conflict?.let { latest ->
                     Text(stringResource(R.string.memory_notes_latest), style = MaterialTheme.typography.titleSmall)
                     OutlinedTextField(
-                        value = latest.markdown, onValueChange = {}, readOnly = true,
+                        value = repository.editorText(latest.markdown), onValueChange = {}, readOnly = true,
                         modifier = Modifier.fillMaxWidth(), maxLines = 6
                     )
                     TextButton(
-                        enabled = !busy && draft.orEmpty().length <= MemoryNotesRepository.MAX_CHARS,
+                        enabled = !busy && storedLength <= MemoryNotesRepository.MAX_CHARS,
                         onClick = { save(latest.version) }
                     ) { Text(stringResource(R.string.memory_notes_overwrite)) }
                 }
@@ -132,13 +143,20 @@ fun MemoryNotesDialog(profileId: String, onDismiss: () -> Unit) {
                     Button(
                         onClick = { base?.let { save(it.version) } },
                         enabled = base != null && conflict == null && !busy &&
-                            draft.orEmpty().length <= MemoryNotesRepository.MAX_CHARS
+                            storedLength <= MemoryNotesRepository.MAX_CHARS
                     ) { Text(stringResource(R.string.save_action)) }
                 }
             }
         }
     }
     if (confirmDiscard) {
+        if (com.ai.assistance.operit.data.preferences.MemorySearchSettingsPreferences.isOrbitSpace(profileId)) {
+            com.ai.assistance.operit.ui.features.orbit.OrbitConfirmDialog(
+                title = stringResource(R.string.memory_notes_discard_title),
+                onConfirm = onDismiss,
+                onDismiss = { confirmDiscard = false },
+            )
+        } else {
         AlertDialog(
             onDismissRequest = { confirmDiscard = false },
             title = { Text(stringResource(R.string.memory_notes_discard_title)) },
@@ -149,5 +167,6 @@ fun MemoryNotesDialog(profileId: String, onDismiss: () -> Unit) {
                 TextButton(onClick = { confirmDiscard = false }) { Text(stringResource(R.string.cancel)) }
             }
         )
+        }
     }
 }

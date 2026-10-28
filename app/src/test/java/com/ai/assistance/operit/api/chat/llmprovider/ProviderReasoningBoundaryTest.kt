@@ -457,9 +457,8 @@ class ProviderReasoningBoundaryTest {
     }
 
     /**
-     * The function path marks its requests so Zen's free models never pick the chat slider up. The
-     * chat transport learned to send reasoning_effort with the same change, so both transports have
-     * to stay out of that fallback.
+     * The function path sends its own effort on Zen's free models, in the field each transport
+     * reads, and marks the request so the chat slider never replaces it.
      */
     @Test
     fun zenFreeFunctionSuppressionKeepsTheChatSliderOutOfBothBodies() = runBlocking {
@@ -516,21 +515,34 @@ class ProviderReasoningBoundaryTest {
                     return JSONObject(buffer.readUtf8())
                 }
             }
-        val functionalParameters =
+        val chatFunction =
             buildFunctionalReasoningRequest(
                 ApiProviderType.OPENCODE_ZEN_FREE,
                 "space-bunny-free",
                 emptyList(),
-                5,
+                1,
+                com.ai.assistance.operit.data.model.ModelProtocolSettings(reasoningEfforts = declared),
+            ).modelParameters
+        val responsesFunction =
+            buildFunctionalReasoningRequest(
+                ApiProviderType.OPENCODE_ZEN_FREE,
+                "muse-spark-1.3-contributor-free",
+                emptyList(),
+                1,
+                com.ai.assistance.operit.data.model.ModelProtocolSettings(
+                    protocol = com.ai.assistance.operit.data.model.ModelProtocol.RESPONSES,
+                    reasoningEfforts = declared,
+                ),
             ).modelParameters
 
         withoutAndroidLoggingOnCurrentThread {
             // A chat request without the function wrapper carries the slider's effort ...
             assertEquals("max", chatProvider.buildRequest(emptyList()).optString("reasoning_effort"))
             assertNotNull(responsesProvider.buildRequest(emptyList()).optJSONObject("reasoning"))
-            // ... and the function wrapper keeps it out of both transports.
-            assertEquals("", chatProvider.buildRequest(functionalParameters).optString("reasoning_effort"))
-            assertNull(responsesProvider.buildRequest(functionalParameters).optJSONObject("reasoning"))
+            // ... and the function wrapper puts its own level in both transports instead.
+            assertEquals("low", chatProvider.buildRequest(chatFunction).optString("reasoning_effort"))
+            assertEquals("low", responsesProvider.buildRequest(responsesFunction)
+                .optJSONObject("reasoning")?.optString("effort"))
         }
     }
 

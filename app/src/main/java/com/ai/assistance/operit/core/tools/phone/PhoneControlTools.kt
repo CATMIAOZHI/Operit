@@ -50,6 +50,9 @@ object PhoneControlTools {
         packageAvailable = available
         if (!available) lease.active()?.let { stop(it.id) }
     }
+
+    /** The chat that is controlling the phone right now, if any. */
+    fun activeSessionChatId(): String? = lease.active()?.owner?.chat
     private var watchdog: Runnable? = null
 
     private fun armWatchdog(id: String) {

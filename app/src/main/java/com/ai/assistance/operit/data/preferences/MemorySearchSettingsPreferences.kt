@@ -28,7 +28,12 @@ class MemorySearchSettingsPreferences(private val context: Context, profileId: S
         return config.normalized()
     }
 
-    fun shouldInjectNotes(): Boolean = searchPrefs.getBoolean("inject_memory_notes", true)
+    /**
+     * An Orbit's own space always injects memory.md, extracts and revises skills, reads thinking and
+     * applies changes; these switches exist only for ordinary spaces.
+     */
+    val isOrbitLocked: Boolean get() = isOrbitSpace(profileId)
+    fun shouldInjectNotes(): Boolean = isOrbitLocked || searchPrefs.getBoolean("inject_memory_notes", true)
     fun observeInjectNotes(): kotlinx.coroutines.flow.Flow<Boolean> = kotlinx.coroutines.flow.callbackFlow {
         val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
             if (key == "inject_memory_notes") trySend(shouldInjectNotes())
@@ -38,61 +43,37 @@ class MemorySearchSettingsPreferences(private val context: Context, profileId: S
         awaitClose { searchPrefs.unregisterOnSharedPreferenceChangeListener(listener) }
     }
     fun setInjectNotes(enabled: Boolean) {
+        if (isOrbitLocked) return
         searchPrefs.edit().putBoolean("inject_memory_notes", enabled).apply()
         LearningPromptSnapshotRepository.markChanged(context, "notes-policy:$profileId")
     }
-    fun shouldExtractSkills(): Boolean = searchPrefs.getBoolean("extract_skill_drafts", true)
-    fun shouldIncludeThinking(): Boolean = searchPrefs.getBoolean("extract_include_thinking", true)
+    fun shouldExtractSkills(): Boolean = isOrbitLocked || searchPrefs.getBoolean("extract_skill_drafts", true)
+    /**
+     * Whether the reviewer may look up a message's thinking when it needs it. Pages never include
+     * thinking; the reviewer asks for it with history include_thinking=true, mainly for skill work.
+     */
+    fun shouldIncludeThinking(): Boolean = isOrbitLocked || searchPrefs.getBoolean("extract_include_thinking", true)
     fun setIncludeThinking(enabled: Boolean) {
+        if (isOrbitLocked) return
         searchPrefs.edit().putBoolean("extract_include_thinking", enabled).apply()
     }
+    /** How long a chat must stay quiet after its last reply before its new messages are reviewed. */
     fun learningDelayMinutes(): Int = searchPrefs.getInt("learning_delay_minutes", 5).coerceIn(1, 60)
     fun setLearningDelayMinutes(minutes: Int) {
         searchPrefs.edit().putInt("learning_delay_minutes", minutes.coerceIn(1, 60)).apply()
     }
-    fun memoryReviewInterval(): Int = searchPrefs.getInt("memory_review_interval", 10).coerceIn(1, 100)
-    fun skillReviewInterval(): Int = searchPrefs.getInt("skill_review_interval", 10).coerceIn(1, 100)
-    fun setMemoryReviewInterval(value: Int) {
-        searchPrefs.edit().putInt("memory_review_interval", value.coerceIn(1, 100)).apply()
-    }
-    fun setSkillReviewInterval(value: Int) {
-        searchPrefs.edit().putInt("skill_review_interval", value.coerceIn(1, 100)).apply()
-    }
-    internal fun advanceLearningCadence(chatId: String, toolIterations: Int): MemoryLearningTick =
-        synchronized(cadenceLock) {
-            val turnsKey = "learning_turns:$chatId"
-            val iterationsKey = "learning_iterations:$chatId"
-            val tick = MemoryLearningCadence(
-                searchPrefs.getInt(turnsKey, 0), searchPrefs.getInt(iterationsKey, 0)
-            ).advance(shouldExtractNewMemory(), shouldExtractSkills(), toolIterations,
-                memoryReviewInterval(), skillReviewInterval())
-            searchPrefs.edit().putInt(turnsKey, tick.next.turns)
-                .putInt(iterationsKey, tick.next.iterations)
-                .putBoolean("learning_pending_notes:$chatId", shouldExtractNewMemory() &&
-                    (tick.notes || searchPrefs.getBoolean("learning_pending_notes:$chatId", false)))
-                .putBoolean("learning_pending_skills:$chatId", shouldExtractSkills() &&
-                    (tick.skills || searchPrefs.getBoolean("learning_pending_skills:$chatId", false))).apply()
-            tick.copy(notes = searchPrefs.getBoolean("learning_pending_notes:$chatId", false),
-                skills = searchPrefs.getBoolean("learning_pending_skills:$chatId", false))
-        }
-    internal fun consumePendingLearning(chatId: String): Pair<Boolean, Boolean> = synchronized(cadenceLock) {
-        val notes = shouldExtractNewMemory() && searchPrefs.getBoolean("learning_pending_notes:$chatId", false)
-        val skills = shouldExtractSkills() && searchPrefs.getBoolean("learning_pending_skills:$chatId", false)
-        val editor = searchPrefs.edit().remove("learning_pending_notes:$chatId")
-            .remove("learning_pending_skills:$chatId")
-        // This review sees the latest snapshot, including turns accumulated during the idle wait.
-        if (notes) editor.putInt("learning_turns:$chatId", 0)
-        if (skills) editor.putInt("learning_iterations:$chatId", 0)
-        editor.apply()
-        notes to skills
-    }
-    fun mayReviseLearnedSkills(): Boolean = searchPrefs.getBoolean("revise_learned_skills", true)
+    fun mayReviseLearnedSkills(): Boolean = isOrbitLocked || searchPrefs.getBoolean("revise_learned_skills", true)
     fun setReviseLearnedSkills(enabled: Boolean) {
+        if (isOrbitLocked) return
         searchPrefs.edit().putBoolean("revise_learned_skills",enabled).apply()
     }
     fun mayAiReviewChanges(): Boolean = searchPrefs.getBoolean("allow_ai_memory_decisions", false)
-    fun shouldAutoApproveChanges(): Boolean = searchPrefs.getBoolean("auto_approve_memory_changes", true)
+    /** An Orbit's own memory space always applies changes without asking; it cannot be turned off. */
+    val isAutoApprovalLocked: Boolean get() = isOrbitSpace(profileId)
+    fun shouldAutoApproveChanges(): Boolean =
+        isAutoApprovalLocked || searchPrefs.getBoolean("auto_approve_memory_changes", true)
     fun setAutoApproveChanges(enabled: Boolean) {
+        if (isAutoApprovalLocked) return
         searchPrefs.edit().putBoolean("auto_approve_memory_changes", enabled).apply()
     }
     fun setAiReviewChanges(enabled: Boolean) {
@@ -100,9 +81,8 @@ class MemorySearchSettingsPreferences(private val context: Context, profileId: S
     }
 
     /**
-     * Dropped together with the memory space. This file also holds the per-conversation learning
-     * cadence (`learning_turns:` / `learning_iterations:` / `learning_pending_*`), so clearing it is
-     * what stops a future space that reuses the id from inheriting stale counters and switches.
+     * Dropped together with the memory space, so a future space that reuses the id does not inherit
+     * stale switches.
      */
     suspend fun clear() = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
         // commit(), not apply(): the space is already gone from the list, and a leftover file is
@@ -115,11 +95,13 @@ class MemorySearchSettingsPreferences(private val context: Context, profileId: S
             )
         }
     }
-    fun shouldExtractNewMemory(): Boolean = searchPrefs.getBoolean("extract_new_memory", true)
+    // Every Orbit conversation goes through memory review; only ordinary spaces can turn it off.
+    fun shouldExtractNewMemory(): Boolean = isOrbitSpace(profileId) || searchPrefs.getBoolean("extract_new_memory", true)
     fun setExtractNewMemory(enabled: Boolean) {
         searchPrefs.edit().putBoolean("extract_new_memory", enabled).apply()
     }
     fun setExtractSkills(enabled: Boolean) {
+        if (isOrbitLocked) return
         searchPrefs.edit().putBoolean("extract_skill_drafts", enabled).apply()
     }
 
@@ -189,7 +171,6 @@ class MemorySearchSettingsPreferences(private val context: Context, profileId: S
     }
 
     companion object {
-        private val cadenceLock = Any()
         private const val KEY_SCORE_MODE = "score_mode"
         private const val KEY_KEYWORD_WEIGHT = "keyword_weight"
         private const val KEY_TAG_WEIGHT = "tag_weight"
@@ -206,5 +187,28 @@ class MemorySearchSettingsPreferences(private val context: Context, profileId: S
         const val DEFAULT_AUTO_SAVE_INTERVAL_MINUTES = 5
         const val MIN_AUTO_SAVE_INTERVAL_MINUTES = 1
         const val MAX_AUTO_SAVE_INTERVAL_MINUTES = 30
+
+        /** Orbit memory spaces are named `orbit_<orbitId>` (UserPreferencesManager.createOrbitMemorySpace). */
+        fun isOrbitSpace(profileId: String): Boolean = profileId.startsWith("orbit_")
+
+        /**
+         * An Orbit keeps its memory inside its own folder, like Muse: `orbit/<orbitId>/memory/`
+         * holds memory.md and the record of changes to it. Other spaces return null.
+         */
+        fun orbitMemoryDir(filesDir: java.io.File, profileId: String): java.io.File? {
+            if (!isOrbitSpace(profileId)) return null
+            val orbitId = profileId.removePrefix("orbit_")
+            // An odd id can only come from edited or restored data; keep it on the old path rather than crash.
+            if (!orbitId.matches(Regex("[a-zA-Z0-9-]+"))) return null
+            return java.io.File(filesDir, "orbit/$orbitId/memory")
+        }
+
+        /** Moves a file written by an older version to its new place, once. */
+        internal fun moveLegacyFile(legacy: java.io.File, target: java.io.File) {
+            if (legacy == target || target.exists() || !legacy.isFile) return
+            target.parentFile?.mkdirs()
+            java.nio.file.Files.move(legacy.toPath(), target.toPath(), java.nio.file.StandardCopyOption.ATOMIC_MOVE)
+            legacy.parentFile?.takeIf { it.list()?.isEmpty() == true }?.delete()
+        }
     }
 }

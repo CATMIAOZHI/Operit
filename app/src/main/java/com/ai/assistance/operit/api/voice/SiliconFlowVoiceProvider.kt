@@ -181,6 +181,19 @@ class SiliconFlowVoiceProvider(
         completion.await()
     }
 
+    override suspend fun synthesizeToFile(text: String, out: File): Boolean = withContext(Dispatchers.IO) {
+        if (!isInitialized && !initialize()) return@withContext false
+        val request = SpeakRequest(text, interrupt = false, rate = null, pitch = null, extraParams = emptyMap(),
+            generation = stopGeneration.get(), completion = CompletableDeferred())
+        val prepared = fetchAudioFile(request) ?: return@withContext false
+        try {
+            prepared.audioFile.copyTo(out, overwrite = true)
+        } finally {
+            prepared.audioFile.delete()
+        }
+        out.length() > 0
+    }
+
     private suspend fun fetchAudioFile(request: SpeakRequest): PreparedRequest? {
         if (!isInitialized) {
             AppLogger.e(TAG, "TTS未初始化")
@@ -275,6 +288,10 @@ class SiliconFlowVoiceProvider(
             connection.setRequestProperty("Authorization", "Bearer $apiKey")
             connection.setRequestProperty("Content-Type", "application/json")
             connection.doOutput = true
+            // A server that never answers must not hold the voice forever, and stopping it drops the connection.
+            connection.connectTimeout = 30_000
+            connection.readTimeout = 120_000
+            return stopOnCancel<PreparedRequest?>(stop = { connection.disconnect() }) {
 
             // 写入请求体
             connection.outputStream.use { os ->
@@ -286,18 +303,23 @@ class SiliconFlowVoiceProvider(
                 // 将音频数据保存到临时文件
                 val tempFile = File.createTempFile("siliconflow_tts", ".mp3", context.cacheDir)
 
-                connection.inputStream.use { input ->
-                    FileOutputStream(tempFile).use { output ->
-                        input.copyTo(output)
+                try {
+                    connection.inputStream.use { input ->
+                        FileOutputStream(tempFile).use { output ->
+                            input.copyTo(output)
+                        }
                     }
+                } catch (e: Throwable) {
+                    tempFile.delete()
+                    throw e
                 }
 
                 if (request.generation != stopGeneration.get()) {
                     tempFile.delete()
-                    return null
+                    return@stopOnCancel null
                 }
 
-                return PreparedRequest(request, tempFile)
+                PreparedRequest(request, tempFile)
             } else {
                 val errorBody = connection.errorStream?.bufferedReader()?.readText()
                 AppLogger.e(TAG, "TTS请求失败，响应码: $responseCode, Body: $errorBody")
@@ -307,7 +329,12 @@ class SiliconFlowVoiceProvider(
                     errorBody = errorBody
                 )
             }
+            }
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            if (kotlin.coroutines.coroutineContext[kotlinx.coroutines.Job]?.isCancelled == true) {
+                throw kotlinx.coroutines.CancellationException("TTS request stopped")
+            }
             AppLogger.e(TAG, "TTS speak失败", e)
             if (e is TtsException) throw e
             throw TtsException("TTS speak failed", cause = e)

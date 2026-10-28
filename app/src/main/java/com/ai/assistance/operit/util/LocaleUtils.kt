@@ -3,6 +3,7 @@ package com.ai.assistance.operit.util
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.res.Configuration
+import android.content.res.Resources
 import android.os.Build
 import android.os.LocaleList
 import androidx.appcompat.app.AppCompatDelegate
@@ -103,6 +104,10 @@ object LocaleUtils {
         return context.createConfigurationContext(configuration)
     }
 
+    /** System prompts are written in Chinese only for Chinese; every other language gets English. */
+    fun usesEnglishPrompt(context: Context): Boolean =
+        !getCurrentLanguage(context).lowercase().startsWith("zh")
+
     /**
      * 获取当前应用设置的语言
      * @param context 上下文
@@ -142,7 +147,14 @@ object LocaleUtils {
         } catch (e: Exception) {
             AppLogger.e("LocaleUtils", "保存应用语言设置失败: $languageCode", e)
         }
+        applyAppLanguage(context, languageCode)
+    }
 
+    /**
+     * Applies a language already saved with [UserPreferencesManager.saveAppLanguage]. Following the
+     * system clears the app's own language on Android 13+, so the phone's language shows again.
+     */
+    fun applyAppLanguage(context: Context, languageCode: String) {
         // 根据 languageCode 获取相应的 Locale
         val localeToSet = getLocaleForLanguageCode(languageCode, context)
         
@@ -152,7 +164,9 @@ object LocaleUtils {
         // 根据Android版本应用语言设置
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             // Android 13+ 使用AppCompatDelegate API
-            val localeList = LocaleListCompat.create(localeToSet)
+            val followSystem = languageCode.isBlank() || languageCode == LanguageCodes.AUTO
+            val localeList =
+                if (followSystem) LocaleListCompat.getEmptyLocaleList() else LocaleListCompat.create(localeToSet)
             AppCompatDelegate.setApplicationLocales(localeList)
         } else {
             // 较旧版本Android使用资源配置
@@ -193,12 +207,18 @@ object LocaleUtils {
         }
     }
 
+    /**
+     * The phone's own language. The activity's resources already carry the app's chosen language,
+     * so they cannot tell what the system uses.
+     */
+    @Suppress("UNUSED_PARAMETER")
     private fun getCurrentSystemLocale(context: Context): Locale {
+        val system = Resources.getSystem().configuration
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            context.resources.configuration.locales.get(0)
+            system.locales.get(0)
         } else {
             @Suppress("DEPRECATION")
-            context.resources.configuration.locale
+            system.locale
         }
     }
 

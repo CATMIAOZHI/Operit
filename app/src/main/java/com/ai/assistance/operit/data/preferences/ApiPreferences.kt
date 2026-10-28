@@ -229,7 +229,7 @@ class ApiPreferences private constructor(private val context: Context) {
 
         // API 配置默认值
         const val DEFAULT_API_ENDPOINT = "https://api.deepseek.com/v1/chat/completions"
-        const val DEFAULT_MODEL_NAME = "deepseek-v4-flash"
+        const val DEFAULT_MODEL_NAME = "deepseek-flash"
 
         // legacy cleanup applied marker 键前缀（P1 闭环）：marker 与累计键清理在
         // 同一次 DataStore.edit 内原子完成；marker 已存在时同 operation 重试为
@@ -339,13 +339,11 @@ class ApiPreferences private constructor(private val context: Context) {
         context.apiDataStore.data.map { preferences ->
             preferences[ENABLE_MEMORY_AUTO_UPDATE] ?: DEFAULT_ENABLE_MEMORY_AUTO_UPDATE
         }
-    val enableLegacyMemoryExtractionFlow: Flow<Boolean> =
-        context.apiDataStore.data.map { it[ENABLE_LEGACY_MEMORY_EXTRACTION] ?: false }
-
-    suspend fun saveEnableLegacyMemoryExtraction(enabled: Boolean) {
-        context.apiDataStore.edit { it[ENABLE_LEGACY_MEMORY_EXTRACTION] = enabled }
-        if (!enabled) com.ai.assistance.operit.api.chat.library.MemoryAutoSaveScheduler.getInstance()?.cancelAutomaticExtraction()
-    }
+    /**
+     * Extraction into the old memory graph is gone: the graph is read-only, so this is always off
+     * whatever was saved before. New memory is learned by the memory_review pipeline instead.
+     */
+    val enableLegacyMemoryExtractionFlow: Flow<Boolean> = kotlinx.coroutines.flow.flowOf(false)
 
     // Flow for Auto Read
     val enableAutoReadFlow: Flow<Boolean> =

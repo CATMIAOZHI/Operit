@@ -194,9 +194,10 @@ fun ClassicChatSettingsBar(
             true
         } else false
     }
+    val orbitChatModel = com.ai.assistance.operit.ui.features.orbit.rememberOrbitChatModel(currentChatId, configSummaries)
     val currentConfigMapping =
-            configMappingWithIndex[FunctionType.CHAT] ?: FunctionConfigMapping(FunctionalConfigManager.DEFAULT_CONFIG_ID, 0)
-    val isModelSelectionLockedByCharacterCard = !characterCardBoundChatModelConfigId.isNullOrBlank()
+            orbitChatModel?.mapping ?: configMappingWithIndex[FunctionType.CHAT] ?: FunctionConfigMapping(FunctionalConfigManager.DEFAULT_CONFIG_ID, 0)
+    val isModelSelectionLockedByCharacterCard = orbitChatModel == null && !characterCardBoundChatModelConfigId.isNullOrBlank()
     val isMemorySelectionLockedByCharacterCard = !characterCardBoundMemoryProfileId.isNullOrBlank()
     val effectiveCurrentConfigMapping =
             if (isModelSelectionLockedByCharacterCard) {
@@ -254,10 +255,13 @@ fun ClassicChatSettingsBar(
     val currentProfileName =
         preferenceProfiles.find { it.id == effectiveCurrentProfileId }?.name ?: stringResource(R.string.not_selected)
     val currentConfig = configSummaries.find { it.id == effectiveCurrentConfigMapping.configId }
-    val currentModelName =
+    val mappedModelName =
         currentConfig?.let { config ->
-            getModelList(config.modelName).getOrNull(effectiveCurrentConfigMapping.modelIndex)
-        } ?: stringResource(R.string.functional_model_reselect)
+            com.ai.assistance.operit.data.preferences.OrbitModelRef
+                .fromSelection(config, effectiveCurrentConfigMapping.modelIndex)?.modelName
+        }
+    val currentModelName = mappedModelName?.ifEmpty { stringResource(R.string.orbit_model_plugin_default) }
+        ?: stringResource(R.string.functional_model_reselect)
     var currentModelParameters by remember {
         mutableStateOf<List<ModelParameter<*>>>(emptyList())
     }
@@ -291,7 +295,7 @@ fun ClassicChatSettingsBar(
                 ThinkingRequestSemantics.resolve(
                     config = config,
                     isToolPkgProvider = currentIsToolPkgProvider,
-                    modelName = currentModelName,
+                    modelName = mappedModelName.orEmpty(),
                     qualityLevel = thinkingQualityLevel,
                     modelParameters = currentModelParameters,
                     enableThinking = enableThinkingMode,
@@ -301,7 +305,8 @@ fun ClassicChatSettingsBar(
     val maxThinkingQualityLevel = ApiPreferences.MAX_THINKING_QUALITY_LEVEL
     val toolPermissionText =
         stringResource(
-            (if (enableTools) permissionStop else ToolPermissionStop.FORBID).labelRes
+            (com.ai.assistance.operit.ui.permissions.rememberMainChatOrbitLockedStop()
+                ?: if (enableTools) permissionStop else ToolPermissionStop.FORBID).labelRes
         )
     val behaviorSummary =
         if (disableStreamOutput) {
@@ -312,47 +317,25 @@ fun ClassicChatSettingsBar(
 
     // The detail is finished inside a suspend lambda, which cannot read resources, so the strings are
     // resolved here and later formatted with the locale those resources use.
-    val memoryAutoSaveLocale = LocalConfiguration.current.locales[0]
-    val memoryAutoSaveStatusText = stringResource(R.string.memory_auto_update_runtime_status)
-    val memoryAutoSavePausedText = stringResource(R.string.memory_auto_update_runtime_paused)
-    val memoryAutoSavePausedMasterText =
-        stringResource(R.string.memory_auto_update_runtime_paused_master)
-    val memoryAutoSaveAbandonedText = stringResource(R.string.memory_auto_update_runtime_abandoned)
+    val memoryLearningOnText = stringResource(R.string.memory_auto_update_runtime_new_on)
+    val memoryLearningOffText = stringResource(R.string.memory_auto_update_runtime_new_off)
 
+    // The old memory graph is read-only, so there is no queue or countdown left to describe.
     val buildMemoryAutoSaveDetail: suspend () -> String = {
-        val candidates = MemoryAutoSaveCandidateRepository(context, effectiveCurrentProfileId)
-        val pendingCandidateCount = candidates.countPendingAndFailedCandidates()
-        // The countdown describes the graph path alone, so it must not be shown while that path is
-        // switched off: the numbers would read as work that is about to happen when nothing will run.
-        val api = ApiPreferences.getInstance(context)
-        val masterEnabled = api.enableMemoryAutoUpdateFlow.first()
-        val graphEnabled = masterEnabled && api.enableLegacyMemoryExtractionFlow.first()
-        val detail = when {
-            // The master switch stops notes and skills as well, so it must not read as a graph-only
-            // pause; the graph path has its own way of being off.
-            !masterEnabled -> memoryAutoSavePausedMasterText.format(
-                memoryAutoSaveLocale, pendingCandidateCount)
-            !graphEnabled -> memoryAutoSavePausedText.format(
-                memoryAutoSaveLocale, pendingCandidateCount)
-            else -> {
-                val minutesUntilNextSave =
-                    MemoryAutoSaveScheduler.getInstance()?.getMinutesUntilNextRun(effectiveCurrentProfileId)
-                        ?: MemorySearchSettingsPreferences(context, effectiveCurrentProfileId).loadAutoSaveIntervalMinutes().toLong()
-                memoryAutoSaveStatusText.format(
-                    memoryAutoSaveLocale,
-                    pendingCandidateCount,
-                    minutesUntilNextSave
-                )
-            }
-        }
-        // Abandoned candidates are silently skipped by the queue, so the count is the only signal.
-        val abandoned = candidates.countAbandonedCandidates()
-        if (abandoned > 0) detail + " " + memoryAutoSaveAbandonedText.format(memoryAutoSaveLocale, abandoned)
-        else detail
+        if (ApiPreferences.getInstance(context).enableMemoryAutoUpdateFlow.first()) memoryLearningOnText
+        else memoryLearningOffText
     }
 
     val onSelectModel: (String, Int) -> Unit = { selectedId, modelIndex ->
-        if (isModelSelectionLockedByCharacterCard) {
+        if (orbitChatModel != null) {
+            val name = configSummaries.firstOrNull { it.id == selectedId }?.let {
+                com.ai.assistance.operit.data.preferences.OrbitModelRef.fromSelection(it, modelIndex)?.modelName
+            }
+            if (name != null) scope.launch {
+                com.ai.assistance.operit.ui.features.orbit.selectOrbitChatModel(context, orbitChatModel.orbitId, selectedId, name)
+                showModelDropdown = false
+            }
+        } else if (isModelSelectionLockedByCharacterCard) {
             val currentModelIndex =
                 configSummaries.find { it.id == effectiveCurrentConfigMapping.configId }?.let { config ->
                     getValidModelIndex(config.modelName, effectiveCurrentConfigMapping.modelIndex)
@@ -530,7 +513,9 @@ fun ClassicChatSettingsBar(
                                         Modifier.padding(vertical = 4.dp)
                                 .verticalScroll(rememberScrollState())
                         ) {
-                            ClassicSettingsFoldSection(
+                            // Orbit always remembers on its own: no memory section, no Max mode.
+                            val orbitMenu = com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current
+                            if (!orbitMenu) ClassicSettingsFoldSection(
                                 title = stringResource(R.string.memory),
                                 value = currentProfileName,
                                 icon = Icons.Outlined.Portrait,
@@ -705,7 +690,7 @@ fun ClassicChatSettingsBar(
                                     showMenu = false
                                 }
                             )
-                            SettingItem(
+                            if (!orbitMenu) SettingItem(
                                 title = stringResource(R.string.max_mode_title),
                                 icon = if (enableMaxContextMode) Icons.Rounded.Whatshot else Icons.Outlined.Whatshot,
                                 iconTint = if (enableMaxContextMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
@@ -1252,8 +1237,11 @@ private fun ToolPermissionSettingItem(
                 overflow = TextOverflow.Ellipsis
             )
             Spacer(modifier = Modifier.height(6.dp))
-            PermissionStopSlider(
+            if (com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current) {
+                com.ai.assistance.operit.ui.permissions.OrbitAccessSlider()
+            } else PermissionStopSlider(
                 stop = selectedStop,
+                lockedStop = com.ai.assistance.operit.ui.permissions.rememberMainChatOrbitLockedStop(),
                 onStopSelected = { stop ->
                     // Turning tools off and turning them back on stay part of choosing the level.
                     if (!enableTools && stop != ToolPermissionStop.FORBID) {
@@ -1269,7 +1257,8 @@ private fun ToolPermissionSettingItem(
             )
         }
 
-        Box(
+        // Orbit keeps its own tools on; the main app's tool manager is not offered there.
+        if (!com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current) Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(30.dp)
@@ -1671,8 +1660,10 @@ private fun ModelSelectorItem(
     var expandedConfigId by remember { mutableStateOf<String?>(null) } // 用于记录当前展开的配置的模型列表
 
     val currentModelName = currentConfig?.let { config ->
-        getModelList(config.modelName).getOrNull(currentConfigMapping.modelIndex)
-    } ?: stringResource(R.string.functional_model_reselect)
+        com.ai.assistance.operit.data.preferences.OrbitModelRef
+            .fromSelection(config, currentConfigMapping.modelIndex)?.modelName
+    }?.ifEmpty { stringResource(R.string.orbit_model_plugin_default) }
+        ?: stringResource(R.string.functional_model_reselect)
     val effectiveExpanded = expanded
     val expandStateDesc =
             if (effectiveExpanded) stringResource(R.string.expanded) else stringResource(R.string.collapsed)
@@ -1722,11 +1713,9 @@ private fun ModelSelectorItem(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 // 只显示选中的模型名称
-                currentConfig?.let { config ->
-                    val selectedModel = getModelList(config.modelName)
-                        .getOrNull(currentConfigMapping.modelIndex).orEmpty()
+                currentConfig?.let {
                     Text(
-                        text = selectedModel.ifEmpty { stringResource(R.string.functional_model_reselect) },
+                        text = currentModelName,
                         fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.primary,
                         maxLines = 2,
@@ -1838,7 +1827,10 @@ private fun ModelSelectorItem(
                 @Composable
                 fun ConfigItem(config: ModelConfigSummary) {
                     val isSelected = config.id == currentConfigMapping.configId
-                    val modelList = getModelList(config.modelName)
+                    val modelList = getModelList(config.modelName).ifEmpty {
+                        if (com.ai.assistance.operit.data.preferences.OrbitModelRef.fromSelection(config, 0)?.modelName == "")
+                            listOf("") else emptyList()
+                    }
                     val hasMultipleModels = modelList.size > 1
                     val isExpanded = expandedConfigId == config.id
 
@@ -1888,7 +1880,7 @@ private fun ModelSelectorItem(
                                     )
                                 } else {
                                     Text(
-                                        text = config.modelName,
+                                        text = modelList.firstOrNull()?.ifEmpty { stringResource(R.string.orbit_model_plugin_default) } ?: config.modelName,
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         fontSize = 11.sp,
@@ -1940,7 +1932,7 @@ private fun ModelSelectorItem(
                                         verticalAlignment = Alignment.CenterVertically,
                                     ) {
                                         Text(
-                                            text = modelName,
+                                            text = modelName.ifEmpty { stringResource(R.string.orbit_model_plugin_default) },
                                             fontSize = 12.sp,
                                             fontWeight = if (isModelSelected) FontWeight.Bold else FontWeight.Normal,
                                             color = if (isModelSelected) MaterialTheme.colorScheme.primary
@@ -1949,7 +1941,7 @@ private fun ModelSelectorItem(
                                             overflow = TextOverflow.Ellipsis,
                                             modifier = Modifier.weight(1f),
                                         )
-                                        IconButton(
+                                        if (modelName.isNotEmpty()) IconButton(
                                             onClick = { onToggleFavorite(config.id, modelName) },
                                             modifier = Modifier.size(24.dp),
                                         ) {

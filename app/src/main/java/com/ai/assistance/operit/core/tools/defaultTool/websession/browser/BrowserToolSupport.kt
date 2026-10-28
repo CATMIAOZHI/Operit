@@ -45,7 +45,14 @@ internal data class BrowserNetworkRequestEntry(
     val isStatic: Boolean,
     val headers: Map<String, String> = emptyMap(),
     val timestamp: Long = System.currentTimeMillis()
-)
+) {
+    /** Filled from DevTools when it is connected; guarded by the session's networkEntries lock. */
+    var status: Int? = null
+    var mimeType: String? = null
+    var failure: String? = null
+    /** DevTools' ID for this request, usable with Network.getResponseBody. */
+    var requestId: String? = null
+}
 
 internal data class PendingDialog(
     val type: String,
@@ -60,7 +67,9 @@ internal data class PendingDialog(
 internal data class PendingAsyncJsCall(
     val latch: CountDownLatch = CountDownLatch(1),
     @Volatile var result: String? = null,
-    @Volatile var error: String? = null
+    @Volatile var error: String? = null,
+    /** Set only by the injection callback: the page could not parse the script, so none of it ran. */
+    @Volatile var notParsed: Boolean = false
 )
 
 internal data class WebDownloadEvent(
@@ -70,7 +79,7 @@ internal data class WebDownloadEvent(
     val url: String? = null,
     val mimeType: String? = null,
     val savedPath: String? = null,
-    val downloadId: Long? = null,
+    val downloadId: String? = null,
     val error: String? = null
 ) {
     fun toJson(): JSONObject =
@@ -137,6 +146,31 @@ internal fun buildBrowserResponse(
         sections += "### Error\n${error.trim()}"
     }
     return sections.joinToString("\n\n")
+}
+
+/** Longest single section placed in a reply; longer text is saved to a file so it does not flood the context. */
+internal const val BROWSER_INLINE_SECTION_CHARS = 12_000
+
+/**
+ * [text] as is when short; otherwise part of it plus the path of a file holding all of it.
+ * Logs keep their newest end ([keepTail]); results keep their start.
+ */
+internal fun StandardBrowserSessionTools.inlineOrSaved(
+    text: String,
+    prefix: String,
+    extension: String,
+    keepTail: Boolean = false,
+    limit: Int = BROWSER_INLINE_SECTION_CHARS
+): String {
+    if (text.length <= limit) return text
+    val path = runCatching { writeBrowserTextOutput("", text, prefix, extension) }.getOrNull()
+    val hidden = text.length - limit
+    val where = if (path != null) "full text saved to $path" else "the rest could not be saved"
+    return if (keepTail) {
+        "... ($hidden earlier characters not shown; $where)\n" + text.takeLast(limit)
+    } else {
+        text.take(limit) + "\n... ($hidden more characters not shown; $where)"
+    }
 }
 
 private fun formatSnapshotSection(snapshot: String): String {
@@ -244,7 +278,7 @@ internal fun StandardBrowserSessionTools.renderAllConsoleMessages(
     }
     return messages.joinToString("\n") { entry ->
         val source = if (!entry.sourceId.isNullOrBlank()) " (${entry.sourceId}:${entry.lineNumber ?: 0})" else ""
-        "- [${normalizeConsoleLevel(entry.level)}] ${entry.message}$source"
+        "- [${normalizeConsoleLevel(entry.level)}] ${clipConsoleMessage(entry.message)}$source"
     }
 }
 
@@ -259,11 +293,17 @@ internal fun StandardBrowserSessionTools.renderNewConsoleMessages(
     if (messages.isEmpty()) {
         return null
     }
-    return messages.joinToString("\n") { entry ->
-        val source = if (!entry.sourceId.isNullOrBlank()) " (${entry.sourceId}:${entry.lineNumber ?: 0})" else ""
-        "- [${normalizeConsoleLevel(entry.level)}] ${entry.message}$source"
-    }
+    val text =
+        messages.joinToString("\n") { entry ->
+            val source = if (!entry.sourceId.isNullOrBlank()) " (${entry.sourceId}:${entry.lineNumber ?: 0})" else ""
+            "- [${normalizeConsoleLevel(entry.level)}] ${clipConsoleMessage(entry.message)}$source"
+        }
+    return inlineOrSaved(text, "console_messages", "log", keepTail = true, limit = 6_000)
 }
+
+/** One very long console line (a dumped object, a minified stack) should not take over the reply. */
+private fun clipConsoleMessage(message: String): String =
+    if (message.length <= 2_000) message else message.take(2_000) + " ... (${message.length - 2_000} more characters)"
 
 internal fun StandardBrowserSessionTools.renderNetworkRequestLog(
     session: BrowserToolSession,
@@ -279,20 +319,86 @@ internal fun StandardBrowserSessionTools.renderNetworkRequestLog(
     return entries.joinToString("\n") { entry ->
         val frameTag = if (entry.isMainFrame) " [main-frame]" else ""
         val staticTag = if (entry.isStatic) " [static]" else ""
-        "- ${entry.method} ${entry.url}$frameTag$staticTag"
+        val outcome =
+            when {
+                entry.failure != null && entry.status != null ->
+                    " => [${entry.status}, then failed: ${entry.failure}]"
+                entry.failure != null -> " => [failed: ${entry.failure}]"
+                entry.status != null -> " => [${entry.status}]" + (entry.mimeType?.let { " $it" } ?: "")
+                else -> ""
+            }
+        val idTag = entry.requestId?.let { " (requestId: $it)" } ?: ""
+        val url = if (entry.url.length <= 600) entry.url else entry.url.take(600) + "...(${entry.url.length} chars)"
+        "- ${entry.method} $url$outcome$frameTag$staticTag$idTag"
+    }
+}
+
+/**
+ * Records what DevTools saw a request end with: its status, or why it failed. A request is tied
+ * to one entry by its DevTools ID, so a later failure updates that same entry. A redirect hop
+ * ([isRedirectHop]) shares the ID with the final request, so it is matched by method and URL only.
+ */
+internal fun StandardBrowserSessionTools.recordNetworkOutcome(
+    session: BrowserToolSession,
+    requestId: String?,
+    method: String?,
+    url: String,
+    resourceType: String?,
+    status: Int?,
+    mimeType: String?,
+    failure: String?,
+    isRedirectHop: Boolean = false
+) {
+    if (url.isBlank() || url.startsWith("data:")) return
+    val id = requestId?.takeIf { it.isNotBlank() && !isRedirectHop }
+    val wantedMethod = method?.takeIf { it.isNotBlank() } ?: "GET"
+    synchronized(session.networkEntries) {
+        val entry =
+            id?.let { wanted -> session.networkEntries.lastOrNull { it.requestId == wanted } }
+                ?: session.networkEntries.lastOrNull {
+                    it.requestId == null && it.url == url && it.status == null && it.failure == null &&
+                        it.method.equals(wantedMethod, ignoreCase = true)
+                }
+                ?: BrowserNetworkRequestEntry(
+                    method = wantedMethod,
+                    url = url,
+                    isMainFrame = resourceType == "Document",
+                    isStatic = resourceType in setOf("Image", "Stylesheet", "Font", "Script", "Media")
+                ).also {
+                    session.networkEntries += it
+                    if (session.networkEntries.size > StandardBrowserSessionTools.MAX_EVENT_LOG_ENTRIES) {
+                        session.networkEntries.removeAt(0)
+                    }
+                }
+        if (id != null) entry.requestId = id
+        if (status != null) entry.status = status
+        mimeType?.takeIf { it.isNotBlank() }?.let { entry.mimeType = it }
+        if (failure != null) entry.failure = failure
     }
 }
 
 internal fun StandardBrowserSessionTools.renderModalState(session: BrowserToolSession): String? {
-    val dialog = session.pendingDialog ?: return null
+    val dialog = session.pendingDialog
+    val chooserOpen = session.pendingFileChooserCallback != null
+    if (dialog == null && !chooserOpen) return null
     return buildString {
-        appendLine("- Type: ${dialog.type}")
-        appendLine("- Message: ${dialog.message.ifBlank { "(empty)" }}")
-        if (!dialog.defaultValue.isNullOrBlank()) {
-            appendLine("- Default value: ${dialog.defaultValue}")
+        if (dialog != null) {
+            appendLine("- Type: ${dialog.type}")
+            appendLine("- Message: ${dialog.message.ifBlank { "(empty)" }}")
+            if (!dialog.defaultValue.isNullOrBlank()) {
+                appendLine("- Default value: ${dialog.defaultValue}")
+            }
+            appendLine("- URL: ${dialog.url.orEmpty().ifBlank { session.currentUrl.ifBlank { "about:blank" } }}")
         }
-        append("- URL: ${dialog.url.orEmpty().ifBlank { session.currentUrl.ifBlank { "about:blank" } }}")
-    }
+        if (chooserOpen) {
+            appendLine("- Type: file chooser (the page is waiting for files)")
+            val accept = session.pendingFileChooserAccept
+            appendLine("- Accepts: ${if (accept.isEmpty()) "any file" else accept.joinToString(", ")}")
+            appendLine("- Multiple files: ${if (session.pendingFileChooserMultiple) "yes" else "no"}")
+            if (session.pendingFileChooserCapture) appendLine("- Asks for the camera or microphone")
+            appendLine("- Next: call browser_file_upload with absolute paths, or with no paths to cancel.")
+        }
+    }.trim()
 }
 
 internal fun StandardBrowserSessionTools.renderDownloads(
@@ -315,7 +421,7 @@ internal fun StandardBrowserSessionTools.captureActionMarkers(
         initialSessionId = session.id,
         initialUrl = readCurrentUrl(session.webView, session.currentUrl).ifBlank { session.currentUrl },
         consoleTimestamp = latestConsoleTimestamp(session),
-        downloadTimestamp = latestBrowserDownloadEventAt(),
+        downloadTimestamp = latestProfileDownloadEventAt(session.profileName),
         snapshotGeneration = session.lastSnapshot?.generation ?: 0L,
         startedAt = System.currentTimeMillis()
     )
@@ -375,7 +481,10 @@ internal fun StandardBrowserSessionTools.matchesTextState(
                     2_000L
                 )
             )
-        }.getOrElse { "" }
+        }.getOrElse {
+            // An unreadable page proves nothing, in particular not that some text is gone.
+            return false
+        }
     val containsWanted = text == null || bodyText.contains(text)
     val goneSatisfied = textGone == null || !bodyText.contains(textGone)
     return containsWanted && goneSatisfied
@@ -556,7 +665,7 @@ private fun StandardBrowserSessionTools.actionSettled(
     val dialogOpened = session.pendingDialog?.timestamp?.let { it >= markers.startedAt } == true
     val fileChooserOpened =
         session.pendingFileChooserCallback != null && session.lastFileChooserRequestAt >= markers.startedAt
-    val downloadTriggered = latestBrowserDownloadEventAt() > markers.downloadTimestamp
+    val downloadTriggered = latestProfileDownloadEventAt(session.profileName) > markers.downloadTimestamp
     if (dialogOpened || fileChooserOpened || downloadTriggered) {
         return true
     }
@@ -671,6 +780,36 @@ internal fun StandardBrowserSessionTools.captureSnapshotModel(
                 return '"' + escapeQuoted(text) + '"';
             };
             const quotedName = (value) => '"' + escapeQuoted(normalize(value)) + '"';
+            // Also looks inside open shadow roots, where web components keep their content.
+            const deepQueryAll = (root, query) => {
+                const found = [];
+                const stack = [root];
+                while (stack.length) {
+                    const current = stack.pop();
+                    try { found.push.apply(found, Array.from(current.querySelectorAll(query))); } catch (_) {}
+                    let all = [];
+                    try { all = current.querySelectorAll("*"); } catch (_) {}
+                    for (let i = 0; i < all.length; i++) {
+                        if (all[i].shadowRoot) stack.push(all[i].shadowRoot);
+                    }
+                }
+                return found;
+            };
+            // Children as drawn: a shadow host shows its shadow root, and slots show what is put into them.
+            const renderedChildren = (element) => {
+                const source = element.shadowRoot ? element.shadowRoot.childNodes : element.childNodes;
+                const result = [];
+                Array.from(source).forEach((node) => {
+                    if (node.nodeType === Node.ELEMENT_NODE && String(node.tagName || "").toLowerCase() === "slot") {
+                        let assigned = [];
+                        try { assigned = node.assignedNodes({ flatten: true }); } catch (_) {}
+                        (assigned.length ? assigned : Array.from(node.childNodes)).forEach((child) => result.push(child));
+                        return;
+                    }
+                    result.push(node);
+                });
+                return result;
+            };
             const collectWindows = () => {
                 const queue = [window];
                 const visited = new Set();
@@ -691,7 +830,7 @@ internal fun StandardBrowserSessionTools.captureSnapshotModel(
                         continue;
                     }
                     result.push(currentWindow);
-                    Array.from(currentDocument.querySelectorAll("iframe, frame")).forEach((frameElement) => {
+                    deepQueryAll(currentDocument, "iframe, frame").forEach((frameElement) => {
                         try {
                             if (frameElement.contentWindow) {
                                 queue.push(frameElement.contentWindow);
@@ -724,7 +863,7 @@ internal fun StandardBrowserSessionTools.captureSnapshotModel(
                 const existingRefElements = [];
                 collectWindows().forEach((currentWindow) => {
                     try {
-                        Array.from(currentWindow.document.querySelectorAll("[aria-ref]")).forEach((element) => {
+                        deepQueryAll(currentWindow.document, "[aria-ref]").forEach((element) => {
                             existingRefElements.push(element);
                         });
                     } catch (_) {}
@@ -751,7 +890,10 @@ internal fun StandardBrowserSessionTools.captureSnapshotModel(
                     }
                     return normalize(
                         ids.map((id) => {
-                            const labelElement = element.ownerDocument.getElementById(id);
+                            const rootNode = element.getRootNode ? element.getRootNode() : null;
+                            const labelElement =
+                                (rootNode && rootNode.getElementById ? rootNode.getElementById(id) : null) ||
+                                element.ownerDocument.getElementById(id);
                             return labelElement ? normalize(labelElement.innerText || labelElement.textContent) : "";
                         }).filter(Boolean).join(" ")
                     );
@@ -976,7 +1118,7 @@ internal fun StandardBrowserSessionTools.captureSnapshotModel(
                         }
                         buffer = [];
                     };
-                    Array.from(element.childNodes).forEach((node) => {
+                    renderedChildren(element).forEach((node) => {
                         if (node.nodeType === Node.TEXT_NODE) {
                             buffer.push(node.textContent || "");
                             return;
@@ -1021,14 +1163,21 @@ internal fun StandardBrowserSessionTools.captureSnapshotModel(
                         attributes.push("ref=" + ref);
                         nodes.push({ ref: ref, role: role, name: name });
                         let children = [];
+                        let readable = false;
                         if (remainingDepth == null || remainingDepth > 0) {
                             try {
                                 const frameDocument = element.contentDocument;
                                 const frameRoot = frameDocument && (frameDocument.body || frameDocument.documentElement);
                                 if (frameRoot) {
+                                    readable = true;
                                     children = collectEntries(frameRoot, remainingDepth == null ? null : remainingDepth - 1);
                                 }
                             } catch (_) {}
+                        } else {
+                            readable = true;
+                        }
+                        if (!readable) {
+                            attributes.push("cross-origin: contents not readable, use a screenshot and browser_mouse_click_xy inside it");
                         }
                         return [{ kind: "element", role: role, name: name, attributes: attributes, inlineText: "", children: children }];
                     }
@@ -1037,7 +1186,7 @@ internal fun StandardBrowserSessionTools.captureSnapshotModel(
                     const textEntries = directTextEntries(element);
                     const combinedChildren = [];
                     let textIndex = 0;
-                    Array.from(element.childNodes).forEach((childNode) => {
+                    renderedChildren(element).forEach((childNode) => {
                         if (childNode.nodeType === Node.TEXT_NODE || (childNode.nodeType === Node.ELEMENT_NODE && String(childNode.tagName || "").toLowerCase() === "br")) {
                             const nextText = textEntries[textIndex];
                             if (nextText) {
@@ -1069,7 +1218,9 @@ internal fun StandardBrowserSessionTools.captureSnapshotModel(
                     let inlineText = "";
                     let children = combinedChildren;
                     if (role === "textbox") {
-                        const value = normalize(element.value);
+                        const sensitive = element.type === "password" ||
+                            /(?:current-password|new-password|one-time-code|cc-number|cc-csc)/i.test(element.autocomplete || "");
+                        const value = sensitive ? "" : normalize(element.value);
                         if (value && value !== name) {
                             inlineText = value;
                             children = [];
@@ -1180,6 +1331,21 @@ internal fun browserRefResolverScript(functionName: String = "__operitResolveRef
     """
     const $functionName = (refValue) => {
         const wantedRef = String(refValue || "");
+        // Searches open shadow roots too, matching how the snapshot hands out refs.
+        const deepQueryAll = (root, query) => {
+            const found = [];
+            const stack = [root];
+            while (stack.length) {
+                const current = stack.pop();
+                try { found.push.apply(found, Array.from(current.querySelectorAll(query))); } catch (_) {}
+                let all = [];
+                try { all = current.querySelectorAll("*"); } catch (_) {}
+                for (let i = 0; i < all.length; i++) {
+                    if (all[i].shadowRoot) stack.push(all[i].shadowRoot);
+                }
+            }
+            return found;
+        };
         const queue = [window];
         const visited = new Set();
         while (queue.length) {
@@ -1197,13 +1363,19 @@ internal fun browserRefResolverScript(functionName: String = "__operitResolveRef
             if (!currentDocument) {
                 continue;
             }
-            const target = Array.from(currentDocument.querySelectorAll("[aria-ref]")).find((element) => {
-                return String(element.getAttribute("aria-ref") || "") === wantedRef;
-            });
+            let target = null;
+            try {
+                target = currentDocument.querySelector('[aria-ref="' + wantedRef.replace(/["\\]/g, "") + '"]');
+            } catch (_) {}
+            if (!target) {
+                target = deepQueryAll(currentDocument, "[aria-ref]").find((element) => {
+                    return String(element.getAttribute("aria-ref") || "") === wantedRef;
+                }) || null;
+            }
             if (target) {
                 return { element: target, window: currentWindow };
             }
-            Array.from(currentDocument.querySelectorAll("iframe, frame")).forEach((frameElement) => {
+            deepQueryAll(currentDocument, "iframe, frame").forEach((frameElement) => {
                 try {
                     if (frameElement.contentWindow && !visited.has(frameElement.contentWindow)) {
                         queue.push(frameElement.contentWindow);

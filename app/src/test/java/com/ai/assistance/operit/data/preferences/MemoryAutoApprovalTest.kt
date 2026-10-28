@@ -39,6 +39,23 @@ class MemoryAutoApprovalTest {
         assertTrue(settings.shouldExtractSkills())
     }
 
+    @Test fun `an Orbit space keeps learning on even when stored switches say off`() {
+        val context = context(false)
+        val settings = MemorySearchSettingsPreferences(context, "orbit_x")
+        assertTrue(settings.shouldInjectNotes())
+        assertTrue(settings.shouldExtractSkills())
+        assertTrue(settings.shouldIncludeThinking())
+        assertTrue(settings.mayReviseLearnedSkills())
+        assertTrue(settings.shouldAutoApproveChanges())
+        settings.setExtractSkills(false)
+        settings.setIncludeThinking(false)
+        settings.setReviseLearnedSkills(false)
+        settings.setInjectNotes(false)
+        verify(context.getSharedPreferences("x", 0).edit(), never()).putBoolean(any(), any())
+        // An ordinary space still follows its stored switches.
+        assertFalse(MemorySearchSettingsPreferences(context, "a").shouldExtractSkills())
+    }
+
     @Test fun `automatic approval applies new notes and records decision without sweeping old drafts`() = runBlocking {
         val context = context()
         val notes = MemoryNotesRepository(context, "a")

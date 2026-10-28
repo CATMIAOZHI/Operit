@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="launch_mode_setting_title">打开 App 默认进入</string>
+    <string name="launch_mode_setting_orbit">Orbit 模式 · 关闭后进入普通模式</string>
+    <string name="launch_mode_setting_standard">普通模式 · 开启后进入 Orbit 模式</string>
+    <string name="launch_mode_choose_title">选择使用模式</string>
+    <string name="launch_mode_choose_note">以后可以在设置里切换。</string>
+    <string name="launch_mode_orbit_recommended">Orbit（推荐）</string>
+    <string name="launch_mode_standard">普通模式</string>
+    <string name="launch_mode_orbit_description">你的私人 AI 助手。聊天就能办事，也能帮你配置 App。</string>
+    <string name="launch_mode_standard_description">完整的 Operit 功能，自己手动配置。</string>
+    <string name="launch_mode_continue">继续</string>
+    <string name="launch_mode_save_failed">未能保存设置，请重试。</string>
+</resources>

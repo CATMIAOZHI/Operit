@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="orbit_task_detail_title">Task</string>
+    <string name="orbit_task_missing">This task no longer exists.</string>
+    <string name="orbit_task_section_plan">Schedule</string>
+    <string name="orbit_task_row_when">When</string>
+    <string name="orbit_task_row_next">Next run</string>
+    <string name="orbit_task_row_watch">Watches</string>
+    <string name="orbit_task_row_report">Reports</string>
+    <string name="orbit_task_row_run">How it runs</string>
+    <string name="orbit_task_pause">Pause task</string>
+    <string name="orbit_task_resume">Resume task</string>
+    <string name="orbit_tasks_group_attention">Needs you</string>
+    <string name="orbit_tasks_all">All tasks</string>
+    <string name="orbit_tasks_all_desc">%1$d in total, grouped by state</string>
+    <string name="orbit_task_resume_blocked">Confirm above whether that action finished before resuming.</string>
+    <string name="orbit_task_run_queued">Queued. It starts shortly.</string>
+    <string name="orbit_task_run_already_queued">Already waiting to run.</string>
+    <string name="orbit_task_dismiss">OK</string>
+    <string name="orbit_action_failed">Could not do that; it may have just changed. Refresh and try again.</string>
+    <string name="orbit_goal_new_message">Help me set up a new goal:</string>
+    <string name="orbit_task_keep">Keep task</string>
+    <string name="orbit_tasks_group_active">Active</string>
+    <string name="orbit_tasks_group_paused">Paused</string>
+    <string name="orbit_tasks_group_finished">Finished</string>
+    <string name="orbit_tasks_show_all">View all</string>
+    <string name="orbit_tasks_group_empty">No tasks in this group right now.</string>
+    <string name="orbit_tasks_group_system">System tasks</string>
+    <string name="orbit_tasks_system_separator">,\u0020</string>
+    <plurals name="orbit_tasks_system_waiting">
+        <item quantity="one">%d needs you</item>
+        <item quantity="other">%d need you</item>
+    </plurals>
+    <string name="skill_detail_files">Files</string>
+    <string name="skill_detail_location">Location</string>
+    <string name="skill_detail_entry_file">Entry file: %1$s</string>
+    <string name="skill_detail_load_failed">Couldn\'t read this skill: %1$s</string>
+    <string name="skill_detail_instructions">Instructions</string>
+    <string name="skill_delete_confirm_title">Delete \"%1$s\"?</string>
+    <string name="skill_delete_confirm_body">The skill\'s files will be removed. This can\'t be undone.</string>
+    <string name="skill_import_title">Add a skill</string>
+    <string name="skill_import_hint_repo">Paste a GitHub repository link and Operit downloads the skills in it.</string>
+    <string name="skill_import_hint_zip">Choose a skill package (.zip).</string>
+    <string name="skill_import_pick_zip">Choose package</string>
+    <string name="skill_import_change_zip">Change</string>
+</resources>

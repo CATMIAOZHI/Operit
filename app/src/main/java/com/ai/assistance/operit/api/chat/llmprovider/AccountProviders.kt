@@ -117,7 +117,7 @@ class GrokAccountProvider(
             val messages = json.optJSONArray("messages")
             if (messages != null) for (i in 0 until messages.length()) messages.optJSONObject(i)?.remove("reasoning_content")
         }
-        return createJsonRequestBody(json.toString())
+        return createJsonRequestBody(json)
     }
     override suspend fun getModelsList(context: Context): Result<List<ModelOption>> =
         try { Result.success(manager.availableGrokModels()) }

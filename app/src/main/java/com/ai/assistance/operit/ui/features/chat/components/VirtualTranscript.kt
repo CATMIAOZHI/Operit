@@ -8,6 +8,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.lazy.layout.LazyLayoutCacheWindow
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -29,8 +30,12 @@ import com.ai.assistance.operit.data.model.ChatMessageLocatorPreview
 import com.ai.assistance.operit.ui.common.markdown.LocalResponseProcessExpanded
 import com.ai.assistance.operit.ui.common.markdown.ResponseActivityHeader
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.gestures.stopScroll
+import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.ui.platform.LocalContext
 import com.ai.assistance.operit.ui.common.markdown.LocalTranscriptMarkdownSlice
 import com.ai.assistance.operit.ui.common.markdown.prepareTranscriptMarkdown
@@ -79,6 +84,7 @@ internal fun VirtualTranscript(
     renderMessage: @Composable (Int) -> Unit,
     footer: @Composable () -> Unit,
     splitMarkdown: Boolean = true,
+    skipMessage: ((ChatMessage) -> Boolean)? = null,
 ) {
     if (!process.ready) {
         Box(modifier) { CircularProgressIndicator(Modifier.align(Alignment.Center)) }
@@ -96,25 +102,54 @@ internal fun VirtualTranscript(
     val runSnapshot = remember(chatId, runs) { TranscriptRunSnapshot(chatId, runs) }
     val toolModeValue by remember(displayPreferences) {
         displayPreferences.toolCollapseMode.map { it as ToolCollapseMode? }
-    }.collectAsState(initial = null)
+    }.collectAsState(initial = TranscriptDisplayCache.toolMode)
     val showThinkingValue by remember(userPreferences) {
         userPreferences.showThinkingProcess.map { it as Boolean? }
-    }.collectAsState(initial = null)
+    }.collectAsState(initial = TranscriptDisplayCache.showThinking)
     val collapseValue by remember(displayPreferences) {
         displayPreferences.collapseCompletedProcess.map { it as Boolean? }
-    }.collectAsState(initial = null)
+    }.collectAsState(initial = TranscriptDisplayCache.collapse)
     val bubbleSettings = rememberBubbleAiRenderSettings()
     val toolLabelTextMeasurer = rememberTextMeasurer(cacheSize = 256)
     if (toolModeValue == null || showThinkingValue == null || collapseValue == null || bubbleSettings == null) {
         Box(modifier) { CircularProgressIndicator(Modifier.align(Alignment.Center)) }
         return
     }
+    TranscriptDisplayCache.toolMode = toolModeValue
+    TranscriptDisplayCache.showThinking = showThinkingValue
+    TranscriptDisplayCache.collapse = collapseValue
     val toolMode = toolModeValue!!
-    val showThinking = showThinkingValue!!
+    // Orbit's developer view shows all of Orbit's thinking, whatever the display setting.
+    val showThinking = showThinkingValue!! || LocalShowHiddenChatRows.current
     val collapse = collapseValue!!
     val grouper = remember(toolMode, showThinking) { ThinkToolsXmlNodeGrouper(showThinking, toolCollapseMode = toolMode) }
-    val documents = remember(chatId, grouper) { mutableStateMapOf<Long, TranscriptDocumentEntry>() }
-    val baseRows = transcriptRows(messages, process)
+    // Prepared replies are kept per way of grouping. Orbit's developer view groups with thinking
+    // shown, so going to Orbit's look and back finds its long replies already split into the same
+    // rows instead of preparing them again from nothing. A grouping not in use keeps only the
+    // replies that were around the screen when it was left.
+    val documentsByGrouping = remember(chatId) {
+        HashMap<Pair<ToolCollapseMode, Boolean>, androidx.compose.runtime.snapshots.SnapshotStateMap<Long, TranscriptDocumentEntry>>()
+    }
+    val nearbyByGrouping = remember(chatId) { HashMap<Pair<ToolCollapseMode, Boolean>, Set<Long>>() }
+    val grouping = toolMode to showThinking
+    val documents = remember(grouping, documentsByGrouping) {
+        documentsByGrouping.getOrPut(grouping) { mutableStateMapOf() }
+    }
+    LaunchedEffect(chatId, grouping) {
+        documentsByGrouping.forEach { (other, cached) ->
+            if (other == grouping) return@forEach
+            val nearby = nearbyByGrouping[other].orEmpty()
+            cached.keys.toList().filterNot { it in nearby }.forEach { cached.remove(it) }
+        }
+    }
+    // Skipped rows are dropped before cards are formed, and each remaining row is a card of its own,
+    // so a hidden step never squares off or merges the bubbles around it.
+    val baseRows = transcriptRows(messages, process).let { all ->
+        if (skipMessage == null) all
+        // Rows without a message (a page's "more" link) are part of the hidden steps too.
+        else all.filter { row -> messages.getOrNull(row.messageIndex)?.let { !skipMessage(it) } == true }
+            .map { it.copy(cardKey = it.key) }
+    }
     val expandedIds = TranscriptExpansionState.expandedIds(chatId)
     val expandedProcesses = process.groups.values.filter { process.isExpanded(it.key) }.mapTo(hashSetOf()) { it.key }
     val currentFollowingChange by rememberUpdatedState(onFollowingChange)
@@ -143,14 +178,54 @@ internal fun VirtualTranscript(
         )
     }
     val scope = rememberCoroutineScope()
+    // Orbit's developer view draws this chat with more rows than Orbit's own look. Each look keeps
+    // the row it was on and whether it was following the newest message, so going to the other look
+    // and back lands where it was. Read without observing, so scrolling never recomposes this.
+    val look = LocalOrbitChatLook.current
+    val lookAnchors = remember(chatId) { HashMap<Boolean, Triple<Any?, Int, Boolean>>() }
+    val shownLook = remember(chatId) { booleanArrayOf(look) }
+    val rowsForLook by rememberUpdatedState(rows)
+    val followingForLook by rememberUpdatedState(following)
+    if (shownLook[0] != look) {
+        androidx.compose.runtime.snapshots.Snapshot.withoutReadObservation {
+            val first = listState.firstVisibleItemIndex
+            val row = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == first }
+            lookAnchors[shownLook[0]] = Triple(row?.key, listState.firstVisibleItemScrollOffset, followingForLook)
+        }
+        shownLook[0] = look
+    }
+    LaunchedEffect(chatId, look) {
+        val anchor = lookAnchors[look] ?: return@LaunchedEffect
+        val (key, offset, wasFollowing) = anchor
+        try {
+            // Following again goes to the newest message by itself; otherwise stop following first,
+            // so it does not pull the list away from the row being restored.
+            onFollowingChange?.invoke(wasFollowing)
+            if (wasFollowing || key == null) return@LaunchedEffect
+            // The row may still be preparing; wait a little for it, giving up if the reader scrolls.
+            // First the old follow has to be gone, or it would pull the list back to the newest message.
+            val index = withTimeoutOrNull(1_500) {
+                snapshotFlow { followingForLook }.first { !it }
+                snapshotFlow { rowsForLook.indexOfFirst { it.key == key } }.first { it >= 0 }
+            } ?: return@LaunchedEffect
+            if (!listState.isScrollInProgress) listState.scrollToItem(index, offset)
+        } finally {
+            // A newer anchor saved while this waited is left for its own restore.
+            if (lookAnchors[look] === anchor) lookAnchors.remove(look)
+        }
+    }
     val dragging by listState.interactionSource.collectIsDraggedAsState()
     var direction by remember(chatId) { mutableStateOf(0) }
     var lastPageRequest by remember(chatId) { mutableStateOf<Pair<Int, Long>?>(null) }
     var pagesWithoutMovement by remember(chatId) { mutableStateOf(0) }
+    // Each new drag may ask for a page again, even when the list already rests at the edge and
+    // nothing else the page request watches has changed.
+    var pageRetry by remember(chatId) { mutableStateOf(0) }
     LaunchedEffect(dragging) {
         if (dragging) {
             lastPageRequest = null
             pagesWithoutMovement = 0
+            pageRetry++
         }
     }
     var pendingJump by remember(chatId) { mutableStateOf<Long?>(null) }
@@ -179,6 +254,8 @@ internal fun VirtualTranscript(
         // it left the screen would turn its rows back into one placeholder during a fling.
         val keep = currentMessages.mapTo(hashSetOf()) { it.timestamp }
         documents.keys.toList().filterNot { it in keep }.forEach { documents.remove(it) }
+        // Noted before preparing: leaving the grouping halfway through still keeps these.
+        nearbyByGrouping[grouping] = prepareCandidates.mapTo(hashSetOf()) { it.first }
         prepareCandidates.forEach { (timestamp, content) ->
             if (documents[timestamp]?.content != content) {
                 val document = prepareTranscriptMarkdown(content, grouper)
@@ -215,18 +292,33 @@ internal fun VirtualTranscript(
             restoring = false
         }
     }
-    val connection = remember(chatId, listState) {
+    // Following stops only once the reader has really left the newest message, not on a nudge at it.
+    val followTolerancePx = with(androidx.compose.ui.platform.LocalDensity.current) { 32.dp.toPx() }
+    fun distanceFromEnd(): Float {
+        if (!listState.canScrollForward) return 0f
+        val layout = listState.layoutInfo
+        val last = layout.visibleItemsInfo.lastOrNull() ?: return 0f
+        // The footer after the last row is often empty, so it leaves the screen on the first pixels
+        // back; measuring from the last row then is close enough.
+        if (last.index < layout.totalItemsCount - 2) return Float.MAX_VALUE
+        return (last.offset + last.size - (layout.viewportEndOffset - layout.afterContentPadding))
+            .coerceAtLeast(0).toFloat()
+    }
+    val connection = remember(chatId, listState, followTolerancePx) {
         object : NestedScrollConnection {
             private var before = 0 to 0
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
                 before = listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
-                if (source == NestedScrollSource.UserInput && available.y > 0) {
-                    currentFollowingChange?.invoke(false)
-                }
                 return Offset.Zero
             }
             override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
                 val after = listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
+                // The list really moved (a drag or its fling), so loaded pages were not wasted.
+                if (consumed.y != 0f) pagesWithoutMovement = 0
+                // A drag or its fling that moved the list back past the tolerance ends following.
+                if (consumed.y > 0f && followingForLook && distanceFromEnd() > followTolerancePx) {
+                    currentFollowingChange?.invoke(false)
+                }
                 if (source == NestedScrollSource.UserInput &&
                     (before != after || available.y != 0f)
                 ) {
@@ -296,7 +388,7 @@ internal fun VirtualTranscript(
     LaunchedEffect(processPrefetchKey, messages.size) {
         processPrefetchKey?.let { process.loadMore(it) }
     }
-    LaunchedEffect(direction, nearStart, nearEnd, atEnd, loadingPage, hasOlder, hasNewer,
+    LaunchedEffect(direction, nearStart, nearEnd, atEnd, loadingPage, hasOlder, hasNewer, pageRetry,
         restoring, messages.firstOrNull()?.timestamp, messages.lastOrNull()?.timestamp) {
         if (loadingPage || restoring) return@LaunchedEffect
         val cursor = if (direction < 0) messages.firstOrNull()?.timestamp else messages.lastOrNull()?.timestamp
@@ -317,22 +409,62 @@ internal fun VirtualTranscript(
     LaunchedEffect(following, hasNewer, loadingPage, restoring) {
         if (following && hasNewer && !loadingPage && !restoring) onLatest?.invoke()
     }
-    LaunchedEffect(chatId, following, hasNewer, loadingPage, dragging, restoring) {
-        if (following && !hasNewer && !loadingPage && !dragging && !restoring) {
+    /**
+     * The jump-to-latest button. A fling still running would keep following waiting (and could
+     * turn it off again), so it is stopped first; then following takes the list to the end.
+     */
+    fun jumpToLatest() {
+        scope.launch {
+            listState.stopScroll(androidx.compose.foundation.MutatePriority.PreventUserInput)
+            direction = 0
+            restoring = false
+            pendingJump = null
+            onFollowingChange?.invoke(true)
+            onLatest?.invoke()
+        }
+    }
+    LaunchedEffect(chatId, following, hasNewer, loadingPage, restoring) {
+        if (following && !hasNewer && !loadingPage && !restoring) {
+            // Never take the list from the reader: a drag or its fling finishes first. Then the list
+            // goes to the end only when something changed (new rows, a row on screen growing, such as
+            // a reply or a loaded picture, a resized view): letting go just short of the end leaves it
+            // there. Rows that only came into view are measured, not taken as growth.
+            var lastShape: List<Int>? = null
+            val knownSizes = HashMap<Any, Int>()
             snapshotFlow {
                 val layout = listState.layoutInfo
-                Triple(layout.totalItemsCount, layout.visibleItemsInfo.lastOrNull()?.let { it.offset + it.size },
-                    listState.canScrollForward)
-            }.distinctUntilChanged().collect {
-                if (currentRows.isNotEmpty()) listState.scrollToItem(currentRows.size)
+                val count = layout.totalItemsCount
+                val shape = listOf(count, layout.viewportSize.width, layout.viewportSize.height,
+                    layout.afterContentPadding)
+                val sizes = layout.visibleItemsInfo.associate { it.key to it.size }
+                Triple(shape, sizes, listState.isScrollInProgress)
+            }.distinctUntilChanged().collect { (shape, sizes, scrolling) ->
+                if (scrolling || currentRows.isEmpty()) return@collect
+                val changed = shape != lastShape || sizes.any { (key, size) ->
+                    knownSizes[key].let { it != null && it != size }
+                }
+                if (shape != lastShape) knownSizes.clear()
+                lastShape = shape
+                // Only rows on screen are kept, so the record stays as small as the screen.
+                knownSizes.keys.retainAll(sizes.keys)
+                knownSizes.putAll(sizes)
+                if (!changed || !listState.canScrollForward) return@collect
+                try {
+                    listState.scrollToItem(currentRows.size)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    // A scroll that won the list cancels only this jump; keep following afterwards.
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                }
             }
         }
     }
     LaunchedEffect(pendingJump, rows.map { it.key }) {
         val timestamp = pendingJump ?: return@LaunchedEffect
+        val shownTimestamp = if (look) com.ai.assistance.operit.features.orbit.OrbitChatFork
+            .displayTimestamp(messages, timestamp) else timestamp
         val index = rows.indexOfFirst { row ->
             row.section != ResponseMessageSection.HEADER &&
-                messages.getOrNull(row.messageIndex)?.timestamp == timestamp
+                messages.getOrNull(row.messageIndex)?.timestamp == shownTimestamp
         }
         if (index >= 0) {
             listState.scrollToItem(index)
@@ -352,6 +484,18 @@ internal fun VirtualTranscript(
     var jumpLocatedAt by remember(chatId) { mutableStateOf<Long?>(null) }
     LaunchedEffect(jumpRequest?.token, rows.map { it.key }) {
         val request = jumpRequest ?: return@LaunchedEffect
+        // A search result names its message: load the page holding it if needed, then land there.
+        request.timestamp?.let { timestamp ->
+            if (messages.none { it.timestamp == timestamp } && reveal?.invoke(timestamp) != true) {
+                TranscriptJumpHost.consume(request.token)
+                return@LaunchedEffect
+            }
+            TranscriptJumpHost.consume(request.token)
+            restoring = false
+            onFollowingChange?.invoke(false)
+            pendingJump = timestamp
+            return@LaunchedEffect
+        }
         val requestIndex =
             messages.indexOfFirst { message -> message.content.contains(request.marker) }
         if (requestIndex >= 0) {
@@ -423,6 +567,10 @@ internal fun VirtualTranscript(
         finally { locatorLoading = false }
     }
     com.ai.assistance.operit.ui.theme.ProvideAiMarkdownTextLayoutSettings {
+    // Orbit's chat reads like a messenger: a time line above a message that comes after a pause.
+    val timeRows = if (look) remember(rows, messages) {
+        orbitChatTimeRows(rows.map { row -> row.key to messages.getOrNull(row.messageIndex)?.timestamp })
+    } else emptyMap()
     Box(modifier) {
         LazyColumn(
             state = listState,
@@ -436,6 +584,7 @@ internal fun VirtualTranscript(
                 // Keep each chronological block together for accessibility traversal,
                 // instead of geometrically sorting all of its descendants with other rows.
                 Column(Modifier.semantics { isTraversalGroup = true }) {
+                    timeRows[row.key]?.let { OrbitChatTimeLine(it) }
                     // Keep the paging sentinel key without cutting a transparent hole in the reply.
                     CompositionLocalProvider(
                         com.ai.assistance.operit.ui.common.dynamicui.LocalDynamicUiOwner provides
@@ -474,6 +623,8 @@ internal fun VirtualTranscript(
             item("footer") { footer() }
         }
         Column(Modifier.align(Alignment.CenterEnd)) {
+            // Orbit's chat reads like messages; jumping by raw records would show the hidden steps.
+            if (skipMessage == null) {
             TranscriptPositionIndicator(
                 progress = {
                     val layout = listState.layoutInfo
@@ -505,9 +656,34 @@ internal fun VirtualTranscript(
                     showLocator = true
                 },
             )
-            if (!following || hasNewer) {
-                IconButton(onClick = { onFollowingChange?.invoke(true); onLatest?.invoke() }) {
+            }
+            if (!look && (!following || hasNewer)) {
+                IconButton(onClick = ::jumpToLatest) {
                     Icon(Icons.Default.KeyboardArrowDown, stringResource(R.string.history_scroll_to_bottom))
+                }
+            }
+        }
+        // Orbit: a round button just above the message box, in the middle.
+        if (look) androidx.compose.animation.AnimatedVisibility(
+            visible = !following || hasNewer,
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = bottomPadding + 12.dp),
+            enter = androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(150)) +
+                androidx.compose.animation.scaleIn(androidx.compose.animation.core.tween(150), initialScale = 0.8f),
+            exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(120)) +
+                androidx.compose.animation.scaleOut(androidx.compose.animation.core.tween(120), targetScale = 0.8f),
+        ) {
+            androidx.compose.material3.Surface(
+                onClick = ::jumpToLatest,
+                shape = androidx.compose.foundation.shape.CircleShape,
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                shadowElevation = 3.dp,
+                modifier = Modifier.size(44.dp),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        Icons.Default.ArrowDownward, stringResource(R.string.history_scroll_to_bottom),
+                        tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(22.dp),
+                    )
                 }
             }
         }
@@ -527,4 +703,14 @@ internal fun VirtualTranscript(
             }
         }
     }
+}
+
+/**
+ * Display settings last read, so a transcript opened again draws at once with them instead of
+ * showing a spinner for the frame or two the live values take; they replace these as they arrive.
+ */
+private object TranscriptDisplayCache {
+    @Volatile var toolMode: ToolCollapseMode? = null
+    @Volatile var showThinking: Boolean? = null
+    @Volatile var collapse: Boolean? = null
 }

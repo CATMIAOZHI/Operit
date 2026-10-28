@@ -11,6 +11,7 @@ import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
+import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -20,8 +21,10 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
@@ -37,6 +40,8 @@ import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.data.preferences.OrbitPreferences
+import com.ai.assistance.operit.ui.features.orbit.OrbitAppearanceTheme
 import com.ai.assistance.operit.core.tools.defaultTool.websession.userscript.ui.WebSessionUserscriptUiStateStore
 import com.ai.assistance.operit.ui.features.websession.browser.WebSessionBrowserScreen
 import com.ai.assistance.operit.ui.features.websession.browser.WebSessionFloatingTheme
@@ -44,6 +49,27 @@ import com.ai.assistance.operit.ui.features.websession.browser.WebSessionMinimiz
 import com.ai.assistance.operit.util.AppLogger
 import kotlin.math.roundToInt
 import org.json.JSONTokener
+
+@Composable
+private fun BrowserAppearanceTheme(orbitId: String?, content: @Composable () -> Unit) {
+    if (orbitId == null) {
+        WebSessionFloatingTheme(content)
+        return
+    }
+    val context = androidx.compose.ui.platform.LocalContext.current.applicationContext
+    val settings by remember(context) { OrbitPreferences.getInstance(context).settingsFlow }
+        .collectAsState(initial = null)
+    // Do not show the app's light palette for a frame while the companion's appearance loads.
+    val loaded = settings ?: return
+    val orbit = loaded.orbits.firstOrNull { it.id == orbitId }
+    if (orbit != null) {
+        WebSessionFloatingTheme {
+            OrbitAppearanceTheme(orbit, updateAppAppearance = false, content = content)
+        }
+    } else {
+        WebSessionFloatingTheme(content)
+    }
+}
 
 internal class WebSessionBrowserHost(
     private val appContext: Context,
@@ -93,6 +119,7 @@ internal class WebSessionBrowserHost(
     private val webViewHost = WebSessionWebViewHost()
 
     private var rootView: DeceptiveMinimizedLayout? = null
+    private var backgroundViews: FrameLayout? = null
     private var composeView: ComposeView? = null
     private var overlayParams: WindowManager.LayoutParams? = null
     private var overlayLifecycleOwner: WebSessionOverlayLifecycleOwner? = null
@@ -105,6 +132,11 @@ internal class WebSessionBrowserHost(
 
     private var isExpanded: Boolean = false
     private var hostState by mutableStateOf(WebSessionBrowserHostState())
+    /** True while Orbit's watch screen shows and the user has not taken control: the page takes no input. */
+    private var watchLocked = false
+    /** The Orbit chat whose watch screen showed last; when its work ends the browser closes instead of unlocking. */
+    private var lastWatchTalk: String? = null
+    private var a11yHiddenWebView: java.lang.ref.WeakReference<WebView>? = null
     fun ensureCreated(initialExpanded: Boolean = false) {
         if (rootView != null) {
             if (isExpanded != initialExpanded) {
@@ -126,6 +158,18 @@ internal class WebSessionBrowserHost(
                 setOnClickListener {}
             }
         installViewTreeOwners(root, lifecycleOwner)
+        // Keep task pages attached and laid out for JavaScript, snapshots and native taps, without
+        // replacing the page the user is watching. The three-task/two-tab limits bound this cost.
+        val background = FrameLayout(appContext).apply {
+            // Off-screen/GONE views stop Chromium rendering, leaving screenshots stale. The
+            // pages stay faintly drawn underneath the opaque browser surface, like minimized mode.
+            alpha = 0.01f
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+            descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
+        }
+        root.addView(background, FrameLayout.LayoutParams(
+            appContext.resources.displayMetrics.widthPixels, appContext.resources.displayMetrics.heightPixels))
+        backgroundViews = background
 
         val compose =
             ComposeView(appContext).apply {
@@ -137,10 +181,38 @@ internal class WebSessionBrowserHost(
                     val bookmarks by store.bookmarksFlow.collectAsState(initial = emptyList())
                     val history by store.historyFlow.collectAsState(initial = emptyList())
                     val userscriptUiState by userscriptStore.state.collectAsState()
+                    val orbitWorks by com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.works.collectAsState()
+                    val watchingTalk by com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.watching.collectAsState()
+                    val watchWork = orbitWatchWork(orbitWorks, watchingTalk, hostState.browserState)
+                    val watch = watchWork?.let { orbitWatchUi(it, hostState.browserState) }
+                    val locked = watch != null && !watch.controlling
+                    androidx.compose.runtime.SideEffect {
+                        setWatchLocked(locked)
+                        // The phone's back key closes the watch screen like the X, also while the user
+                        // drives the page: going back in the page is the back button in its controls.
+                        // A dialog the page put up is dismissed first, like any popup.
+                        root.onBackKey = watch?.let { w ->
+                            when {
+                                w.controlling && hostState.browserState.pendingDialog != null ->
+                                    ({ callbacks.onHandlePendingDialog(false, null) })
+                                else -> w.onClose
+                            }
+                        }
+                        val ended = lastWatchTalk?.takeIf { watchWork == null && it !in orbitWorks }
+                        lastWatchTalk = watchWork?.executorChatId
+                        if (ended != null && isExpanded) {
+                            // The work is over: close the watch screen rather than leave an unlocked page behind.
+                            root.post { callbacks.onMinimize() }
+                        }
+                    }
 
-                    WebSessionFloatingTheme {
+                    BrowserAppearanceTheme(watchWork?.orbitId) {
                         WebSessionBrowserScreen(
-                            hostState = hostState,
+                            hostState = if (watchWork == null) hostState else hostState.copy(browserState =
+                                hostState.browserState.copy(tabs = hostState.browserState.tabs.filter { tab ->
+                                    com.ai.assistance.operit.core.tools.defaultTool.standard.StandardBrowserSessionTools.sessions[tab.sessionId]?.browserTaskId == watchWork.executorChatId
+                                })),
+                            watch = watch,
                             bookmarks = bookmarks,
                             globalHistory = history,
                             userscriptUiState = userscriptUiState,
@@ -221,6 +293,7 @@ internal class WebSessionBrowserHost(
         overlayLifecycleOwner = null
         composeView = null
         rootView = null
+        backgroundViews = null
         overlayParams = null
         indicatorParams = null
         webViewHost.clear()
@@ -246,10 +319,30 @@ internal class WebSessionBrowserHost(
                         browserState.currentUrl
                     }
             )
+        syncIndicatorWithPages()
         updateIndicatorLayoutForCurrentState()
     }
 
+    /**
+     * Orbit puts nothing on the screen: its pages open from the card in its chat. The floating
+     * button is only for the main app's own tabs (those without an Orbit task).
+     */
+    private fun wantsIndicator(): Boolean =
+        com.ai.assistance.operit.core.tools.defaultTool.standard.StandardBrowserSessionTools.sessions.values
+            .any { it.browserTaskId == null }
+
+    private fun syncIndicatorWithPages() {
+        if (isExpanded || rootView == null) return
+        if (wantsIndicator()) showIndicator() else hideIndicator()
+    }
+
     fun attachActiveWebView(webView: WebView?, viewportWidth: Int? = null, viewportHeight: Int? = null) {
+        webViewHost.currentWebView()?.takeIf { it !== webView }?.let { previous ->
+            com.ai.assistance.operit.core.tools.defaultTool.standard.StandardBrowserSessionTools.sessions.values
+                .firstOrNull { it.webView === previous && it.browserTaskId != null }?.let {
+                    parkWebView(previous, it.viewportWidthPx, it.viewportHeightPx)
+                }
+        }
         updateHostState {
             if (it.viewportWidthPx == viewportWidth && it.viewportHeightPx == viewportHeight) {
                 it
@@ -258,8 +351,40 @@ internal class WebSessionBrowserHost(
             }
         }
         webViewHost.setActiveWebView(webView, viewportWidth, viewportHeight)
+        applyWatchAccessibility(webView)
     }
 
+    fun attachBackgroundWebView(webView: WebView, width: Int?, height: Int?) {
+        if (webViewHost.currentWebView() !== webView) parkWebView(webView, width, height)
+    }
+
+    private fun parkWebView(webView: WebView, width: Int?, height: Int?) {
+        val target = backgroundViews ?: return
+        if (webView.parent !== target) {
+            (webView.parent as? ViewGroup)?.removeView(webView)
+            target.addView(webView)
+        }
+        val density = appContext.resources.displayMetrics.density
+        val w = width?.let { (it * density).roundToInt() } ?: appContext.resources.displayMetrics.widthPixels
+        val h = height?.let { (it * density).roundToInt() } ?: appContext.resources.displayMetrics.heightPixels
+        webView.layoutParams = FrameLayout.LayoutParams(w, h)
+        val scale = minOf(appContext.resources.displayMetrics.widthPixels.toFloat() / w,
+            appContext.resources.displayMetrics.heightPixels.toFloat() / h)
+        webView.pivotX = 0f
+        webView.pivotY = 0f
+        webView.scaleX = scale
+        webView.scaleY = scale
+        webView.translationX = 0f
+        webView.translationY = 0f
+        // A page Orbit stopped using stays at rest when it goes back to the background.
+        val task = com.ai.assistance.operit.core.tools.defaultTool.standard.StandardBrowserSessionTools.sessions.values
+            .firstOrNull { it.webView === webView }?.browserTaskId
+        val watch = com.ai.assistance.operit.features.orbit.OrbitBrowserWatch
+        if (watch.resting(task)) watch.rest(webView) else webView.onResume()
+        webView.measure(View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(h, View.MeasureSpec.EXACTLY))
+        webView.layout(0, 0, w, h)
+    }
     fun showTextSelectionActionsOverlay(anchorX: Double, anchorY: Double) {
         if (!isExpanded) {
             return
@@ -338,6 +463,10 @@ internal class WebSessionBrowserHost(
 
         if (!expanded) {
             hideTextSelectionActionsOverlay()
+            // Put away, the browser is no longer Orbit's watch screen; the card opens it again.
+            com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.unwatch()
+        } else if (com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.watching.value == null) {
+            com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.watchSession(hostState.browserState.activeSessionId)
         }
 
         isExpanded = expanded
@@ -353,7 +482,8 @@ internal class WebSessionBrowserHost(
             }
 
         if (expanded) {
-            root.descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
+            root.descendantFocusability =
+                if (watchLocked) ViewGroup.FOCUS_BLOCK_DESCENDANTS else ViewGroup.FOCUS_AFTER_DESCENDANTS
             root.setMinimizedMeasure(false)
             root.setBackgroundColor(AndroidColor.TRANSPARENT)
             compose.alpha = 1f
@@ -361,9 +491,7 @@ internal class WebSessionBrowserHost(
             applyExpandedLayoutParams(params)
             hideIndicator()
         } else {
-            if (indicatorView == null) {
-                showIndicator()
-            }
+            if (wantsIndicator()) showIndicator() else hideIndicator()
 
             root.descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
             val displayMetrics = appContext.resources.displayMetrics
@@ -408,6 +536,76 @@ internal class WebSessionBrowserHost(
 
     fun showSheet(route: WebSessionBrowserSheetRoute) {
         updateHostState { it.copy(sheetRoute = route) }
+    }
+
+    /**
+     * The Orbit work the tab in front belongs to. A user in control keeps the watch screen on any
+     * tab they reach (a page may open a new one), so the hand-back button never disappears.
+     */
+    private fun orbitWatchWork(
+        works: Map<String, com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.Work>,
+        watchingTalk: String?,
+        browserState: WebSessionBrowserState,
+    ): com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.Work? {
+        // Opened from Orbit's card, the browser stays the watch screen on whatever tab shows,
+        // even before the first page is ready or after the last tab closed.
+        watchingTalk?.let(works::get)?.let { return it }
+        val active = browserState.activeSessionId
+        return active?.let { id -> works.values.firstOrNull { it.sessionId == id } }
+            ?: works.values.filter { it.control != com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.Control.NONE }
+                .maxByOrNull { it.lastActionAt }
+    }
+
+    /** Orbit's watch screen for [work]. */
+    private fun orbitWatchUi(
+        work: com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.Work,
+        browserState: WebSessionBrowserState,
+    ): BrowserWatchUi {
+        val watch = com.ai.assistance.operit.features.orbit.OrbitBrowserWatch
+        val url = browserState.currentUrl.takeIf { it.isNotBlank() && it != "about:blank" } ?: work.url
+        return BrowserWatchUi(
+            host = runCatching { android.net.Uri.parse(url).host }.getOrNull()?.removePrefix("www.").orEmpty(),
+            orbitName = work.orbitName,
+            controlling = work.control == com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.Control.USER,
+            waiting = work.control == com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.Control.WAITING,
+            finished = work.finished,
+            onClose = { watch.close(work.executorChatId) },
+            onTakeOver = { watch.takeOver(work.executorChatId) },
+            onHandBack = { watch.handBack(work.executorChatId) },
+            onStop = { watch.stop(work.executorChatId) },
+        )
+    }
+
+    /** While locked the page cannot take focus, so no keyboard opens over it and nothing is typed. */
+    private fun setWatchLocked(locked: Boolean) {
+        if (watchLocked == locked) return
+        watchLocked = locked
+        val root = rootView ?: return
+        if (locked) {
+            webViewHost.currentWebView()?.let { webView ->
+                webView.clearFocus()
+                (appContext.getSystemService(Context.INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager)
+                    ?.hideSoftInputFromWindow(webView.windowToken, 0)
+            }
+        }
+        if (isExpanded) {
+            root.descendantFocusability =
+                if (locked) ViewGroup.FOCUS_BLOCK_DESCENDANTS else ViewGroup.FOCUS_AFTER_DESCENDANTS
+        }
+        applyWatchAccessibility(webViewHost.currentWebView())
+    }
+
+    /** While locked, screen readers skip the page too, so it cannot be clicked through TalkBack. */
+    private fun applyWatchAccessibility(webView: WebView?) {
+        val hidden = a11yHiddenWebView?.get()
+        if (hidden != null && (hidden !== webView || !watchLocked)) {
+            hidden.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
+            a11yHiddenWebView = null
+        }
+        if (watchLocked && webView != null) {
+            webView.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+            a11yHiddenWebView = java.lang.ref.WeakReference(webView)
+        }
     }
 
     private fun updateHostState(transform: (WebSessionBrowserHostState) -> WebSessionBrowserHostState) {
@@ -820,10 +1018,107 @@ private class DeceptiveMinimizedLayout(context: Context) : FrameLayout(context) 
     var minimizedMeasureEnabled: Boolean = false
     var fakeWidthPx: Int = 1
     var fakeHeightPx: Int = 1
+    /** Takes the back key while set; Orbit's watch screen closes with it. */
+    var onBackKey: (() -> Unit)? = null
+        set(value) {
+            val wasWatching = field != null
+            field = value
+            if (value == null && wasWatching) resetBackTransform()
+            syncBackCallback()
+        }
+
+    /**
+     * With the app's predictive back on, Android 13+ hands the back key to a window callback before
+     * it reaches the views, so [dispatchKeyEvent] alone never sees it. Registered only while
+     * [onBackKey] is set, so other times back goes where it always did.
+     */
+    private var backCallback: Any? = null
+    private var backCommitting = false
+
+    private fun syncBackCallback() {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) return
+        val want = onBackKey != null && isAttachedToWindow
+        val dispatcher = findOnBackInvokedDispatcher()
+        if (want && backCallback == null && dispatcher != null) {
+            val callback = if (android.os.Build.VERSION.SDK_INT >= 34) {
+                object : android.window.OnBackAnimationCallback {
+                    override fun onBackStarted(backEvent: android.window.BackEvent) {
+                        if (backCommitting) return
+                        animate().cancel()
+                    }
+                    override fun onBackProgressed(backEvent: android.window.BackEvent) {
+                        if (backCommitting) return
+                        val p = backEvent.progress.coerceIn(0f, 1f)
+                        scaleX = 1f - 0.06f * p
+                        scaleY = scaleX
+                        translationX = width * 0.12f * p *
+                            if (backEvent.swipeEdge == android.window.BackEvent.EDGE_LEFT) 1f else -1f
+                        alpha = 1f - 0.2f * p
+                    }
+                    override fun onBackCancelled() {
+                        if (backCommitting) return
+                        animate().scaleX(1f).scaleY(1f).translationX(0f).alpha(1f)
+                            .setDuration(180).withEndAction(null).start()
+                    }
+                    override fun onBackInvoked() {
+                        if (backCommitting) return
+                        backCommitting = true
+                        animate().scaleX(0.94f).scaleY(0.94f).alpha(0.8f).setDuration(140)
+                            .withEndAction {
+                                onBackKey?.invoke()
+                                resetBackTransform()
+                            }.start()
+                    }
+                }
+            } else {
+                android.window.OnBackInvokedCallback { onBackKey?.invoke() }
+            }
+            dispatcher.registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, callback)
+            backCallback = callback
+        } else if (!want && backCallback != null) {
+            runCatching { dispatcher?.unregisterOnBackInvokedCallback(backCallback as android.window.OnBackInvokedCallback) }
+            backCallback = null
+        }
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        syncBackCallback()
+    }
+
+    override fun onDetachedFromWindow() {
+        resetBackTransform()
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            backCallback?.let { cb ->
+                runCatching { findOnBackInvokedDispatcher()?.unregisterOnBackInvokedCallback(cb as android.window.OnBackInvokedCallback) }
+            }
+        }
+        backCallback = null
+        super.onDetachedFromWindow()
+    }
 
     init {
         clipChildren = false
         clipToPadding = false
+    }
+
+    private fun resetBackTransform() {
+        backCommitting = false
+        animate().cancel()
+        animate().withEndAction(null)
+        scaleX = 1f
+        scaleY = 1f
+        translationX = 0f
+        alpha = 1f
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val back = onBackKey
+        if (back != null && event.keyCode == KeyEvent.KEYCODE_BACK) {
+            if (event.action == KeyEvent.ACTION_UP && !event.isCanceled) back()
+            return true
+        }
+        return super.dispatchKeyEvent(event)
     }
 
     fun setMinimizedMeasure(enabled: Boolean, fakeWidth: Int = fakeWidthPx, fakeHeight: Int = fakeHeightPx) {

@@ -89,18 +89,26 @@ class CollaborationToolExecutor(context: Context) : ToolExecutor {
                     buildJsonObject { put("task_name", agent.path); put("agent_id", agent.chatId) }
                 }
                 "send_message", "followup_task" -> {
-                    coordinator.send(chatId, required("target"), required("message"), tool.name == "followup_task")
-                    buildJsonObject { put("accepted", true) }
+                    val agentId = coordinator.send(chatId, required("target"), required("message"), tool.name == "followup_task")
+                    // The chat it reached lets the transcript open this agent even after its name is reused.
+                    buildJsonObject { put("accepted", true); put("agent_id", agentId) }
                 }
                 "interrupt_agent" -> buildJsonObject {
                     put("previous_status", coordinator.interrupt(chatId, required("target")).name.lowercase())
                 }
-                "list_agents" -> buildJsonObject {
-                    val limits = com.ai.assistance.operit.core.agent.AgentProfileRepository.instance.collaborationLimits.value
+                "list_agents" -> {
+                  val limits = coordinator.limitsFor(chatId)
+                  val listing = coordinator.list(chatId, optional("path_prefix"))
+                  val shownSubagents = listing.agents.count { it.path != com.ai.assistance.operit.core.agent.collaboration.AgentPath.ROOT }
+                  buildJsonObject {
                     put("max_active_subagents", limits.maxActive)
                     put("max_depth", limits.maxDepth)
+                    put("total_subagents", listing.totalSubagents)
+                    if (listing.totalSubagents > shownSubagents) {
+                        put("note", "Showing the $shownSubagents most recently active subagents, newest first. Older idle ones are archived automatically and their names can be reused.")
+                    }
                     put("agents", buildJsonArray {
-                        coordinator.list(chatId, optional("path_prefix")).forEach {
+                        listing.agents.forEach {
                             // A run the review stopped stores the English instruction written for
                             // the model, and polling status would otherwise replay it verbatim into
                             // the caller's context and the transcript. Report the outcome instead.
@@ -127,11 +135,12 @@ class CollaborationToolExecutor(context: Context) : ToolExecutor {
                             })
                         }
                     })
+                  }
                 }
                 "wait_agent" -> {
                     val timeout = optional("timeout_ms")?.let {
                         requireNotNull(it.toLongOrNull()) { "timeout_ms must be an integer" }
-                    } ?: com.ai.assistance.operit.core.agent.AgentProfileRepository.instance.collaborationLimits.value.defaultWaitMs
+                    } ?: coordinator.limitsFor(chatId).defaultWaitMs
                     val waited = coordinator.wait(chatId, timeout)
                     buildJsonObject {
                         put("timed_out", waited.timedOut)
@@ -149,5 +158,5 @@ class CollaborationToolExecutor(context: Context) : ToolExecutor {
     }
 
     /** Keeps result text in the same language the caller's tool prompts were rendered in. */
-    private fun isChineseLanguage(): Boolean = LocaleUtils.getCurrentLanguage(appContext) != "en"
+    private fun isChineseLanguage(): Boolean = !LocaleUtils.usesEnglishPrompt(appContext)
 }

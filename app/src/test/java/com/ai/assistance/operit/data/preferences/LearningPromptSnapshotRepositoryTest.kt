@@ -15,6 +15,39 @@ class LearningPromptSnapshotRepositoryTest {
     @get:Rule val folder = TemporaryFolder()
     private fun repo(chat: String) = LearningPromptSnapshotRepository(folder.root, chat)
 
+    @Test fun `accepted persona revision clears stale prefix while unchanged revision preserves cache`() = runBlocking {
+        repo("orbit").bindMemoryScope("orbit-a", "soul-v1")
+        repo("orbit").beginEpoch("")
+        assertEquals("old persona", repo("orbit").bindSystem("old persona", emptyMap()))
+        repo("orbit").bindMemoryScope("orbit-a", "soul-v1")
+        assertEquals("old persona", repo("orbit").bindSystem("candidate", emptyMap()))
+        repo("orbit").bindMemoryScope("orbit-a", "soul-v2")
+        repo("orbit").beginEpoch("")
+        assertEquals("new persona", repo("orbit").bindSystem("new persona", emptyMap()))
+        repo("orbit").bindMemoryScope("orbit-a", "soul-v2")
+        assertEquals("new persona", repo("orbit").bindSystem("later candidate", emptyMap()))
+    }
+
+    @Test fun `private scope migration replaces global user skills and complete system without affecting other chats`() = runBlocking {
+        for (chat in listOf("orbit", "ordinary")) {
+            repo(chat).beginEpoch("")
+            repo(chat).getOrPut("user") { "global user" }
+            repo(chat).getOrPut("skill_catalog") { "global learned skill" }
+            repo(chat).bindSystem("global system", emptyMap())
+        }
+        repo("orbit").bindMemoryScope("orbit-a")
+        repo("orbit").beginEpoch("")
+        assertEquals("private user", repo("orbit").getOrPut("user") { "private user" })
+        assertEquals("private skill", repo("orbit").getOrPut("skill_catalog") { "private skill" })
+        assertEquals("private system", repo("orbit").bindSystem("private system", emptyMap()))
+        repo("orbit").bindMemoryScope("orbit-a")
+        assertEquals("private system", repo("orbit").bindSystem("replacement", emptyMap()))
+        repo("orbit").beginEpoch("compressed")
+        repo("orbit").bindMemoryScope("orbit-a")
+        assertEquals("compressed system", repo("orbit").bindSystem("compressed system", emptyMap()))
+        assertEquals("global system", repo("ordinary").bindSystem("replacement", emptyMap()))
+    }
+
     @Test fun `configuration changes flag only their chat while dynamic candidates remain frozen`() = runBlocking {
         val context = mock<Context>()
         val prefs = mock<SharedPreferences>()

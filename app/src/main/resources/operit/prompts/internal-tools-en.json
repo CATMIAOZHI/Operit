@@ -459,7 +459,7 @@
       },
       {
         "name": "browser_drag",
-        "description": "Perform drag and drop between two page elements.",
+        "description": "Perform drag and drop between two page elements. If nothing moves, try another mode.",
         "parameters": "",
         "parametersStructured": [
           {
@@ -489,6 +489,13 @@
             "description": "target element ref from browser_snapshot output",
             "required": true,
             "default": null
+          },
+          {
+            "name": "mode",
+            "type": "string",
+            "description": "optional: auto (default), mouse (real mouse), touch (real finger) or html5 (HTML drag-and-drop events)",
+            "required": false,
+            "default": "auto"
           }
         ],
         "details": "",
@@ -651,13 +658,13 @@
       },
       {
         "name": "browser_press_key",
-        "description": "Press a keyboard key in the current page.",
+        "description": "Press a key or key combination like a real keyboard: Enter really submits and Tab really moves focus.",
         "parameters": "",
         "parametersStructured": [
           {
             "name": "key",
             "type": "string",
-            "description": "key name, for example ArrowLeft or a",
+            "description": "key name such as Enter, ArrowDown or a; join combinations with +, such as Control+A",
             "required": true,
             "default": null
           }
@@ -690,13 +697,13 @@
       },
       {
         "name": "browser_run_code",
-        "description": "Run a Playwright-style code snippet against the current tab.",
+        "description": "Run a limited Playwright-style snippet against the current tab, not full Playwright.",
         "parameters": "",
         "parametersStructured": [
           {
             "name": "code",
             "type": "string",
-            "description": "Playwright-style JavaScript snippet",
+            "description": "A function that takes page, such as async (page) => { await page.locator('#login').click(); }, or a plain body that may use await and return",
             "required": true,
             "default": null
           }
@@ -772,7 +779,7 @@
           {
             "name": "type",
             "type": "string",
-            "description": "optional image type: png or jpeg",
+            "description": "png, jpeg or pdf; pdf saves the whole page (image-based, text not selectable) and cannot be combined with ref",
             "required": false,
             "default": "png"
           },
@@ -801,6 +808,101 @@
             "name": "fullPage",
             "type": "boolean",
             "description": "optional full-page capture; cannot be used with element screenshots",
+            "required": false,
+            "default": "false"
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "browser_mouse_click_xy",
+        "description": "Tap the page at pixel coordinates of a page screenshot; can also long-press, swipe or right-click. Take a plain browser_take_screenshot first (no fullPage or ref) and use coordinates from that image.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "x",
+            "type": "number",
+            "description": "Horizontal pixel in the screenshot, 0 at the left edge",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "y",
+            "type": "number",
+            "description": "Vertical pixel in the screenshot, 0 at the top edge",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "doubleClick",
+            "type": "boolean",
+            "description": "Optional double tap",
+            "required": false,
+            "default": "false"
+          },
+          {
+            "name": "holdMs",
+            "type": "number",
+            "description": "optional milliseconds to hold before release, for a long press, max 10000",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "endX",
+            "type": "number",
+            "description": "optional swipe end x; give together with endY",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "endY",
+            "type": "number",
+            "description": "optional swipe end y; give together with endX",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "button",
+            "type": "string",
+            "description": "optional left/right/middle; swipes use left only",
+            "required": false,
+            "default": "left"
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "browser_devtools",
+        "description": "Send one Chrome DevTools Protocol command to the current tab and return its result; with events=true, also return recently received events (WebSocket frames, Console, Page and so on, up to 200). Only page-scoped domains work; Target, Browser, Storage and Fetch are not available. Find the requestId with browser_network_requests before reading a response body.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "method",
+            "type": "string",
+            "description": "Command name as Domain.command; may be omitted when only reading events",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "params",
+            "type": "string",
+            "description": "Optional command parameters as a JSON object",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "filename",
+            "type": "string",
+            "description": "Optional file to save a long result to",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "events",
+            "type": "boolean",
+            "description": "optional; when true, also return recent events. method may be omitted to only read events",
             "required": false,
             "default": "false"
           }
@@ -854,7 +956,7 @@
       },
       {
         "name": "browser_wait_for",
-        "description": "Wait for text to appear, disappear, or for a duration to pass.",
+        "description": "Wait for text to appear or disappear, for an element to appear or disappear, or for a duration. Searches same-origin iframes and Shadow DOM.",
         "parameters": "",
         "parametersStructured": [
           {
@@ -877,6 +979,27 @@
             "description": "optional text that must disappear",
             "required": false,
             "default": null
+          },
+          {
+            "name": "selector",
+            "type": "string",
+            "description": "optional element selector to wait for",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "state",
+            "type": "string",
+            "description": "optional, with selector: visible/hidden/attached/detached",
+            "required": false,
+            "default": "visible"
+          },
+          {
+            "name": "timeout",
+            "type": "number",
+            "description": "optional maximum seconds to wait, 1 to 60",
+            "required": false,
+            "default": "10"
           }
         ],
         "details": "",
@@ -884,13 +1007,13 @@
       },
       {
         "name": "browser_tabs",
-        "description": "List, create, select, or close browser tabs using 0-based indexes.",
+        "description": "List, create, select, or close browser tabs using 0-based indexes; use restore to reopen a page after it crashed.",
         "parameters": "",
         "parametersStructured": [
           {
             "name": "action",
             "type": "string",
-            "description": "one of: list, create, select, close",
+            "description": "one of list/create/select/close/restore",
             "required": true,
             "default": null
           },
@@ -900,6 +1023,96 @@
             "description": "optional tab index used by select or close",
             "required": false,
             "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "browser_downloads",
+        "description": "View and manage downloads for this login profile: list, check status, wait until finished, cancel or retry. Clicking a download link returns its downloadId.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "action",
+            "type": "string",
+            "description": "optional list/status/wait/cancel/retry",
+            "required": false,
+            "default": "list"
+          },
+          {
+            "name": "downloadId",
+            "type": "string",
+            "description": "required for status/wait/cancel/retry",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "timeout",
+            "type": "number",
+            "description": "optional seconds for wait, 1 to 120",
+            "required": false,
+            "default": "60"
+          },
+          {
+            "name": "offset",
+            "type": "number",
+            "description": "optional for list: skip this many newest downloads to page back to older ones",
+            "required": false,
+            "default": "0"
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "browser_clipboard",
+        "description": "Copy and paste between the page and the phone clipboard. paste is offered to the page first, which suits editors and split code boxes.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "action",
+            "type": "string",
+            "description": "read (page selection and clipboard), copy (copy the page selection), write (put text on the clipboard) or paste (paste at the cursor)",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "text",
+            "type": "string",
+            "description": "required for write; optional for paste, which otherwise uses the clipboard",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "browser_permissions",
+        "description": "Save per-site answers for camera, microphone, location and similar requests, so the site gets the saved answer next time.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "action",
+            "type": "string",
+            "description": "optional list/allow/block/reset",
+            "required": false,
+            "default": "list"
+          },
+          {
+            "name": "origin",
+            "type": "string",
+            "description": "optional site such as https://example.com; defaults to the current page",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "permission",
+            "type": "string",
+            "description": "optional all/camera/microphone/location/protected_media/midi",
+            "required": false,
+            "default": "all"
           }
         ],
         "details": "",

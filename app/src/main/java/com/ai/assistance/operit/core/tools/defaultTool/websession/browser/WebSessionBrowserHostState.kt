@@ -20,7 +20,9 @@ internal data class WebSessionBrowserTab(
     val title: String,
     val url: String,
     val isActive: Boolean,
-    val hasSslError: Boolean
+    val hasSslError: Boolean,
+    /** The Orbit whose own logins this tab uses; null for the main app's tabs. */
+    val ownerLabel: String? = null
 )
 
 @Immutable
@@ -91,6 +93,7 @@ internal data class BrowserDownloadItem(
 @Immutable
 internal data class BrowserDownloadUiState(
     val tasks: List<BrowserDownloadItem> = emptyList(),
+    val storageUnavailable: Boolean = false,
     val selectedFilter: BrowserDownloadFilter = BrowserDownloadFilter.IN_PROGRESS
 )
 
@@ -99,6 +102,24 @@ internal data class ExternalOpenPromptState(
     val requestId: String,
     val title: String,
     val target: String
+)
+
+/**
+ * Orbit's watch screen over a tab an Orbit is working in. Until [controlling] the user only looks;
+ * [waiting] is the moment between asking for control and the AI's current action ending.
+ */
+@Immutable
+internal data class BrowserWatchUi(
+    val host: String,
+    val orbitName: String,
+    val controlling: Boolean,
+    val waiting: Boolean,
+    /** Orbit stopped working here; the page stays for the user to look at or take over. */
+    val finished: Boolean,
+    val onClose: () -> Unit,
+    val onTakeOver: () -> Unit,
+    val onHandBack: () -> Unit,
+    val onStop: () -> Unit,
 )
 
 @Immutable

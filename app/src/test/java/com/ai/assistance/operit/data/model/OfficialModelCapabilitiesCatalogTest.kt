@@ -39,6 +39,14 @@ class OfficialModelCapabilitiesCatalogTest {
 
     @Test
     fun `matches canonical model id without provider configuration`() {
+        val aliasCatalog = OfficialModelCapabilitiesCatalog.parse(
+            """{"deepseek/deepseek-v4.1-flash-1017":{"name":"DeepSeek V4.1 Flash 1017",
+              "modalities":{"input":["text","image"]}}}""",
+        )
+        val alias = aliasCatalog.lookup("deepseek-flash") as OfficialModelCapabilitiesLookup.Match
+        assertEquals("deepseek/deepseek-v4.1-flash-1017", alias.model.officialModelId)
+        assertTrue(alias.model.capabilities.image)
+
         val result = catalog.lookup("moonshotai/kimi-k2.6")
         assertTrue(result is OfficialModelCapabilitiesLookup.Match)
         val match = result as OfficialModelCapabilitiesLookup.Match

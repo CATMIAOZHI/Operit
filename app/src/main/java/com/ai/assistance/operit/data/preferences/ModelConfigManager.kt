@@ -340,6 +340,17 @@ class ModelConfigManager(
     private suspend fun updateConfigInternal(
             configId: String,
             transform: (ModelConfigData) -> ModelConfigData
+    ): ModelConfigData = updateConfigLocked(configId, transform)
+
+    /** Changes one configuration from its stored value, in one edit, so parallel changes are kept. */
+    suspend fun editModelConfig(
+            configId: String,
+            transform: (ModelConfigData) -> ModelConfigData
+    ): ModelConfigData = updateConfigLocked(configId, transform)
+
+    private suspend fun updateConfigLocked(
+            configId: String,
+            transform: (ModelConfigData) -> ModelConfigData
     ): ModelConfigData {
         val configKey = stringPreferencesKey("config_${configId}")
         var updated: ModelConfigData? = null
@@ -479,8 +490,7 @@ class ModelConfigManager(
     }
 
     // 创建新配置
-    suspend fun createConfig(name: String): String {
-        val configId = UUID.randomUUID().toString()
+    suspend fun createConfig(name: String, configId: String = UUID.randomUUID().toString()): String {
 
         val newConfig =
                 ModelConfigData(

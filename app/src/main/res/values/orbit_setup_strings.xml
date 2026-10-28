@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="orbit_component_title">安装组件</string>
+    <string name="orbit_component_detail_head">要下载并安装这些组件：</string>
+    <string name="orbit_component_detail_item">· %1$s（%2$s）</string>
+    <string name="orbit_component_detail_total">合计约 %1$s，建议连着 Wi-Fi。</string>
+
+    <string name="orbit_setup_title">先给 Orbit 接上模型</string>
+    <string name="orbit_setup_subtitle">填一个 API 密钥，或登录一个账号就行。接好后，剩下的事都可以直接跟 Orbit 说。</string>
+    <string name="orbit_setup_provider">服务商</string>
+    <string name="orbit_setup_recommended">推荐</string>
+    <string name="orbit_setup_endpoint">接口地址</string>
+    <string name="orbit_setup_change_endpoint">改地址</string>
+    <string name="orbit_setup_get_key">获取密钥</string>
+    <string name="orbit_setup_key_promise">密钥只保存在这台手机上。</string>
+    <string name="orbit_setup_main">主模型</string>
+    <string name="orbit_setup_main_note">用来聊天。不一定要选最聪明的，选你觉得最合适的就行，推荐 DeepSeek Flash。</string>
+    <string name="orbit_setup_assistant">辅助模型</string>
+    <string name="orbit_setup_assistant_note">用来起标题、整理记忆等后台小事，选便宜、快的，推荐 DeepSeek Flash。</string>
+    <string name="orbit_setup_pick_model">选择模型</string>
+    <string name="orbit_setup_check">验证并获取模型</string>
+    <string name="orbit_setup_testing">正在测试…</string>
+    <string name="orbit_setup_start">开始</string>
+    <string name="orbit_setup_skip">稍后再说</string>
+    <string name="orbit_setup_no_models">服务商没有列出模型。你可以直接填模型名。</string>
+    <string name="orbit_setup_fetch_failed">这个服务没法自动列出模型。你可以直接填模型名，再点开始测试。</string>
+    <string name="orbit_setup_problem_key">密钥不对，或者这个密钥没有权限。检查一下再试。</string>
+    <string name="orbit_setup_problem_money">账户余额不足或额度用完了。充值后再试。</string>
+    <string name="orbit_setup_problem_model">找不到这个模型，或者它不能用来聊天。换一个模型试试。</string>
+    <string name="orbit_setup_problem_rate">请求太频繁了，稍等一会儿再试。</string>
+    <string name="orbit_setup_problem_network">连不上服务。检查网络和接口地址后再试。</string>
+    <string name="orbit_setup_problem_slow">模型一分钟内没有回应。稍后再试，或换一个模型。</string>
+    <string name="orbit_setup_problem_other">没能完成。可以换个模型或检查地址后再试。</string>
+    <string name="orbit_setup_helper_failed">辅助模型 %1$s 没通过：%2$s</string>
+    <string name="orbit_setup_show_detail">查看详情</string>
+    <string name="orbit_setup_hide_detail">收起详情</string>
+    <string name="orbit_setup_model_name_hint">模型名，比如 deepseek-v4.1-flash</string>
+    <string name="orbit_setup_same_as_main">不填就和主模型一样</string>
+    <string name="orbit_setup_manual_note">填服务商文档里写的模型名，点开始会先试一下能不能用。</string>
+    <string name="orbit_setup_existing_title">用你已经配好的模型</string>
+    <string name="orbit_setup_existing_main">聊天：%1$s</string>
+    <string name="orbit_setup_existing_assistant">后台小事：%1$s</string>
+    <string name="orbit_setup_existing_use">用这些模型开始</string>
+    <string name="orbit_setup_existing_or">或者填新密钥、登录账号</string>
+    <string name="orbit_setup_entry">用 API 密钥或账号快速开始</string>
+    <string name="orbit_setup_entry_note">填一个密钥或登录账号，自动建好 Orbit 和模型</string>
+    <string name="orbit_setup_no_match">没有匹配的模型</string>
+    <string name="orbit_setup_account">账号</string>
+    <string name="orbit_setup_account_none">这个服务用账号登录，不用填密钥。先登录，再获取模型。</string>
+    <string name="orbit_setup_account_done">已登录，可以获取模型了</string>
+    <string name="orbit_setup_account_manage">管理账号</string>
+</resources>

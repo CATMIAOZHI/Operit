@@ -108,8 +108,43 @@ internal fun AIService.withFunctionalReasoning(
         providerType = providerType,
         modelName = config.modelName,
         thinkingQualityLevel = thinkingQualityLevel,
-        catalogReasoning = config.protocolSettingsForModel(config.modelName)
-            .takeIf { it.protocol == ModelProtocol.CHAT_REASONING },
+        // Every protocol's catalog entry is kept: a null effort list means the catalog does not know
+        // the model (pass the function's effort through), an empty one that it takes no effort.
+        catalogReasoning = config.protocolSettingsForModel(config.modelName),
+    )
+}
+
+/**
+ * Gateways and generic endpoints have no per-model function mapping. A model the catalog does not
+ * describe gets the function's own effort as is, one with declared levels gets the nearest declared
+ * level, and one whose entry lists no effort gets none. The suppression parameter keeps the provider
+ * from falling back to the chat slider either way.
+ */
+private fun passThroughFunctionalRequest(
+    responses: Boolean,
+    effectiveLevel: Int,
+    declared: List<String>?,
+    modelParameters: List<ModelParameter<*>>,
+): FunctionalReasoningRequest? {
+    val effort = ThinkingRequestSemantics.declaredCatalogReasoningEffort(
+        ApiPreferences.thinkingQualityEffort(effectiveLevel), declared,
+    ) ?: return null
+    val explicitChat = modelParameters.any { it.apiName == "reasoning_effort" && it.isEnabled }
+    val parameters = if (!responses) {
+        // Account parameters the user set stay as they are.
+        modelParameters + (if (explicitChat) emptyList() else listOf(functionalStringParameter("reasoning_effort", effort)))
+    } else {
+        val explicitResponses = explicitChat || modelParameters.any {
+            it.apiName == "reasoning" && it.isEnabled &&
+                runCatching { org.json.JSONObject(it.currentValue.toString()).has("effort") }.getOrDefault(false)
+        }
+        if (explicitResponses) modelParameters
+        else modelParameters.filterNot { it.apiName == "reasoning" } +
+            functionalResponsesReasoningParameter(modelParameters, effort)
+    }
+    return FunctionalReasoningRequest(
+        enableThinking = true,
+        modelParameters = parameters + functionalAutomaticReasoningSuppressionParameter(),
     )
 }
 
@@ -121,22 +156,21 @@ internal fun buildFunctionalReasoningRequest(
     catalogReasoning: ModelProtocolSettings? = null,
 ): FunctionalReasoningRequest {
     val effectiveLevel = normalizeFunctionalThinkingQualityLevel(thinkingQualityLevel)
-    if (providerType == ApiProviderType.OPENAI_GENERIC && catalogReasoning != null) {
-        val effort = ThinkingRequestSemantics.declaredCatalogReasoningEffort(
-            ApiPreferences.thinkingQualityEffort(effectiveLevel), catalogReasoning.reasoningEfforts,
-        )
-        if (effort != null) {
-            // Generic endpoints keep explicit account parameters; otherwise use this
-            // function's choice, so the provider never falls back to the chat slider.
-            val explicit = modelParameters.any { it.apiName == "reasoning_effort" && it.isEnabled }
-            return FunctionalReasoningRequest(
-                enableThinking = true,
-                modelParameters = modelParameters +
-                    (if (explicit) emptyList() else listOf(functionalStringParameter("reasoning_effort", effort))) +
-                    functionalAutomaticReasoningSuppressionParameter(),
+    val declared = catalogReasoning?.reasoningEfforts
+    val passThrough = when (providerType) {
+        ApiProviderType.OPENAI_GENERIC,
+        ApiProviderType.OPENCODE_GO ->
+            passThroughFunctionalRequest(false, effectiveLevel, declared, modelParameters)
+        ApiProviderType.OPENAI_RESPONSES_GENERIC ->
+            passThroughFunctionalRequest(true, effectiveLevel, declared, modelParameters)
+        ApiProviderType.OPENCODE_ZEN_FREE ->
+            passThroughFunctionalRequest(
+                OpenCodeZenFree.usesResponses(modelName, catalogReasoning?.protocol ?: ModelProtocol.INHERIT),
+                effectiveLevel, declared, modelParameters,
             )
-        }
+        else -> null
     }
+    if (passThrough != null) return passThrough
     val parametersWithoutConflictingControls =
         modelParameters.filterNot {
             it.apiName in
@@ -231,7 +265,8 @@ private fun buildFunctionalReasoningParameters(
         // The Zen free tier carries reasoning_effort on its OpenAI-compatible models, so the chat
         // slider would otherwise reach function requests through the provider's automatic effort.
         // There is no function-level mapping for it yet, so keep the provider from inventing one.
-        ApiProviderType.OPENCODE_ZEN_FREE ->
+        ApiProviderType.OPENCODE_ZEN_FREE,
+        ApiProviderType.OPENCODE_GO ->
             listOf(functionalAutomaticReasoningSuppressionParameter())
 
         ApiProviderType.OPENAI_RESPONSES ->
@@ -537,14 +572,8 @@ private fun siliconFlowSupportsThinkingBudget(modelName: String): Boolean {
 }
 
 private fun deepSeekFunctionalEffort(modelName: String, qualityLevel: Int): String? {
-    val normalized = modelName.trim().lowercase().substringAfterLast('/')
-    if (
-        !normalized.matches(
-            Regex("deepseek-v4-(?:flash|pro)(?:$|[-_].*)")
-        )
-    ) {
-        return null
-    }
+    // Every DeepSeek model takes the same effort field as chat does; a new model name is not a
+    // reason to drop it.
     return when (qualityLevel) {
         1 -> "low"
         2, 3 -> "high"

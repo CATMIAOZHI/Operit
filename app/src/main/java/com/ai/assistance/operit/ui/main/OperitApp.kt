@@ -21,6 +21,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
 import androidx.navigation.compose.rememberNavController
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.core.tools.packTool.PackageManager
 import com.ai.assistance.operit.core.config.DistributionConfig
@@ -36,7 +37,7 @@ import com.ai.assistance.operit.ui.main.navigation.AppNavigationModel
 import com.ai.assistance.operit.ui.main.navigation.AppRouteCatalog
 import com.ai.assistance.operit.ui.main.screens.Screen
 import com.ai.assistance.operit.ui.main.navigation.AppRouterGateway
-import com.ai.assistance.operit.ui.main.navigation.AppRouterState
+import com.ai.assistance.operit.ui.main.navigation.AppNavigationViewModel
 import com.ai.assistance.operit.ui.main.navigation.AppRouteDiscoveryGateway
 import com.ai.assistance.operit.ui.main.navigation.screenKeysAliveOnStack
 import com.ai.assistance.operit.ui.main.navigation.NavigationEntrySpec
@@ -63,6 +64,12 @@ import com.ai.assistance.operit.util.AppLogger
 // 它允许子组件（如AIChatScreen）向上提供它们的action Composable
 val LocalTopBarActions = compositionLocalOf<(@Composable (RowScope.() -> Unit)) -> Unit> { {} }
 
+/** Opens the side drawer (phone) or toggles the sidebar (tablet), for pages without a top bar. */
+val LocalOpenAppDrawer = compositionLocalOf<() -> Unit> { {} }
+
+/** Leaves the Orbit page for Operit's main chat, the same way picking it in the drawer does. */
+val LocalLeaveOrbit = compositionLocalOf<() -> Unit> { {} }
+
 class TopBarTitleContent(val content: @Composable () -> Unit)
 
 val LocalTopBarTitleContent = compositionLocalOf<(TopBarTitleContent?) -> Unit> { {} }
@@ -75,8 +82,9 @@ enum class NavigationTransitionSource {
 
 private const val TAG = "OperitApp"
 
+/** Orbit is a home of its own: back at its root leaves the app, never drops into the main chat. */
 internal fun shouldHandleSystemBack(canPop: Boolean, currentScreen: Screen): Boolean =
-    canPop || currentScreen !is Screen.AiChat
+    currentScreen !is Screen.Orbit && (canPop || currentScreen !is Screen.AiChat)
 
 private data class NetworkStateSnapshot(
     val isAvailable: Boolean,
@@ -111,8 +119,22 @@ fun OperitApp(
     val configuration = LocalConfiguration.current
     val navigationModel = remember(context, configuration, navigationRevision) { AppRouteCatalog.build(context) }
 
-    val routerState = remember {
-        AppRouterState(AppRouteCatalog.initialEntry(initialNavItem))
+    val navigationViewModel: AppNavigationViewModel = viewModel()
+    val routerState = navigationViewModel.getOrCreateRouter {
+        // Resolve a targeted launch before rendering its first frame.
+        val restoredEntry = navigationViewModel.restoredEntry
+        if (routeNavRequest != null && navigationModel.routesById.containsKey(routeNavRequest)) {
+            com.ai.assistance.operit.ui.main.navigation.RouteEntry(
+                routeId = routeNavRequest,
+                args = routeNavArgs,
+            )
+        } else if (shortcutNavRequest != null) {
+            AppRouteCatalog.initialEntry(shortcutNavRequest)
+        } else if (restoredEntry != null && AppRouteCatalog.resolveScreen(navigationModel, restoredEntry) != null) {
+            restoredEntry
+        } else {
+            AppRouteCatalog.initialEntry(initialNavItem)
+        }
     }
     val routeBackGuardRegistry = remember { RouteBackGuardRegistry() }
     val currentRouteEntry = routerState.currentEntry
@@ -196,7 +218,12 @@ fun OperitApp(
     // 当currentScreen改变时，检查是否需要清空TopBarActions
     // 这是为了解决从有action的屏幕导航到无action的屏幕时，action残留的问题
     LaunchedEffect(currentScreen) {
-        if (currentScreen !is Screen.AiChat && currentScreen !is Screen.TokenConfig) {
+        // The Orbit page hosts the chat screen too, which sets its own actions.
+        if (
+            currentScreen !is Screen.AiChat &&
+                currentScreen !is Screen.Orbit &&
+                currentScreen !is Screen.TokenConfig
+        ) {
             topBarActions = {}
         }
         topBarTitleContent = null
@@ -460,7 +487,8 @@ fun OperitApp(
             },
             LocalTopBarTitleContent provides { titleContent ->
                 topBarTitleContent = titleContent
-            }
+            },
+            LocalLeaveOrbit provides { navigateTo(Screen.AiChat, fromDrawer = true) },
         ) {
             if (useTabletLayout) {
                 // Tablet layout

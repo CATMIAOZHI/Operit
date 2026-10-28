@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="orbit_approval_model_models_pick">Models: you pick them below</string>
+    <string name="orbit_approval_model_models_suggested">Suggested models: %1$s</string>
+    <string name="orbit_model_pick_title">Models</string>
+    <string name="orbit_model_pick_count">%1$d picked</string>
+    <string name="orbit_model_pick_hint">Get the provider\'s model list, then tick the ones to use.</string>
+    <string name="orbit_model_pick_need_key">Type the API key above first to get the model list.</string>
+    <string name="orbit_model_pick_failed">Couldn\'t get the model list. Check the key and endpoint, then try again.</string>
+    <string name="orbit_model_pick_failed_account">Couldn\'t get this account\'s model list. The sign-in may have expired. Try again; if it still fails, decline this card and tell %1$s, who will put a sign-in-again card.</string>
+    <string name="orbit_model_pick_fetch">Get model list</string>
+    <string name="orbit_model_pick_retry">Try again</string>
+    <string name="orbit_model_pick_loading">Getting the model list…</string>
+    <string name="orbit_model_pick_empty">The provider returned no models.</string>
+    <string name="orbit_model_pick_search">Search models</string>
+    <string name="orbit_model_pick_unlisted">Not in the provider\'s list</string>
+    <string name="orbit_model_pick_more">%1$d more; search to find them</string>
+    <string name="orbit_model_switch_role_main">Main chat model</string>
+    <string name="orbit_model_switch_role_assistant">Assistant model</string>
+    <string name="orbit_model_switch_role_multimodal">Picture model</string>
+    <string name="orbit_model_switch_title">Switch %1$s: %2$s</string>
+    <string name="orbit_model_switch_detail">%1$s: %2$s → %3$s</string>
+    <string name="orbit_model_switch_none">not set</string>
+    <string name="orbit_model_switch_adds">Adds %1$s to the models of \"%2$s\"</string>
+    <string name="orbit_model_switch_thinking">Assistant thinking strength: %1$s → %2$s</string>
+    <string name="orbit_model_switch_image_unsupported">%1$s / %2$s does not have picture support enabled, so nothing was switched and your picture model is unchanged. Choose a model that supports pictures. If this model is confirmed to support pictures, enable vision in the app model configuration, then request the switch again.</string>
+    <string name="orbit_model_pick_full">Up to %1$d models</string>
+</resources>

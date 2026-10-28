@@ -50,6 +50,7 @@ import com.ai.assistance.operit.data.repository.ChatHistoryManager
 import com.ai.assistance.operit.ui.common.NavItem
 import com.ai.assistance.operit.ui.common.displays.FpsCounter
 import com.ai.assistance.operit.ui.main.NavigationTransitionSource
+import com.ai.assistance.operit.ui.main.LocalOpenAppDrawer
 import com.ai.assistance.operit.ui.main.TopBarTitleContent
 import com.ai.assistance.operit.ui.main.navigation.RouteEntry
 import com.ai.assistance.operit.ui.main.navigation.LocalRouteInstanceId
@@ -276,12 +277,17 @@ fun AppContent(
 
     CompositionLocalProvider(
         LocalAppBarContentColor provides appBarContentColor,
+        LocalOpenAppDrawer provides {
+            if (useTabletLayout) onToggleSidebar() else scope.launch { drawerState.open() }
+        },
     ) {
         // 使用Scaffold来正确处理顶部栏和内容的布局
         // contentWindowInsets = WindowInsets(0) 让内容可以延伸到系统栏下方，使背景能够完全填充
         Scaffold(
             contentWindowInsets = WindowInsets(0, 0, 0, 0),
-            topBar = {
+            topBar = topBar@{
+                // Orbit draws its own floating buttons over a full-height page.
+                if (currentScreen is Screen.Orbit) return@topBar
                 // 单一工具栏 - 使用小型化的设计
                 // 使用 windowInsets 参数让 TopAppBar 自己处理状态栏的 insets
                 TopAppBar(
@@ -463,7 +469,12 @@ fun AppContent(
                                                 hasBackgroundImage = hasBackgroundImage,
                                                 onLoading = onLoading,
                                                 onError = onError,
-                                                onGestureConsumed = if (screenSnapshot is Screen.AiChat) onGestureConsumed else { _ -> }
+                                                onGestureConsumed =
+                                                    if (screenSnapshot is Screen.AiChat || screenSnapshot is Screen.Orbit) {
+                                                        onGestureConsumed
+                                                    } else {
+                                                        { _ -> }
+                                                    }
                                             )
                                         }
                                         if (screenSnapshot.usesRouteViewModelStore) {

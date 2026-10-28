@@ -93,6 +93,11 @@ fun ChatScreenContent(
          actualViewModel: ChatViewModel,
          enableMessageDialogs: Boolean = true,
          readOnlyTranscript: Boolean = false,
+         // Read the chat with its tool details, but offer nothing that rewrites it.
+         lockTranscript: Boolean = false,
+         // The chat this screen was asked to show (a host such as Orbit sets it); until the shared chat
+         // has switched to it, the previous chat is not drawn under the host's look.
+         expectedChatId: String? = null,
          enableToolDetailDialogs: Boolean? = null,  // 工具详情弹窗开关，null 时跟随 enableDialogs
          showChatHistorySelector: Boolean,
         chatHistory: List<ChatMessage>,
@@ -147,6 +152,7 @@ fun ChatScreenContent(
         bubbleAiContentPaddingLeft: Float = 12f,
         bubbleAiContentPaddingRight: Float = 12f,
         showChatFloatingDotsAnimation: Boolean = true,
+        headerContent: (@Composable () -> Unit)? = null,
         configurationNotice: @Composable () -> Unit = {},
 ) {
     val density = LocalDensity.current
@@ -156,10 +162,23 @@ fun ChatScreenContent(
     var isMultiSelectMode by remember { mutableStateOf(false) }
     val transcriptSelection = remember(currentChatId) { TranscriptSelection() }
     var selectedMessageIndices by transcriptSelection.forMessages(chatHistory)
-    val selectableMessageIndices = remember(chatHistory) {
+    // An Orbit chat selects only the messages it shows; its bar copies, shares and keeps them.
+    val orbitMessageHost = if (LocalOrbitChatLook.current) {
+        com.ai.assistance.operit.ui.features.orbit.LocalOrbitMessageHost.current
+    } else null
+    val selectableMessageIndices = remember(chatHistory, orbitMessageHost != null) {
         chatHistory.mapIndexedNotNull { index, message ->
-            if (message.sender == "user" || message.sender == "ai") index else null
+            if ((message.sender == "user" || message.sender == "ai") &&
+                (orbitMessageHost == null || !OrbitSpeech.hidden(message))) index else null
         }.toSet()
+    }
+    // Another Orbit chat on screen starts with nothing selected.
+    LaunchedEffect(currentChatId) {
+        if (orbitMessageHost != null) isMultiSelectMode = false
+    }
+    androidx.activity.compose.BackHandler(enabled = orbitMessageHost != null && isMultiSelectMode) {
+        isMultiSelectMode = false
+        selectedMessageIndices = emptySet()
     }
     var isGeneratingImage by remember { mutableStateOf(false) }
     var showSharePreviewDialog by remember { mutableStateOf(false) }
@@ -205,8 +224,9 @@ fun ChatScreenContent(
     val isSpeechSessionActive by actualViewModel.isSpeechSessionActive.collectAsState()
     val isSpeechPaused by actualViewModel.isSpeechPaused.collectAsState()
     val isAutoReadEnabled by actualViewModel.isAutoReadEnabled.collectAsState()
-    LaunchedEffect(readOnlyTranscript) {
-        if (readOnlyTranscript) {
+    val transcriptLocked = readOnlyTranscript || lockTranscript
+    LaunchedEffect(transcriptLocked) {
+        if (transcriptLocked) {
             isMultiSelectMode = false
             selectedMessageIndices = emptySet()
             editingMessageIndex.value = null
@@ -223,18 +243,28 @@ fun ChatScreenContent(
     }
     // 打开编辑器的那一刻才去读这一轮的协作消息，所以回调本身可以一直复用，不受转录刷新影响。
     val latestChatHistory by rememberUpdatedState(chatHistory)
+    val orbitLookForEdit by rememberUpdatedState(LocalOrbitChatLook.current)
     val onSelectMessageToEditCallback = remember(
         editingMessageIndex,
         editingMessageContent,
         editingMemoryFragments,
     ) {
         { index: Int, message: ChatMessage, senderType: String ->
+            // An Orbit chat shows messages without their thinking and tool calls; the editor must
+            // still get the whole stored message, or saving would drop them.
+            // Other chats already show the stored messages and are left as they are.
+            val storedByTime =
+                if (orbitLookForEdit) actualViewModel.chatHistory.value.associateBy { it.timestamp } else emptyMap()
+            val stored = storedByTime[message.timestamp]
+            val source =
+                if (orbitLookForEdit) latestChatHistory.map { shown -> storedByTime[shown.timestamp] ?: shown }
+                else latestChatHistory
             editingMessageIndex.value = index
-            editingMessageContent.value = message.content
+            editingMessageContent.value = (stored ?: message).content
             editingMessageType = senderType
             editingMemoryFragments.value =
                 if (senderType == "ai") {
-                    collaborationMemoryFragments(latestChatHistory, index, includeAssistant = true)
+                    collaborationMemoryFragments(source, index, includeAssistant = true)
                 } else {
                     emptyList()
                 }
@@ -242,12 +272,18 @@ fun ChatScreenContent(
     }
 
     val activeRunStartedAt by actualViewModel.activeRunStartedAt.collectAsState()
+    val userWaitingChatIds by actualViewModel.userWaitingChatIds.collectAsState()
+    val summaryHeldSends by actualViewModel.summaryHeldSends.collectAsState()
     androidx.compose.runtime.CompositionLocalProvider(
         com.ai.assistance.operit.ui.common.dynamicui.LocalDynamicUiSubmit provides
-            if (readOnlyTranscript) null else actualViewModel::submitDynamicUi,
+            if (transcriptLocked) null else actualViewModel::submitDynamicUi,
+        com.ai.assistance.operit.ui.features.orbit.LocalOrbitOptionSend provides
+            if (transcriptLocked) null else actualViewModel::sendOrbitOption,
     ) {
     Box(modifier = modifier.fillMaxSize().padding(paddingValues)) {
-        if (chatHeaderOverlayMode && chatHeaderTransparent) {
+        // A page's own header (Orbit's) always floats over the chat: messages slide softly under
+        // its fade instead of stopping at a hard edge, whatever the chat header settings are.
+        if ((chatHeaderOverlayMode && chatHeaderTransparent) || headerContent != null) {
             // 覆盖模式：Header浮动在ChatArea之上
             Box(modifier = Modifier.fillMaxSize()) {
                 ChatArea(
@@ -255,8 +291,10 @@ fun ChatScreenContent(
                         currentChatId = currentChatId,
                         isLoading = isLoading,
                         activeRunStartedAt = activeRunStartedAt[currentChatId],
+                        orbitUserWaiting = currentChatId in userWaitingChatIds,
+                        summaryHeldSend = summaryHeldSends[currentChatId],
                         enableDialogs = enableMessageDialogs && !readOnlyTranscript,
-                        allowTranscriptMutation = !readOnlyTranscript,
+                        allowTranscriptMutation = !transcriptLocked,
                         enableToolDetailDialogs = enableToolDetailDialogs ?: enableMessageDialogs,
                         userMessageColor = userMessageColor,
                         aiMessageColor = aiMessageColor,
@@ -302,7 +340,7 @@ fun ChatScreenContent(
                         hasOlderDisplayHistory = hasOlderDisplayHistory,
                         processMetadata = processMetadata,
                         onLoadProcess = actualViewModel::loadTranscriptProcess,
-                        transcriptReady = displayedChatId == currentChatId,
+                        transcriptReady = displayedChatId == currentChatId && (expectedChatId == null || currentChatId == expectedChatId),
                         hasNewerDisplayHistory = hasNewerDisplayHistory,
                         isLoadingDisplayWindow = isLoadingDisplayWindow,
                         onLoadOlderDisplayWindow = {
@@ -363,7 +401,7 @@ fun ChatScreenContent(
                         headerHeight = with(density) { coordinates.size.height.toDp() }
                     }
                 ) {
-                    ChatScreenHeader(
+                    headerContent?.invoke() ?: ChatScreenHeader(
                         actualViewModel = actualViewModel,
                         showChatHistorySelector = showChatHistorySelector,
                         chatHeaderTransparent = chatHeaderTransparent,
@@ -377,7 +415,7 @@ fun ChatScreenContent(
             }
         } else {
             Column(modifier = Modifier.fillMaxSize()) {
-                ChatScreenHeader(
+                headerContent?.invoke() ?: ChatScreenHeader(
                         actualViewModel = actualViewModel,
                         showChatHistorySelector = showChatHistorySelector,
                         chatHeaderTransparent = chatHeaderTransparent,
@@ -392,8 +430,10 @@ fun ChatScreenContent(
                         currentChatId = currentChatId,
                         isLoading = isLoading,
                         activeRunStartedAt = activeRunStartedAt[currentChatId],
+                        orbitUserWaiting = currentChatId in userWaitingChatIds,
+                        summaryHeldSend = summaryHeldSends[currentChatId],
                         enableDialogs = enableMessageDialogs && !readOnlyTranscript,
-                        allowTranscriptMutation = !readOnlyTranscript,
+                        allowTranscriptMutation = !transcriptLocked,
                         enableToolDetailDialogs = enableToolDetailDialogs ?: enableMessageDialogs,
                         userMessageColor = userMessageColor,
                         aiMessageColor = aiMessageColor,
@@ -439,7 +479,7 @@ fun ChatScreenContent(
                         hasOlderDisplayHistory = hasOlderDisplayHistory,
                         processMetadata = processMetadata,
                         onLoadProcess = actualViewModel::loadTranscriptProcess,
-                        transcriptReady = displayedChatId == currentChatId,
+                        transcriptReady = displayedChatId == currentChatId && (expectedChatId == null || currentChatId == expectedChatId),
                         hasNewerDisplayHistory = hasNewerDisplayHistory,
                         isLoadingDisplayWindow = isLoadingDisplayWindow,
                         onLoadOlderDisplayWindow = {
@@ -499,14 +539,56 @@ fun ChatScreenContent(
 
         // 多选模式底部操作栏
         AnimatedVisibility(
-            visible = isMultiSelectMode && !readOnlyTranscript,
+            visible = isMultiSelectMode && !transcriptLocked,
             enter = fadeIn() + slideInVertically(initialOffsetY = { it }),
             exit = fadeOut() + slideOutVertically(targetOffsetY = { it }),
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = bottomInset + 16.dp)
         ) {
-            Surface(
+            if (orbitMessageHost != null) {
+                fun picked() = selectedMessageIndices.sorted().mapNotNull { chatHistory.getOrNull(it) }
+                fun done() {
+                    isMultiSelectMode = false
+                    selectedMessageIndices = emptySet()
+                }
+                com.ai.assistance.operit.ui.features.orbit.OrbitSelectionBar(
+                    count = selectedMessageIndices.size,
+                    onClose = ::done,
+                    onCopy = {
+                        val messages = picked()
+                        orbitMessageHost.scope.launch {
+                            com.ai.assistance.operit.ui.features.orbit.OrbitMessageActions.copy(
+                                context,
+                                com.ai.assistance.operit.ui.features.orbit.OrbitMessageActions.transcript(context, orbitMessageHost, messages),
+                            )
+                        }
+                        done()
+                    },
+                    onShare = {
+                        val messages = picked()
+                        orbitMessageHost.scope.launch {
+                            com.ai.assistance.operit.ui.features.orbit.OrbitMessageActions.share(
+                                context,
+                                com.ai.assistance.operit.ui.features.orbit.OrbitMessageActions.transcript(context, orbitMessageHost, messages),
+                            )
+                        }
+                        done()
+                    },
+                    onKeep = {
+                        val messages = picked()
+                        orbitMessageHost.scope.launch {
+                            val items = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                                messages.map {
+                                    com.ai.assistance.operit.ui.features.orbit.OrbitMessageActions.favoriteOf(context, orbitMessageHost, it)
+                                }
+                            }
+                            com.ai.assistance.operit.ui.features.orbit.OrbitMessageActions.keep(context, orbitMessageHost, items)
+                        }
+                        done()
+                    },
+                )
+            } else Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
                 tonalElevation = 2.dp,
@@ -583,33 +665,7 @@ fun ChatScreenContent(
                             )
                         }
 
-                        FilledIconButton(
-                            onClick = {
-                                if (selectedMessageIndices.isNotEmpty()) {
-                                    val selectedMessages =
-                                        selectedMessageIndices
-                                            .mapNotNull { index -> chatHistory.getOrNull(index) }
-                                            .sortedBy { it.timestamp }
-                                    actualViewModel.enqueueSelectedMessagesForMemoryAutoSave(
-                                        selectedMessages
-                                    )
-                                }
-                            },
-                            enabled = selectedMessageIndices.isNotEmpty(),
-                            modifier = Modifier.size(32.dp),
-                            colors = IconButtonDefaults.filledIconButtonColors(
-                                containerColor = MaterialTheme.colorScheme.tertiaryContainer,
-                                contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
-                                disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-                                disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
-                            )
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.CheckCircle,
-                                contentDescription = stringResource(R.string.add_selected_to_memory),
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
+                        // "Add selected to memory" fed only the old memory graph, which is read-only now.
 
                         // 分享按钮
                         FilledIconButton(

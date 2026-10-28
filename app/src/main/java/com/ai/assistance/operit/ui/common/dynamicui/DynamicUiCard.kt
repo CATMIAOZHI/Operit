@@ -39,8 +39,15 @@ import kotlinx.serialization.json.*
 data class DynamicUiOwner(val chatId: String, val timestamp: Long, val variant: Int, val content: String)
 val LocalDynamicUiOwner = staticCompositionLocalOf<DynamicUiOwner?> { null }
 val LocalDynamicUiSubmit = staticCompositionLocalOf<((DynamicUiOwner, String) -> Boolean)?> { null }
+/** Opens a card's web link; null opens it right away. A page can ask the user first. */
+val LocalDynamicUiOpenUrl = staticCompositionLocalOf<((String) -> Unit)?> { null }
 /** Solid color the card is drawn on (a plain chat bubble); unspecified for images, glass or no bubble. */
 val LocalDynamicUiBackdrop = staticCompositionLocalOf { Color.Unspecified }
+/**
+ * Which Dynamic UI card of its message this is, when the message is drawn in pieces and each card
+ * is rendered alone; null means the card's place in the text it is rendered from.
+ */
+val LocalDynamicUiBlockIndex = staticCompositionLocalOf<Int?> { null }
 
 @Composable
 fun DynamicUiCard(source: String, closed: Boolean, streaming: Boolean, blockIndex: Int, ink: Color = Color.Unspecified) {
@@ -57,6 +64,7 @@ private fun DynamicUiCardContent(source: String, closed: Boolean, streaming: Boo
     val context = LocalContext.current
     val resources = LocalResources.current
     val submit by rememberUpdatedState(LocalDynamicUiSubmit.current)
+    val openUrl by rememberUpdatedState(LocalDynamicUiOpenUrl.current)
     val currentOwner by rememberUpdatedState(owner)
     val storageSource = "$blockIndex:$source"
     val storageFiles = remember(owner?.chatId, owner?.timestamp, owner?.variant, storageSource) {
@@ -220,7 +228,8 @@ private fun DynamicUiCardContent(source: String, closed: Boolean, streaming: Boo
                                 "open_url" -> {
                                     val url = event.context["url"] as? String ?: error("Missing URL")
                                     require(DynamicUiProtocol.safeUrl(url))
-                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                                    openUrl?.invoke(url)
+                                        ?: context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                                 }
                                 "copy" -> {
                                     val text = event.context["text"] as? String ?: error("Missing text")

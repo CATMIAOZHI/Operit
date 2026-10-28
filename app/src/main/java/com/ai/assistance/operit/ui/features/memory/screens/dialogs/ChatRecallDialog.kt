@@ -1,5 +1,7 @@
 package com.ai.assistance.operit.ui.features.memory.screens.dialogs
 
+import com.ai.assistance.operit.ui.features.orbit.orbitDismissLayer
+
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -14,9 +16,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.ui.features.memory.screens.MemoryLibraryPage
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.foundation.clickable
 import com.ai.assistance.operit.R
-import com.ai.assistance.operit.api.chat.library.MemoryLearningService
 import com.ai.assistance.operit.data.dao.*
 import com.ai.assistance.operit.data.repository.ChatRecallRepository
 import com.ai.assistance.operit.data.repository.parseRecallTime
@@ -35,9 +37,31 @@ fun ChatRecallDialog(profileId: String, onDismiss: () -> Unit) {
     // A mistyped filter is not a read failure, so it must not be reported as one.
     val filterRoleInvalid = stringResource(R.string.chat_recall_filter_role_invalid)
     val filterTimeInvalid = stringResource(R.string.chat_recall_filter_time_invalid)
-    val draftExtracted = stringResource(R.string.skill_draft_extracted)
-    val extractionTimeout = stringResource(R.string.memory_extraction_timeout)
-    val repo = remember { ChatRecallRepository(context) }
+    var retry by remember(profileId) { mutableStateOf(0) }
+    val scopedRepo by produceState<Result<ChatRecallRepository>?>(null, profileId, retry) {
+        value = null
+        value = try {
+            val owner = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.privateOwner(context, profileId)
+            val chatId = if (owner == null) null else
+                com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context).current()
+                    .orbits.first { it.id == owner && !it.deleting }.chatId
+            Result.success(ChatRecallRepository(context, chatId))
+        } catch (e: CancellationException) { throw e }
+        catch (e: Exception) { Result.failure(e) }
+    }
+    val repo = scopedRepo?.getOrNull()
+    if (repo == null) {
+        MemoryLibraryPage(stringResource(R.string.chat_recall_title), profileId, onDismiss) {
+            Column(Modifier.fillMaxWidth().padding(24.dp)) {
+                if (scopedRepo == null) CircularProgressIndicator()
+                else {
+                    Text(recallError)
+                    TextButton(onClick = { retry++ }) { Text(stringResource(R.string.orbit_memory_retry)) }
+                }
+            }
+        }
+        return
+    }
     val scope = rememberCoroutineScope()
     var query by rememberSaveable { mutableStateOf("") }
     var profile by rememberSaveable { mutableStateOf("") }
@@ -117,10 +141,10 @@ fun ChatRecallDialog(profileId: String, onDismiss: () -> Unit) {
     LaunchedEffect(Unit) {
         run { load(false) }
     }
-    fullMessage?.let { part ->
+    val fullPage: @Composable (ChatRecallPart) -> Unit = { part ->
         val partLength = part.content.codePointCount(0,part.content.length)
         MemoryLibraryPage(stringResource(R.string.memory_recall_full), profileId,
-            { if (!busy) fullMessage = null }) {
+            { if (!busy) fullMessage = null }, interceptBack = busy, backEnabled = !busy) {
             Column(Modifier.fillMaxSize().padding(16.dp)) {
                 Text("${charOffset+1}–${charOffset+partLength} / ${part.totalChars}",
                     style = MaterialTheme.typography.labelMedium)
@@ -140,13 +164,30 @@ fun ChatRecallDialog(profileId: String, onDismiss: () -> Unit) {
                 }
             }
         }
-        return
     }
+    // A whole message opens as its own page over the results; the back swipe slides it away.
+    var shownPart by remember { mutableStateOf(fullMessage) }
+    LaunchedEffect(fullMessage) { fullMessage?.let { shownPart = it } }
+    val isOrbit = com.ai.assistance.operit.data.preferences.MemorySearchSettingsPreferences.isOrbitSpace(profileId)
+    val resultBack = com.ai.assistance.operit.ui.features.orbit.rememberOrbitBackMotion()
+    if (isOrbit) {
+        com.ai.assistance.operit.ui.features.orbit.OrbitBackHandler(
+            resultBack, enabled = backStack.isNotEmpty() && fullMessage == null,
+        ) {
+            activeWork?.cancel()
+            if (backStack.isNotEmpty()) backStack.removeAt(backStack.lastIndex).invoke()
+        }
+    }
+    Box(Modifier.fillMaxSize()) {
+    // Hidden from screen readers while a whole message covers it.
+    Box(Modifier.fillMaxSize()
+        .then(if (isOrbit) Modifier.orbitDismissLayer(resultBack) else Modifier)
+        .then(if (fullMessage != null) Modifier.clearAndSetSemantics { } else Modifier)) {
     MemoryLibraryPage(stringResource(R.string.chat_recall_title), profileId, {
         activeWork?.cancel()
         if (backStack.isNotEmpty()) backStack.removeAt(backStack.lastIndex).invoke()
         else onDismiss()
-    }) {
+    }, interceptBack = backStack.isNotEmpty() && !isOrbit) {
         Box(Modifier.fillMaxSize()) {
             Column(Modifier.fillMaxSize().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
                 Text(stringResource(R.string.chat_recall_hint),style=MaterialTheme.typography.bodySmall)
@@ -233,25 +274,14 @@ fun ChatRecallDialog(profileId: String, onDismiss: () -> Unit) {
                     }
                     if(more) item { TextButton(onClick={ run { load(true) } },enabled=!busy) { Text(stringResource(R.string.chat_recall_more)) } }
                 }
-                sourceChat?.let { id ->
-                    Text(stringResource(R.string.skill_draft_manual_hint),style=MaterialTheme.typography.bodySmall)
-                    TextButton(onClick={ run {
-                        try {
-                            MemoryLearningService.extract(context,profileId,id)
-                        } catch(e: kotlinx.coroutines.TimeoutCancellationException) {
-                            // A timeout is our own limit, not a user cancellation, so report it.
-                            message = extractionTimeout
-                            return@run
-                        } catch(e: CancellationException) { throw e }
-                        catch(e: Exception) {
-                            // The extractor refuses with a specific, already-localized reason.
-                            message = e.message?.takeIf { it.isNotBlank() } ?: recallError
-                            return@run
-                        }
-                        message=draftExtracted
-                    } },enabled=!busy) { Text(stringResource(R.string.skill_draft_extract)) }
-                }
             }
         }
+    }
+    }
+    com.ai.assistance.operit.ui.features.orbit.OrbitCoverPage(
+        visible = fullMessage != null, onDismiss = { fullMessage = null }, backEnabled = !busy,
+    ) {
+        (fullMessage ?: shownPart)?.let { fullPage(it) }
+    }
     }
 }

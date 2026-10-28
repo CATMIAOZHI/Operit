@@ -153,6 +153,8 @@ object ActivityLifecycleManager : Application.ActivityLifecycleCallbacks {
                 context = appContext,
                 reason = "application_foreground"
             )
+            // Orbit tasks Android would not start in the background run now that Operit is open.
+            runCatching { com.ai.assistance.operit.features.orbit.OrbitTaskHost.onAppForeground(appContext) }
             AppLifecycleHookPluginRegistry.dispatchAsync(
                 event = AppLifecycleEvent.APPLICATION_FOREGROUND,
                 params = AppLifecycleHookParams(context = appContext)

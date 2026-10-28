@@ -61,7 +61,6 @@ fun MemorySearchSettingsDialog(
     isRebuilding: Boolean,
     onDismiss: () -> Unit,
     onSave: (MemorySearchConfig, CloudEmbeddingConfig, Int) -> Unit,
-    onRebuild: () -> Unit,
     onSimulateSearch: () -> Unit
 ) {
     var keywordWeight by remember(currentConfig) { mutableFloatStateOf(currentConfig.keywordWeight) }
@@ -144,33 +143,7 @@ fun MemorySearchSettingsDialog(
                     )
                 }
 
-                SettingsSection(title = stringResource(R.string.memory_auto_save_settings_title)) {
-                    SliderSettingItem(
-                        title = stringResource(R.string.memory_auto_save_interval_minutes),
-                        value = editedAutoSaveIntervalMinutes,
-                        valueText = stringResource(
-                            R.string.memory_auto_save_interval_value,
-                            editedAutoSaveIntervalMinutes.roundToInt(),
-                            MemorySearchSettingsPreferences.MIN_AUTO_SAVE_INTERVAL_MINUTES,
-                            MemorySearchSettingsPreferences.MAX_AUTO_SAVE_INTERVAL_MINUTES
-                        ),
-                        valueRange = MemorySearchSettingsPreferences.MIN_AUTO_SAVE_INTERVAL_MINUTES.toFloat()..
-                            MemorySearchSettingsPreferences.MAX_AUTO_SAVE_INTERVAL_MINUTES.toFloat(),
-                        steps = MemorySearchSettingsPreferences.MAX_AUTO_SAVE_INTERVAL_MINUTES -
-                            MemorySearchSettingsPreferences.MIN_AUTO_SAVE_INTERVAL_MINUTES - 1,
-                        onValueChange = { editedAutoSaveIntervalMinutes = it }
-                    )
-                    Text(
-                        text = stringResource(
-                            R.string.memory_auto_save_interval_hint,
-                            MemorySearchSettingsPreferences.MIN_AUTO_SAVE_INTERVAL_MINUTES,
-                            MemorySearchSettingsPreferences.MAX_AUTO_SAVE_INTERVAL_MINUTES,
-                            MemorySearchSettingsPreferences.DEFAULT_AUTO_SAVE_INTERVAL_MINUTES
-                        ),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                // The old graph's auto-save interval is gone: that extractor no longer runs.
 
                 SettingsSection(title = stringResource(R.string.memory_embedding_cloud_title)) {
                     Row(
@@ -261,14 +234,7 @@ fun MemorySearchSettingsDialog(
                         dimensions = dimensionUsage.chunkDimensions
                     )
 
-                    OutlinedButton(
-                        onClick = onRebuild,
-                        enabled = rebuildEnabled,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(stringResource(R.string.memory_embedding_rebuild_action))
-                    }
-
+                    // Rebuilding writes embeddings into the old memory, which is read-only now.
                     if (!error.isNullOrBlank()) {
                         Text(
                             text = error,

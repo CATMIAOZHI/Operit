@@ -37,6 +37,13 @@ private data class BubbleAiPreferences(
 
 internal val LocalBubbleAiRenderSettings = staticCompositionLocalOf<BubbleAiRenderSettings?> { null }
 
+/**
+ * The preferences last read, so a chat opened again draws at once with them instead of waiting a
+ * frame or two on a spinner; the live values replace them as they arrive.
+ */
+@Volatile
+private var lastBubbleAiPreferences: BubbleAiPreferences? = null
+
 /** One complete snapshot prevents newly visible blocks from laying out with default settings. */
 @Composable
 internal fun rememberBubbleAiRenderSettings(): BubbleAiRenderSettings? {
@@ -53,8 +60,9 @@ internal fun rememberBubbleAiRenderSettings(): BubbleAiRenderSettings? {
         combine(layout, font, identity, d.collapseCompletedProcess, d.toolCollapseMode,
             ::BubbleAiPreferences)
     }
-    val preferences by flow.collectAsState(initial = null)
+    val preferences by flow.collectAsState(initial = lastBubbleAiPreferences)
     val value = preferences ?: return null
+    lastBubbleAiPreferences = value
     val baseTypography = MaterialTheme.typography
     val typography = remember(context, value.font, baseTypography) {
         applyFontFamilyToTypography(

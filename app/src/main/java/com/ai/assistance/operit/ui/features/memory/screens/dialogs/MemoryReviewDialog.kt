@@ -10,6 +10,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.ui.features.memory.screens.MemoryLibraryPage
@@ -22,8 +23,9 @@ import java.text.DateFormat
 import java.util.Date
 
 @Composable
-fun MemoryReviewDialog(profileId: String, onDismiss: () -> Unit) {
+fun MemoryReviewDialog(profileId: String, onDismiss: () -> Unit, initialSkillName: String? = null) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val reviewErrorFormat = stringResource(R.string.memory_review_error)
     val repo = remember(profileId) { MemoryReviewRepository(context, profileId) }
     val settings = remember(profileId) { MemorySearchSettingsPreferences(context, profileId) }
@@ -35,13 +37,16 @@ fun MemoryReviewDialog(profileId: String, onDismiss: () -> Unit) {
     var loaded by remember { mutableStateOf(false) }
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
     val selected = records.find { it.id == selectedId }
-    var history by rememberSaveable { mutableStateOf(false) }
+    var history by rememberSaveable { mutableStateOf(initialSkillName != null) }
     var body by rememberSaveable { mutableStateOf("") }
     var description by rememberSaveable { mutableStateOf("") }
     var reason by rememberSaveable { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var discardTarget by remember { mutableStateOf<String?>(null) }
+    var evidenceText by remember(selectedId) { mutableStateOf<String?>(null) }
+    val memorySpace by remember(profileId) { UserPreferencesManager.getInstance(context).getMemorySpaceFlow(profileId) }
+        .collectAsState(initial = null)
     // A typed review reason is part of the draft too, so leaving must not drop it silently.
     val dirty = selected?.let { it.status == "pending" &&
         (body != it.body || description != it.description || reason.isNotBlank()) } == true
@@ -65,11 +70,21 @@ fun MemoryReviewDialog(profileId: String, onDismiss: () -> Unit) {
         catch (e: CancellationException) { throw e }
         catch (e: Exception) { error = reviewErrorFormat.format(e.message.orEmpty()) }
     }
-    MemoryLibraryPage(selected?.title ?: stringResource(R.string.memory_review_title), profileId,
-        { leave(if (selectedId == null) "close" else "back") }) {
+    // A record opens over the list like an iOS page; in an Orbit the back swipe slides it away.
+    val status: @Composable () -> Unit = {
+        error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+    }
+    com.ai.assistance.operit.ui.features.orbit.OrbitPushHost(
+        entries = listOfNotNull(selectedId),
+        onPop = { selectedId = null },
+        base = {
+    MemoryLibraryPage(stringResource(R.string.memory_review_title), profileId, { leave("close") }) {
         Box(Modifier.fillMaxSize()) {
             Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (selected == null) {
+                kotlin.run {
+                    if (memorySpace?.ownerOrbitId != null) Text(stringResource(R.string.orbit_memory_correction_help),
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (!autoSave) Text(stringResource(R.string.memory_auto_master_off), style = MaterialTheme.typography.bodySmall)
                     Row {
                         Text(stringResource(R.string.memory_review_ai_allowed), Modifier.weight(1f))
@@ -80,7 +95,8 @@ fun MemoryReviewDialog(profileId: String, onDismiss: () -> Unit) {
                         TextButton(onClick = { history = true }) { Text(stringResource(R.string.memory_review_history)) }
                         TextButton(onClick = { run {} }, enabled = !busy) { Text(stringResource(R.string.memory_review_refresh)) }
                     }
-                    val visible = records.filter { (it.status !in setOf("pending", "applying")) == history }
+                    val visible = records.filter { (it.status !in setOf("pending", "applying")) == history &&
+                        (initialSkillName == null || it.kind.startsWith("skill") && it.title == initialSkillName) }
                     LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         // The draft in the detail pane is restored before the list reloads, so an
                         // empty list here must not be reported as "no records" while still loading.
@@ -99,12 +115,42 @@ fun MemoryReviewDialog(profileId: String, onDismiss: () -> Unit) {
                             }
                         }
                     }
+                }
+                status()
+            }
+        }
+    }
+        },
+    ) { shownId ->
+    val record = records.find { it.id == shownId }
+    MemoryLibraryPage(record?.title ?: stringResource(R.string.memory_review_title), profileId,
+        { leave("back") }, interceptBack = dirty || busy, backEnabled = !busy) {
+        Box(Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (record == null) {
+                    LinearProgressIndicator(Modifier.fillMaxWidth())
                 } else {
-                    val record = selected!!
                     val pending = record.status == "pending"
                     val changed = body != record.body || description != record.description
                     Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(record.title + (if(record.kind=="skill_file") "/${record.path}" else "") + " · " + reviewStatus(record.status))
+                        if (record.origin == "learning") Text(stringResource(R.string.orbit_memory_inferred),
+                            style = MaterialTheme.typography.bodySmall)
+                        if (record.evidence.isNotBlank() && record.evidence != "[]") {
+                            TextButton(enabled = !busy, onClick = { run {
+                                val sources = org.json.JSONArray(record.evidence)
+                                val ids = (0 until sources.length()).map {
+                                    sources.getJSONObject(it).getLong("message_id")
+                                }.distinct().take(8)
+                                val recall = com.ai.assistance.operit.data.repository.ChatRecallRepository(context, record.sourceChatId)
+                                evidenceText = ids.mapNotNull { recall.message(it)?.content?.take(2000) }.joinToString("\n\n")
+                                    .ifBlank { resources.getString(R.string.orbit_memory_source_missing) }
+                            } }) { Text(stringResource(R.string.orbit_memory_view_evidence)) }
+                            evidenceText?.let {
+                                Text(stringResource(R.string.orbit_memory_evidence_current), style = MaterialTheme.typography.bodySmall)
+                                Text(it)
+                            }
+                        }
                         if (record.before.isNotEmpty()) {
                             Text(stringResource(R.string.memory_review_before))
                             OutlinedTextField(record.before, {}, readOnly = true, modifier = Modifier.fillMaxWidth(), maxLines = 5)
@@ -112,6 +158,7 @@ fun MemoryReviewDialog(profileId: String, onDismiss: () -> Unit) {
                         if (record.kind == "skill") OutlinedTextField(description, { description = it },
                             readOnly = !pending, enabled = !busy, label = { Text(stringResource(R.string.memory_review_description)) })
                         if (record.kind=="skill_delete") Text(stringResource(R.string.memory_review_delete_skill))
+                        else if (record.kind == "skill_file" && record.operation == "remove") Text(stringResource(R.string.orbit_skill_restore_removes_file))
                         else OutlinedTextField(body, { body = it }, readOnly = !pending, enabled = !busy,
                             label = { Text(stringResource(R.string.memory_review_after)) },
                             modifier = Modifier.fillMaxWidth(), minLines = 5, maxLines = 12)
@@ -121,7 +168,21 @@ fun MemoryReviewDialog(profileId: String, onDismiss: () -> Unit) {
                                 minLines = 2, maxLines = 8)
                         }
                         if (record.audits.isNotBlank()) Text(record.audits)
-                        if (record.reviewedAt > 0) Text("${record.reviewer} · ${DateFormat.getDateTimeInstance().format(Date(record.reviewedAt))}\n${record.reason}")
+                        if (memorySpace?.ownerOrbitId != null && record.kind == "skill_file" && record.status == "approved") {
+                            Text(stringResource(R.string.orbit_skill_restore_help), style = MaterialTheme.typography.bodySmall)
+                            for (beforeChange in listOf(true, false)) {
+                                TextButton(enabled = !busy, onClick = { run {
+                                    val proposal = repo.proposeSkillFileRestore(context, record.id, beforeChange)
+                                    selectedId = proposal.id; body = proposal.body; description = proposal.description; reason = ""
+                                } }) { Text(stringResource(if (beforeChange) R.string.orbit_skill_restore_before else R.string.orbit_skill_restore_after)) }
+                            }
+                        }
+                        if (record.reviewedAt > 0) {
+                            val detailReason = if (record.reason.startsWith("Memory was corrected") ||
+                                record.reason == "Memory changed while this proposal was being applied")
+                                stringResource(R.string.orbit_memory_proposal_obsolete) else record.reason
+                            Text("${record.reviewer} · ${DateFormat.getDateTimeInstance().format(Date(record.reviewedAt))}\n$detailReason")
+                        }
                         if (pending || record.status == "applying") {
                             OutlinedTextField(reason, { reason = it }, enabled = !busy,
                                 label = { Text(stringResource(R.string.memory_review_reason)) }, modifier = Modifier.fillMaxWidth())
@@ -139,24 +200,36 @@ fun MemoryReviewDialog(profileId: String, onDismiss: () -> Unit) {
                         }
                     }
                 }
-                error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+                status()
                 Row {
-                    if (selected != null) TextButton(onClick = { leave("back") }, enabled = !busy) { Text(stringResource(R.string.chat_recall_back)) }
+                    TextButton(onClick = { leave("back") }, enabled = !busy) { Text(stringResource(R.string.chat_recall_back)) }
                 }
             }
         }
     }
-    if (discardTarget != null) AlertDialog(
-        onDismissRequest = { discardTarget = null },
-        title = { Text(stringResource(R.string.memory_notes_discard_title)) },
-        confirmButton = { TextButton(onClick = {
+    }
+    if (discardTarget != null) {
+        val discard = {
             val target = discardTarget
             discardTarget = null
             if (target == "close") onDismiss() else selectedId = null
-        }) { Text(stringResource(R.string.confirm)) } },
-        dismissButton = { TextButton(onClick = { discardTarget = null }) { Text(stringResource(R.string.cancel)) } }
-    )
+        }
+        if (MemorySearchSettingsPreferences.isOrbitSpace(profileId)) {
+            com.ai.assistance.operit.ui.features.orbit.OrbitConfirmDialog(
+                title = stringResource(R.string.memory_notes_discard_title),
+                onConfirm = discard,
+                onDismiss = { discardTarget = null },
+                destructive = true,
+            )
+        } else {
+            AlertDialog(
+                onDismissRequest = { discardTarget = null },
+                title = { Text(stringResource(R.string.memory_notes_discard_title)) },
+                confirmButton = { TextButton(onClick = discard) { Text(stringResource(R.string.confirm)) } },
+                dismissButton = { TextButton(onClick = { discardTarget = null }) { Text(stringResource(R.string.cancel)) } },
+            )
+        }
+    }
 }
 
 @Composable

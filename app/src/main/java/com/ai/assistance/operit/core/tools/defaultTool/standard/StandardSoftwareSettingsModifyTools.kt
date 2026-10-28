@@ -179,8 +179,16 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
 
     fun listSandboxPackages(tool: AITool, packageManager: PackageManager): ToolResult {
         return try {
+            // Called from an Orbit chat, "enabled" means the Orbit's own switches.
+            val orbit = callerOrbit()
+            // Copies kept for Orbit of packages the main app deleted are Orbit's only.
             val availablePackages = packageManager.getAvailablePackages(forceRefresh = true)
-            val enabledSet = packageManager.getEnabledPackageNames().toSet()
+                .let { all -> if (orbit == null) packageManager.withoutOrbitCopies(all) else all }
+            val enabledSet = orbit?.let {
+                kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+                    com.ai.assistance.operit.features.orbit.OrbitPackages.enabled(context, it.id, packageManager)
+                }
+            } ?: packageManager.getEnabledPackageNames().toSet()
             val disabledSet = packageManager.getDisabledPackages().toSet()
             val externalPackagesPath = packageManager.getExternalPackagesPath()
             val packageLoadErrors = packageManager.getPackageLoadErrors()
@@ -241,9 +249,23 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
         }
     }
 
+    /** The Orbit whose chat called the current tool, or null in any other chat. */
+    private fun callerOrbit(): com.ai.assistance.operit.data.preferences.OrbitProfile? {
+        val caller = com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager.currentToolRuntimeContext()?.callerChatId
+            ?: return null
+        return runCatching {
+            kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+                com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context, caller)
+            }
+        }.getOrNull()
+    }
+
     fun getSkillsDirectory(tool: AITool): ToolResult {
         return try {
-            val path = SkillRepository.getInstance(context).getSkillsDirectoryPath()
+            val caller = com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager.currentToolRuntimeContext()?.callerChatId
+            val path = kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+                SkillRepository.forChat(context, caller).getSkillsDirectoryPath()
+            }
             ToolResult(
                 toolName = tool.name,
                 success = true,
@@ -292,6 +314,17 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
                         message = ""
                     ),
                 error = "Invalid required parameter: enabled (expected true/false)"
+            )
+        }
+
+        // Orbit's switches require an approval, including calls through operit_editor.
+        if (callerOrbit() != null) {
+            return ToolResult(
+                toolName = tool.name,
+                success = false,
+                result = SandboxPackageUpdateResultData(packageName, enabled, false, false, ""),
+                error = "Switching Orbit packages needs user approval. Use orbit_packages action=request_toggle " +
+                    "with on/off package names instead. Orbit 工具包开关需要用户批准，请改用 orbit_packages 的 request_toggle。",
             )
         }
 

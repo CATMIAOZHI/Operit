@@ -69,7 +69,7 @@ object ApiProviderConfigs {
         ),
         ProviderApiConfig(
             providerType = ApiProviderType.ANTHROPIC,
-            defaultModelName = "claude-3-opus-20240229",
+            defaultModelName = "claude-sonnet-5",
             defaultApiEndpoint = "https://api.anthropic.com/v1/messages"
         ),
         ProviderApiConfig(
@@ -90,7 +90,7 @@ object ApiProviderConfigs {
         ),
         ProviderApiConfig(
             providerType = ApiProviderType.DEEPSEEK,
-            defaultModelName = "deepseek-v4-flash",
+            defaultModelName = "deepseek-flash",
             defaultApiEndpoint = "https://api.deepseek.com/v1/chat/completions"
         ),
         ProviderApiConfig(
@@ -138,7 +138,7 @@ object ApiProviderConfigs {
         ),
         ProviderApiConfig(
             providerType = ApiProviderType.MOONSHOT,
-            defaultModelName = "moonshot-v1-128k",
+            defaultModelName = "kimi-k3",
             defaultApiEndpoint = "https://api.moonshot.cn/v1/chat/completions",
             endpointOptions = listOf(
                 ProviderEndpointOption(
@@ -177,7 +177,7 @@ object ApiProviderConfigs {
         ),
         ProviderApiConfig(
             providerType = ApiProviderType.OPENROUTER,
-            defaultModelName = "google/gemini-pro",
+            defaultModelName = "google/gemini-3.7-flash",
             defaultApiEndpoint = "https://openrouter.ai/api/v1/chat/completions"
         ),
         ProviderApiConfig(

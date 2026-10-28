@@ -162,6 +162,25 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
         }
 
         globalImageLoader = ImageLoader.Builder(this).build()
+
+        // Logins of deleted Orbits can only be removed before any tab loads them, so do it now.
+        // Other processes never open browser tabs and must not start WebView.
+        if (isMainAppProcess()) {
+            runCatching {
+                com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserProfiles
+                    .deletePendingAtStartup(this)
+            }
+        }
+    }
+
+    private fun isMainAppProcess(): Boolean {
+        val name =
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                getProcessName()
+            } else {
+                runCatching { java.io.File("/proc/self/cmdline").readText().trim('\u0000', ' ', '\n') }.getOrNull()
+            }
+        return name == null || name == packageName
     }
 
     /**
@@ -325,8 +344,7 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
 
         AppLogger.d(TAG, "【启动计时】JSON序列化器初始化完成 - ${System.currentTimeMillis() - startTime}ms")
 
-        memoryAutoSaveScheduler = MemoryAutoSaveScheduler(applicationContext, applicationScope)
-            .also { it.start() }
+        // The old memory graph is read-only, so its extraction scheduler no longer runs.
         com.ai.assistance.operit.api.chat.library.MemoryLearningCoordinator.resumePending(applicationContext)
         AppLogger.d(TAG, "【启动计时】长期记忆自动保存轮询器启动完成 - ${System.currentTimeMillis() - startTime}ms")
 
@@ -342,6 +360,15 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
             val emojiStartTime = System.currentTimeMillis()
             CustomEmojiRepository.getInstance(applicationContext).initializeBuiltinEmojis()
             AppLogger.d(TAG, "【启动计时】当前角色自定义表情初始化完成（异步） - ${System.currentTimeMillis() - emojiStartTime}ms")
+        }
+
+        // On the first start, fetch the newest model catalogs and fill in each saved model's
+        // protocol and picture support; a failed download is tried again next start.
+        if (isMainAppProcess()) {
+            applicationScope.launch {
+                runCatching { com.ai.assistance.operit.data.model.ModelAutoConfig.firstStart(applicationContext) }
+                    .onFailure { AppLogger.w(TAG, "Model auto-configuration at first start failed: ${it.message}") }
+            }
         }
 
         // 初始化AndroidShellExecutor上下文
@@ -509,6 +536,29 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
             val schedulerStartTime = System.currentTimeMillis()
             WorkflowSchedulerInitializer.initialize(applicationContext)
             AppLogger.d(TAG, "【启动计时】WorkflowScheduler初始化完成（异步） - ${System.currentTimeMillis() - schedulerStartTime}ms")
+        }
+
+        applicationScope.launch {
+            runCatching {
+                com.ai.assistance.operit.features.orbit.OrbitCompanion.restoreSchedule(applicationContext)
+            }.onFailure { AppLogger.e(TAG, "Failed to restore the Orbit check-in schedule", it) }
+            runCatching {
+                com.ai.assistance.operit.features.orbit.OrbitQuota.restoreResetNotice(applicationContext)
+            }.onFailure { AppLogger.e(TAG, "Failed to restore the Orbit allowance reset note", it) }
+            runCatching {
+                com.ai.assistance.operit.features.orbit.OrbitComponents.restore(applicationContext)
+            }.onFailure { AppLogger.e(TAG, "Failed to resume Orbit component installs", it) }
+            runCatching {
+                com.ai.assistance.operit.features.orbit.OrbitWeixin.restore(applicationContext)
+            }.onFailure { AppLogger.e(TAG, "Failed to restore the Orbit WeChat link", it) }
+        }
+
+        // The subagent store is read from disk when first used; read it here, off the main thread,
+        // so the first chat screen does not wait on it.
+        applicationScope.launch {
+            runCatching {
+                com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(applicationContext)
+            }.onFailure { AppLogger.e(TAG, "Failed to load the subagent store early", it) }
         }
 
         applicationScope.launch {

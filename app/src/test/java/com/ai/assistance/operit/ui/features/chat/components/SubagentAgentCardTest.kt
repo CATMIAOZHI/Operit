@@ -185,6 +185,47 @@ class SubagentAgentCardTest {
         assertNull(findCollaborationRun(listOf(live, otherAgent), "  "))
     }
 
+    @Test fun aReusedNameKeepsEachRowWithTheAgentOfItsTime() {
+        val first = collaborationRun(id = "first", owner = "/root/worker", createdAt = 100L)
+        val second = collaborationRun(id = "second", owner = "/root/worker", createdAt = 200L)
+        val runs = listOf(first, second)
+        // Messages: the sender's run already existed when the message arrived.
+        assertEquals("first", findCollaborationRun(runs, "/root/worker", 150L)?.id)
+        assertEquals("second", findCollaborationRun(runs, "/root/worker", 250L)?.id)
+        // A message older than every run of that name never borrows a later agent.
+        assertNull(findCollaborationRun(listOf(second), "/root/worker", 150L))
+        // Calls: the chat a call reports wins over its name and time.
+        assertEquals(
+            "first",
+            com.ai.assistance.operit.ui.features.chat.components.part.findCallRun(
+                runs, "call", "/root/worker", agentId = "child-first", at = 250L,
+            )?.id,
+        )
+        // A reported chat that is gone links nowhere, never to another agent of the name.
+        assertNull(
+            com.ai.assistance.operit.ui.features.chat.components.part.findCallRun(
+                listOf(second), "call", "/root/worker", agentId = "child-first", at = 250L,
+            ),
+        )
+        // An older call that never said its chat does not borrow a later agent of the name.
+        assertNull(
+            com.ai.assistance.operit.ui.features.chat.components.part.findCallRun(
+                listOf(second), "old-call", "/root/worker", at = 150L,
+            ),
+        )
+        // Older calls without that report fall back to the time of their message.
+        assertEquals(
+            "first",
+            com.ai.assistance.operit.ui.features.chat.components.part.findCallRun(runs, "call", "/root/worker", at = 150L)?.id,
+        )
+        assertEquals(
+            "child-second",
+            com.ai.assistance.operit.ui.features.chat.components.part.collaborationCallAgentId(
+                "{\"accepted\":true,\"agent_id\":\"child-second\"}",
+            ),
+        )
+    }
+
     @Test fun theOpenCardBelongsToTheConversationThatOpenedIt() {
         SubagentDetailHost.clear()
         openCard(chatId = "a")
@@ -284,11 +325,44 @@ class SubagentAgentCardTest {
         )
     }
 
+    @Test fun aNewerAgentArchivedByHandNeverHandsItsRowsToTheOlderOne() {
+        val first = collaborationRun(id = "first", owner = "/root/worker", createdAt = 100L)
+        val second = collaborationRun(id = "second", owner = "/root/worker", createdAt = 200L, archivedAt = 300L)
+        val runs = listOf(first, second)
+        // The row belongs to the second agent; that agent is archived, so the row opens nothing.
+        assertNull(findCollaborationRun(runs, "/root/worker", 250L))
+        assertNull(
+            com.ai.assistance.operit.ui.features.chat.components.part.findCallRun(
+                runs, "old-call", "/root/worker", at = 250L,
+            ),
+        )
+        assertNull(
+            com.ai.assistance.operit.ui.features.chat.components.part.findCallRun(
+                runs, "call", "/root/worker", agentId = "child-second", at = 250L,
+            ),
+        )
+        // The first agent's own rows still open it.
+        assertEquals("first", findCollaborationRun(runs, "/root/worker", 150L)?.id)
+        // A deleted second run: the envelope's Sender ID keeps the row from falling to the first.
+        assertNull(findCollaborationRun(listOf(first), "/root/worker", 250L, senderId = "child-second"))
+        assertEquals("first", findCollaborationRun(listOf(first), "/root/worker", 250L, senderId = "child-first")?.id)
+    }
+
+    @Test fun anEnvelopeWithASenderIdStillReadsAsAMessage() {
+        val content = "Message ID: 123e4567-e89b-12d3-a456-426614174000\nMessage Type: FINAL_ANSWER\n" +
+            "Task name: /root\nSender: /root/worker\nSender ID: child-second\nPayload:\ndone"
+        val event = collaborationDisplayMessages(content, "fallback").single()
+        assertEquals("FINAL_ANSWER", event.kind)
+        assertEquals("done", event.body)
+        assertEquals("child-second", event.senderId)
+    }
+
     private fun collaborationRun(
         id: String,
         owner: String?,
         ownerType: String? = CollaborationCoordinator.OWNER_TYPE,
         archivedAt: Long? = null,
+        createdAt: Long = 0L,
     ) =
         SubagentRunEntity(
             id = id,
@@ -299,5 +373,6 @@ class SubagentAgentCardTest {
             externalOwnerType = ownerType,
             externalOwnerId = owner,
             archivedAt = archivedAt,
+            createdAt = createdAt,
         )
 }

@@ -1,5 +1,7 @@
 package com.ai.assistance.operit.ui.features.websession.browser
 
+import com.ai.assistance.operit.ui.features.orbit.orbitDismissLayer
+
 import android.net.Uri
 import android.graphics.Color as AndroidColor
 import android.widget.FrameLayout
@@ -53,6 +55,7 @@ import java.util.Locale
 @Composable
 internal fun WebSessionBrowserScreen(
     hostState: WebSessionBrowserHostState,
+    watch: com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserWatchUi? = null,
     bookmarks: List<WebSessionBookmark>,
     globalHistory: List<WebSessionHistoryEntry>,
     userscriptUiState: WebSessionUserscriptUiState,
@@ -137,6 +140,48 @@ internal fun WebSessionBrowserScreen(
     val activeSheetRoute = hostState.sheetRoute
     var promptDraft by remember(browserState.pendingDialog?.message, browserState.pendingDialog?.defaultValue) {
         mutableStateOf(browserState.pendingDialog?.defaultValue.orEmpty())
+    }
+
+    if (watch != null) {
+        // An Orbit works in this tab: the watch screen replaces the browser's own bars.
+        Box(modifier.fillMaxSize()) {
+            WebSessionWatchScreen(
+                watch = watch,
+                webViewHost = webViewHost,
+                hasSession = browserState.activeSessionId != null,
+                url = browserState.currentUrl,
+                isLoading = browserState.isLoading,
+                canGoBack = browserState.canGoBack,
+                canGoForward = browserState.canGoForward,
+                onNavigate = onNavigate,
+                onBack = onBack,
+                onForward = onForward,
+                onRefreshOrStop = onRefreshOrStop,
+                onTotalHeight = { totalHeightPx = it },
+                onBrowserArea = { width, height ->
+                    browserAreaHeightPx = height
+                    if (width != hostState.browserAreaWidthPx) {
+                        onHostStateChange { current ->
+                            if (current.browserAreaWidthPx == width) current else current.copy(browserAreaWidthPx = width)
+                        }
+                    }
+                },
+            )
+            // A page dialog needs an answer from whoever holds the page; the user only once in control.
+            if (watch.controlling) {
+                browserState.pendingDialog?.let { pendingDialog ->
+                    PendingDialogOverlay(
+                        orbitStyle = true,
+                        dialog = pendingDialog,
+                        promptValue = promptDraft,
+                        onPromptValueChange = { promptDraft = it },
+                        onConfirm = { onHandlePendingDialog(true, promptDraft) },
+                        onDismiss = { onHandlePendingDialog(false, null) },
+                    )
+                }
+            }
+        }
+        return
     }
 
     Box(
@@ -425,8 +470,11 @@ private fun PendingDialogOverlay(
     promptValue: String,
     onPromptValueChange: (String) -> Unit,
     onConfirm: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    orbitStyle: Boolean = false,
 ) {
+    val backMotion = if (orbitStyle) com.ai.assistance.operit.ui.features.orbit.rememberOrbitBackMotion() else null
+    if (backMotion != null) com.ai.assistance.operit.ui.features.orbit.OrbitPopupBack(backMotion, onDismiss)
     Box(
         modifier =
             Modifier
@@ -435,7 +483,8 @@ private fun PendingDialogOverlay(
         contentAlignment = Alignment.Center
     ) {
         Surface(
-            modifier = Modifier.padding(horizontal = 20.dp),
+            modifier = Modifier.padding(horizontal = 20.dp)
+                .then(if (backMotion != null) Modifier.orbitDismissLayer(backMotion) else Modifier),
             shape = RoundedCornerShape(20.dp),
             color = MaterialTheme.colorScheme.surface,
             contentColor = MaterialTheme.colorScheme.onSurface,
@@ -733,7 +782,7 @@ private fun BrowserDownloadSummaryBar(
     }
 }
 
-private fun normalizeNavigationUrl(raw: String): String {
+internal fun normalizeNavigationUrl(raw: String): String {
     val trimmed = raw.trim()
     if (trimmed.isBlank()) {
         return "about:blank"

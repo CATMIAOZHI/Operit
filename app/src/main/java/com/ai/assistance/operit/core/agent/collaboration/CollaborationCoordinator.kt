@@ -30,7 +30,14 @@ class CollaborationCoordinator private constructor(context: Context) {
     private val core get() = ChatRuntimeHolder.getInstance(appContext).getCore(ChatRuntimeSlot.MAIN)
     private val runner get() = SubagentCoordinator.getInstance(appContext)
     private var state = store.load().let { loaded ->
-        loaded.copy(agents = loaded.agents.map {
+        // Mail saved before envelopes carried a sender ID gets it now. Unread mail keeps its sender
+        // from being archived, so the live agent at that path is the one that wrote it.
+        val liveChat = loaded.agents.filterNot { it.archived }.associate { (it.rootChatId to it.path) to it.chatId }
+        loaded.copy(agents = loaded.agents.map { agent ->
+            if (agent.messages.none { it.senderId == null }) agent else agent.copy(messages = agent.messages.map {
+                if (it.senderId != null) it else it.copy(senderId = liveChat[agent.rootChatId to it.sender])
+            })
+        }.map {
             if (it.status == CollaborationStatus.RUNNING) it.copy(
                 status = CollaborationStatus.INTERRUPTED,
                 lastError = "Application stopped during the agent turn",
@@ -47,6 +54,10 @@ class CollaborationCoordinator private constructor(context: Context) {
     private val deliveryLocks = Array(64) { Mutex() }
     private val deleting = mutableSetOf<String>()
     private val stopGate = CollaborationStopGate()
+    /** Root chats a hidden wake turn is being arranged for. */
+    private val waking = mutableSetOf<String>()
+    /** One wake send at a time, so two wakes never race for the same idle chat. */
+    private val wakeSendLock = Mutex()
 
     private fun key(root: String, path: String) = "$root:$path"
     private val _composerPredictionRevision = kotlinx.coroutines.flow.MutableStateFlow(0L)
@@ -62,6 +73,36 @@ class CollaborationCoordinator private constructor(context: Context) {
         state.agents.any { it.chatId == chatId && it.path != AgentPath.ROOT }
     }
 
+    /** The root chat [chatId] works under; itself for a root or a chat outside collaboration. */
+    fun rootChatOf(chatId: String): String = synchronized(lock) {
+        state.agents.firstOrNull { it.chatId == chatId }?.rootChatId ?: chatId
+    }
+
+    /** The limits for the agent tree [chatId] works in: Orbit's own in an Orbit chat, else the app's settings. */
+    suspend fun limitsFor(chatId: String?): CollaborationLimits {
+        val appLimits = AgentProfileRepository.instance.collaborationLimits.value
+        val root = chatId?.let { rootChatOf(it) } ?: return appLimits
+        return if (com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(appContext, root) != null) {
+            CollaborationLimits.ORBIT
+        } else appLimits
+    }
+
+    /** True while the subagent with this chat still has a running job. */
+    fun isAgentRunning(chatId: String): Boolean = synchronized(lock) {
+        state.agents.firstOrNull { it.chatId == chatId && it.path != AgentPath.ROOT && !it.archived }
+            ?.let { jobs[key(it.rootChatId, it.path)]?.isActive == true } == true
+    }
+
+    /** The user stopped one subagent from outside its chat (Orbit's browser). False when none ran. */
+    suspend fun stopAgentForUser(chatId: String): Boolean {
+        val job = synchronized(lock) {
+            val agent = state.agents.firstOrNull { it.chatId == chatId && it.path != AgentPath.ROOT && !it.archived } ?: return false
+            jobs[key(agent.rootChatId, agent.path)]?.also { it.cancel() }
+        } ?: return false
+        job.join()
+        return true
+    }
+
     /** Read-only eligibility check; unlike list/caller, this never creates a collaboration root. */
     fun blocksComposerPrediction(chatId: String): Boolean = synchronized(lock) {
         val caller = state.agents.firstOrNull { it.chatId == chatId }
@@ -73,7 +114,7 @@ class CollaborationCoordinator private constructor(context: Context) {
             stopping = stopGate.isStopping(root),
             jobKeys = jobs.keys,
             reservationKeys = reservations,
-            agents = state.agents,
+            agents = state.agents.filterNot { it.archived },
         )
     }
 
@@ -87,7 +128,7 @@ class CollaborationCoordinator private constructor(context: Context) {
 
     fun checkpoint(chatId: String, history: List<PromptTurn>, cutoff: Long) {
         synchronized(lock) {
-            val agent = requireNotNull(state.agents.firstOrNull { it.chatId == chatId })
+            val agent = requireNotNull(state.agents.firstOrNull { it.chatId == chatId && !it.archived })
             write(state.update(agent.copy(
                 inheritedHistory = history.map {
                     CollaborationTurn(it.kind.name, it.content, it.toolName,
@@ -100,30 +141,105 @@ class CollaborationCoordinator private constructor(context: Context) {
 
     fun caller(chatId: String): CollaborationAgent = synchronized(lock) {
         require(chatId !in deleting) { "Chat is being deleted" }
-        state.agents.firstOrNull { it.chatId == chatId } ?: CollaborationAgent(
-            rootChatId = chatId, path = AgentPath.ROOT, chatId = chatId,
-        ).also { write(state.update(it)) }
+        state.agents.firstOrNull { it.chatId == chatId && !it.archived } ?: run {
+            // An archived subagent's chat must not start a new tree of its own.
+            require(state.agents.none { it.chatId == chatId }) { "This subagent was archived" }
+            CollaborationAgent(rootChatId = chatId, path = AgentPath.ROOT, chatId = chatId)
+                .also { write(state.update(it)) }
+        }
     }
 
     private fun target(caller: CollaborationAgent, value: String): CollaborationAgent {
         val byId = state.agents.firstOrNull {
-            it.rootChatId == caller.rootChatId && (it.chatId == value || it.runId == value)
+            it.rootChatId == caller.rootChatId && !it.archived && (it.chatId == value || it.runId == value)
+        }
+        if (byId == null) {
+            // An ID never passes to another agent: an archived one fails instead of reaching a namesake.
+            state.agents.firstOrNull {
+                it.rootChatId == caller.rootChatId && it.archived && (it.chatId == value || it.runId == value)
+            }?.let { error("Agent ${it.path} ($value) was archived and can no longer be reached; its name may now belong to a different agent") }
         }
         return byId ?: requireNotNull(state.find(caller.rootChatId, AgentPath.resolve(caller.path, value))) {
             "Unknown agent: $value"
         }
     }
 
-    fun list(chatId: String, prefix: String?): List<CollaborationAgent> = synchronized(lock) {
+    /** Live agents in the caller's tree: the root, then at most [limit] subagents, most recently active first. */
+    fun list(chatId: String, prefix: String?, limit: Int = LIST_LIMIT): AgentListing = synchronized(lock) {
         val caller = caller(chatId)
         val resolvedPrefix = prefix?.let { AgentPath.resolve(caller.path, it) }
-        state.agents.filter {
-            it.rootChatId == caller.rootChatId && (resolvedPrefix == null || AgentPath.isWithin(it.path, resolvedPrefix))
-        }.map {
+        val matched = state.agents.filter {
+            it.rootChatId == caller.rootChatId && !it.archived &&
+                (resolvedPrefix == null || AgentPath.isWithin(it.path, resolvedPrefix))
+        }
+        val (roots, subagents) = matched.partition { it.path == AgentPath.ROOT }
+        // The state keeps agents from least to most recently active.
+        val shown = (roots + subagents.asReversed().take(limit)).map {
             if (it.path == AgentPath.ROOT && it.chatId in core.activeStreamingChatIds.value) {
                 it.copy(status = CollaborationStatus.RUNNING)
             } else it
         }
+        AgentListing(shown, subagents.size)
+    }
+
+    /** What list_agents shows: [agents] (root first) and how many live subagents there are in all. */
+    class AgentListing(val agents: List<CollaborationAgent>, val totalSubagents: Int)
+
+    /**
+     * Keeps at most [keep] live subagents in [root]'s tree. The least recently active idle ones are
+     * archived: they leave listing, addressing and naming, so their names can be used again, while
+     * their chats stay known as subagent chats. An agent is archived only together with everything
+     * under it, and never while it or anything under it is among the [keep] most recent, runs, is
+     * creating a child, has mail waiting, or has sent mail another agent has not taken yet.
+     */
+    private fun archiveOverflow(root: String, keep: Int) {
+        val live = state.agents.filter { it.rootChatId == root && it.path != AgentPath.ROOT && !it.archived }
+        if (live.size <= keep) return
+        val recent = live.takeLast(keep).mapTo(mutableSetOf()) { it.path }
+        val pendingSenders = state.agents.filter { it.rootChatId == root && !it.archived }
+            .flatMap { it.messages }.mapTo(mutableSetOf()) { it.sender }
+        val creatingParents = pendingParents.values.toSet()
+        // Reserved names under an agent: a child of it is being created.
+        val reservedPrefix = "$root:"
+        val reservedPaths = reservations.filter { it.startsWith(reservedPrefix) }
+            .mapTo(mutableSetOf()) { it.removePrefix(reservedPrefix) }
+        fun idle(agent: CollaborationAgent): Boolean {
+            val agentKey = key(root, agent.path)
+            return agent.path !in recent && agentKey !in jobs && agentKey !in reservations &&
+                agent.messages.isEmpty() && agent.status != CollaborationStatus.RUNNING &&
+                agent.path !in pendingSenders && agent.chatId !in creatingParents && agent.chatId !in deleting
+        }
+        // One pass, deepest first: an agent is held when it or anything under it is not idle, or
+        // when a name under it is reserved.
+        val held = mutableSetOf<String>()
+        reservedPaths.forEach { path ->
+            var parent = path.substringBeforeLast('/', "")
+            while (parent.length > AgentPath.ROOT.length && held.add(parent)) parent = parent.substringBeforeLast('/', "")
+        }
+        live.sortedByDescending { agent -> agent.path.count { it == '/' } }.forEach { agent ->
+            if (agent.path in held || !idle(agent)) {
+                held += agent.path
+                held += agent.path.substringBeforeLast('/', "")
+            }
+        }
+        val children = live.groupBy { it.path.substringBeforeLast('/', "") }
+        val archived = mutableSetOf<String>()
+        val archivedPaths = mutableSetOf<String>()
+        var remaining = live.size
+        for (candidate in live) {
+            if (remaining <= keep) break
+            if (candidate.path in archivedPaths || candidate.path in held) continue
+            // Nothing under a free agent is held, so its whole subtree goes with it.
+            val pending = ArrayDeque(listOf(candidate))
+            while (pending.isNotEmpty()) {
+                val agent = pending.removeFirst()
+                if (!archivedPaths.add(agent.path)) continue
+                archived += agent.chatId
+                remaining--
+                children[agent.path]?.let(pending::addAll)
+            }
+        }
+        if (archived.isNotEmpty()) write(state.archive(archived))
     }
 
     suspend fun spawn(
@@ -135,10 +251,12 @@ class CollaborationCoordinator private constructor(context: Context) {
         includeProfilePrompt: Boolean = true,
     ): CollaborationAgent {
         require(message.isNotBlank()) { "Empty task message" }
+        val orbitTask = com.ai.assistance.operit.features.orbit.OrbitTaskExecution.resolve(appContext, chatId)
         val parent = caller(chatId)
         val generation = synchronized(lock) { stopGate.generation(parent.rootChatId) }
         val path = AgentPath.child(parent.path, taskName)
-        require(path.count { it == '/' } <= AgentProfileRepository.instance.collaborationLimits.value.maxDepth + 1) { "Agent nesting limit reached" }
+        val limits = limitsFor(parent.rootChatId)
+        require(path.count { it == '/' } <= limits.maxDepth + 1) { "Agent nesting limit reached" }
         val configuredProfile = AgentProfileRepository.instance.requireTaskToolSubagent(profileId)
         val profile = if (inheritModel) configuredProfile.copy(
             modelConfigId = modelConfigId, modelIndex = modelIndex,
@@ -148,10 +266,12 @@ class CollaborationCoordinator private constructor(context: Context) {
         synchronized(lock) {
             require(chatId !in deleting) { "Parent chat is being deleted" }
             stopGate.checkCurrent(parent.rootChatId, generation)
+            // Room for the new one; archived names can be taken again.
+            archiveOverflow(parent.rootChatId, LIVE_LIMIT - 1)
             require(state.find(parent.rootChatId, path) == null && reservation !in reservations) {
                 "Agent task name already exists: $path"
             }
-            checkCapacity(parent.rootChatId)
+            checkCapacity(parent.rootChatId, limits.maxActive)
             reservations.add(reservation)
             pendingParents[reservation] = chatId
         }
@@ -175,8 +295,9 @@ class CollaborationCoordinator private constructor(context: Context) {
             requested next step. A prose mention is not a delivered message; the tool creates
             the envelope. Do not send empty progress updates or duplicate your automatic
             final report. When replying to an incoming agent message, route the answer with
-            send_message to its stated Sender if that sender is not your parent or the answer
-            is needed before you finish. An ordinary final answer only goes to your parent;
+            send_message to its stated Sender ID (or its Sender when no ID is given) if that
+            sender is not your parent or the answer is needed before you finish. An ordinary
+            final answer only goes to your parent;
             it does not reply to a peer who contacted you. Treat delivery as successful only
             after the tool accepts it; never claim to have sent a message based on prose alone.
             If an idle non-root recipient must do more work, use followup_task;
@@ -200,6 +321,7 @@ class CollaborationCoordinator private constructor(context: Context) {
             )
             val assignment = AgentMessage(
                 UUID.randomUUID().toString(), parent.path, path, AgentMessageKind.NEW_TASK, message,
+                senderId = parent.chatId,
             )
             val job = scope.launch(start = CoroutineStart.LAZY) {
                 try {
@@ -214,6 +336,8 @@ class CollaborationCoordinator private constructor(context: Context) {
                         profileOverride = profile,
                         collaborationRoleCardId = roleCardId ?: parent.roleCardId,
                         onRunCreated = { run ->
+                            com.ai.assistance.operit.features.orbit.OrbitTaskExecution.bindChild(
+                                appContext, chatId, run.childChatId)
                             val agent = CollaborationAgent(
                                 rootChatId = parent.rootChatId, path = path, chatId = run.childChatId,
                                 runId = run.id, parentPath = parent.path, profileId = profileId,
@@ -288,32 +412,38 @@ class CollaborationCoordinator private constructor(context: Context) {
         }
     }
 
-    private fun checkCapacity(root: String) {
+    private fun checkCapacity(root: String, maximum: Int) {
         val active = (jobs.keys + reservations).count { it.startsWith("$root:") }
-        val maximum = AgentProfileRepository.instance.collaborationLimits.value.maxActive
         require(active < maximum) { "Concurrent agent limit reached ($maximum)" }
     }
 
-    suspend fun send(chatId: String, target: String, text: String, followup: Boolean) {
+    /** Delivers [text] to [target]; returns the chat of the agent it reached. */
+    suspend fun send(chatId: String, target: String, text: String, followup: Boolean): String {
+        val limits = limitsFor(chatId)
         val receiverBeforeDelivery = synchronized(lock) { target(caller(chatId), target) }
         val generation = synchronized(lock) { stopGate.generation(receiverBeforeDelivery.rootChatId) }
         reconcileMailbox(receiverBeforeDelivery)
-        synchronized(lock) {
+        val reached = synchronized(lock) {
             val caller = caller(chatId)
             val receiver = target(caller, target)
+            // The name may have passed to a new agent since the first look; the mail goes to the agent checked above.
+            require(receiver.chatId == receiverBeforeDelivery.chatId) { "Agent $target changed while sending; send again" }
             stopGate.checkCurrent(receiver.rootChatId, generation)
             require(!followup || receiver.path != AgentPath.ROOT) { "Cannot start a new task on the root agent" }
             require(receiver.chatId !in deleting) { "Target chat is being deleted" }
             val wake = followup && jobs[key(receiver.rootChatId, receiver.path)] == null
-            if (wake) checkCapacity(caller.rootChatId)
+            if (wake) checkCapacity(caller.rootChatId, limits.maxActive)
             val message = AgentMessage(
                 UUID.randomUUID().toString(), caller.path, receiver.path,
                 if (followup) AgentMessageKind.NEW_TASK else AgentMessageKind.MESSAGE, text,
+                senderId = caller.chatId,
             )
             write(state.enqueue(caller.rootChatId, message))
             if (wake) startExisting(requireNotNull(state.find(receiver.rootChatId, receiver.path)))
+            receiver.chatId
         }
-        deliverPending(receiverBeforeDelivery.chatId)
+        deliverPending(reached)
+        return reached
     }
 
     /** Called with the lifecycle lock held so two follow-ups cannot start the same agent twice. */
@@ -325,9 +455,10 @@ class CollaborationCoordinator private constructor(context: Context) {
         write(state.update(agent.copy(status = CollaborationStatus.RUNNING, lastError = null)))
         val job = scope.launch(start = CoroutineStart.LAZY) {
             try {
+                val orbitTask = com.ai.assistance.operit.features.orbit.OrbitTaskExecution.resolve(appContext, agent.chatId)
                 val result = runner.runTask(SubagentTaskRequest(
-                    parentChatId = requireNotNull(list(agent.chatId, null).firstOrNull {
-                        it.path == agent.parentPath
+                    parentChatId = requireNotNull(synchronized(lock) {
+                        agent.parentPath?.let { state.find(agent.rootChatId, it) }
                     }).chatId,
                     parentToolCallId = null,
                     parentAgentName = inputs.map { it.sender }.distinct().joinToString(", "),
@@ -409,7 +540,9 @@ class CollaborationCoordinator private constructor(context: Context) {
                 UUID.randomUUID().toString(), path, agent.parentPath,
                 if (status == CollaborationStatus.COMPLETED) AgentMessageKind.FINAL_ANSWER else AgentMessageKind.STATUS,
                 text.ifBlank { "$path completed with an empty response" },
+                senderId = agent.chatId,
             )))
+            archiveOverflow(root, LIVE_LIMIT)
         }
         val parentChatId = synchronized(lock) {
             val agent = state.find(root, path)
@@ -430,12 +563,155 @@ class CollaborationCoordinator private constructor(context: Context) {
 
     private suspend fun deliverToAgent(chatId: String) =
         deliveryLocks[(chatId.hashCode() and Int.MAX_VALUE) % deliveryLocks.size].withLock {
-            val agent = synchronized(lock) { state.agents.firstOrNull { it.chatId == chatId } }
+            val agent = synchronized(lock) { state.agents.firstOrNull { it.chatId == chatId && !it.archived } }
             if (agent != null) {
                 reconcileMailbox(agent)
                 offerPending(chatId)
+                if (agent.parentPath == null) wakeIdleRoot(chatId)
             }
         }
+
+    private fun rootOf(chatId: String): CollaborationAgent? =
+        state.agents.firstOrNull { it.chatId == chatId && it.parentPath == null }
+
+    /**
+     * The root's undelivered mail, when it holds the report of a child that finished or failed on
+     * its own. A child the user stopped does not wake anything. Called with [lock] held.
+     */
+    private fun wakeMail(root: CollaborationAgent): List<AgentMessage> {
+        val open = root.messages.filter { it.id !in deliveries }
+        val reported = open.any { message ->
+            (message.kind == AgentMessageKind.FINAL_ANSWER || message.kind == AgentMessageKind.STATUS) &&
+                state.find(root.rootChatId, message.sender)?.status.let {
+                    it == CollaborationStatus.COMPLETED || it == CollaborationStatus.FAILED
+                }
+        }
+        return if (reported) open else emptyList()
+    }
+
+    /**
+     * A child's report reached a root whose turn already ended. Left alone it would wait in the
+     * mailbox until the user typed again; instead the root gets a turn of its own with the report,
+     * once its chat is quiet. A root that is still working gets reports by steering instead.
+     */
+    private fun wakeIdleRoot(chatId: String) {
+        val start = synchronized(lock) {
+            val root = rootOf(chatId) ?: return
+            !stopGate.isStopping(root.rootChatId) && chatId !in deleting &&
+                wakeMail(root).isNotEmpty() && waking.add(chatId)
+        }
+        if (!start) return
+        scope.launch {
+            var finished = false
+            try {
+                finished = runWake(chatId)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                com.ai.assistance.operit.util.AppLogger.w("Collaboration", "Could not wake $chatId: ${e.message}")
+            } finally {
+                synchronized(lock) { waking.remove(chatId) }
+                // A report that arrived while this wake was busy gets its own turn.
+                if (finished) wakeIdleRoot(chatId)
+            }
+        }
+    }
+
+    /** Sends the root's reports as soon as its chat is quiet. False when it gave up waiting. */
+    private suspend fun runWake(chatId: String): Boolean {
+        val deadline = android.os.SystemClock.elapsedRealtime() + WAKE_WAIT_MS
+        while (true) {
+            val left = deadline - android.os.SystemClock.elapsedRealtime()
+            if (left <= 0) return false
+            val batch = synchronized(lock) {
+                val root = rootOf(chatId) ?: return true
+                if (stopGate.isStopping(root.rootChatId) || chatId in deleting) return true
+                wakeMail(root).ifEmpty { return true }
+            }
+            val ids = batch.mapTo(mutableSetOf()) { it.id }
+            var claimed = false
+            var acknowledged = false
+            // Right before sending: the reports are still unsent and no turn took them meanwhile.
+            val claim: suspend () -> Boolean = {
+                synchronized(lock) {
+                    val root = rootOf(chatId)
+                    val open = root?.messages?.filter { it.id !in deliveries }?.mapTo(mutableSetOf()) { it.id }
+                    val ok = root != null && open != null && open.containsAll(ids) &&
+                        !stopGate.isStopping(root.rootChatId) && chatId !in deleting &&
+                        core.getMessageProcessingDelegate().steeringTurnId(chatId) == null
+                    if (ok) {
+                        deliveries.addAll(ids)
+                        possiblyPersisted.addAll(ids)
+                        claimed = true
+                    }
+                    ok
+                }
+            }
+            val sent: suspend () -> Unit = {
+                synchronized(lock) {
+                    rootOf(chatId)?.let { write(state.acknowledge(it.rootChatId, it.path, ids)) }
+                    deliveries.removeAll(ids)
+                    possiblyPersisted.removeAll(ids)
+                    acknowledged = true
+                }
+            }
+            try {
+                sendWake(chatId, batch, left, claim, sent)
+            } finally {
+                if (claimed && !acknowledged) synchronized(lock) { deliveries.removeAll(ids) }
+            }
+            if (!acknowledged) delay(WAKE_RETRY_MS)
+        }
+    }
+
+    /**
+     * Starts the hidden turn. An Orbit chat goes through Orbit's own wake, which also shows the
+     * reply as a notification when the app is in the background; any other chat gets the reports
+     * as the same collaboration rows a running turn would show.
+     */
+    private suspend fun sendWake(
+        chatId: String,
+        batch: List<AgentMessage>,
+        waitMs: Long,
+        claim: suspend () -> Boolean,
+        sent: suspend () -> Unit,
+    ) {
+        val orbit = com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(appContext).current()
+            .orbitForChat(chatId)?.takeIf { chatId in it.talkChatIds }
+        if (orbit != null) {
+            val english = com.ai.assistance.operit.util.LocaleUtils.usesEnglishPrompt(appContext)
+            com.ai.assistance.operit.features.orbit.OrbitWake.tell(
+                appContext, orbit, chatId,
+                com.ai.assistance.operit.features.orbit.OrbitSubagentNotice.text(english, batch),
+                idleWaitMs = waitMs, totalWaitMs = waitMs, ready = claim, onSent = sent,
+            )
+            return
+        }
+        val holder = ChatRuntimeHolder.getInstance(appContext)
+        val cores = listOf(holder.getCore(ChatRuntimeSlot.MAIN), holder.getCore(ChatRuntimeSlot.FLOATING))
+        fun quiet() = cores.all {
+            chatId !in it.activeStreamingChatIds.value && !it.isSummarizing.value && !it.isSendTriggeredSummarizing.value
+        }
+        withTimeoutOrNull(waitMs) { while (!quiet()) delay(1_000) } ?: return
+        wakeSendLock.withLock {
+            if (!quiet() || !claim()) return
+            val text = if (batch.size == 1) batch.single().render()
+                else "Collaboration message batch (${batch.size}):\n\n" + batch.joinToString("\n\n") { it.render() }
+            val ok = withContext(Dispatchers.Main.immediate) {
+                core.trySendUserMessageToExistingChat(
+                    chatId = chatId,
+                    messageText = text,
+                    turnOptions = com.ai.assistance.operit.data.model.ChatTurnOptions(
+                        useComposerReply = false, deliveredByTool = true, collaborationEvent = true,
+                        // A summary first would only start it; the report must be sent before it is acknowledged.
+                        disableSummary = true,
+                        userRoleNameOverride = batch.map { it.sender }.distinct().joinToString(", "),
+                    ),
+                )
+            }
+            if (ok) sent()
+        }
+    }
 
     /**
      * A process can stop after the user transcript commits but before the mailbox ack commits.
@@ -465,6 +741,7 @@ class CollaborationCoordinator private constructor(context: Context) {
         synchronized(lock) {
             val delegate = core.getMessageProcessingDelegate()
             state.agents.forEach { agent ->
+                if (agent.archived) return@forEach
                 if (stopGate.isStopping(agent.rootChatId)) return@forEach
                 if (chatId != null && agent.chatId != chatId) return@forEach
                 val turn = delegate.steeringTurnId(agent.chatId) ?: return@forEach
@@ -484,7 +761,11 @@ class CollaborationCoordinator private constructor(context: Context) {
                                 possiblyPersisted.remove(message.id)
                             }
                         },
-                        returned = { synchronized(lock) { deliveries.remove(message.id) } },
+                        returned = {
+                            synchronized(lock) { deliveries.remove(message.id) }
+                            // The turn ended before it read the report: the root gets it on its own turn.
+                            if (agent.parentPath == null) wakeIdleRoot(agent.chatId)
+                        },
                     ))
                     if (!accepted) {
                         deliveries.remove(message.id)
@@ -544,7 +825,7 @@ class CollaborationCoordinator private constructor(context: Context) {
             jobs.filter { (jobKey, _) ->
                 pendingParents[jobKey] in chatIds ||
                     state.agents.any {
-                        key(it.rootChatId, it.path) == jobKey &&
+                        !it.archived && key(it.rootChatId, it.path) == jobKey &&
                             (it.chatId in chatIds || it.rootChatId in chatIds)
                     }
             }.values.toList().also { jobs -> jobs.forEach { it.cancel() } }
@@ -574,7 +855,7 @@ class CollaborationCoordinator private constructor(context: Context) {
     }
 
     suspend fun wait(chatId: String, timeoutMs: Long): CollaborationWaitResult {
-        val limits = AgentProfileRepository.instance.collaborationLimits.value
+        val limits = limitsFor(chatId)
         require(timeoutMs <= limits.maxWaitMs) { "timeout_ms must be at most ${limits.maxWaitMs}" }
         val caller = caller(chatId)
         val inbox = core.getMessageProcessingDelegate().turnInputInbox(chatId)
@@ -619,7 +900,7 @@ class CollaborationCoordinator private constructor(context: Context) {
     private fun callerHasWaitableWork(caller: CollaborationAgent): Boolean = synchronized(lock) {
         val mailboxEmpty = state.find(caller.rootChatId, caller.path)?.messages.isNullOrEmpty()
         val peerChatIds = state.agents
-            .filter { it.rootChatId == caller.rootChatId && it.chatId != caller.chatId }
+            .filter { it.rootChatId == caller.rootChatId && it.chatId != caller.chatId && !it.archived }
             .mapTo(mutableSetOf()) { it.chatId }
         hasWaitableWork(
             rootChatId = caller.rootChatId,
@@ -634,6 +915,13 @@ class CollaborationCoordinator private constructor(context: Context) {
 
     companion object {
         const val OWNER_TYPE = "subagent_v2"
+        /** Live subagents a tree keeps before the least recently active idle ones are archived. */
+        const val LIVE_LIMIT = 200
+        /** Subagents list_agents shows at most, most recently active first. */
+        const val LIST_LIMIT = 200
+        /** How long a report waits for a busy root chat to go quiet before it waits for the next turn. */
+        private const val WAKE_WAIT_MS = 30 * 60_000L
+        private const val WAKE_RETRY_MS = 2_000L
         private val MESSAGE_ID = Regex("^Message ID: ([0-9a-f-]{36})$", RegexOption.MULTILINE)
         @Volatile private var instance: CollaborationCoordinator? = null
         fun getInstance(context: Context): CollaborationCoordinator =

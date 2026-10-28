@@ -23,6 +23,7 @@ import com.ai.assistance.operit.util.stream.SharedStream
 import com.ai.assistance.operit.util.stream.TextStreamEventCarrier
 import com.ai.assistance.operit.util.stream.TextStreamEventType
 import com.ai.assistance.operit.util.stream.TextStreamRevisionTracker
+import com.ai.assistance.operit.util.stream.replayAfter
 import com.ai.assistance.operit.util.TtsSegmenter
 import com.ai.assistance.operit.util.WaifuMessageProcessor
 import com.ai.assistance.operit.data.preferences.ApiPreferences
@@ -148,6 +149,8 @@ class MessageProcessingDelegate(
                     .trim()
                 if (generatedTitle.isNotBlank() && getChatTitle(chatId) == fallbackTitle) {
                     updateChatTitle(chatId, generatedTitle)
+                    // An Orbit side chat opened without a title is listed under this one too.
+                    com.ai.assistance.operit.features.orbit.OrbitCompanion.adoptGeneratedTitle(context, chatId, generatedTitle)
                 }
             } catch (e: Exception) {
                 AppLogger.e(TAG, "生成对话标题失败", e)
@@ -182,8 +185,17 @@ class MessageProcessingDelegate(
 
     private val _activeStreamingChatIds = MutableStateFlow<Set<String>>(emptySet())
     val activeStreamingChatIds: StateFlow<Set<String>> = _activeStreamingChatIds.asStateFlow()
+    private val _modelPreparingChatIds = MutableStateFlow<Set<String>>(emptySet())
+    val modelPreparingChatIds: StateFlow<Set<String>> = _modelPreparingChatIds.asStateFlow()
     private val _activeRunStartedAt = MutableStateFlow<Map<String, Long>>(emptyMap())
     val activeRunStartedAt: StateFlow<Map<String, Long>> = _activeRunStartedAt.asStateFlow()
+    /**
+     * The running chats answering what the user said themselves: a turn they sent, or one they
+     * steered into. Known when loading starts, before the user row is saved. Hidden turns (a
+     * reaction, an approval, a background task) and subagent reports do not count.
+     */
+    private val _userWaitingChatIds = MutableStateFlow<Set<String>>(emptySet())
+    val userWaitingChatIds: StateFlow<Set<String>> = _userWaitingChatIds.asStateFlow()
 
     private val _inputProcessingStateByChatId =
         MutableStateFlow<Map<String, EnhancedInputProcessingState>>(emptyMap())
@@ -240,7 +252,7 @@ class MessageProcessingDelegate(
     private data class ChatRuntime(
         @Volatile var inputInbox: TurnInputInbox? = null,
         @Volatile var canSteer: Boolean = false,
-        @Volatile var prepareSteeringInput: (suspend (String, List<AttachmentInfo>) -> String)? = null,
+        @Volatile var prepareSteeringInput: (suspend (String, List<AttachmentInfo>, ChatMessage?) -> String)? = null,
         val transcriptMutex: Mutex = Mutex(),
         val steeredTranscript: SteeredTranscript = SteeredTranscript(),
         var sendJob: Job? = null,
@@ -254,6 +266,7 @@ class MessageProcessingDelegate(
         var requestSentAt: Long = 0L,
         var requestStartElapsed: Long = 0L,
         @Volatile var runStartedElapsed: Long = 0L,
+        @Volatile var userWaiting: Boolean = false,
         var firstResponseElapsed: Long? = null,
         val isLoading: MutableStateFlow<Boolean> = MutableStateFlow(false)
     )
@@ -264,12 +277,14 @@ class MessageProcessingDelegate(
         chatRuntimes[chatId]?.takeIf { it.canSteer }?.inputInbox?.turnId
 
     suspend fun prepareSteeringInput(
-        chatId: String, expectedTurnId: String, text: String, attachments: List<AttachmentInfo>
+        chatId: String, expectedTurnId: String, text: String, attachments: List<AttachmentInfo>,
+        replyToMessage: ChatMessage? = null,
     ): String? {
         val runtime = chatRuntimes[chatId] ?: return null
         if (!runtime.canSteer || runtime.inputInbox?.turnId != expectedTurnId) return null
-        if (attachments.isEmpty()) return text
-        return runtime.prepareSteeringInput?.invoke(text, attachments)
+        if (attachments.isEmpty() && replyToMessage == null) return text
+        val prepare = runtime.prepareSteeringInput ?: return null
+        return withContext(Dispatchers.IO) { prepare(text, attachments, replyToMessage) }
     }
 
     fun pendingTurnInputKind(chatId: String): TurnInputInbox.PendingInputKind? =
@@ -281,19 +296,43 @@ class MessageProcessingDelegate(
     fun trySteerMessage(chatId: String, expectedTurnId: String, input: TurnInputInbox.Input): Boolean {
         val runtime = chatRuntimes[chatId] ?: return false
         val inbox = runtime.inputInbox ?: return false
-        return inbox.turnId == expectedTurnId && runtime.canSteer && runtime.isLoading.value &&
+        val accepted = inbox.turnId == expectedTurnId && runtime.canSteer && runtime.isLoading.value &&
             inbox.offer(input)
+        // The user spoke into the running turn, so it now answers them too.
+        if (accepted && input.agentPath == null && !runtime.userWaiting) {
+            runtime.userWaiting = true
+            updateGlobalLoadingState()
+        }
+        return accepted
     }
 
     private suspend fun persistAssistantMessage(chatId: String, message: ChatMessage) {
         val runtime = runtimeFor(chatId)
         runtime.transcriptMutex.withLock {
-            runtime.steeredTranscript.project(message).forEach { addMessageToChat(chatId, it) }
+            runtime.steeredTranscript.project(message).forEach { row ->
+                sentAsMessages(chatId, row).forEach { addMessageToChat(chatId, it) }
+            }
+        }
+    }
+
+    /** In an Orbit chat a finished reply with message breaks is saved as separate messages. */
+    private suspend fun sentAsMessages(chatId: String, row: ChatMessage): List<ChatMessage> {
+        if (row.contentStream != null || !row.content.contains("message_break", ignoreCase = true)) return listOf(row)
+        val orbit = com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context).current().orbitForChat(chatId)
+        if (orbit?.talkChatIds?.contains(chatId) != true) return listOf(row)
+        return OrbitMessageBreaks.split(row) { timestamps ->
+            withContext(Dispatchers.IO) {
+                com.ai.assistance.operit.data.db.AppDatabase.getDatabase(context).chatContentDao()
+                    .getMessagesByTimestamps(chatId, timestamps)
+                    .associate { it.timestamp to (it.sender to it.content) }
+            }
         }
     }
     private val lastScrollEmitMsByChatKey = ConcurrentHashMap<String, AtomicLong>()
     private val suppressIdleCompletedStateByChatId = ConcurrentHashMap<String, Boolean>()
     private val pendingAsyncSummaryUiByChatId = ConcurrentHashMap<String, Boolean>()
+    private data class ModelPreparation(val job: Job, val userWaiting: Boolean)
+    private val pendingModelPreparations = ConcurrentHashMap<String, ModelPreparation>()
 
     private fun chatKey(chatId: String?): String = chatId ?: "__DEFAULT_CHAT__"
 
@@ -330,8 +369,21 @@ class MessageProcessingDelegate(
         _activeRunStartedAt.value = activeChatIds.associateWith {
             chatRuntimes.getValue(it).runStartedElapsed
         }
-        _activeStreamingChatIds.value = activeChatIds
-        _isLoading.value = anyLoading
+        val preparing = pendingModelPreparations.toMap()
+        _modelPreparingChatIds.value = preparing.keys
+        _userWaitingChatIds.value = activeChatIds.filterTo(HashSet()) { chatRuntimes.getValue(it).userWaiting } +
+            preparing.filterValues { it.userWaiting }.keys
+        _activeStreamingChatIds.value = activeChatIds + preparing.keys
+        _isLoading.value = anyLoading || pendingModelPreparations.isNotEmpty()
+    }
+
+    /** Keep queued dispatchers waiting while the UI asynchronously resolves a model route. */
+    fun setPendingModelPreparation(chatId: String, preparation: Job, pending: Boolean, userWaiting: Boolean = false) {
+        if (pending) pendingModelPreparations[chatId] = ModelPreparation(preparation, userWaiting)
+        else pendingModelPreparations[chatId]?.takeIf { it.job === preparation }?.let {
+            pendingModelPreparations.remove(chatId, it)
+        }
+        updateGlobalLoadingState()
     }
 
     private fun isTerminalInputState(state: EnhancedInputProcessingState): Boolean {
@@ -413,8 +465,61 @@ class MessageProcessingDelegate(
         finalMessageContent
     }
 
+    /** A user message's content and the model it was built for; it goes to that model. */
+    data class UserTurnContent(val content: String, val configId: String, val modelIndex: Int)
+
+    /**
+     * The content [sendUserMessage] gives a user message, built ahead and the same way: a send that
+     * waits for a history summary shows exactly it meanwhile, then goes out with it.
+     */
+    suspend fun buildUserTurnContent(
+        chatId: String?,
+        messageText: String,
+        attachments: List<AttachmentInfo>,
+        workspacePath: String?,
+        workspaceEnv: String?,
+        replyToMessage: ChatMessage?,
+        proxySenderName: String?,
+        roleCardId: String?,
+        chatModelConfigIdOverride: String?,
+        chatModelIndexOverride: Int?,
+        turnOptions: ChatTurnOptions,
+    ): UserTurnContent = withContext(Dispatchers.IO) {
+        val mapping = functionalConfigManager.getConfigMappingForFunction(FunctionType.CHAT)
+        val overrideConfigId = chatModelConfigIdOverride?.takeIf { it.isNotBlank() }
+        val configId = overrideConfigId ?: mapping.configId
+        val modelIndex = if (overrideConfigId != null) chatModelIndexOverride ?: 0 else mapping.modelIndex
+        val capabilities = modelConfigManager.getModelConfigFlow(configId).first().multimodalCapabilitiesForModel(modelIndex)
+        val content = AIMessageManager.buildUserMessageContent(
+            context = context,
+            messageText = messageText.trim(),
+            proxySenderName = proxySenderName,
+            attachments = attachments,
+            workspacePath = workspacePath,
+            workspaceEnv = workspaceEnv,
+            replyToMessage = replyToMessage,
+            enableDirectAudioProcessing = capabilities.audio,
+            enableDirectVideoProcessing = capabilities.video,
+            chatId = chatId,
+            roleCardId = roleCardId,
+            isSubTask = turnOptions.isSubTask,
+            promptHooksEnabled = turnOptions.promptHooksEnabled,
+        )
+        UserTurnContent(content, configId, modelIndex)
+    }
+
     fun getResponseStream(chatId: String): SharedStream<String>? {
         return chatRuntimes[chatKey(chatId)]?.responseStream
+    }
+
+    /** Disk snapshots carry no stream, so reference forks must check the live segment here. */
+    suspend fun isStreamingMessage(chatId: String, timestamp: Long): Boolean {
+        val runtime = chatRuntimes[chatKey(chatId)] ?: return false
+        return runtime.transcriptMutex.withLock {
+            runtime.isLoading.value && runtime.streamingAiMessage?.let {
+                runtime.steeredTranscript.finalTimestamp(it.timestamp) == timestamp
+            } == true
+        }
     }
 
     private fun resolveFinalContent(aiMessage: ChatMessage): String {
@@ -692,6 +797,22 @@ class MessageProcessingDelegate(
         setUserMessageDraft(value)
     }
 
+    /**
+     * Puts [value] in the input box of [chatId] without sending it. If that chat is not the one
+     * shown yet, it waits as that chat's draft and appears when the chat opens.
+     */
+    fun setDraftForChat(chatId: String, value: TextFieldValue) {
+        saveUserMessageDraft(chatId, value)
+        if (activeDraftChatId == chatId) setUserMessageDraft(value)
+    }
+
+    fun draftForChat(chatId: String): String =
+        if (activeDraftChatId == chatId) _userMessage.value.text else userMessageDraftsByChatId[chatId]?.text.orEmpty()
+
+    fun clearSubmittedDraft(chatId: String, submittedText: String) {
+        if (draftForChat(chatId) == submittedText) clearUserMessageDraft(chatId)
+    }
+
     private fun setUserMessageDraft(value: TextFieldValue) {
         if (_userMessage.value != value) draftRevision++
         _userMessage.value = value
@@ -775,6 +896,14 @@ class MessageProcessingDelegate(
         _currentTurnToolInvocationCountByChatId.value = updated
     }
 
+    /** A route can fail or be cancelled before sendUserMessage owns the registered turn. */
+    fun finishUnstartedTurn(chatId: String, options: ChatTurnOptions, error: String = "", cancelled: Boolean = false) {
+        options.turnId?.let { turnId ->
+            onTurnTerminated(if (cancelled) ChatTurnTerminalSignal.Cancelled(turnId, chatId)
+                else ChatTurnTerminalSignal.Failed(turnId, chatId, error))
+        }
+    }
+
     fun sendUserMessage(
             attachments: List<AttachmentInfo> = emptyList(),
             chatId: String,
@@ -839,6 +968,8 @@ class MessageProcessingDelegate(
             clearUserMessageDraft(chatId)
         }
         resetCurrentTurnToolInvocationCount(chatId)
+        // A task's terminal signal may still be pending after loading ended; never give it this turn's reasons.
+        com.ai.assistance.operit.features.orbit.OrbitChatDecision.onTurnStarted(chatId, turnOptions.turnId)
         chatRuntime.responseStream = null
         chatRuntime.streamingAiMessage = null
         chatRuntime.toolBoundarySnapshot = null
@@ -846,6 +977,11 @@ class MessageProcessingDelegate(
         // 压缩后的自动续写是同一个任务的后半段：重启计时会让用户看到长任务被清零。
         if (!isAutoContinuation || chatRuntime.runStartedElapsed <= 0L) {
             chatRuntime.runStartedElapsed = android.os.SystemClock.elapsedRealtime()
+        }
+        // A continuation after compaction is the same turn and keeps who it answers.
+        if (!isAutoContinuation) {
+            chatRuntime.userWaiting = turnOptions.persistTurn && !turnOptions.hideUserMessage &&
+                !turnOptions.deliveredByTool && !turnOptions.isSubTask
         }
         chatRuntime.isLoading.value = true
         chatRuntime.currentTurnOptions = turnOptions
@@ -856,6 +992,9 @@ class MessageProcessingDelegate(
         updateGlobalLoadingState()
         setChatInputProcessingState(chatId, EnhancedInputProcessingState.Processing(context.getString(R.string.message_processing)))
 
+        // 性能日志：这一轮的起点只交给本轮主请求；没用上（插件接管、出错、还没开始就取消）时结束补一行。
+        val perfStart = com.ai.assistance.operit.core.chat.LlmPerfStart(
+            turnOptions.perfStartMs ?: com.ai.assistance.operit.core.chat.LlmRequestPerf.now())
         val sendJob =
             coroutineScope.launch(Dispatchers.IO + CoroutineName("ChatSend")) {
             val sendUserMessageStartTime = messageTimingNow()
@@ -942,6 +1081,7 @@ class MessageProcessingDelegate(
             var userMessage = ChatMessage(
                 sender = "user",
                 content = finalMessageContent,
+                timestamp = turnOptions.userMessageTimestamp ?: ChatMessageTimestampAllocator.next(),
                 roleName =
                     resolveTranscriptRoleName(
                         override = turnOptions.userRoleNameOverride,
@@ -990,6 +1130,7 @@ class MessageProcessingDelegate(
             var cancellationToPropagate: kotlinx.coroutines.CancellationException? = null
             var terminalFailureMessage: String? = null
             var assistantMessageTimestampForTurn: Long? = null
+            var turnInPlaceCompactionChatId: String? = null
             val toolBoundaryContentSnapshot =
                 AtomicReference<EnhancedAIService.ToolExecutionBoundarySnapshot?>(null)
             // Final merged content produced by the stream-collection exit. resolveFinalContent()
@@ -1069,9 +1210,16 @@ class MessageProcessingDelegate(
                             Pair(null, null)
                         }
                     } ?: Pair(null, null)
+                val orbitOfChat = com.ai.assistance.operit.data.preferences.OrbitPreferences
+                    .getInstance(context)
+                    .current()
+                    .orbitForChat(activeChatId)
                 val currentRoleName =
                     resolveTranscriptRoleName(
-                        override = turnOptions.assistantRoleNameOverride,
+                        // An Orbit signs its replies with the name it chose for itself.
+                        override =
+                            turnOptions.assistantRoleNameOverride
+                                ?: orbitOfChat?.name?.takeIf { it.isNotBlank() },
                         fallback = characterName ?: "Operit",
                     )
                 logMessageTiming(
@@ -1115,8 +1263,21 @@ class MessageProcessingDelegate(
                 // 关闭总结时仍保留真实 limits，避免下游插件收到 0/Infinity 这类无效 JSON 值。
                 val effectiveMaxTokens = maxTokens
                 val effectiveEnableSummary = enableSummary && effectivePersistTurn
+                // An Orbit turn that cannot run the normal summary (a hidden notice, or a chat that is
+                // not on screen) compacts its context in place and goes on, so a long-running Orbit
+                // chat never outgrows the model's window while the user is away.
+                if (orbitOfChat != null && !effectiveEnableSummary && effectivePersistTurn &&
+                    !turnOptions.isCollaborationAgent && activeChatId != null &&
+                    !com.ai.assistance.operit.api.chat.enhance.InPlaceCompaction.contains(activeChatId)
+                ) {
+                    com.ai.assistance.operit.api.chat.enhance.InPlaceCompaction.register(activeChatId, keepsLatestUserTurn = true)
+                    turnInPlaceCompactionChatId = activeChatId
+                }
                 val effectiveTokenUsageThreshold =
-                    if (effectiveEnableSummary || turnOptions.isCollaborationAgent) tokenUsageThreshold else Double.MAX_VALUE
+                    if (effectiveEnableSummary || turnOptions.isCollaborationAgent ||
+                        // Background reading runs compact themselves in place instead of stopping.
+                        com.ai.assistance.operit.api.chat.enhance.InPlaceCompaction.contains(activeChatId)
+                    ) tokenUsageThreshold else Double.MAX_VALUE
                 val effectiveOnTokenLimitExceeded = if (effectiveEnableSummary) {
                     suspend {
                         onTokenLimitExceeded(
@@ -1192,7 +1353,9 @@ class MessageProcessingDelegate(
                     avatarUri = avatarUri,
                     roleCardId = effectiveRoleCardId,
                     currentRoleName = currentRoleName,
-                    splitHistoryByRole = true,
+                    // An Orbit chat has one companion whose name can change; every reply in it is its own,
+                    // so replies signed with an earlier name must not be read back as someone else's.
+                    splitHistoryByRole = orbitOfChat == null,
                     groupOrchestrationMode = isGroupOrchestrationTurn,
                     groupParticipantNamesText = groupParticipantNamesText,
                     proxySenderName = proxySenderNameOverride,
@@ -1220,7 +1383,7 @@ class MessageProcessingDelegate(
                             chatRuntime.steeredTranscript.project(snapshotMessage.copy(
                                 content = boundary.displayContent.toString(), contentStream = null,
                                 displayMode = ChatMessageDisplayMode.ASSISTANT_INTERMEDIATE,
-                            )).forEach { addMessageToChat(chatId, it) }
+                            )).forEach { row -> sentAsMessages(chatId, row).forEach { addMessageToChat(chatId, it) } }
                             texts.forEach { input ->
                                 addMessageToChat(chatId, ChatMessage(
                                     sender = "user", content = input.text,
@@ -1243,6 +1406,7 @@ class MessageProcessingDelegate(
                     notifyReplyOverride = turnOptions.notifyReply,
                     chatModelConfigIdOverride = chatModelConfigIdOverride,
                     chatModelIndexOverride = chatModelIndexOverride,
+                    chatReasoningLevelOverride = turnOptions.chatReasoningLevel,
                     memorySpaceIdOverride = memorySpaceIdOverride,
                     toolTimingScopeId = aiMessageTimestamp.toString(),
                     disableWarning = turnOptions.disableWarning,
@@ -1254,6 +1418,7 @@ class MessageProcessingDelegate(
                     systemPromptOverride = turnOptions.systemPromptOverride,
                     collaborationHistory = turnOptions.collaborationHistory,
                     collaborationInput = turnOptions.isCollaborationAgent,
+                    perfStart = perfStart,
                 )
                 } catch (error: Throwable) {
                     toolBoundaryMessageReady.complete(null)
@@ -1306,14 +1471,18 @@ class MessageProcessingDelegate(
 
                 // 检查是否启用waifu模式来决定是否显示流式过程
                 val waifuPreferences = WaifuPreferences.getInstance(context)
-                isWaifuModeEnabled = waifuPreferences.enableWaifuModeFlow.first()
+                // The main app's waifu mode (split sentences, typing delay, emotion stickers) is not an Orbit's.
+                isWaifuModeEnabled = waifuPreferences.enableWaifuModeFlow.first() &&
+                    runCatching { com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context, chatId) }
+                        .getOrNull() == null
                 val collaborationEnabled =
                     com.ai.assistance.operit.core.agent.collaboration.CollaborationToolPolicy
                         .visibility(context, chatId, turnOptions.isSubTask)["spawn_agent"] == true
-                chatRuntime.prepareSteeringInput = { text, inputAttachments ->
+                chatRuntime.prepareSteeringInput = { text, inputAttachments, reply ->
                     AIMessageManager.buildUserMessageContent(
                         context = context, messageText = text, attachments = inputAttachments,
                         workspacePath = workspacePath, workspaceEnv = workspaceEnv,
+                        replyToMessage = reply,
                         enableDirectAudioProcessing = multimodalCapabilities.audio,
                         enableDirectVideoProcessing = multimodalCapabilities.video,
                         chatId = chatId, roleCardId = roleCardId,
@@ -1360,7 +1529,7 @@ class MessageProcessingDelegate(
                         if (effectivePersistTurn && chatId != null) {
                             addMessageToChat(chatId, segmentMessage)
                         }
-                        if (getIsAutoReadEnabled()) {
+                        if (effectivePersistTurn && !com.ai.assistance.operit.ui.permissions.UnattendedChats.contains(chatId) && getIsAutoReadEnabled()) {
                             didStreamAutoRead = true
                             AppLogger.d(
                                 TAG,
@@ -1449,7 +1618,8 @@ class MessageProcessingDelegate(
                             }
 
                             fun tryFlushAutoRead() {
-                                if (!getIsAutoReadEnabled()) return
+                                // A turn that never enters the chat is not read aloud either.
+                                if (!effectivePersistTurn || com.ai.assistance.operit.ui.permissions.UnattendedChats.contains(chatId) || !getIsAutoReadEnabled()) return
                                 if (isWaifuModeEnabled) return
                                 while (true) {
                                     val bufferBefore = autoReadBuffer.length
@@ -1495,9 +1665,9 @@ class MessageProcessingDelegate(
                             }
 
                             suspend fun drainRevisionEvents() {
-                                val events = revisableStream?.eventChannel?.replayCache.orEmpty()
-                                while (processedRevisionEventCount < events.size) {
-                                    val event = events[processedRevisionEventCount]
+                                val events = revisableStream?.eventChannel
+                                    ?.replayAfter(processedRevisionEventCount).orEmpty()
+                                for (event in events) {
                                     if (event.replayCharCount?.let { it > processedReplayCharCount } == true) {
                                         break
                                     }
@@ -1623,7 +1793,7 @@ class MessageProcessingDelegate(
                             autoReadJob?.join()
                             waifuSegmentsJob?.join()
 
-                            if (getIsAutoReadEnabled() && !isWaifuModeEnabled) {
+                            if (effectivePersistTurn && !com.ai.assistance.operit.ui.permissions.UnattendedChats.contains(chatId) && getIsAutoReadEnabled() && !isWaifuModeEnabled) {
                                 val remaining = autoReadBuffer.toString()
                                 autoReadBuffer.clear()
                                 AppLogger.d(
@@ -1760,8 +1930,14 @@ class MessageProcessingDelegate(
             } finally {
                 chatRuntime.canSteer = false
                 chatRuntime.prepareSteeringInput = null
+                turnInPlaceCompactionChatId?.let {
+                    com.ai.assistance.operit.api.chat.enhance.InPlaceCompaction.unregister(it)
+                }
+                val returnedForSummary = chatRuntime.inputInbox?.sealedForSummary == true
                 val unconsumedInputs = chatRuntime.inputInbox?.close().orEmpty()
-                unconsumedInputs.forEach { it.returned() }
+                unconsumedInputs.forEach {
+                    if (returnedForSummary) (it.returnedForSummary ?: it.returned)() else it.returned()
+                }
                 val finalizeMessageStartTime = messageTimingNow()
                 val deferTurnCompleteToAsyncJob =
                     if (cancellationToPropagate == null) {
@@ -1807,6 +1983,10 @@ class MessageProcessingDelegate(
                     details = "chatId=$activeChatId, notifyTurnComplete=$shouldNotifyTurnComplete"
                 )
 
+                // cleanup permits another turn to clear the shared transcript before terminal bookkeeping.
+                val completedAssistantTimestamp = assistantMessageTimestampForTurn?.let {
+                    chatRuntime.steeredTranscript.finalTimestamp(it)
+                }
                 val cleanupRuntimeStartTime = messageTimingNow()
                 cleanupRuntimeAfterSend(chatId, chatRuntime)
                 logMessageTiming(
@@ -1872,9 +2052,7 @@ class MessageProcessingDelegate(
                                     turnId = turnId,
                                     chatId = activeChatId,
                                     assistantMessageTimestamp =
-                                        chatRuntime.steeredTranscript.finalTimestamp(
-                                            requireNotNull(assistantMessageTimestampForTurn)
-                                        ),
+                                        requireNotNull(completedAssistantTimestamp),
                                 )
                             else ->
                                 ChatTurnTerminalSignal.Failed(
@@ -1900,6 +2078,7 @@ class MessageProcessingDelegate(
             }
             cancellationToPropagate?.let { throw it }
         }
+        sendJob.invokeOnCompletion { perfStart.reportIfUnused(it) }
         chatRuntime.sendJob = sendJob
         if (turnOptions.turnId?.let(isTurnCancellationRequested) == true) {
             sendJob.cancel(
@@ -1948,7 +2127,10 @@ class MessageProcessingDelegate(
         var shouldResetInputStateToIdle = false
         chatRuntime.sendJob = currentJob
         resetCurrentTurnToolInvocationCount(chatId)
+        com.ai.assistance.operit.features.orbit.OrbitChatDecision.onTurnStarted(chatId, null)
         chatRuntime.runStartedElapsed = android.os.SystemClock.elapsedRealtime()
+        // Regenerating is the user asking again.
+        chatRuntime.userWaiting = true
         chatRuntime.isLoading.value = true
         updateGlobalLoadingState()
         setChatInputProcessingState(
@@ -2059,9 +2241,9 @@ class MessageProcessingDelegate(
             var processedReplayCharCount = 0
 
             fun drainRevisionEvents() {
-                val events = revisableStream?.eventChannel?.replayCache.orEmpty()
-                while (processedRevisionEventCount < events.size) {
-                    val event = events[processedRevisionEventCount]
+                val events = revisableStream?.eventChannel
+                    ?.replayAfter(processedRevisionEventCount).orEmpty()
+                for (event in events) {
                     if (event.replayCharCount?.let { it > processedReplayCharCount } == true) {
                         break
                     }
@@ -2245,7 +2427,7 @@ class MessageProcessingDelegate(
                             "autoRead[final] enabled=${getIsAutoReadEnabled()} skipFinalAutoRead=$skipFinalAutoRead len=${finalContent.length} preview=\"${speechPreview(finalContent)}\""
                         )
                         // 如果启用了自动朗读，则朗读完整消息
-                        if (getIsAutoReadEnabled() && !skipFinalAutoRead) {
+                        if (turnOptions.persistTurn && !com.ai.assistance.operit.ui.permissions.UnattendedChats.contains(chatId) && getIsAutoReadEnabled() && !skipFinalAutoRead) {
                             speakMessageHandler(finalContent, true)
                         }
                         forceEmitScrollToBottom(chatId)

@@ -28,7 +28,7 @@ import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** 管理多个AIService实例，根据功能类型提供不同的服务配置 */
-class MultiServiceManager(private val context: Context) {
+class MultiServiceManager(private val context: Context, private val chatId: String? = null) {
     companion object {
         private const val TAG = "MultiServiceManager"
     }
@@ -61,6 +61,8 @@ class MultiServiceManager(private val context: Context) {
         val modelConfig: ModelConfigData,
         val modelIndex: Int,
         val modelParameters: List<ModelParameter<*>>,
+        /** Reasoning the cached function service was built with; null for CHAT and config services. */
+        val thinkingQualityLevel: Int? = null,
         var activeLeases: Int = 0,
         var retired: Boolean = false,
         var released: Boolean = false
@@ -71,8 +73,12 @@ class MultiServiceManager(private val context: Context) {
     private val modelConfigManager = ModelConfigManager(context)
 
     // 服务实例缓存
-    private val serviceInstances = mutableMapOf<FunctionType, ManagedService>()
-    private val customServiceInstances = mutableMapOf<String, ManagedService>()
+    private data class FunctionServiceKey(val function: FunctionType, val orbitId: String?)
+    private data class ConfigServiceKey(val configId: String, val modelIndex: Int, val orbitId: String?)
+    // The singleton also serves auxiliary tool calls. Switching between an Orbit and the main app
+    // must not retire a provider still streaming for the other owner.
+    private val serviceInstances = mutableMapOf<FunctionServiceKey, ManagedService>()
+    private val customServiceInstances = mutableMapOf<ConfigServiceKey, ManagedService>()
     private val retiredServices = mutableSetOf<ManagedService>()
     private val serviceMutex = Mutex()
 
@@ -163,14 +169,19 @@ class MultiServiceManager(private val context: Context) {
     }
 
     private suspend fun getOrCreateServiceForFunctionLocked(functionType: FunctionType): ManagedService {
-        val configMapping = functionalConfigManager.getEffectiveConfigMappingForFunction(functionType)
+        val key = FunctionServiceKey(functionType,
+            com.ai.assistance.operit.features.orbit.OrbitModels.ownerId(context, chatId))
+        val configMapping = mappingFor(functionType)
         val config = modelConfigManager.getModelConfigFlow(configMapping.configId).first()
         val actualModelIndex = configMapping.resolveModelIndex(config.modelName).modelIndex
         requireAvailableSelection(config, actualModelIndex)
         val selectedModelConfig = config.forSelectedModel(actualModelIndex)
-        serviceInstances[functionType]?.let {
-            if (it.modelConfig == selectedModelConfig && it.modelIndex == actualModelIndex) return it
-            serviceInstances.remove(functionType)
+        // The level is part of the built service, so a changed level must not reuse the old one.
+        val reasoningLevel = configMapping.thinkingQualityLevel.takeIf { functionType != FunctionType.CHAT }
+        serviceInstances[key]?.let {
+            if (it.modelConfig == selectedModelConfig && it.modelIndex == actualModelIndex &&
+                it.thinkingQualityLevel == reasoningLevel) return it
+            serviceInstances.remove(key)
             retireManagedServiceLocked(it)
         }
         val baseService = createServiceFromConfig(config, actualModelIndex)
@@ -189,8 +200,9 @@ class MultiServiceManager(private val context: Context) {
             modelIndex = actualModelIndex,
             modelParameters =
                 modelConfigManager.getModelParametersForConfigSnapshot(selectedModelConfig),
+            thinkingQualityLevel = reasoningLevel,
         )
-        serviceInstances[functionType] = managedService
+        serviceInstances[key] = managedService
 
         if (functionType == FunctionType.CHAT) {
             defaultService = managedService
@@ -205,7 +217,8 @@ class MultiServiceManager(private val context: Context) {
 
     private suspend fun getOrCreateServiceForConfigLocked(configId: String, modelIndex: Int): ManagedService {
         val normalizedIndex = modelIndex
-        val cacheKey = "$configId#$normalizedIndex"
+        val cacheKey = ConfigServiceKey(configId, normalizedIndex,
+            com.ai.assistance.operit.features.orbit.OrbitModels.ownerId(context, chatId))
         val config = modelConfigManager.getModelConfigFlow(configId).first()
         requireAvailableSelection(config, normalizedIndex)
         val actualModelIndex = normalizedIndex
@@ -287,27 +300,34 @@ class MultiServiceManager(private val context: Context) {
     suspend fun refreshServiceForFunction(functionType: FunctionType) {
         ensureInitialized()
         serviceMutex.withLock {
-            serviceInstances.remove(functionType)?.let { retireManagedServiceLocked(it) }
-
             // A follower borrows this function's configuration, so its cached service may have been
             // built from the previous one.
-            FunctionalConfigManager.FUNCTION_CONFIG_FOLLOWERS
+            val affected = FunctionalConfigManager.FUNCTION_CONFIG_FOLLOWERS
                 .filterValues { followed -> followed == functionType }
-                .keys
-                .forEach { follower ->
-                    serviceInstances.remove(follower)?.let { retireManagedServiceLocked(it) }
-                }
+                .keys + functionType
+            serviceInstances.keys.filter { it.orbitId == null && it.function in affected }.forEach { key ->
+                serviceInstances.remove(key)?.let { retireManagedServiceLocked(it) }
+            }
 
             if (functionType == FunctionType.CHAT) {
-                defaultService = null
-                val customServices = customServiceInstances.values.toList()
-                customServiceInstances.clear()
-                customServices.forEach { service ->
-                    retireManagedServiceLocked(service)
+                customServiceInstances.keys.filter { it.orbitId == null }.forEach { key ->
+                    customServiceInstances.remove(key)?.let { retireManagedServiceLocked(it) }
                 }
             }
 
             AppLogger.d(TAG, "已移除功能${functionType}的服务实例缓存")
+        }
+    }
+
+    /** Retire only this companion's providers, also used when that companion is deleted. */
+    suspend fun refreshOrbitServices(orbitId: String) {
+        serviceMutex.withLock {
+            serviceInstances.keys.filter { it.orbitId == orbitId }.forEach { key ->
+                serviceInstances.remove(key)?.let { retireManagedServiceLocked(it) }
+            }
+            customServiceInstances.keys.filter { it.orbitId == orbitId }.forEach { key ->
+                customServiceInstances.remove(key)?.let { retireManagedServiceLocked(it) }
+            }
         }
     }
 
@@ -339,6 +359,7 @@ class MultiServiceManager(private val context: Context) {
     }
 
     private fun retireManagedServiceLocked(managedService: ManagedService) {
+        if (defaultService === managedService) defaultService = null
         managedService.retired = true
         retiredServices.add(managedService)
         closeRetiredServiceLocked(managedService)
@@ -441,8 +462,7 @@ class MultiServiceManager(private val context: Context) {
             functionType: FunctionType
     ): List<com.ai.assistance.operit.data.model.ModelParameter<*>> {
         ensureInitialized()
-        val configMapping = functionalConfigManager.getEffectiveConfigMappingForFunction(functionType)
-        return modelConfigManager.getModelParametersForConfig(configMapping.configId)
+        return modelConfigManager.getModelParametersForConfigSnapshot(getModelConfigForFunction(functionType))
     }
 
     /**
@@ -452,7 +472,7 @@ class MultiServiceManager(private val context: Context) {
      */
     suspend fun getModelConfigForFunction(functionType: FunctionType): ModelConfigData {
         ensureInitialized()
-        val mapping = functionalConfigManager.getEffectiveConfigMappingForFunction(functionType)
+        val mapping = mappingFor(functionType)
         val config = modelConfigManager.getModelConfigFlow(mapping.configId).first()
         val index = mapping.resolveModelIndex(config.modelName).modelIndex
         requireAvailableSelection(config, index)
@@ -467,6 +487,10 @@ class MultiServiceManager(private val context: Context) {
             context.getString(R.string.functional_model_selection_unavailable)
         }
     }
+
+    private suspend fun mappingFor(functionType: FunctionType) =
+        com.ai.assistance.operit.features.orbit.OrbitModels.mapping(context, functionType, chatId)
+            ?: functionalConfigManager.getEffectiveConfigMappingForFunction(functionType)
 
     suspend fun getSelectedModelConfigForConfig(configId: String, modelIndex: Int): ModelConfigData {
         ensureInitialized()
@@ -495,7 +519,12 @@ class MultiServiceManager(private val context: Context) {
      */
     suspend fun hasImageRecognitionConfigured(): Boolean {
         ensureInitialized()
-        val configMapping = functionalConfigManager.getConfigMappingForFunction(FunctionType.IMAGE_RECOGNITION)
+        val orbitId = com.ai.assistance.operit.features.orbit.OrbitModels.ownerId(context, chatId)
+        if (orbitId != null) return try {
+            getModelConfigForFunction(FunctionType.IMAGE_RECOGNITION).enableDirectImageProcessing
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (_: IllegalStateException) { false }
+        val configMapping = mappingFor(FunctionType.IMAGE_RECOGNITION)
         val config = modelConfigManager.getModelConfigFlow(configMapping.configId).first()
         
         // 检查模型配置是否启用了直接图片处理
@@ -504,14 +533,22 @@ class MultiServiceManager(private val context: Context) {
 
     suspend fun hasAudioRecognitionConfigured(): Boolean {
         ensureInitialized()
-        val configMapping = functionalConfigManager.getConfigMappingForFunction(FunctionType.AUDIO_RECOGNITION)
+        if (com.ai.assistance.operit.features.orbit.OrbitModels.ownerId(context, chatId) != null) return try {
+            getModelConfigForFunction(FunctionType.AUDIO_RECOGNITION).enableDirectAudioProcessing
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (_: IllegalStateException) { false }
+        val configMapping = mappingFor(FunctionType.AUDIO_RECOGNITION)
         val config = modelConfigManager.getModelConfigFlow(configMapping.configId).first()
         return config.multimodalCapabilitiesForModel(configMapping.modelIndex).audio
     }
 
     suspend fun hasVideoRecognitionConfigured(): Boolean {
         ensureInitialized()
-        val configMapping = functionalConfigManager.getConfigMappingForFunction(FunctionType.VIDEO_RECOGNITION)
+        if (com.ai.assistance.operit.features.orbit.OrbitModels.ownerId(context, chatId) != null) return try {
+            getModelConfigForFunction(FunctionType.VIDEO_RECOGNITION).enableDirectVideoProcessing
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (_: IllegalStateException) { false }
+        val configMapping = mappingFor(FunctionType.VIDEO_RECOGNITION)
         val config = modelConfigManager.getModelConfigFlow(configMapping.configId).first()
         return config.multimodalCapabilitiesForModel(configMapping.modelIndex).video
     }

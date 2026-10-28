@@ -90,12 +90,16 @@ data class ChatRecallHit(
 )
 
 data class ChatRecallSession(val chatId: String, val title: String, val updatedAt: Long, val profile: String?)
+
 data class ChatRecallPart(val messageId: Long, val chatId: String, val sender: String,
     val timestamp: Long, val content: String, val totalChars: Int, val containsNull: Boolean = false)
 
 /** Reads message text in bounded rows so a single large message cannot overflow CursorWindow. */
 @Dao
 abstract class ChatContentDao {
+    @Query("SELECT COALESCE(MAX(messageId),0) FROM messages")
+    abstract suspend fun memoryLearningHorizon(): Long
+
     @Query("""
         SELECT COALESCE(MAX(m.messageId),0) FROM messages m JOIN chats c ON c.id=m.chatId
         WHERE c.id=:chatId AND c.isHidden=0 AND c.chatKind='NORMAL' AND c.parentChatId IS NULL
@@ -108,6 +112,7 @@ abstract class ChatContentDao {
         FROM messages m JOIN chats c ON c.id=m.chatId
         WHERE c.id=:chatId AND c.isHidden=0 AND c.chatKind='NORMAL' AND c.parentChatId IS NULL
         AND m.sender IN ('user','ai') AND m.messageId>=:fromId AND m.messageId<=:horizon
+        AND m.displayMode!='HIDDEN_PLACEHOLDER'
         ORDER BY m.messageId LIMIT 1
     """)
     abstract suspend fun nextLearningSource(chatId: String, fromId: Long, horizon: Long): ChatRecallPart?
@@ -125,14 +130,34 @@ abstract class ChatContentDao {
     """)
     abstract suspend fun readLearningMessageBytes(id: Long, byteOffset: Long): ByteArray?
 
+    /**
+     * Whether a learning source message has no text at all (a reply that was cut off or only ended
+     * quietly); null when the message is gone. SQLite hands an empty text back as no bytes, which
+     * [readLearningMessageBytes] cannot tell apart from a missing message.
+     */
+    @Query("""
+        SELECT COALESCE(LENGTH(COALESCE(v.content,m.content)),0)=0
+        FROM messages m JOIN chats c ON c.id=m.chatId
+        LEFT JOIN message_variants v ON v.chatId=m.chatId AND v.messageTimestamp=m.timestamp
+            AND v.variantIndex=m.selectedVariantIndex
+        WHERE m.messageId=:id AND c.isHidden=0 AND c.chatKind='NORMAL' AND c.parentChatId IS NULL
+        AND m.sender IN ('user','ai')
+    """)
+    abstract suspend fun learningMessageIsEmpty(id: Long): Boolean?
+
     @Query("""
         SELECT c.id AS chatId, c.title, c.updatedAt, c.characterCardName AS profile
         FROM chats c WHERE c.isHidden=0 AND c.chatKind='NORMAL' AND c.parentChatId IS NULL
         AND (:profile='' OR c.characterCardName=:profile)
         AND c.updatedAt >= :after AND c.updatedAt <= :before
+        AND (:minimumMessageId=0 AND :minimumTimestamp=0 OR EXISTS(SELECT 1 FROM messages m
+            WHERE m.chatId=c.id AND m.messageId>=:minimumMessageId AND m.timestamp>=:minimumTimestamp))
+        AND (:scopeMode=0 OR (:scopeMode=1 AND INSTR(:scopeIds, ',' || HEX(c.id) || ',')>0) OR (:scopeMode=2 AND INSTR(:scopeIds, ',' || HEX(c.id) || ',')=0))
         ORDER BY c.updatedAt DESC, c.id LIMIT :limit OFFSET :offset
     """)
-    abstract suspend fun browseRecallSessions(profile: String, after: Long, before: Long, limit: Int, offset: Int): List<ChatRecallSession>
+    abstract suspend fun browseRecallSessions(profile: String, after: Long, before: Long, limit: Int, offset: Int,
+        scopeMode: Int = 0, scopeIds: String = "", minimumMessageId: Long = 0,
+        minimumTimestamp: Long = 0): List<ChatRecallSession>
 
     @Query("""
         SELECT m.messageId, m.chatId, c.title AS chatTitle, m.sender, m.timestamp,
@@ -140,13 +165,16 @@ abstract class ChatContentDao {
         FROM chat_recall_fts INNER JOIN messages m ON m.messageId=chat_recall_fts.rowid
         INNER JOIN chats c ON c.id=m.chatId
         WHERE chat_recall_fts MATCH :query AND c.isHidden=0 AND c.chatKind='NORMAL' AND c.parentChatId IS NULL
+        AND m.messageId>=:minimumMessageId
         AND m.sender IN ('user','ai') AND (:role='' OR m.sender=:role)
         AND (:chatId='' OR c.id=:chatId) AND (:profile='' OR c.characterCardName=:profile)
         AND m.timestamp >= :after AND m.timestamp <= :before
+        AND (:scopeMode=0 OR (:scopeMode=1 AND INSTR(:scopeIds, ',' || HEX(c.id) || ',')>0) OR (:scopeMode=2 AND INSTR(:scopeIds, ',' || HEX(c.id) || ',')=0))
         ORDER BY LENGTH(offsets(chat_recall_fts)) DESC, m.timestamp DESC, m.messageId DESC LIMIT :limit OFFSET :offset
     """)
     abstract suspend fun searchRecallIndex(query: String, role: String, profile: String, chatId: String,
-        after: Long, before: Long, limit: Int, offset: Int): List<ChatRecallHit>
+        after: Long, before: Long, limit: Int, offset: Int,
+        scopeMode: Int = 0, scopeIds: String = "", minimumMessageId: Long = 0): List<ChatRecallHit>
 
     @Query("""
         SELECT m.messageId, m.chatId, c.title AS chatTitle, m.sender, m.timestamp,
@@ -156,22 +184,27 @@ abstract class ChatContentDao {
         AND m.sender IN ('user','ai') AND (:role='' OR m.sender=:role)
         AND (:chatId='' OR c.id=:chatId) AND (:profile='' OR c.characterCardName=:profile)
         AND m.timestamp >= :after AND m.timestamp <= :before AND INSTR(LOWER(m.content),LOWER(:query))>0
+        AND m.messageId>=:minimumMessageId
+        AND (:scopeMode=0 OR (:scopeMode=1 AND INSTR(:scopeIds, ',' || HEX(c.id) || ',')>0) OR (:scopeMode=2 AND INSTR(:scopeIds, ',' || HEX(c.id) || ',')=0))
         ORDER BY m.timestamp DESC,m.messageId DESC LIMIT :limit OFFSET :offset
     """)
     abstract suspend fun searchRecallLiteral(query: String, role: String, profile: String, chatId: String,
-        after: Long, before: Long, limit: Int, offset: Int): List<ChatRecallHit>
+        after: Long, before: Long, limit: Int, offset: Int,
+        scopeMode: Int = 0, scopeIds: String = "", minimumMessageId: Long = 0): List<ChatRecallHit>
 
     @Query("""
         SELECT m.messageId, m.chatId, m.sender, m.timestamp,
         SUBSTR(m.content,1,2000) AS content, LENGTH(m.content) AS totalChars,
         INSTR(m.content,CHAR(0))>0 AS containsNull FROM messages m JOIN chats c ON c.id=m.chatId
         WHERE c.id=:chatId AND c.isHidden=0 AND c.chatKind='NORMAL' AND c.parentChatId IS NULL
+        AND m.messageId>=:minimumMessageId
         AND m.sender IN ('user','ai') AND (:role='' OR m.sender=:role)
         AND m.timestamp >= :after AND m.timestamp <= :before
+        AND (:scopeMode=0 OR (:scopeMode=1 AND INSTR(:scopeIds, ',' || HEX(c.id) || ',')>0) OR (:scopeMode=2 AND INSTR(:scopeIds, ',' || HEX(c.id) || ',')=0))
         ORDER BY m.orderIndex,m.timestamp,m.messageId LIMIT :limit OFFSET :offset
     """)
     abstract suspend fun readRecallSession(chatId: String, role: String, after: Long, before: Long,
-        limit: Int, offset: Int): List<ChatRecallPart>
+        limit: Int, offset: Int, scopeMode: Int = 0, scopeIds: String = "", minimumMessageId: Long = 0): List<ChatRecallPart>
 
     @Query("""
         SELECT m.messageId,m.chatId,m.sender,m.timestamp,
@@ -179,16 +212,20 @@ abstract class ChatContentDao {
         INSTR(m.content,CHAR(0))>0 AS containsNull FROM messages m JOIN chats c ON c.id=m.chatId
         WHERE m.messageId=:id AND c.isHidden=0 AND c.chatKind='NORMAL' AND c.parentChatId IS NULL
         AND m.sender IN ('user','ai')
+        AND (:scopeMode=0 OR (:scopeMode=1 AND INSTR(:scopeIds, ',' || HEX(c.id) || ',')>0) OR (:scopeMode=2 AND INSTR(:scopeIds, ',' || HEX(c.id) || ',')=0))
     """)
-    abstract suspend fun readRecallMessagePart(id: Long, charOffset: Int, limit: Int): ChatRecallPart?
+    abstract suspend fun readRecallMessagePart(id: Long, charOffset: Int, limit: Int,
+        scopeMode: Int = 0, scopeIds: String = ""): ChatRecallPart?
 
     @Query("""
         SELECT SUBSTR(CAST(m.content AS BLOB),:byteOffset+1,32768)
         FROM messages m JOIN chats c ON c.id=m.chatId
         WHERE m.messageId=:id AND c.isHidden=0 AND c.chatKind='NORMAL' AND c.parentChatId IS NULL
         AND m.sender IN ('user','ai')
+        AND (:scopeMode=0 OR (:scopeMode=1 AND INSTR(:scopeIds, ',' || HEX(c.id) || ',')>0) OR (:scopeMode=2 AND INSTR(:scopeIds, ',' || HEX(c.id) || ',')=0))
     """)
-    abstract suspend fun readRecallMessageBytes(id: Long, byteOffset: Long): ByteArray?
+    abstract suspend fun readRecallMessageBytes(id: Long, byteOffset: Long,
+        scopeMode: Int = 0, scopeIds: String = ""): ByteArray?
 
     /** Bounded projections keep even very large archived tool outputs out of CursorWindow. */
     @Query("""
@@ -198,9 +235,11 @@ abstract class ChatContentDao {
         WHERE c.isHidden = 0 AND c.chatKind = 'NORMAL' AND c.parentChatId IS NULL
             AND m.sender IN ('user', 'ai') AND LENGTH(:query) > 0
             AND INSTR(LOWER(m.content), LOWER(:query)) > 0
+            AND (:scopeMode=0 OR (:scopeMode=1 AND INSTR(:scopeIds, ',' || HEX(c.id) || ',')>0) OR (:scopeMode=2 AND INSTR(:scopeIds, ',' || HEX(c.id) || ',')=0))
         ORDER BY m.timestamp DESC, m.messageId DESC LIMIT :limit OFFSET :offset
     """)
-    abstract suspend fun searchRecallMessages(query: String, limit: Int, offset: Int): List<ChatRecallHit>
+    abstract suspend fun searchRecallMessages(query: String, limit: Int, offset: Int,
+        scopeMode: Int = 0, scopeIds: String = ""): List<ChatRecallHit>
 
     @Query("""
         SELECT m.messageId, m.chatId, c.title AS chatTitle, m.sender, m.timestamp,
@@ -208,10 +247,15 @@ abstract class ChatContentDao {
         FROM messages a INNER JOIN chats c ON c.id = a.chatId
             INNER JOIN messages m ON m.chatId = a.chatId
         WHERE a.messageId = :anchorMessageId AND c.isHidden = 0
+            AND a.messageId>=:minimumMessageId AND m.messageId>=:minimumMessageId
+            AND a.timestamp>=:minimumTimestamp AND m.timestamp>=:minimumTimestamp
             AND c.chatKind = 'NORMAL' AND c.parentChatId IS NULL AND m.sender IN ('user', 'ai')
+            AND (:scopeMode=0 OR (:scopeMode=1 AND INSTR(:scopeIds, ',' || HEX(c.id) || ',')>0) OR (:scopeMode=2 AND INSTR(:scopeIds, ',' || HEX(c.id) || ',')=0))
         ORDER BY ABS(m.orderIndex - a.orderIndex), m.messageId LIMIT :limit
     """)
-    abstract suspend fun readRecallContext(anchorMessageId: Long, limit: Int = 11): List<ChatRecallHit>
+    abstract suspend fun readRecallContext(anchorMessageId: Long, limit: Int = 11,
+        scopeMode: Int = 0, scopeIds: String = "", minimumMessageId: Long = 0,
+        minimumTimestamp: Long = 0): List<ChatRecallHit>
 
     @Query(MESSAGE_CONTENT_ROW_QUERY + " WHERE chatId = :chatId ORDER BY timestamp ASC")
     protected abstract suspend fun queryMessagesForChat(chatId: String): List<MessageContentRow>
@@ -334,6 +378,14 @@ abstract class ChatContentDao {
     @Transaction
     open suspend fun getMessagesByTimestamps(chatId: String, timestamps: List<Long>): List<MessageEntity> =
         materializeMessages(queryMessagesByTimestamps(chatId, timestamps))
+
+    @Query(MESSAGE_CONTENT_ROW_QUERY + " WHERE messageId IN (:messageIds)")
+    protected abstract suspend fun queryMessagesByIds(messageIds: List<Long>): List<MessageContentRow>
+
+    /** The messages with [messageIds], each with its whole text however long, in no set order. */
+    @Transaction
+    open suspend fun getMessagesByIds(messageIds: List<Long>): List<MessageEntity> =
+        if (messageIds.isEmpty()) emptyList() else materializeMessages(queryMessagesByIds(messageIds))
 
     @Query(
         "SELECT SUBSTR(CAST(content AS BLOB), :startByte, :byteCount)" +

@@ -269,6 +269,7 @@ internal fun FloatingConversationSurface(floatContext: FloatContext, fullscreen:
                                 style = MaterialTheme.typography.titleMedium)
                             Spacer(Modifier.height(12.dp))
                             com.ai.assistance.operit.ui.features.chat.components.PackageSelectorContent(
+                                chatId = remember { floatContext.chatService?.getChatCore()?.currentChatId?.value },
                                 modifier = Modifier.weight(1f, fill = false),
                                 onSearchFocusChanged = {
                                     floatContext.onInputFocusRequest?.invoke(it)

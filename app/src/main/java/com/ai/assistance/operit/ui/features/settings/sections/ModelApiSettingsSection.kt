@@ -44,7 +44,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogWindow as Dialog
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogSurface
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
@@ -929,7 +930,7 @@ fun ModelApiSettingsSection(
 
                 if (showEndpointDialog && selectableEndpointOptions.isNotEmpty()) {
                     Dialog(onDismissRequest = { showEndpointDialog = false }) {
-                        Surface(
+                        SettingsDialogSurface(
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(16.dp),
                             color = MaterialTheme.colorScheme.surface
@@ -1351,7 +1352,7 @@ fun ModelApiSettingsSection(
                             }
                     }
                 Dialog(onDismissRequest = { showMultimodalModelPicker = false }) {
-                    Surface(
+                    SettingsDialogSurface(
                             modifier = Modifier.fillMaxWidth().heightIn(max = 520.dp),
                             shape = MaterialTheme.shapes.extraLarge,
                             tonalElevation = 6.dp,
@@ -1604,7 +1605,7 @@ fun ModelApiSettingsSection(
                 }
 
         Dialog(onDismissRequest = { showModelsDialog = false }) {
-            Surface(
+            SettingsDialogSurface(
                     modifier = Modifier.fillMaxWidth().heightIn(max = 520.dp),
                     shape = MaterialTheme.shapes.extraLarge,
                     tonalElevation = 6.dp,
@@ -2087,7 +2088,7 @@ private fun formatCodexResetCountdown(resetAtEpochSeconds: Long, nowEpochSeconds
     return stringResource(R.string.codex_reset_after_clock, hours, minutes)
 }
 
-private fun getBuiltInProviderDisplayName(provider: ApiProviderType, context: android.content.Context): String {
+internal fun getBuiltInProviderDisplayName(provider: ApiProviderType, context: android.content.Context): String {
     return when (provider) {
         ApiProviderType.OPENAI -> context.getString(R.string.provider_openai)
         ApiProviderType.OPENAI_RESPONSES -> context.getString(R.string.provider_openai_responses)
@@ -2482,7 +2483,7 @@ private fun ApiProviderDialog(
     val showSearchResults = searchQuery.isNotEmpty()
 
     Dialog(onDismissRequest = onDismissRequest) {
-        Surface(
+        SettingsDialogSurface(
                 modifier = Modifier.fillMaxWidth().heightIn(max = 520.dp),
                 shape = MaterialTheme.shapes.extraLarge,
                 tonalElevation = 6.dp,

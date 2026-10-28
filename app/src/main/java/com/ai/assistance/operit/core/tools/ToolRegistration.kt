@@ -54,6 +54,9 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
     ).forEach { name ->
         handler.registerTool(name=name,executor=com.ai.assistance.operit.api.chat.library.MemoryLearningCoordinator::execute)
     }
+    // Hidden: only the skill grader's isolated turn is shown this tool.
+    handler.registerTool(name = com.ai.assistance.operit.api.chat.library.SkillScorer.NAME,
+        executor = com.ai.assistance.operit.api.chat.library.SkillScorer::execute)
 
     // Hidden control-plane tool. It is never added to ordinary model tool prompts; permission
     // review turns expose it explicitly through an isolated per-turn tool override.
@@ -80,6 +83,60 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
         descriptionGenerator = { context.getString(R.string.toolreg_todowrite_desc) },
         executor = { tool -> ChatTodoTool.execute(context, tool) },
     )
+    // Only shown to the model inside an Orbit chat (see OrbitTools.visibility); the executor
+    // checks the calling chat again.
+    handler.registerTool(
+        name = OrbitTools.SET_NAME,
+        descriptionGenerator = { context.getString(R.string.toolreg_orbit_set_name_desc) },
+        executor = { tool -> OrbitTools.executeSetName(context, tool) },
+    )
+    handler.registerTool(
+        name = OrbitTaskTools.NAME,
+        descriptionGenerator = { context.getString(R.string.orbit_tasks_title) },
+        executor = { tool -> OrbitTaskTools.execute(context, tool) },
+    )
+    handler.registerTool(
+        name = com.ai.assistance.operit.features.orbit.OrbitTaskRunner.FINISH,
+        descriptionGenerator = { context.getString(R.string.orbit_task_submit) },
+        executor = { tool -> runBlockingIoPreservingToolRuntimeContext {
+            com.ai.assistance.operit.features.orbit.OrbitTaskRunner.submit(context, tool)
+        } },
+    )
+    handler.registerTool(
+        name = com.ai.assistance.operit.features.orbit.OrbitReviewReader.TOOL,
+        descriptionGenerator = { context.getString(R.string.orbit_review_read_tool) },
+        executor = { tool -> runBlockingIoPreservingToolRuntimeContext {
+            com.ai.assistance.operit.features.orbit.OrbitTaskRunner.read(context, tool)
+        } },
+    )
+    com.ai.assistance.operit.features.orbit.OrbitTaskActionTools.names.forEach { name ->
+        handler.registerTool(name = name, descriptionGenerator = { name }, executor = { tool ->
+            runBlockingIoPreservingToolRuntimeContext {
+                com.ai.assistance.operit.features.orbit.OrbitTaskActionTools.execute(context, tool)
+            }
+        })
+    }
+    OrbitBoardTools.prompts.forEach { prompt ->
+        handler.registerTool(name = prompt.name, executor = { OrbitBoardTools.execute(context, it) })
+    }
+    OrbitExtraTools.specs.forEach { spec ->
+        val stream = spec.stream
+        if (stream == null) {
+            handler.registerTool(name = spec.prompt.name, executor = { spec.run(context, it) })
+        } else {
+            handler.registerTool(name = spec.prompt.name, executor = object : ToolExecutor {
+                override fun invoke(tool: AITool): ToolResult = spec.run(context, tool)
+                // Collected in the tool call's coroutine, so stopping the chat stops the wait.
+                override fun invokeAndStream(tool: AITool): kotlinx.coroutines.flow.Flow<ToolResult> =
+                    kotlinx.coroutines.flow.flow { emit(stream(context, tool)) }
+            })
+        }
+    }
+    OrbitProductTools.prompts.forEach { prompt ->
+        handler.registerTool(name = prompt.name, executor = { OrbitProductTools.execute(context, it) })
+    }
+    handler.registerTool(name = OrbitSoulTools.NAME, executor = { OrbitSoulTools.execute(context, it) })
+    handler.registerTool(name = OrbitSkillTools.NAME, executor = { OrbitSkillTools.execute(context, handler, it) })
 
     // Helper function to wrap UI tool execution with visibility changes
     suspend fun executeUiToolWithVisibility(
@@ -134,7 +191,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
     )
 
     fun isEnglishLanguage(): Boolean {
-        return LocaleUtils.getCurrentLanguage(context).lowercase().startsWith("en")
+        return LocaleUtils.usesEnglishPrompt(context)
     }
 
     fun buildToolErrorResult(tool: AITool, error: String): ToolResult {
@@ -1047,11 +1104,17 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val packageName = tool.parameters.find { it.name == "package_name" }?.value ?: ""
                 s(R.string.toolreg_use_package_desc, packageName)
             },
-            executor = { tool ->
-                val packageName = tool.parameters.find { it.name == "package_name" }?.value ?: ""
-                handler
-                    .getOrCreatePackageManager()
-                    .executeUsePackageTool(tool.name, packageName)
+            executor = object : ToolExecutor {
+                private fun packageName(tool: AITool) = tool.parameters.find { it.name == "package_name" }?.value ?: ""
+
+                override fun invoke(tool: AITool): ToolResult =
+                    handler.getOrCreatePackageManager().executeUsePackageTool(tool.name, packageName(tool))
+
+                // Collected in the tool call's coroutine, so stopping the chat stops a wait for an MCP start.
+                override fun invokeAndStream(tool: AITool): kotlinx.coroutines.flow.Flow<ToolResult> =
+                    kotlinx.coroutines.flow.flow {
+                        emit(handler.getOrCreatePackageManager().executeUsePackageToolSuspending(tool.name, packageName(tool)))
+                    }
             }
     )
 
@@ -1431,6 +1494,52 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
     )
 
     handler.registerTool(
+            name = "browser_mouse_click_xy",
+            descriptionGenerator = { tool ->
+                val x = tool.parameters.find { it.name == "x" }?.value ?: "?"
+                val y = tool.parameters.find { it.name == "y" }?.value ?: "?"
+                "Tap the browser page at screenshot point ($x, $y)"
+            },
+            executor = { tool -> ToolGetter.getBrowserSessionTools(context).invoke(tool) }
+    )
+
+    handler.registerTool(
+            name = "browser_devtools",
+            descriptionGenerator = { tool ->
+                val method = tool.parameters.find { it.name == "method" }?.value ?: ""
+                "Send DevTools command ${method.ifBlank { "(missing method)" }} to the browser page"
+            },
+            executor = { tool -> ToolGetter.getBrowserSessionTools(context).invoke(tool) }
+    )
+
+    handler.registerTool(
+            name = "browser_downloads",
+            descriptionGenerator = { tool ->
+                val action = tool.parameters.find { it.name == "action" }?.value ?: "list"
+                "Manage browser downloads with action ${action.ifBlank { "list" }}"
+            },
+            executor = { tool -> ToolGetter.getBrowserSessionTools(context).invoke(tool) }
+    )
+
+    handler.registerTool(
+            name = "browser_clipboard",
+            descriptionGenerator = { tool ->
+                val action = tool.parameters.find { it.name == "action" }?.value ?: ""
+                "Use the browser clipboard with action ${action.ifBlank { "(missing action)" }}"
+            },
+            executor = { tool -> ToolGetter.getBrowserSessionTools(context).invoke(tool) }
+    )
+
+    handler.registerTool(
+            name = "browser_permissions",
+            descriptionGenerator = { tool ->
+                val action = tool.parameters.find { it.name == "action" }?.value ?: "list"
+                "Manage browser site permissions with action ${action.ifBlank { "list" }}"
+            },
+            executor = { tool -> ToolGetter.getBrowserSessionTools(context).invoke(tool) }
+    )
+
+    handler.registerTool(
             name = "browser_tabs",
             descriptionGenerator = { tool ->
                 val action = tool.parameters.find { it.name == "action" }?.value ?: ""
@@ -1708,28 +1817,28 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
     handler.registerTool(
             name = "start_chat_service",
             descriptionGenerator = { _ -> s(R.string.toolreg_start_chat_service_desc) },
-            executor = { tool -> runBlocking(Dispatchers.IO) { chatManagerTool.startChatService(tool) } }
+            executor = { tool -> runBlockingIoPreservingToolRuntimeContext { chatManagerTool.startChatService(tool) } }
     )
 
     // 停止聊天服务
     handler.registerTool(
             name = "stop_chat_service",
             descriptionGenerator = { _ -> s(R.string.toolreg_stop_chat_service_desc) },
-            executor = { tool -> runBlocking(Dispatchers.IO) { chatManagerTool.stopChatService(tool) } }
+            executor = { tool -> runBlockingIoPreservingToolRuntimeContext { chatManagerTool.stopChatService(tool) } }
     )
 
     // 新建对话
     handler.registerTool(
             name = "create_new_chat",
             descriptionGenerator = { _ -> s(R.string.toolreg_create_new_chat_desc) },
-            executor = { tool -> runBlocking(Dispatchers.IO) { chatManagerTool.createNewChat(tool) } }
+            executor = { tool -> runBlockingIoPreservingToolRuntimeContext { chatManagerTool.createNewChat(tool) } }
     )
 
     // 列出所有对话
     handler.registerTool(
             name = "list_chats",
             descriptionGenerator = { _ -> s(R.string.toolreg_list_chats_desc) },
-            executor = { tool -> runBlocking(Dispatchers.IO) { chatManagerTool.listChats(tool) } }
+            executor = { tool -> runBlockingIoPreservingToolRuntimeContext { chatManagerTool.listChats(tool) } }
     )
 
     // 查找对话
@@ -1739,7 +1848,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val query = tool.parameters.find { it.name == "query" }?.value ?: ""
                 s(R.string.toolreg_find_chat_desc, query)
             },
-            executor = { tool -> runBlocking(Dispatchers.IO) { chatManagerTool.findChat(tool) } }
+            executor = { tool -> runBlockingIoPreservingToolRuntimeContext { chatManagerTool.findChat(tool) } }
     )
 
     // 查询对话输入状态
@@ -1749,7 +1858,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val chatId = tool.parameters.find { it.name == "chat_id" }?.value ?: ""
                 s(R.string.toolreg_agent_status_desc, chatId)
             },
-            executor = { tool -> runBlocking(Dispatchers.IO) { chatManagerTool.agentStatus(tool) } }
+            executor = { tool -> runBlockingIoPreservingToolRuntimeContext { chatManagerTool.agentStatus(tool) } }
     )
 
     // 切换对话
@@ -1759,7 +1868,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val chatId = tool.parameters.find { it.name == "chat_id" }?.value ?: ""
                 s(R.string.toolreg_switch_chat_desc, chatId)
             },
-            executor = { tool -> runBlocking(Dispatchers.IO) { chatManagerTool.switchChat(tool) } }
+            executor = { tool -> runBlockingIoPreservingToolRuntimeContext { chatManagerTool.switchChat(tool) } }
     )
 
     // 更新对话标题
@@ -1769,7 +1878,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val chatId = tool.parameters.find { it.name == "chat_id" }?.value ?: ""
                 s(R.string.toolreg_update_chat_title_desc, chatId)
             },
-            executor = { tool -> runBlocking(Dispatchers.IO) { chatManagerTool.updateChatTitle(tool) } }
+            executor = { tool -> runBlockingIoPreservingToolRuntimeContext { chatManagerTool.updateChatTitle(tool) } }
     )
 
     // 删除对话
@@ -1779,7 +1888,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val chatId = tool.parameters.find { it.name == "chat_id" }?.value ?: ""
                 s(R.string.toolreg_delete_chat_desc, chatId)
             },
-            executor = { tool -> runBlocking(Dispatchers.IO) { chatManagerTool.deleteChat(tool) } }
+            executor = { tool -> runBlockingIoPreservingToolRuntimeContext { chatManagerTool.deleteChat(tool) } }
     )
 
     // 发送消息给AI
@@ -1790,7 +1899,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val preview = if (message.length > 30) "${message.take(30)}..." else message
                 s(R.string.toolreg_send_message_to_ai_desc, preview)
             },
-            executor = { tool -> runBlocking(Dispatchers.IO) { chatManagerTool.sendMessageToAI(tool) } }
+            executor = { tool -> runBlockingIoPreservingToolRuntimeContext { chatManagerTool.sendMessageToAI(tool) } }
     )
 
     handler.registerTool(
@@ -1803,7 +1912,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
             executor =
                     object : ToolExecutor {
                         override fun invoke(tool: AITool): ToolResult {
-                            return runBlocking(Dispatchers.IO) { chatManagerTool.sendMessageToAI(tool) }
+                            return runBlockingIoPreservingToolRuntimeContext { chatManagerTool.sendMessageToAI(tool) }
                         }
 
                         override fun invokeAndStream(
@@ -1820,7 +1929,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val functionType = tool.parameters.find { it.name == "function_type" }?.value ?: ""
                 s(R.string.toolreg_call_chat_model_desc, functionType)
             },
-            executor = { tool -> runBlocking(Dispatchers.IO) { chatManagerTool.callChatModel(tool) } }
+            executor = { tool -> runBlockingIoPreservingToolRuntimeContext { chatManagerTool.callChatModel(tool) } }
     )
 
 
@@ -1828,7 +1937,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
     handler.registerTool(
             name = "list_character_cards",
             descriptionGenerator = { _ -> s(R.string. toolreg_list_character_cards_desc) },
-            executor = { tool -> runBlocking(Dispatchers.IO) { chatManagerTool.listCharacterCards(tool) } }
+            executor = { tool -> runBlockingIoPreservingToolRuntimeContext { chatManagerTool.listCharacterCards(tool) } }
     )
 
     handler.registerTool(
@@ -1841,7 +1950,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val limitInfo = if (!limit.isNullOrBlank()) " ($limit)" else ""
                 s(R.string.toolreg_get_chat_messages_desc, chatId, orderInfo, limitInfo)
             },
-            executor = { tool -> runBlocking(Dispatchers.IO) { chatManagerTool.getChatMessages(tool) } }
+            executor = { tool -> runBlockingIoPreservingToolRuntimeContext { chatManagerTool.getChatMessages(tool) } }
     )
 
     handler.registerTool(
@@ -1855,7 +1964,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val rangeInfo = if (!start.isNullOrBlank() && !end.isNullOrBlank()) " ($start-$end)" else ""
                 s(R.string.toolreg_get_chat_messages_desc, chatId, orderInfo, rangeInfo)
             },
-            executor = { tool -> runBlocking(Dispatchers.IO) { chatManagerTool.getChatMessagesRange(tool) } }
+            executor = { tool -> runBlockingIoPreservingToolRuntimeContext { chatManagerTool.getChatMessagesRange(tool) } }
     )
 
     // 文件系统工具
@@ -2737,7 +2846,14 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                     append(s(R.string.toolreg_run_ui_subagent_hint))
                 }
             },
-            executor = { tool -> runBlocking(Dispatchers.IO) { uiTools.runUiSubAgent(tool) } }
+            executor = { tool ->
+                // The phone-control subagent's model calls are the calling Orbit's, like its turn's.
+                runBlockingIoPreservingToolRuntimeContext {
+                    kotlinx.coroutines.withContext(
+                        com.ai.assistance.operit.features.orbit.OrbitQuota.toolCallContext(context)
+                    ) { uiTools.runUiSubAgent(tool) }
+                }
+            }
     )
 
     // 在输入框中设置文本

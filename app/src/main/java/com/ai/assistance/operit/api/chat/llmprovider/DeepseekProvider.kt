@@ -1,6 +1,7 @@
 package com.ai.assistance.operit.api.chat.llmprovider
 
 import android.content.Context
+import com.ai.assistance.operit.core.chat.LlmBodyStages
 import com.ai.assistance.operit.core.chat.hooks.PromptTurn
 import com.ai.assistance.operit.core.chat.hooks.PromptTurnKind
 import com.ai.assistance.operit.util.AppLogger
@@ -140,13 +141,16 @@ class DeepseekProvider(
                 toolsJson = tools.toString()
             }
         }
+        LlmBodyStages.lap("工具定义")
 
         val providerReadyHistory = prepareHistoryForProvider(chatHistory, effectiveEnableToolCall)
+        LlmBodyStages.lap("历史整理")
         calculateAndStoreInputTokens(
             providerReadyHistory,
             toolsJson,
             preserveThinkInHistory = true
         )
+        LlmBodyStages.lap("token计数")
 
         // 使用特殊的消息构建方法（支持reasoning_content）
         val messagesArray =
@@ -155,6 +159,7 @@ class DeepseekProvider(
                 providerReadyHistory,
                 effectiveEnableToolCall
             )
+        LlmBodyStages.lap("消息组装")
         jsonObject.put("messages", messagesArray)
 
         // 记录最终的请求体（省略过长的 tools 字段），可用 AppLogger.logRequestBodies 关闭
@@ -162,7 +167,7 @@ class DeepseekProvider(
             jsonObject
         }
 
-        return createJsonRequestBody(jsonObject.toString())
+        return createJsonRequestBody(jsonObject)
     }
 
     /**

@@ -33,6 +33,7 @@ import com.ai.assistance.operit.util.MediaPoolManager
 import com.ai.assistance.operit.util.ChatUtils
 import com.ai.assistance.operit.util.ChatMarkupRegex
 import com.ai.assistance.operit.util.LocaleUtils
+import com.ai.assistance.operit.util.QuoteExcerpt
 import com.ai.assistance.operit.util.stream.SharedStream
 import com.ai.assistance.operit.util.stream.share
 import com.ai.assistance.operit.util.stream.shareRevisable
@@ -110,6 +111,31 @@ object AIMessageManager {
         apiPreferences = ApiPreferences.getInstance(context)
     }
 
+    // What is quoted when the user replies to a message: only the words said, without thinking,
+    // tool calls or an earlier quote, and a long message cut down to its start and end.
+    private val replyQuoteBlocks = listOf(
+        ChatMarkupRegex.replyToTag,
+        ChatMarkupRegex.toolOrToolResultBlock,
+        ChatMarkupRegex.toolSelfClosingTag,
+        ChatMarkupRegex.toolResultSelfClosingTag,
+        ChatMarkupRegex.statusTag,
+        ChatMarkupRegex.statusSelfClosingTag,
+        ChatMarkupRegex.emotionTag,
+    )
+    private val anyTag = Regex("<[^>]*>")
+    private val cardFence = Regex("```(?:a2ui(?:-ref)?|orbit-card)[^\\n]*\\n[\\s\\S]*?(?:```|$)")
+
+    private fun replyQuote(message: ChatMessage): String {
+        var text = ChatUtils.removeThinkingContent(message.content)
+        text = ChatMarkupRegex.removeGeminiThoughtSignatureMeta(text)
+        text = ChatMarkupRegex.removeOpenAiResponsesReasoningMeta(text)
+        replyQuoteBlocks.forEach { text = text.replace(it, "") }
+        // A card shows as a word in the quote, never as its code.
+        text = text.replace(cardFence, "[" + context.getString(R.string.ai_message_quoted_card) + "]")
+        // The chat reads the quote back out of the reply tag, which ends at the first '<'.
+        return QuoteExcerpt.of(text.replace(anyTag, "")).replace('<', '＜')
+    }
+
     /**
      * 构建用户消息的完整内容，包括附件和记忆标签。
      *
@@ -166,12 +192,12 @@ object AIMessageManager {
         // 1. 构建回复标签（如果有回复消息）
         val replyTagStartTime = messageTimingNow()
         val replyTag = replyToMessage?.let { message ->
-            val cleanContent = message.content
-                .replace(Regex("<[^>]*>"), "") // 移除XML标签
-                .trim()
-                .let { if (it.length > 100) it.take(100) + "..." else it }
+            val cleanContent = replyQuote(message)
 
-            val roleName = message.roleName ?: if (message.sender == "ai") "AI" else context.getString(R.string.ai_message_user)
+            // Messages Orbit posts on its own may carry no name; an empty sender would not be read back.
+            val roleName = (message.roleName?.takeIf { it.isNotBlank() }
+                ?: if (message.sender == "ai") "AI" else context.getString(R.string.ai_message_user))
+                .replace("\"", "'")
             val instruction = context.getString(R.string.ai_message_replying_to_previous)
             "<reply_to sender=\"${roleName}\" timestamp=\"${message.timestamp}\">${instruction}\"${cleanContent}\"</reply_to>"
         } ?: ""
@@ -360,6 +386,7 @@ object AIMessageManager {
         notifyReplyOverride: Boolean? = null,
         chatModelConfigIdOverride: String? = null,
         chatModelIndexOverride: Int? = null,
+        chatReasoningLevelOverride: Int? = null,
         memorySpaceIdOverride: String? = null,
         toolTimingScopeId: String? = null,
         disableWarning: Boolean = false,
@@ -371,6 +398,7 @@ object AIMessageManager {
         systemPromptOverride: String? = null,
         collaborationHistory: List<com.ai.assistance.operit.core.chat.hooks.PromptTurn> = emptyList(),
         collaborationInput: Boolean = false,
+        perfStart: LlmPerfStart? = null,
     ): SharedStream<String> {
         val totalStartTime = messageTimingNow()
         val chatKey = chatId ?: DEFAULT_CHAT_KEY
@@ -379,7 +407,7 @@ object AIMessageManager {
 
         val buildMemoryStartTime = messageTimingNow()
         val memory = getMemoryFromMessages(
-            messages = chatHistory,
+            messages = orbitHistoryForModel(chatId, chatHistory),
             splitByRole = splitHistoryByRole,
             targetRoleName = currentRoleName,
             groupOrchestrationMode = groupOrchestrationMode
@@ -467,6 +495,7 @@ object AIMessageManager {
                     chatId = chatId,
                     chatHistory = collaborationHistory + memoryForRequest,
                     collaborationInput = collaborationInput,
+                    perfStart = perfStart,
                     workspacePath = workspacePath,
                     workspaceEnv = workspaceEnv,
                     functionType = functionType,
@@ -491,6 +520,7 @@ object AIMessageManager {
                     notifyReplyOverride = notifyReplyOverride,
                     chatModelConfigIdOverride = chatModelConfigIdOverride,
                     chatModelIndexOverride = chatModelIndexOverride,
+                    chatReasoningLevelOverride = chatReasoningLevelOverride,
                     memorySpaceIdOverride = memorySpaceIdOverride,
                     toolTimingScopeId = toolTimingScopeId,
                     stream = enableStream,
@@ -552,9 +582,9 @@ object AIMessageManager {
             .getInstance(context).contextSnapshot(chatId)
         val memory =
             getMemoryFromMessages(
-                messages = collaboration?.historyCutoff?.let { cutoff ->
+                messages = orbitHistoryForModel(chatId, collaboration?.historyCutoff?.let { cutoff ->
                     chatHistory.filter { it.timestamp > cutoff }
-                } ?: chatHistory,
+                } ?: chatHistory),
                 splitByRole = splitHistoryByRole,
                 targetRoleName = currentRoleName,
                 groupOrchestrationMode = groupOrchestrationMode
@@ -658,7 +688,8 @@ object AIMessageManager {
         messages: List<ChatMessage>,
         autoContinue: Boolean = false,
         isGroupChat: Boolean = false,
-        summaryConfig: ConversationSummaryConfig = ConversationSummaryConfig()
+        summaryConfig: ConversationSummaryConfig = ConversationSummaryConfig(),
+        chatId: String? = null
     ): ChatMessage? {
         val lastSummaryIndex = messages.indexOfLast { it.sender == "summary" }
         val previousSummary = if (lastSummaryIndex != -1) messages[lastSummaryIndex].content.trim() else null
@@ -674,8 +705,27 @@ object AIMessageManager {
             return null
         }
 
+        // An Orbit chat is summarized by Orbit's own template (Muse's compaction), and the summary
+        // is followed by a note that the next reply checks state first.
+        val orbitChat = chatId != null && try {
+            com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context).current().orbitForChat(chatId) != null
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            false
+        }
+        val orbitEnglish = LocaleUtils.usesEnglishPrompt(context)
+        val effectiveSummaryConfig =
+            if (orbitChat) com.ai.assistance.operit.features.orbit.OrbitSummary.config(summaryConfig, orbitEnglish) else summaryConfig
+        val orbitTime = java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.US)
+
         val memoryTagRegex = Regex("<memory>.*?</memory>", RegexOption.DOT_MATCHES_ALL)
         val conversationReviewEntries = mutableListOf<Pair<String, String>>()
+        // The summary is shown in the chat, so a card in it reads in the user's language.
+        val cardReviewLabel: (String) -> String = { text ->
+            if (text.isEmpty()) context.getString(R.string.dynamic_ui_card_review_empty)
+            else context.getString(R.string.dynamic_ui_card_review, text)
+        }
         fun normalizeForReview(text: String): String {
             return text
                 .replace("\r\n", "\n")
@@ -963,7 +1013,8 @@ object AIMessageManager {
                         )
                     } else {
                         // AI 消息需要先移除 thinking 内容，再移除媒体链接
-                        val withoutThinking = com.ai.assistance.operit.ui.common.dynamicui.CardTranscript.forModel(ChatUtils.removeThinkingContent(message.content))
+                        val withoutThinking = com.ai.assistance.operit.ui.common.dynamicui.CardTranscript.forReview(
+                            ChatUtils.removeThinkingContent(message.content), label = cardReviewLabel)
                         stripMediaLinksForAssistant(withoutThinking)
                     }
 
@@ -997,7 +1048,8 @@ object AIMessageManager {
                         message.content.replace(memoryTagRegex, "").trim()
                     )
                 } else {
-                    stripMediaLinksForAssistant(com.ai.assistance.operit.ui.common.dynamicui.CardTranscript.forModel(message.content))
+                    stripMediaLinksForAssistant(com.ai.assistance.operit.ui.common.dynamicui.CardTranscript.forReview(
+                        message.content, label = cardReviewLabel))
                 }
                 if (cleanedContent.isNotBlank()) {
                     val displayContent =
@@ -1011,17 +1063,23 @@ object AIMessageManager {
                         }
                     conversationReviewEntries.add(speakerLabel to displayContent)
                 }
-                Pair(role, "#${index + 1}: $cleanedContent")
+                // In an Orbit chat the date goes with the number, so the summary can point back to the message.
+                val label = if (orbitChat) "#${index + 1} ${orbitTime.format(java.util.Date(message.timestamp))}" else "#${index + 1}"
+                Pair(role, "$label: $cleanedContent")
             }
         }
 
         return try {
             AppLogger.d(TAG, "开始使用AI生成对话总结：总结 ${messagesToSummarize.size} 条消息")
+            // The target chat owns the model route and the Orbit usage tag, even when a caller
+            // supplied the shared service (manual, automatic and insert-at-message summaries).
+            val summaryService = chatId?.let { EnhancedAIService.getChatInstance(context, it) }
+                ?: enhancedAiService
             val summary =
-                enhancedAiService.generateSummary(
+                summaryService.generateSummary(
                     conversationToSummarize,
                     previousSummary,
-                    summaryConfig
+                    effectiveSummaryConfig
                 )
             AppLogger.d(TAG, "AI生成总结完成: ${summary.take(50)}...")
 
@@ -1031,8 +1089,8 @@ object AIMessageManager {
             } else {
                 // 如果是自动续写，在总结消息尾部添加续写提示
                 val trimmedSummary = summary.trim()
-                val useEnglish = LocaleUtils.getCurrentLanguage(context).lowercase().startsWith("en")
-                val packageWarmupBlock = buildPackageWarmupBlock(messagesToSummarize, useEnglish)
+                val useEnglish = LocaleUtils.usesEnglishPrompt(context)
+                val packageWarmupBlock = buildPackageWarmupBlock(messagesToSummarize, useEnglish, chatId)
                 val summaryWithQuotes = buildString {
                     append(trimmedSummary)
                     if (summaryConfig.dialogueReviewEnabled && conversationReviewEntries.isNotEmpty()) {
@@ -1051,6 +1109,10 @@ object AIMessageManager {
                     if (packageWarmupBlock.isNotBlank()) {
                         append("\n\n")
                         append(packageWarmupBlock)
+                    }
+                    if (orbitChat) {
+                        append("\n\n")
+                        append(com.ai.assistance.operit.features.orbit.OrbitSummary.reconcileNote(orbitEnglish))
                     }
                 }.trimEnd()
 
@@ -1078,7 +1140,8 @@ object AIMessageManager {
 
     private suspend fun buildPackageWarmupBlock(
         messagesToSummarize: List<ChatMessage>,
-        useEnglish: Boolean
+        useEnglish: Boolean,
+        chatId: String?
     ): String {
         val title = context.getString(R.string.ai_message_package_warmup_title)
         val topPackages = extractTopPackageUsages(messagesToSummarize, limit = 2)
@@ -1107,7 +1170,7 @@ object AIMessageManager {
                 appendLine()
                 topPackages.forEachIndexed { index, stat ->
                     val resultText =
-                        runCatching { packageManager.usePackage(stat.packageName).trim() }
+                        runCatching { packageManager.usePackage(stat.packageName, chatId).trim() }
                             .getOrElse { throwable ->
                                 if (useEnglish) {
                                     "use_package failed: ${throwable.message ?: "unknown error"}"
@@ -1299,9 +1362,22 @@ object AIMessageManager {
         return false
     }
 
+    /** In an Orbit chat, the parts of a split reply go back to the model as one reply with its breaks. */
+    private suspend fun orbitHistoryForModel(chatId: String?, messages: List<ChatMessage>): List<ChatMessage> {
+        if (chatId.isNullOrBlank() || messages.size < 2) return messages
+        val prefs = com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context)
+        val orbit = (prefs.loadedSnapshot() ?: prefs.current()).orbitForChat(chatId)
+        if (orbit?.talkChatIds?.contains(chatId) != true) return messages
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            com.ai.assistance.operit.services.core.OrbitMessageBreaks.rejoin(messages)
+        }
+    }
+
     /**
      * 从完整的聊天记录中提取用于AI上下文的“记忆”。
      * 这会获取上次总结之后的所有消息。
+     *
+     * Orbit 聊天里，一次回复拆成的几条消息会先用 `<message_break/>` 拼回去，见 [orbitHistoryForModel]。
      *
      * @param messages 完整的聊天记录。
      * @return 一个Pair列表，包含角色和内容，用于AI请求。
@@ -1399,7 +1475,7 @@ object AIMessageManager {
         } else {
             // 其他角色的消息：转换为 user 消息，添加角色标签
             val roleLabel = if (messageRoleName.isNotBlank()) messageRoleName else "unknown"
-            val bridgedContent = removeStatusTags(com.ai.assistance.operit.ui.common.dynamicui.CardTranscript.forModel(cleanedContent))
+            val bridgedContent = removeStatusTags(com.ai.assistance.operit.ui.common.dynamicui.CardTranscript.forReview(cleanedContent))
             if (bridgedContent.isBlank()) {
                 null
             } else {

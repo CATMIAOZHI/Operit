@@ -204,7 +204,8 @@ class StandardTerminalCommandExecutor(private val context: Context) {
                     }
 
                     val fullOutput = completionOutput?.takeIf { it.isNotEmpty() } ?: events.joinToString("")
-                    AppLogger.d(TAG, "Command output collected: '$fullOutput', exitCode: $exitCode")
+                    // Only the size: output can carry a password or key loaded into the terminal, and is masked later.
+                    AppLogger.d(TAG, "Command output collected: ${fullOutput.length} chars, exitCode: $exitCode")
                     val errorMessage =
                             when {
                                 didTimeout -> commandTimeoutMessage(terminal, sessionId, timeout)

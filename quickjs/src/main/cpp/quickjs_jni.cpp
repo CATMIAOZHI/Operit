@@ -470,12 +470,38 @@ public:
         while (executed < max_jobs) {
             JSContext* current_context = nullptr;
             int status = JS_ExecutePendingJob(runtime_, &current_context);
-            if (status <= 0) {
+            if (status == 0) {
                 break;
             }
             executed += 1;
+            if (status < 0 && current_context != nullptr) {
+                // A failed job must not stop the drain: the rest of the queue would otherwise
+                // run later, inside another entry.
+                JS_FreeValue(current_context, JS_GetException(current_context));
+            }
         }
         return executed;
+    }
+
+    // Throws the remaining queued jobs away by running them with the interrupt flag set, so each
+    // fails at its first interrupt check. Returns true when the queue ended up empty.
+    bool DiscardPendingJobs(int max_jobs) {
+        std::lock_guard<std::mutex> guard(lock_);
+        interrupted_.store(true);
+        int executed = 0;
+        while (executed < max_jobs && JS_IsJobPending(runtime_)) {
+            JSContext* current_context = nullptr;
+            int status = JS_ExecutePendingJob(runtime_, &current_context);
+            if (status == 0) {
+                break;
+            }
+            executed += 1;
+            if (status < 0 && current_context != nullptr) {
+                JS_FreeValue(current_context, JS_GetException(current_context));
+            }
+        }
+        interrupted_.store(false);
+        return !JS_IsJobPending(runtime_);
     }
 
     void Interrupt() {
@@ -849,6 +875,20 @@ Java_com_ai_assistance_operit_core_tools_javascript_QuickJsNativeBridge_nativeEx
         return 0;
     }
     return vm->ExecutePendingJobs(max_jobs);
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_ai_assistance_operit_core_tools_javascript_QuickJsNativeBridge_nativeDiscardPendingJobs(
+    JNIEnv*,
+    jclass,
+    jlong handle,
+    jint max_jobs
+) {
+    auto* vm = FromHandle(handle);
+    if (vm == nullptr || max_jobs <= 0) {
+        return JNI_TRUE;
+    }
+    return vm->DiscardPendingJobs(max_jobs) ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT void JNICALL

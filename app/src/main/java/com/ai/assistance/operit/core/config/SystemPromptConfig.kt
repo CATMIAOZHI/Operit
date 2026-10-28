@@ -138,6 +138,9 @@ PACKAGE SYSTEM
             toolVisibility = toolVisibility,
             toolOrder = toolOrder,
             hookMetadata = hookMetadata,
+            collaborationLimits = context?.let {
+                com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(it).limitsFor(chatId)
+            },
             dispatchToolPromptComposeHooks = dispatchToolPromptComposeHooks
         )
     }
@@ -178,6 +181,9 @@ PACKAGE SYSTEM
             toolVisibility = toolVisibility,
             toolOrder = toolOrder,
             hookMetadata = hookMetadata,
+            collaborationLimits = context?.let {
+                com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(it).limitsFor(chatId)
+            },
             dispatchToolPromptComposeHooks = dispatchToolPromptComposeHooks
         )
     }
@@ -314,24 +320,40 @@ AVAILABLE_TOOLS_SECTION""".trimIndent()
           hookMetadata: Map<String, Any?> = emptyMap(),
           dispatchToolPromptComposeHooks: (PromptHookContext) -> PromptHookContext = PromptHookRegistry::dispatchToolPromptComposeHooks
   ): String {
-    val enabledPackages = packageManager.getEnabledPackageNames()
+    // An Orbit chat lists the Orbit's own packages instead of the main app's.
+    val enabledPackages = com.ai.assistance.operit.features.orbit.OrbitPackages
+        .scopeFor(context, packageManager, chatId)?.toList()
+        ?: packageManager.getEnabledPackageNames()
     val packageSystemVisible =
         toolExposureMode == ToolExposureMode.FULL && enableTools && (toolVisibility["use_package"] ?: true)
-    val mcpServers = packageManager.getAvailableServerPackages().filterKeys { serverName ->
-        allowedMcpServerNames?.contains(serverName) ?: true
-    }
+    // An Orbit lists the servers it has switched on, started or not; use_package starts one.
+    val mcpServers: Map<String, String> =
+        com.ai.assistance.operit.features.orbit.OrbitMcp.promptServers(context, chatId)
+            ?: packageManager.getAvailableServerPackages().filterKeys { serverName ->
+                allowedMcpServerNames?.contains(serverName) ?: true
+            }.mapValues { it.value.description }
     suspend fun loadSkillCatalog(): String = org.json.JSONObject(try {
-        SkillRepository.getInstance(
-            com.ai.assistance.operit.core.application.OperitApplication.instance.applicationContext
-        ).getAiVisibleSkillPackages().mapValues { skillIndexDescription(it.value.description) }
+        SkillRepository.forChat(context, chatId)
+            .getAiVisibleSkillPackages().mapValues { skillIndexDescription(it.value.description) }
     } catch (_: Exception) {
         emptyMap<String,String>()
     }).toString()
     val catalog = org.json.JSONObject(if(chatId.isNullOrBlank()) loadSkillCatalog()
-        else com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository(context,chatId)
-            .getOrPut("skill_catalog") { loadSkillCatalog() })
-    val skillPackages = catalog.keys().asSequence()
+        else com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository(context,chatId).let { snapshot ->
+            val owner = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context,chatId)?.id
+            snapshot.bindMemoryScope(owner ?: "global", owner?.let {
+                com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.promptRevision(context, it)
+            }.orEmpty())
+            snapshot.getOrPut("skill_catalog") { loadSkillCatalog() }
+        })
+    val allSkillPackages = catalog.keys().asSequence()
         .filter { allowedSkillNames?.contains(it) ?: true }.sorted().associateWith { catalog.getString(it) }
+    val orbitSkills = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context, chatId) != null
+    val skillPackages = if (orbitSkills) {
+        com.ai.assistance.operit.features.orbit.OrbitSkillCatalog.page(allSkillPackages,
+            limit = com.ai.assistance.operit.features.orbit.OrbitSkillCatalog.PREVIEW_SIZE)
+            .entries.associate { it.name to it.description }
+    } else allSkillPackages
 
     // Build the available packages section
     val packagesSection = StringBuilder()
@@ -365,8 +387,8 @@ AVAILABLE_TOOLS_SECTION""".trimIndent()
       }
 
       // List available MCP servers as regular packages
-      for ((serverName, serverConfig) in mcpServers) {
-        packagesSection.appendLine("- $serverName : ${serverConfig.description}")
+      for ((serverName, description) in mcpServers) {
+        packagesSection.appendLine("- $serverName : $description")
       }
 
       // List available Skills as regular packages
@@ -382,6 +404,9 @@ AVAILABLE_TOOLS_SECTION""".trimIndent()
     }
 
     if (packageSystemVisible) {
+      if (orbitSkills) {
+        packagesSection.appendLine("Skill preview is limited to 12 entries. Use orbit_skills to search the live skill catalog by task keywords; load only relevant skills with use_package. Skills do not grant additional permissions.")
+      }
       // Information about using packages
       packagesSection.appendLine()
       packagesSection.appendLine("To use a package:")
@@ -487,8 +512,15 @@ AVAILABLE_TOOLS_SECTION""".trimIndent()
                 .replace("PACKAGE_SYSTEM_GUIDELINES_SECTION", if (packageSystemVisible) packageGuidelines else "")
                 .replace("AVAILABLE_TOOLS_SECTION", "")
         } else {
+            // Orbit reports results when the work is done, not after every tool, so its chats drop
+            // the "explain each result" line.
+            val xmlUsage = (if (useEnglish) TOOL_USAGE_GUIDELINES_EN else TOOL_USAGE_GUIDELINES_CN).let {
+                if (!orbitSkills) it
+                else it.replace(" After using each tool, clearly explain the execution results and suggest the next steps.", "")
+                    .replace("使用每个工具后，清楚地解释执行结果并建议下一步。", "")
+            }
             prompt = prompt
-                .replace("TOOL_USAGE_GUIDELINES_SECTION", executionGuidelines + "\n" + if (useEnglish) TOOL_USAGE_GUIDELINES_EN else TOOL_USAGE_GUIDELINES_CN)
+                .replace("TOOL_USAGE_GUIDELINES_SECTION", executionGuidelines + "\n" + xmlUsage)
                 .replace(
                     "PACKAGE_SYSTEM_GUIDELINES_SECTION",
                     if (packageSystemVisible) {

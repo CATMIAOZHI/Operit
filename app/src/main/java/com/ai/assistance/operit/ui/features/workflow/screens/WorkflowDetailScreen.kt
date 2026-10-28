@@ -63,7 +63,7 @@ import java.util.Date
 import java.util.Locale
 
 private val NON_SELECTABLE_WORKFLOW_TOOL_NAMES =
-    setOf("package_proxy", "proxy", "search", "todowrite")
+    setOf("package_proxy", "proxy", "search", "todowrite", "orbit_set_name")
 
 internal fun filterWorkflowSelectableToolNames(toolNames: List<String>): List<String> =
     toolNames.filterNot(NON_SELECTABLE_WORKFLOW_TOOL_NAMES::contains)

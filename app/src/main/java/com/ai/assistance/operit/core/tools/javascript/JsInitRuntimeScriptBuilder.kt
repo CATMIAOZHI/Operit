@@ -458,13 +458,32 @@ private fun buildRuntimeToolCallScript(): String {
                 return '__operit_tool_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
             }
 
+            // Browser tools run on another thread and pick the Orbit's own tabs and logins from the
+            // calling chat. Every raw dispatch carries the host-filled chat ID, overriding whatever
+            // the script passed, so no package can borrow another space's tabs by omission.
+            // Covers the built-in tools (browser_tabs), the browser package (browser:tabs, or type
+            // "browser" with name "tabs"), with the same trimming the native side applies.
+            function withHostChatForBrowser(type, name, params) {
+                var cleanType = String(type || '').trim();
+                var cleanName = String(name || '').trim();
+                var fullName = cleanType && cleanType !== 'default' ? cleanType + ':' + cleanName : cleanName;
+                if (!/(?:^|:)browser_/.test(fullName) && !/^browser:/.test(fullName)) return params;
+                delete params.__operit_package_chat_id;
+                var runtime = root && root.__operit_call_runtime_ref;
+                var chatId = runtime && typeof runtime.getChatId === 'function' ? runtime.getChatId() : undefined;
+                if (chatId !== undefined && chatId !== null && String(chatId).trim()) {
+                    params.__operit_package_chat_id = String(chatId).trim();
+                }
+                return params;
+            }
+
             function toolCall() {
                 var rawArgs = arguments;
                 return new Promise(function(resolve, reject) {
                     try {
                         var parsed = parseToolCallArguments(rawArgs);
                         // Versioned ToolPkg facades validate the manifest API before this raw dispatch.
-                        var nativeParams = parsed.params || {};
+                        var nativeParams = withHostChatForBrowser(parsed.type, parsed.name, parsed.params || {});
                         var callbackId = nextToolCallbackId();
                         var intermediateCallbackId =
                             parsed.options && parsed.options.onIntermediateResult

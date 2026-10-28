@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="orbit_chats_pin">置顶</string>
+    <string name="orbit_chats_unpin">取消置顶</string>
+    <string name="orbit_chats_pinned">已置顶</string>
+    <string name="orbit_chats_archive">归档</string>
+    <string name="orbit_chats_unarchive">取消归档</string>
+    <string name="orbit_chats_archived_open">查看已归档的侧聊</string>
+    <string name="orbit_chats_archived_title">已归档的侧聊</string>
+    <string name="orbit_chats_archived_empty">没有归档的侧聊</string>
+    <string name="orbit_chats_archived_empty_hint">长按侧聊选「归档」，它就会收到这里，聊天记录都会保留。</string>
+    <string name="orbit_chats_unarchive_limit">已经有 %1$d 个侧聊了，先归档或删除一个再取消归档。</string>
+    <string name="orbit_chats_limit_all">侧聊加上归档的已经有 %1$d 个了，删掉一些再新建。</string>
+    <string name="orbit_search_title">搜索</string>
+    <string name="orbit_search_hint">搜索主聊天和侧聊里说过的话</string>
+    <string name="orbit_search_empty">没有找到相关的聊天记录</string>
+    <string name="orbit_search_failed">搜索没成功，请稍后再试</string>
+    <string name="orbit_search_clear">清空</string>
+    <string name="orbit_search_close">关闭搜索</string>
+    <string name="orbit_search_today">今天</string>
+    <string name="orbit_search_yesterday">昨天</string>
+    <string name="orbit_search_more_failed">没能加载更多结果</string>
+    <string name="orbit_search_retry">重试</string>
+</resources>

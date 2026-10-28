@@ -61,29 +61,60 @@ class CardDeliveryTest {
             assertEquals("card-2", CardDelivery.register("short", "two"))
             assertEquals("two", CardDelivery.resolve("short", " Card-2 "))
             val decoder = CardReferenceExpander({ CardDelivery.resolve("short", it) })
-            assertEquals("```a2ui\none\n```\n", decoder.push("```a2ui-ref\ncard-1\n```\n"))
+            assertEquals("```a2ui card-1\none\n```\n", decoder.push("```a2ui-ref\ncard-1\n```\n"))
             assertEquals("```a2ui-ref\ncard-3\n```\n", decoder.push("```a2ui-ref\ncard-3\n```\n"))
             assertNull(CardDelivery.canonical("short", "card-0"))
         } finally { CardDelivery.end("short") }
     }
-    @Test fun modelHistoryKeepsVisibleCardTextOnly() {
+    @Test fun modelHistoryGivesBackTheReferenceTheModelWrote() {
+        CardDelivery.begin("history")
+        try {
+            CardDelivery.register("history", "one")
+            CardDelivery.register("history", "two")
+            val written = "给你一张：\n```a2ui-ref\ncard-2\n```\n然后\n```a2ui-ref\ncard-1\n```\n"
+            val decoder = CardReferenceExpander({ CardDelivery.resolve("history", it) })
+            val stored = written.chunked(3).joinToString("") { decoder.push(it) } + decoder.finish()
+            assertEquals("给你一张：\n```a2ui card-2\ntwo\n```\n然后\n```a2ui card-1\none\n```\n", stored)
+            // The model sees exactly what it wrote, never an app-written line in its own words.
+            assertEquals(written, CardTranscript.forModel(stored))
+        } finally { CardDelivery.end("history") }
+        // Cards stored before the name was kept are numbered in order, like a turn names them.
+        assertEquals("a\n```a2ui-ref\ncard-1\n```\nb\n```a2ui-ref\ncard-2\n```",
+            CardTranscript.forModel("a\n```a2ui\nX\n```\nb\n```a2ui\nY\n```"))
+        assertSame("plain", CardTranscript.forModel("plain"))
+    }
+    @Test fun reviewKeepsVisibleCardTextOnly() {
         val document = listOf(
             """{"version":"v0.9","createSurface":{"surfaceId":"card","catalogId":"x"}}""",
             """{"version":"v0.9","updateComponents":{"surfaceId":"card","components":[{"id":"m1","component":"Display","text":"20","label":"Issues"},{"id":"t","component":"Table","columns":["#","Title"],"rows":[["#1","Crash"],["#2","Hang"]],"columnWidths":[64,200]},{"id":"root","component":"Column","children":["m1","t"]}]}}""",
         ).joinToString("\n")
-        val message = "Before\n```a2ui\n$document\n```\nAfter\n```a2ui-ref\ncard-9\n```"
+        val message = "Before\n```a2ui card-1\n$document\n```\nAfter\n```a2ui-ref\ncard-9\n```"
         assertEquals(
             "Before\n[Dynamic UI card shown to the user here. Visible content: 20 Issues; #, Title #1, Crash | #2, Hang]\nAfter\n```a2ui-ref\ncard-9\n```",
-            CardTranscript.forModel(message),
+            CardTranscript.forReview(message),
         )
-        assertSame("plain", CardTranscript.forModel("plain"))
+        assertSame("plain", CardTranscript.forReview("plain"))
     }
     @Test fun htmlCardsKeepTheirTextAndLearningKeepsTheWholeCard() {
         val html = """{"version":"v0.9","updateComponents":{"surfaceId":"c","components":[{"id":"root","component":"Html","html":"<style>.a{color:red}</style><h1>Glass</h1><script>alert(1)</script><p>Live <b>preview</b></p>","css":".b{}"}]}}"""
         assertEquals("[Dynamic UI card shown to the user here. Visible content: Glass Live preview]",
-            CardTranscript.forModel("```a2ui\n$html\n```"))
+            CardTranscript.forReview("```a2ui\n$html\n```"))
         val long = """{"version":"v0.9","updateComponents":{"surfaceId":"c","components":[{"id":"root","component":"Text","text":"${"x".repeat(3000)}"}]}}"""
-        assertTrue(CardTranscript.forModel("```a2ui\n$long\n```").endsWith("x…]"))
-        assertTrue(CardTranscript.forModel("```a2ui\n$long\n```", Int.MAX_VALUE).endsWith("x".repeat(3000) + "]"))
+        assertTrue(CardTranscript.forReview("```a2ui\n$long\n```").endsWith("x…]"))
+        assertTrue(CardTranscript.forReview("```a2ui\n$long\n```", Int.MAX_VALUE).endsWith("x".repeat(3000) + "]"))
+    }
+    @Test fun olderChatsGoBackUnchanged() {
+        // Text an older build let the model copy stays as it was; only shown cards change form.
+        val old = "看这里：\n[Dynamic UI card shown to the user here. Visible content: 提醒]\n之后\n"
+        assertSame(old, CardTranscript.forModel(old))
+        // The chat summary is read by the user, so a card there reads in their words.
+        assertEquals("a\n[卡片：hi]\nb", CardTranscript.forReview(
+            "a\n```a2ui\n{\"updateDataModel\":{\"value\":\"hi\"}}\n```\nb", label = { "[卡片：$it]" }))
+    }
+
+    @Test fun ordinaryBracketLinesAreUntouched() {
+        val decoder = decoder()
+        val text = "[link](https://a.b)\n[Dynamic UI card shown to the user here]\n"
+        assertEquals(text, text.chunked(2).joinToString("") { decoder.push(it) } + decoder.finish())
     }
 }

@@ -9,6 +9,11 @@ class AgentMailboxTest {
         assertTrue(message.render().startsWith("Message ID: message-id\nMessage Type: MESSAGE\n"))
         assertTrue(message.render().endsWith("Payload:\none\ntwo"))
     }
+
+    @Test fun aSenderIdIsWrittenBetweenTheSenderAndThePayload() {
+        val message = AgentMessage("id", "/root/worker", "/root", AgentMessageKind.MESSAGE, "hi", senderId = "child-7")
+        assertTrue(message.render().contains("Sender: /root/worker\nSender ID: child-7\nPayload:\nhi"))
+    }
     private val initial = CollaborationState(agents = listOf(
         CollaborationAgent("chat-a", "/root", "chat-a"),
         CollaborationAgent("chat-a", "/root/worker", "child-a"),

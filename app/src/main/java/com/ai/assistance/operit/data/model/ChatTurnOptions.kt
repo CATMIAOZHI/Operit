@@ -23,6 +23,13 @@ data class ChatTurnOptions(
     val collaborationHistoryCutoff: Long? = null,
     /** Runtime model-function route. Internal turns can use a functional model without becoming CHAT. */
     val functionType: FunctionType = FunctionType.CHAT,
+    /** Host-only per-turn role for a scheduled Orbit wake; never changes the chat's saved selection. */
+    val orbitModelRole: String? = null,
+    /**
+     * Host-only reasoning level for a turn that runs Orbit's background work on the assistant model.
+     * Null keeps the chat's own thinking setting.
+     */
+    val chatReasoningLevel: Int? = null,
     /**
      * The provider conversation this turn belongs to, when that is not the chat the turn runs in.
      * An internal turn whose conversation outlives any single chat pins it here so a provider that
@@ -49,6 +56,19 @@ data class ChatTurnOptions(
     val userRoleNameOverride: String? = null,
     /** Optional transcript-only role label for the persisted assistant response. */
     val assistantRoleNameOverride: String? = null,
+    /**
+     * The stored user turn is a collaboration report (a subagent's answer) shown as one, the same
+     * way a report steered into a running turn is shown.
+     */
+    val collaborationEvent: Boolean = false,
+    /**
+     * The timestamp the stored user row gets, when the caller needs to find exactly that row later
+     * (a message relayed from another app confirms it was saved this way). Taken from
+     * [ChatMessageTimestampAllocator] just before the send, so it still sorts after earlier rows.
+     */
+    val userMessageTimestamp: Long? = null,
+    /** In-process only: when the send entry took this message, for the request timing log (LlmPerf). */
+    val perfStartMs: Long? = null,
 )
 
 /**
@@ -69,6 +89,7 @@ internal fun ChatTurnOptions.userTurnDisplayMode(hidden: Boolean): ChatMessageDi
     when {
         hidden -> ChatMessageDisplayMode.HIDDEN_PLACEHOLDER
         isCollaborationAgent -> ChatMessageDisplayMode.COLLABORATION_TASK
+        collaborationEvent -> ChatMessageDisplayMode.COLLABORATION_EVENT
         deliveredByTool -> ChatMessageDisplayMode.TOOL_DELIVERED
         else -> ChatMessageDisplayMode.NORMAL
     }

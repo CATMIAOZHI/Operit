@@ -204,7 +204,13 @@ object CliToolModeSupport {
         includeSubagentTools: Boolean = true,
         collaborationVisibility: Map<String, Boolean> = emptyMap(),
     ): List<HiddenToolCatalogEntry> {
-        val categories = buildBuiltinAndInternalCategories(useEnglish, includeSubagentTools)
+        // Subagent limits differ by chat (Orbit has its own), so the descriptions follow the caller.
+        val callerChatId =
+            com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager.currentToolRuntimeContext()?.callerChatId
+        val collaborationLimits = callerChatId?.takeIf { includeSubagentTools && it.isNotBlank() }?.let {
+            com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(context).limitsFor(it)
+        }
+        val categories = buildBuiltinAndInternalCategories(useEnglish, includeSubagentTools, collaborationLimits)
         val builtinToolNames = buildBuiltinToolNameSet(useEnglish, includeSubagentTools)
         val entries = LinkedHashMap<String, HiddenToolCatalogEntry>()
 
@@ -244,8 +250,9 @@ object CliToolModeSupport {
             }
         }
 
+        // The chat's own package list: the main app's, or an Orbit's in its chats.
         val enabledPackages =
-            packageManager.getEnabledPackageNames()
+            roleCardToolAccess.scopePackageNames
                 .asSequence()
                 .map { it.trim() }
                 .filter { it.isNotEmpty() }
@@ -284,7 +291,8 @@ object CliToolModeSupport {
         }
 
         val skillPackages =
-            SkillRepository.getInstance(context)
+            SkillRepository.forChat(context,
+                com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager.currentToolRuntimeContext()?.callerChatId)
                 .getAiVisibleSkillPackages()
                 .filterKeys { roleCardToolAccess.isExternalSourceAllowed(it) }
 
@@ -485,12 +493,13 @@ object CliToolModeSupport {
 
     private fun buildBuiltinAndInternalCategories(
         useEnglish: Boolean,
-        includeSubagentTools: Boolean
+        includeSubagentTools: Boolean,
+        collaborationLimits: com.ai.assistance.operit.core.agent.collaboration.CollaborationLimits? = null,
     ): List<SystemToolPromptCategory> {
         return if (useEnglish) {
-            SystemToolPrompts.getAllCategoriesEn(includeSubagentTools = includeSubagentTools)
+            SystemToolPrompts.getAllCategoriesEn(includeSubagentTools = includeSubagentTools, collaborationLimits = collaborationLimits)
         } else {
-            SystemToolPrompts.getAllCategoriesCn(includeSubagentTools = includeSubagentTools)
+            SystemToolPrompts.getAllCategoriesCn(includeSubagentTools = includeSubagentTools, collaborationLimits = collaborationLimits)
         }
     }
 

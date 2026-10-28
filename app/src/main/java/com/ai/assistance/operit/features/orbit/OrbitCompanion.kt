@@ -1,0 +1,528 @@
+package com.ai.assistance.operit.features.orbit
+
+import android.content.Context
+import android.net.Uri
+import androidx.work.CoroutineWorker
+import androidx.work.WorkerParameters
+import com.ai.assistance.operit.R
+import com.ai.assistance.operit.api.chat.ChatRuntimeHolder
+import com.ai.assistance.operit.api.chat.ChatRuntimeSlot
+import com.ai.assistance.operit.core.application.OperitApplication
+import com.ai.assistance.operit.data.preferences.CharacterCardManager
+import com.ai.assistance.operit.data.preferences.OrbitPreferences
+import com.ai.assistance.operit.data.preferences.OrbitProfile
+import com.ai.assistance.operit.data.preferences.OrbitRunOutcome
+import com.ai.assistance.operit.data.preferences.OrbitSettings
+import com.ai.assistance.operit.data.preferences.UserPreferencesManager
+import com.ai.assistance.operit.data.preferences.canAddSideChat
+import com.ai.assistance.operit.services.ChatServiceCore
+import com.ai.assistance.operit.util.FileUtils
+import java.util.Calendar
+import java.util.UUID
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+
+/**
+ * Orbit: a long-term companion with its own chat, name, look, Soul.md and a daily check-in.
+ *
+ * There is one Orbit. It starts as "Orbit" with the starting SOUL.md and runs under the default
+ * role card with Soul.md as its persona. On the first talk it asks whether to take another name,
+ * borrow a role card's character for SOUL.md, or bring memories over from another AI. To start
+ * over, the user deletes it and makes a new one. Orbits made before this rule keep working.
+ *
+ * Background checks use durable tasks; only an explicit submitted message reaches the main chat.
+ */
+object OrbitCompanion {
+    private const val CHAT_CREATE_TIMEOUT_MS = 15_000L
+    /** A new Orbit's name, the same in every language; the user may give it another on the first talk. */
+    const val DEFAULT_NAME = "Orbit"
+    private const val MIN_SCHEDULE_DELAY_MS = 60_000L
+    private const val ANDROID_ASSET_URI = "file:///android_asset/"
+    private val chatMutex = Mutex()
+
+    /** True while a check-in is running in this process. */
+    val running: StateFlow<Boolean> = OrbitTaskRunner.running
+
+    private fun core(context: Context): ChatServiceCore =
+        ChatRuntimeHolder.getInstance(context.applicationContext).getCore(ChatRuntimeSlot.MAIN)
+
+    /**
+     * Starts the Orbit, making it the first time. When Orbits from before the one-Orbit rule are
+     * still there, the newest one is started.
+     */
+    suspend fun start(
+        context: Context,
+        /** Told the new Orbit's id and its chat's id before either is made, so a caller can undo a start cut off later. */
+        onCreated: (orbitId: String, chatId: String) -> Unit = { _, _ -> },
+    ): OrbitProfile {
+        val appContext = context.applicationContext
+        val profile = chatMutex.withLock {
+            val preferences = OrbitPreferences.getInstance(appContext)
+            val existing = preferences.current().orbits.maxByOrNull { it.createdAt }
+            val profile =
+                if (existing != null) ensureChatLocked(appContext, existing)
+                else createLocked(appContext, onCreated)
+            preferences.setActive(profile.id)
+            profile
+        }
+        applySchedule(appContext)
+        return profile
+    }
+
+    /** Starts the paused Orbit [orbitId] and pauses the one that was running. */
+    suspend fun resume(context: Context, orbitId: String): OrbitProfile? {
+        val appContext = context.applicationContext
+        val profile = chatMutex.withLock {
+            val preferences = OrbitPreferences.getInstance(appContext)
+            val existing = preferences.current().orbits.firstOrNull { it.id == orbitId }
+                ?: return@withLock null
+            ensureChatLocked(appContext, existing).also { preferences.setActive(it.id) }
+        }
+        stopInFlightUnlessActive(appContext)
+        applySchedule(appContext)
+        return profile
+    }
+
+    /** Pauses the running Orbit. It keeps everything and can be started again later. */
+    suspend fun pause(context: Context, expectedOrbitId: String? = null) {
+        OrbitPreferences.getInstance(context.applicationContext).setActive(null, expectedOrbitId)
+        stopInFlightUnlessActive(context)
+        applySchedule(context)
+    }
+
+    /** Deletes the Orbit [orbitId] together with its chat and Soul.md. */
+    suspend fun remove(context: Context, orbitId: String) {
+        val appContext = context.applicationContext
+        val preferences = OrbitPreferences.getInstance(appContext)
+        val orbit = preferences.current().orbits.firstOrNull { it.id == orbitId } ?: return
+        val chatIds = mutableSetOf(orbit.chatId).apply { addAll(orbit.ownedChatIds) }
+        chatIds.addAll(preferences.current().chatOwners.filterValues { it == orbitId }.keys)
+        val chats = com.ai.assistance.operit.data.db.AppDatabase.getDatabase(appContext)
+            .chatDao().getAllChatsDirectly()
+        chatIds.addAll(orbitDescendants(chatIds, chats.map { it.id to it.parentChatId }))
+        chatIds.forEach { preferences.rememberChatOwner(it, orbitId) }
+        preferences.markDeleting(orbitId)
+        // The phone's notification history is kept for the Orbit only. Cleared now, before the Orbit's
+        // settings go, and waited for, so a new Orbit never finds it; marked deleting, nothing new is kept.
+        // A failure stops the deletion here, leaving it marked deleting so it can be tried again.
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { OrbitNotificationHistory.clear(appContext) }
+        stopInFlightUnlessActive(appContext)
+        OrbitTaskRunner.cancelOrbit(orbitId)
+        com.ai.assistance.operit.data.db.AppDatabase.getDatabase(appContext).orbitTaskDao().removeOrbit(orbitId)
+        com.ai.assistance.operit.core.agent.SubagentCoordinator.getInstance(appContext)
+            .withChatDeletionsPrepared(chatIds) {
+                val runtimes = ChatRuntimeHolder.getInstance(appContext)
+                ChatRuntimeSlot.entries.forEach { slot ->
+                    chatIds.forEach { runtimes.getCore(slot).prepareChatDeletion(it) }
+                }
+                orbit.memorySpaceId?.let { UserPreferencesManager.getInstance(appContext).deleteMemorySpace(it) }
+                preferences.removeOrbit(orbitId)
+            }
+        core(appContext).deleteChatHistory(orbit.chatId)
+        orbit.sideChats.forEach { core(appContext).deleteChatHistory(it.chatId) }
+        OrbitReactions.drop(orbitId)
+        // Its vault, forget plan and forgotten list are encrypted outside the Orbit's folder.
+        runCatching { OrbitSecretFile.deleteAllForOrbit(appContext, orbitId) }
+        OrbitVault.forgetCached(orbitId)
+        runCatching { OrbitWeixin.forget(appContext, orbitId) }
+        // Model-only task chats are independent NORMAL nodes, not children in the archive graph.
+        val history = com.ai.assistance.operit.data.repository.ChatHistoryManager.getInstance(appContext)
+        chats.filter { it.id in chatIds && it.hiddenReason == "ORBIT_TASK" }.forEach {
+            if (history.deleteChatHistory(it.id)) preferences.forgetDeletedTaskChatOwner(it.id, orbitId)
+        }
+        applySchedule(appContext)
+    }
+
+    /** Stops a check-in whose Orbit is no longer the running one. */
+    private suspend fun stopInFlightUnlessActive(context: Context) {
+        OrbitTaskRunner.cancelUnlessActive(OrbitPreferences.getInstance(context).current().activeOrbitId)
+    }
+
+    /**
+     * Opens a side chat: a separate, lasting conversation with the same Orbit about one topic,
+     * next to the main chat. It shares Orbit's memory and tools; its history stays its own.
+     */
+    suspend fun createSideChat(context: Context, orbitId: String, title: String): String {
+        val appContext = context.applicationContext
+        val clean = title.replace(Regex("\\s+"), " ").trim().take(OrbitSettings.MAX_SIDE_CHAT_TITLE)
+        require(clean.isNotEmpty()) { "Missing title" }
+        return chatMutex.withLock {
+            val preferences = OrbitPreferences.getInstance(appContext)
+            val orbit = preferences.current().orbits.firstOrNull { it.id == orbitId && !it.deleting }
+                ?: error("Orbit no longer exists")
+            check(orbit.canAddSideChat) { "Too many side chats" }
+            val chatId = createChat(appContext, null, clean, titled = false)
+            inheritContext(appContext, orbit, chatId)
+            preferences.rememberChatOwner(chatId, orbit.id)
+            preferences.addSideChat(orbit.id, chatId, clean)
+            chatId
+        }
+    }
+
+    /** A new side chat compacts like the main chat. */
+    private suspend fun inheritContext(context: Context, orbit: OrbitProfile, chatId: String) {
+        try {
+            OrbitContextSettings.inherit(context, orbit, chatId)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // The side chat still works with the app's default compaction.
+            android.util.Log.w("OrbitCompanion", "Side chat kept the default context setting", e)
+        }
+    }
+
+    /** Runs [block] while no chat of any Orbit is being made, so it sees the full side chat list. */
+    internal suspend fun <T> withSideChatsSettled(block: suspend () -> T): T = chatMutex.withLock { block() }
+
+    suspend fun renameSideChat(context: Context, orbitId: String, chatId: String, title: String) {
+        val clean = title.replace(Regex("\\s+"), " ").trim().take(OrbitSettings.MAX_SIDE_CHAT_TITLE)
+        require(clean.isNotEmpty()) { "Missing title" }
+        val appContext = context.applicationContext
+        OrbitPreferences.getInstance(appContext).renameSideChat(orbitId, chatId, clean)
+        runCatching { core(appContext).getChatHistoryDelegate().updateChatTitleAndWait(chatId, clean) }
+    }
+
+    /** Navigation only: starts no model turn and copies no source messages into the new history. */
+    suspend fun forkSideChat(context: Context, orbitId: String, messageId: Long): OrbitChatFork.Created {
+        val appContext = context.applicationContext
+        return chatMutex.withLock {
+            val preferences = OrbitPreferences.getInstance(appContext)
+            val orbit = preferences.current().orbits.firstOrNull { it.id == orbitId && !it.deleting }
+                ?: error("Orbit no longer exists")
+            check(orbit.canAddSideChat) { "Too many side chats" }
+            val origin = com.ai.assistance.operit.data.preferences.OrbitChatOrigin(orbit.chatId, messageId)
+            require(!core(appContext).getMessageProcessingDelegate().isStreamingMessage(origin.chatId, messageId)) {
+                "That reply is still being written; choose an earlier finished message or wait for it to finish"
+            }
+            val excerpts = OrbitChatFork.read(appContext, origin)
+            require(excerpts.any { it.messageId == messageId }) { "Choose an existing, visible user or Orbit message" }
+            // Keeping the standard placeholder enables the existing first-message title generator.
+            val title = appContext.getString(R.string.new_conversation)
+            val chatId = createChat(appContext, null, title, titled = false)
+            inheritContext(appContext, orbit, chatId)
+            preferences.rememberChatOwner(chatId, orbit.id)
+            preferences.addSideChat(orbit.id, chatId, title, origin)
+            OrbitChatFork.Created(chatId, title, origin, excerpts)
+        }
+    }
+
+    suspend fun setSideChatPinned(context: Context, orbitId: String, chatId: String, pinned: Boolean) =
+        OrbitPreferences.getInstance(context.applicationContext).setSideChatPinned(orbitId, chatId, pinned)
+
+    /** Archived side chats leave the menu; their history, memory and reminders stay as they are. */
+    suspend fun setSideChatArchived(context: Context, orbitId: String, chatId: String, archived: Boolean) =
+        OrbitPreferences.getInstance(context.applicationContext).setSideChatArchived(orbitId, chatId, archived)
+
+    /**
+     * A side chat opened without a title takes the one generated from its first message. One
+     * that already has a name (given by the user or by Orbit) keeps it.
+     */
+    suspend fun adoptGeneratedTitle(context: Context, chatId: String, title: String) {
+        val appContext = context.applicationContext
+        val clean = title.replace(Regex("\\s+"), " ").trim().take(OrbitSettings.MAX_SIDE_CHAT_TITLE)
+        if (clean.isEmpty()) return
+        val preferences = OrbitPreferences.getInstance(appContext)
+        if (preferences.current().orbitForChat(chatId)?.sideChats?.none { it.chatId == chatId } != false) return
+        preferences.renameSideChatIfTitled(chatId, appContext.getString(R.string.new_conversation), clean)
+    }
+
+    /**
+     * Deletes a side chat and its history. Tasks made there report to the main chat from now on,
+     * and reports still waiting to be posted go there too. It finishes even if the screen that
+     * asked goes away, and the side chat stays listed until its history is really gone, so a
+     * failed delete can be tried again.
+     */
+    suspend fun deleteSideChat(context: Context, orbitId: String, chatId: String) = withContext(NonCancellable) {
+        val appContext = context.applicationContext
+        val preferences = OrbitPreferences.getInstance(appContext)
+        val orbit = preferences.current().orbits.firstOrNull { it.id == orbitId } ?: return@withContext
+        if (orbit.sideChats.none { it.chatId == chatId }) return@withContext
+        // WeChat messages land in this chat; it stays until the user disconnects WeChat.
+        if (OrbitWeixin.boundChatId(appContext, orbitId) == chatId) throw OrbitWeixin.ChatBoundException()
+        val dao = com.ai.assistance.operit.data.db.AppDatabase.getDatabase(appContext).orbitTaskDao()
+        OrbitExecutionGate.serialized {
+            dao.moveTaskChat(orbitId, chatId, orbit.chatId)
+            dao.movePendingDeliveries(orbitId, chatId, orbit.chatId)
+        }
+        // Deleting the chat on screen would make the chat screen jump to some unrelated chat, so
+        // show Orbit's main chat first.
+        val core = core(appContext)
+        if (core.currentChatId.value == chatId) {
+            withContext(kotlinx.coroutines.Dispatchers.Main) { core.switchChat(orbit.chatId, scrollToBottom = false) }
+            kotlinx.coroutines.withTimeoutOrNull(3_000) { core.currentChatId.first { it != chatId } }
+        }
+        // Its history may already be gone (deleted from chat history settings, or an earlier try
+        // that timed out after finishing); then only the list entry is left to remove.
+        if (core.chatExists(chatId)) {
+            val deleted = CompletableDeferred<Boolean>()
+            core.getChatHistoryDelegate().deleteChatHistory(chatId) { deleted.complete(it) }
+            check(withTimeout(CHAT_CREATE_TIMEOUT_MS) { deleted.await() } || !core.chatExists(chatId)) {
+                "Could not delete the chat"
+            }
+        }
+        preferences.removeSideChat(orbitId, chatId)
+        OrbitDelivery.markSeen(chatId)
+        runCatching { OrbitWeixin.onSideChatDeleted(appContext, orbitId, chatId) }
+        runCatching { OrbitReactions.of(appContext, orbitId).removeChat(chatId) }
+        runCatching { OrbitReactions.ofUser(appContext, orbitId).removeChat(chatId) }
+    }
+
+    /** The running Orbit with a chat that exists, or null while every Orbit is paused. */
+    suspend fun ensureActiveChat(context: Context): OrbitProfile? {
+        val appContext = context.applicationContext
+        return chatMutex.withLock {
+            val active = OrbitPreferences.getInstance(appContext).current().active?.takeUnless { it.deleting }
+                ?: return@withLock null
+            ensureChatLocked(appContext, active)
+        }
+    }
+
+    /** Makes the Orbit: named Orbit, the starting SOUL.md, and no picture, so it shows the Orbit logo. */
+    private suspend fun createLocked(context: Context, onCreated: (String, String) -> Unit): OrbitProfile {
+        val roleCardId = CharacterCardManager.DEFAULT_CHARACTER_CARD_ID
+        val orbitId = UUID.randomUUID().toString()
+        val newChatId = UUID.randomUUID().toString()
+        val preferences = OrbitPreferences.getInstance(context)
+        // The caller records both ids before anything is made, so a setup cut off halfway can undo exactly them.
+        onCreated(orbitId, newChatId)
+        preferences.writeSoul(orbitId, OrbitSoulTemplate.initial(com.ai.assistance.operit.util.LocaleUtils.usesEnglishPrompt(context)))
+        // No opening message: Orbit greets the user itself on the first talk.
+        val chatId = createChat(context, null, DEFAULT_NAME, chatId = newChatId)
+        val profile =
+            OrbitProfile(
+                id = orbitId,
+                sourceRoleCardId = roleCardId,
+                chatId = chatId,
+                // Orbit starts as Orbit and asks on the first talk whether the user wants another name.
+                name = DEFAULT_NAME,
+                avatarUri = null,
+                createdAt = System.currentTimeMillis(),
+                appearance = systemLogoColors(context),
+            )
+        preferences.putOrbit(profile)
+        val memorySpaceId = OrbitMemoryScope.ensureInitialized(context, profile)
+        return profile.copy(memorySpaceId = memorySpaceId)
+    }
+
+    /**
+     * The new Orbit's logo takes the user's color from the phone's own theme (Android 12+ wallpaper
+     * colors): the core stands for the user. When that color sits too near the ring's blue, the ring
+     * takes the theme's contrasting color so the two still read apart. Older phones keep the defaults.
+     */
+    private fun systemLogoColors(context: Context): com.ai.assistance.operit.data.preferences.OrbitAppearance {
+        val base = com.ai.assistance.operit.data.preferences.OrbitAppearance()
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S) return base
+        return runCatching {
+            val user = context.getColor(android.R.color.system_accent1_600)
+            val ringDefault = android.graphics.Color.parseColor(com.ai.assistance.operit.ui.features.orbit.OrbitLogoDefaults.ORBIT_HEX)
+            fun hsv(c: Int) = FloatArray(3).also { android.graphics.Color.colorToHSV(c, it) }
+            val userHsv = hsv(user)
+            val gap = kotlin.math.abs(userHsv[0] - hsv(ringDefault)[0]).let { minOf(it, 360f - it) }
+            fun hex(c: Int) = String.format(java.util.Locale.ROOT, "#%06X", c and 0xFFFFFF)
+            val ring = if (userHsv[1] >= 0.15f && gap < 35f) hex(context.getColor(android.R.color.system_accent3_600)) else null
+            base.copy(logoUserColor = hex(user), logoOrbitColor = ring)
+        }.getOrDefault(base)
+    }
+
+    /**
+     * Orbit's own copy of the role card's current picture. Built-in role pictures ship with the
+     * app and never change, so they are used directly. Null when the card has no picture.
+     */
+    private suspend fun roleAvatarCopy(context: Context, roleCardId: String): String? =
+        runCatching {
+            UserPreferencesManager.getInstance(context)
+                .getResolvedAiAvatarForCharacterCardFlow(roleCardId)
+                .first()
+                ?.takeIf { it.isNotBlank() }
+                ?.let {
+                    if (it.startsWith(ANDROID_ASSET_URI)) it
+                    else FileUtils.copyFileToInternalStorage(context, Uri.parse(it), "orbit_avatar")?.toString()
+                }
+        }.getOrNull()
+
+    /**
+     * Uses the picture of role card [roleCardId] (the Orbit's own default card when null), as the
+     * card has it now. A card that no longer exists fails, except a built-in role's picture.
+     */
+    suspend fun useRoleCardAvatar(context: Context, orbitId: String, roleCardId: String? = null) {
+        val preferences = OrbitPreferences.getInstance(context)
+        val orbit = preferences.current().orbits.firstOrNull { it.id == orbitId } ?: return
+        val cardId = roleCardId ?: orbit.sourceRoleCardId
+        val cardExists = runCatching {
+            cardId in CharacterCardManager.getInstance(context).characterCardListFlow.first()
+        }.getOrDefault(false)
+        val builtIn = UserPreferencesManager.getBuiltInCharacterAvatarUri(cardId)
+        require(cardExists || builtIn != null) { "No role card with id $cardId; list them with orbit_soul action=list_role_cards" }
+        val uri = if (cardExists) roleAvatarCopy(context, cardId) ?: builtIn else builtIn
+        // A card without a picture changes nothing rather than clearing the current one.
+        checkNotNull(uri) { "That role card has no picture; the avatar was not changed" }
+        preferences.setAvatar(orbitId, uri)
+    }
+
+    /** Makes the Orbit's chat again when the user deleted it; everything else stays. */
+    private suspend fun ensureChatLocked(context: Context, orbit: OrbitProfile): OrbitProfile {
+        val spaceId = OrbitMemoryScope.ensureInitialized(context, orbit)
+        if (core(context).chatExists(orbit.chatId)) {
+            // Context compaction always follows Orbit's fixed rules, whatever was saved before.
+            OrbitContextSettings.enforce(context, orbit)
+            return orbit.copy(memorySpaceId = spaceId)
+        }
+        val recreated = orbit.copy(chatId = createChat(context, null, orbit.name), memorySpaceId = spaceId,
+            ownedChatIds = orbit.ownedChatIds + orbit.chatId)
+        OrbitPreferences.getInstance(context).putOrbit(recreated)
+        OrbitContextSettings.enforce(context, recreated)
+        OrbitExecutionGate.serialized {
+            val dao = com.ai.assistance.operit.data.db.AppDatabase.getDatabase(context).orbitTaskDao()
+            // Tasks made in a side chat keep reporting there.
+            dao.tasks(orbit.id).filter { it.chatId == orbit.chatId }.forEach { task ->
+                dao.replaceDefinition(task.copy(chatId = recreated.chatId, updatedAt = System.currentTimeMillis()),
+                    task.version)
+            }
+        }
+        return recreated
+    }
+
+    /**
+     * Creates an Orbit chat. A new Orbit's chat starts with its role card's opening message; after
+     * that the chat no longer follows the role card.
+     */
+    private suspend fun createChat(
+        context: Context, roleCardId: String?, title: String, titled: Boolean = true, chatId: String? = null,
+    ): String {
+        val core = core(context)
+        val created = CompletableDeferred<String>()
+        // 0 waiting, 1 handed over, 2 given up. A chat that turns up after the wait gave up
+        // removes itself, so a timed-out start never leaves a chat nobody knows about. Its id is
+        // also written down until it is gone, in case the app is closed before it removes itself.
+        val state = java.util.concurrent.atomic.AtomicInteger(0)
+        fun giveUp() {
+            if (state.compareAndSet(0, 2) && chatId != null) {
+                lateInFlight.add(chatId)
+                editLate(context) { it + chatId }
+            }
+        }
+        core.createNewChat(
+            inheritGroupFromCurrent = false,
+            setAsCurrentChat = false,
+            characterCardId = roleCardId ?: CharacterCardManager.DEFAULT_CHARACTER_CARD_ID,
+            // A side chat (no role card) starts empty: it is Orbit talking, not the default card.
+            withOpeningMessage = roleCardId != null,
+            onCreated = { madeId ->
+                if (state.compareAndSet(0, 1)) created.complete(madeId)
+                else core.getChatHistoryDelegate().deleteChatHistory(madeId) { ok ->
+                    lateInFlight.remove(madeId)
+                    if (ok) editLate(context) { it - madeId }
+                    else com.ai.assistance.operit.util.AppLogger.w("OrbitCompanion", "Could not remove a chat made too late")
+                }
+            },
+            chatId = chatId,
+        )
+        val made = try {
+            kotlinx.coroutines.withTimeoutOrNull(CHAT_CREATE_TIMEOUT_MS) { created.await() }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            giveUp()
+            throw e
+        } ?: run {
+            giveUp()
+            if (state.get() == 2) throw IllegalStateException("The chat could not be made in time")
+            created.await()
+        }
+        core.getChatHistoryDelegate()
+            .updateChatTitleAndWait(made, if (titled) context.getString(R.string.orbit_chat_title, title) else title)
+        return made
+    }
+
+    private const val LATE_PREFS = "orbit_late_chats"
+    private const val KEY_LATE = "ids"
+    /** Given-up chats whose making may still finish in this run of the app. */
+    private val lateInFlight = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    private fun editLate(context: Context, change: (Set<String>) -> Set<String>) = synchronized(lateInFlight) {
+        val p = context.applicationContext.getSharedPreferences(LATE_PREFS, Context.MODE_PRIVATE)
+        val now = p.getStringSet(KEY_LATE, emptySet()).orEmpty().toSet()
+        p.edit().putStringSet(KEY_LATE, change(now)).commit()
+    }
+
+    /**
+     * Removes chats whose making was given up but which were made anyway (the app was closed before
+     * they removed themselves). An id is forgotten once its chat is gone, or when it never appeared
+     * and is no longer being made.
+     */
+    suspend fun sweepLateChats(context: Context) = withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val app = context.applicationContext
+        val ids = app.getSharedPreferences(LATE_PREFS, Context.MODE_PRIVATE).getStringSet(KEY_LATE, emptySet()).orEmpty().toSet()
+        if (ids.isEmpty()) return@withContext
+        val dao = com.ai.assistance.operit.data.db.AppDatabase.getDatabase(app).chatDao()
+        val history = com.ai.assistance.operit.data.repository.ChatHistoryManager.getInstance(app)
+        ids.forEach { id ->
+            val gone = runCatching {
+                if (dao.getChatById(id) != null) history.deleteChatHistory(id) else id !in lateInFlight
+            }.getOrDefault(false)
+            if (gone) editLate(app) { it - id }
+        }
+    }
+
+    /** Milliseconds from [nowMillis] to the next [minuteOfDay], at least a minute ahead. */
+    internal fun delayUntilNextCheckIn(nowMillis: Long, minuteOfDay: Int): Long {
+        val target =
+            Calendar.getInstance().apply {
+                timeInMillis = nowMillis
+                set(Calendar.HOUR_OF_DAY, minuteOfDay / 60)
+                set(Calendar.MINUTE, minuteOfDay % 60)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }
+        if (target.timeInMillis - nowMillis < MIN_SCHEDULE_DELAY_MS) {
+            target.add(Calendar.DAY_OF_YEAR, 1)
+        }
+        return target.timeInMillis - nowMillis
+    }
+
+    /** Applies changed settings: schedules the next check-in, or cancels it when turned off. */
+    suspend fun applySchedule(context: Context) {
+        OrbitTaskScheduler.migrateAndSchedule(context)
+    }
+
+    /** Restores the schedule at app start without moving a check-in that is already queued. */
+    suspend fun restoreSchedule(context: Context) {
+        OrbitTaskScheduler.migrateAndSchedule(context, restore = true)
+    }
+}
+
+class OrbitCheckInWorker(
+    appContext: Context,
+    params: WorkerParameters,
+) : CoroutineWorker(appContext, params) {
+    override suspend fun doWork(): Result {
+        val manual = inputData.getBoolean(KEY_MANUAL, false)
+        when (OperitApplication.initializeMainApplication(applicationContext)) {
+            OperitApplication.MainApplicationInitResult.Initialized -> Unit
+            OperitApplication.MainApplicationInitResult.MigrationInProgress -> return Result.retry()
+            else -> {
+                // A manual try is waiting on a result in the Orbit screen, so leave one.
+                if (manual) {
+                    runCatching {
+                        OrbitPreferences.getInstance(applicationContext).recordRun(
+                            OrbitRunOutcome.FAILED,
+                            applicationContext.getString(R.string.orbit_run_failed_unknown),
+                        )
+                    }
+                }
+                return Result.failure()
+            }
+        }
+        // Upgrade compatibility for already queued work. Only the durable runner executes tasks.
+        OrbitTaskScheduler.migrateAndSchedule(applicationContext, restore = true)
+        return Result.success()
+    }
+
+    companion object {
+        const val KEY_MANUAL = "manual"
+    }
+}

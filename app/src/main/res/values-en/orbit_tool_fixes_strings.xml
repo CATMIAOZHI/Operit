@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="orbit_tool_current_location_title">Current location</string>
+    <string name="orbit_tool_current_location_note">Allow access to the current location. Approximate location is enough; background access is not needed.</string>
+    <string name="orbit_tool_geofence_title">Location reminders</string>
+    <string name="orbit_tool_geofence_note">Arrival and departure reminders need precise location. Tap below, allow access while using the app, and enable precise location if that option appears. Android 10 and later also need background access, enabled separately after returning.</string>
+    <string name="orbit_tool_geofence_background_note">Precise location is on. Tap below again and choose “Allow all the time” for location. Android 11 and later require this on the system settings page.</string>
+    <string name="orbit_tool_geofence_services_note">Location permissions are ready. Tap below to turn on the phone’s location service so location reminders can work.</string>
+</resources>

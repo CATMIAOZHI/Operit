@@ -427,6 +427,8 @@ class SubagentCoordinator private constructor(context: Context) {
                     externalOwnerId = request.externalOwnerId,
                 )
             )
+        // A subagent of an Orbit chat belongs to that Orbit; record it before any prompt is built.
+        com.ai.assistance.operit.features.orbit.OrbitMemoryScope.registerDescendant(appContext, created.childChat.id)
         // Reading-companion audit sessions are registered against the child chat that actually
         // executes the turn; the reading coordinator links its reading.db run via this hook.
         try {

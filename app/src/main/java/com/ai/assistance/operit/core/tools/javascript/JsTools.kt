@@ -161,6 +161,8 @@ fun getJsToolsDefinition(): String {
             },
             // 网络操作
             Net: {
+                // Browser calls pass the host-filled chat ID the way memory calls do, so an Orbit's
+                // package calls open and see only the tabs that use the Orbit's own logins.
                 httpGet: (url, ignoreSsl) => {
                     const params = { url, method: "GET" };
                     if (ignoreSsl !== undefined) params.ignore_ssl = ignoreSsl ? "true" : "false";
@@ -175,15 +177,16 @@ fun getJsToolsDefinition(): String {
                     return toolCall("http_request", params);
                 },
                 visit: (params) => {
+                    // The host chat lets an Orbit's search run without putting anything on screen.
                     if (typeof params === 'string') {
                         // 向后兼容，如果只传入一个字符串，则假定为URL
-                        return toolCall("visit_web", { url: params });
+                        return toolCall("visit_web", Tools.Memory._withHostChat({ url: params }));
                     }
                     // 否则，假定为参数对象
                     if (params && typeof params === 'object' && params.headers !== undefined && typeof params.headers === 'object') {
                         params = { ...params, headers: JSON.stringify(params.headers) };
                     }
-                    return toolCall("visit_web", params);
+                    return toolCall("visit_web", Tools.Memory._withHostChat({ ...(params || {}) }));
                 },
                 browserNavigate: (urlOrOptions) => {
                     const params = typeof urlOrOptions === 'string' ? { url: urlOrOptions } : { ...(urlOrOptions || {}) };
@@ -193,13 +196,13 @@ fun getJsToolsDefinition(): String {
                     if (params.headers !== undefined && typeof params.headers === 'object') {
                         params.headers = JSON.stringify(params.headers);
                     }
-                    return toolCall("browser_navigate", params);
+                    return toolCall("browser_navigate", Tools.Memory._withHostChat({ ...(params) }));
                 },
                 browserNavigateBack: (options) => {
                     if (options !== undefined && (typeof options !== 'object' || Array.isArray(options))) {
                         throw new Error("browserNavigateBack only accepts one options object");
                     }
-                    return toolCall("browser_navigate_back", options || {});
+                    return toolCall("browser_navigate_back", Tools.Memory._withHostChat({ ...(options || {}) }));
                 },
                 browserClick: (options) => {
                     if (!options || typeof options !== 'object' || Array.isArray(options)) {
@@ -246,19 +249,19 @@ fun getJsToolsDefinition(): String {
                     if (params.doubleClick !== undefined) {
                         params.doubleClick = !!params.doubleClick;
                     }
-                    return toolCall("browser_click", params);
+                    return toolCall("browser_click", Tools.Memory._withHostChat({ ...(params) }));
                 },
                 browserClose: (options) => {
                     if (options !== undefined && (typeof options !== 'object' || Array.isArray(options))) {
                         throw new Error("browserClose only accepts one options object");
                     }
-                    return toolCall("browser_close", options || {});
+                    return toolCall("browser_close", Tools.Memory._withHostChat({ ...(options || {}) }));
                 },
                 browserCloseAll: (options) => {
                     if (options !== undefined && (typeof options !== 'object' || Array.isArray(options))) {
                         throw new Error("browserCloseAll only accepts one options object");
                     }
-                    return toolCall("browser_close_all", options || {});
+                    return toolCall("browser_close_all", Tools.Memory._withHostChat({ ...(options || {}) }));
                 },
                 browserConsoleMessages: (options) => {
                     if (options !== undefined && (typeof options !== 'object' || Array.isArray(options))) {
@@ -274,7 +277,7 @@ fun getJsToolsDefinition(): String {
                     if (params.filename !== undefined && params.filename !== null) {
                         params.filename = String(params.filename);
                     }
-                    return toolCall("browser_console_messages", params);
+                    return toolCall("browser_console_messages", Tools.Memory._withHostChat({ ...(params) }));
                 },
                 browserDrag: (options) => {
                     if (!options || typeof options !== 'object' || Array.isArray(options)) {
@@ -289,7 +292,7 @@ fun getJsToolsDefinition(): String {
                             throw new Error("browserDrag requires " + key);
                         }
                     });
-                    return toolCall("browser_drag", params);
+                    return toolCall("browser_drag", Tools.Memory._withHostChat({ ...(params) }));
                 },
                 browserEvaluate: (options) => {
                     if (!options || typeof options !== 'object' || Array.isArray(options)) {
@@ -311,7 +314,7 @@ fun getJsToolsDefinition(): String {
                     if (params.element && !params.ref) {
                         throw new Error("ref is required when element is provided");
                     }
-                    return toolCall("browser_evaluate", params);
+                    return toolCall("browser_evaluate", Tools.Memory._withHostChat({ ...(params) }));
                 },
                 browserFileUpload: (options) => {
                     if (options !== undefined && (typeof options !== 'object' || Array.isArray(options))) {
@@ -324,7 +327,7 @@ fun getJsToolsDefinition(): String {
                         }
                         params.paths = params.paths.map((path) => String(path));
                     }
-                    return toolCall("browser_file_upload", params);
+                    return toolCall("browser_file_upload", Tools.Memory._withHostChat({ ...(params) }));
                 },
                 browserFillForm: (options) => {
                     if (!options || typeof options !== 'object' || Array.isArray(options)) {
@@ -334,7 +337,7 @@ fun getJsToolsDefinition(): String {
                     if (!Array.isArray(params.fields) || params.fields.length === 0) {
                         throw new Error("browserFillForm requires a non-empty fields array");
                     }
-                    return toolCall("browser_fill_form", params);
+                    return toolCall("browser_fill_form", Tools.Memory._withHostChat({ ...(params) }));
                 },
                 browserHandleDialog: (options) => {
                     if (!options || typeof options !== 'object' || Array.isArray(options)) {
@@ -347,7 +350,7 @@ fun getJsToolsDefinition(): String {
                     if (params.promptText !== undefined && params.promptText !== null) {
                         params.promptText = String(params.promptText);
                     }
-                    return toolCall("browser_handle_dialog", params);
+                    return toolCall("browser_handle_dialog", Tools.Memory._withHostChat({ ...(params) }));
                 },
                 browserHover: (options) => {
                     if (!options || typeof options !== 'object' || Array.isArray(options)) {
@@ -363,7 +366,7 @@ fun getJsToolsDefinition(): String {
                     if (params.element !== undefined && params.element !== null) {
                         params.element = String(params.element);
                     }
-                    return toolCall("browser_hover", params);
+                    return toolCall("browser_hover", Tools.Memory._withHostChat({ ...(params) }));
                 },
                 browserNetworkRequests: (options) => {
                     if (options !== undefined && (typeof options !== 'object' || Array.isArray(options))) {
@@ -376,7 +379,7 @@ fun getJsToolsDefinition(): String {
                     if (params.filename !== undefined && params.filename !== null) {
                         params.filename = String(params.filename);
                     }
-                    return toolCall("browser_network_requests", params);
+                    return toolCall("browser_network_requests", Tools.Memory._withHostChat({ ...(params) }));
                 },
                 browserPressKey: (keyOrOptions) => {
                     const params = typeof keyOrOptions === 'string' ? { key: keyOrOptions } : { ...(keyOrOptions || {}) };
@@ -386,7 +389,7 @@ fun getJsToolsDefinition(): String {
                     if (!params.key) {
                         throw new Error("browserPressKey requires key");
                     }
-                    return toolCall("browser_press_key", params);
+                    return toolCall("browser_press_key", Tools.Memory._withHostChat({ ...(params) }));
                 },
                 browserResize: (options) => {
                     if (!options || typeof options !== 'object' || Array.isArray(options)) {
@@ -396,7 +399,7 @@ fun getJsToolsDefinition(): String {
                     if (params.width === undefined || params.height === undefined) {
                         throw new Error("browserResize requires width and height");
                     }
-                    return toolCall("browser_resize", params);
+                    return toolCall("browser_resize", Tools.Memory._withHostChat({ ...(params) }));
                 },
                 browserRunCode: (options) => {
                     if (!options || typeof options !== 'object' || Array.isArray(options)) {
@@ -409,7 +412,7 @@ fun getJsToolsDefinition(): String {
                     if (!params.code) {
                         throw new Error("browserRunCode requires code");
                     }
-                    return toolCall("browser_run_code", params);
+                    return toolCall("browser_run_code", Tools.Memory._withHostChat({ ...(params) }));
                 },
                 browserSelectOption: (options) => {
                     if (!options || typeof options !== 'object' || Array.isArray(options)) {
@@ -429,7 +432,7 @@ fun getJsToolsDefinition(): String {
                     if (params.element !== undefined && params.element !== null) {
                         params.element = String(params.element);
                     }
-                    return toolCall("browser_select_option", params);
+                    return toolCall("browser_select_option", Tools.Memory._withHostChat({ ...(params) }));
                 },
                 browserSnapshot: (options) => {
                     if (options !== undefined && (typeof options !== 'object' || Array.isArray(options))) {
@@ -455,7 +458,7 @@ fun getJsToolsDefinition(): String {
                         }
                         params.depth = depth;
                     }
-                    return toolCall("browser_snapshot", params);
+                    return toolCall("browser_snapshot", Tools.Memory._withHostChat({ ...(params) }));
                 },
                 browserTabs: (options) => {
                     if (!options || typeof options !== 'object' || Array.isArray(options)) {
@@ -468,7 +471,7 @@ fun getJsToolsDefinition(): String {
                     if (!params.action) {
                         throw new Error("browserTabs requires action");
                     }
-                    return toolCall("browser_tabs", params);
+                    return toolCall("browser_tabs", Tools.Memory._withHostChat({ ...(params) }));
                 },
                 browserTakeScreenshot: (options) => {
                     if (!options || typeof options !== 'object' || Array.isArray(options)) {
@@ -496,7 +499,77 @@ fun getJsToolsDefinition(): String {
                     if (params.fullPage !== undefined) {
                         params.fullPage = !!params.fullPage;
                     }
-                    return toolCall("browser_take_screenshot", params);
+                    return toolCall("browser_take_screenshot", Tools.Memory._withHostChat({ ...(params) }));
+                },
+                browserMouseClickXy: (options) => {
+                    if (!options || typeof options !== 'object' || Array.isArray(options)) {
+                        throw new Error("browserMouseClickXy only accepts one options object");
+                    }
+                    const params = { ...options };
+                    ["x", "y"].forEach((key) => {
+                        const value = Number(params[key]);
+                        if (!Number.isFinite(value)) {
+                            throw new Error("browserMouseClickXy requires numeric " + key);
+                        }
+                        params[key] = value;
+                    });
+                    if (params.doubleClick !== undefined) {
+                        params.doubleClick = !!params.doubleClick;
+                    }
+                    return toolCall("browser_mouse_click_xy", Tools.Memory._withHostChat({ ...(params) }));
+                },
+                browserDevtools: (options) => {
+                    if (!options || typeof options !== 'object' || Array.isArray(options)) {
+                        throw new Error("browserDevtools only accepts one options object");
+                    }
+                    const params = { ...options };
+                    params.method = String(params.method || "").trim();
+                    if (params.events !== undefined) {
+                        params.events = !!params.events;
+                    }
+                    if (!params.method && !params.events) {
+                        throw new Error("browserDevtools requires method, or events: true");
+                    }
+                    if (params.params !== undefined && params.params !== null && typeof params.params !== 'string') {
+                        params.params = JSON.stringify(params.params);
+                    }
+                    if (params.filename !== undefined && params.filename !== null) {
+                        params.filename = String(params.filename);
+                    }
+                    return toolCall("browser_devtools", Tools.Memory._withHostChat({ ...(params) }));
+                },
+                browserDownloads: (options) => {
+                    const params = { ...(options || {}) };
+                    if (params.action !== undefined && params.action !== null) {
+                        params.action = String(params.action).trim();
+                    }
+                    if (params.downloadId !== undefined && params.downloadId !== null) {
+                        params.downloadId = String(params.downloadId).trim();
+                    }
+                    return toolCall("browser_downloads", Tools.Memory._withHostChat({ ...(params) }));
+                },
+                browserClipboard: (options) => {
+                    if (!options || typeof options !== 'object' || Array.isArray(options)) {
+                        throw new Error("browserClipboard only accepts one options object");
+                    }
+                    const params = { ...options };
+                    params.action = String(params.action || "").trim();
+                    if (!params.action) {
+                        throw new Error("browserClipboard requires action");
+                    }
+                    if (params.text !== undefined && params.text !== null) {
+                        params.text = String(params.text);
+                    }
+                    return toolCall("browser_clipboard", Tools.Memory._withHostChat({ ...(params) }));
+                },
+                browserPermissions: (options) => {
+                    const params = { ...(options || {}) };
+                    ["action", "origin", "permission"].forEach((key) => {
+                        if (params[key] !== undefined && params[key] !== null) {
+                            params[key] = String(params[key]).trim();
+                        }
+                    });
+                    return toolCall("browser_permissions", Tools.Memory._withHostChat({ ...(params) }));
                 },
                 browserType: (options) => {
                     if (!options || typeof options !== 'object' || Array.isArray(options)) {
@@ -522,7 +595,7 @@ fun getJsToolsDefinition(): String {
                     if (params.slowly !== undefined) {
                         params.slowly = !!params.slowly;
                     }
-                    return toolCall("browser_type", params);
+                    return toolCall("browser_type", Tools.Memory._withHostChat({ ...(params) }));
                 },
                 browserWaitFor: (options) => {
                     if (!options || typeof options !== 'object' || Array.isArray(options)) {
@@ -532,9 +605,10 @@ fun getJsToolsDefinition(): String {
                     if (
                         params.time === undefined &&
                         params.text === undefined &&
-                        params.textGone === undefined
+                        params.textGone === undefined &&
+                        params.selector === undefined
                     ) {
-                        throw new Error("browserWaitFor requires one of: time, text, textGone");
+                        throw new Error("browserWaitFor requires one of: time, text, textGone, selector");
                     }
                     if (params.text !== undefined && params.text !== null) {
                         params.text = String(params.text);
@@ -542,7 +616,7 @@ fun getJsToolsDefinition(): String {
                     if (params.textGone !== undefined && params.textGone !== null) {
                         params.textGone = String(params.textGone);
                     }
-                    return toolCall("browser_wait_for", params);
+                    return toolCall("browser_wait_for", Tools.Memory._withHostChat({ ...(params) }));
                 },
                 // 新增增强版HTTP请求
                 http: (options) => {
@@ -1141,6 +1215,15 @@ fun getJsToolsDefinition(): String {
             },
             // 记忆管理
             Memory: {
+                // Native memory tools run on another thread and cannot see which chat called them.
+                // Pass the host-filled chat ID so an Orbit reads and writes its own memory space.
+                _withHostChat: (params) => {
+                    const root = typeof globalThis !== 'undefined' ? globalThis : this;
+                    const runtime = root && root.__operit_call_runtime_ref;
+                    const chatId = runtime && typeof runtime.getChatId === 'function' ? runtime.getChatId() : undefined;
+                    if (chatId !== undefined && chatId !== null && String(chatId).trim()) params.__operit_package_chat_id = String(chatId).trim();
+                    return params;
+                },
                 _normalizeCallerCardId: (callerCardId) => {
                     if (callerCardId === undefined || callerCardId === null) return undefined;
                     const normalized = String(callerCardId).trim();
@@ -1170,6 +1253,7 @@ fun getJsToolsDefinition(): String {
                     if (options.threshold !== undefined) params.threshold = options.threshold;
                     const normalizedCallerCardId = Tools.Memory._normalizeCallerCardId(options.callerCardId);
                     if (normalizedCallerCardId !== undefined) params.caller_card_id = normalizedCallerCardId;
+                    Tools.Memory._withHostChat(params);
                     return toolCall("query_memory", params);
                 },
                 // 通过标题获取记忆
@@ -1192,6 +1276,7 @@ fun getJsToolsDefinition(): String {
                     if (options.limit !== undefined) params.limit = options.limit;
                     const normalizedCallerCardId = Tools.Memory._normalizeCallerCardId(options.callerCardId);
                     if (normalizedCallerCardId !== undefined) params.caller_card_id = normalizedCallerCardId;
+                    Tools.Memory._withHostChat(params);
                     return toolCall("get_memory_by_title", params);
                 },
                 // 创建记忆
@@ -1215,6 +1300,7 @@ fun getJsToolsDefinition(): String {
                     if (options.tags) params.tags = options.tags;
                     const normalizedCallerCardId = Tools.Memory._normalizeCallerCardId(options.callerCardId);
                     if (normalizedCallerCardId !== undefined) params.caller_card_id = normalizedCallerCardId;
+                    Tools.Memory._withHostChat(params);
                     return toolCall("create_memory", params);
                 },
                 // 更新记忆
@@ -1234,6 +1320,7 @@ fun getJsToolsDefinition(): String {
                     if (options.tags) params.tags = options.tags;
                     const normalizedCallerCardId = Tools.Memory._normalizeCallerCardId(options.callerCardId);
                     if (normalizedCallerCardId !== undefined) params.caller_card_id = normalizedCallerCardId;
+                    Tools.Memory._withHostChat(params);
                     return toolCall("update_memory", params);
                 },
                 // 删除记忆
@@ -1245,6 +1332,7 @@ fun getJsToolsDefinition(): String {
                     const params = { title: options.title };
                     const normalizedCallerCardId = Tools.Memory._normalizeCallerCardId(options.callerCardId);
                     if (normalizedCallerCardId !== undefined) params.caller_card_id = normalizedCallerCardId;
+                    Tools.Memory._withHostChat(params);
                     return toolCall("delete_memory", params);
                 },
                 // 批量移动记忆（按标题列表和/或来源文件夹筛选）
@@ -1260,6 +1348,7 @@ fun getJsToolsDefinition(): String {
                     if (options.sourceFolderPath !== undefined && options.sourceFolderPath !== null) params.source_folder_path = String(options.sourceFolderPath);
                     const normalizedCallerCardId = Tools.Memory._normalizeCallerCardId(options.callerCardId);
                     if (normalizedCallerCardId !== undefined) params.caller_card_id = normalizedCallerCardId;
+                    Tools.Memory._withHostChat(params);
                     return toolCall("move_memory", params);
                 },
                 // 链接记忆
@@ -1274,6 +1363,7 @@ fun getJsToolsDefinition(): String {
                     if (options.description) params.description = options.description;
                     const normalizedCallerCardId = Tools.Memory._normalizeCallerCardId(options.callerCardId);
                     if (normalizedCallerCardId !== undefined) params.caller_card_id = normalizedCallerCardId;
+                    Tools.Memory._withHostChat(params);
                     return toolCall("link_memories", params);
                 },
                 // 查询记忆链接
@@ -1290,6 +1380,7 @@ fun getJsToolsDefinition(): String {
                     if (options.limit !== undefined) params.limit = options.limit;
                     const normalizedCallerCardId = Tools.Memory._normalizeCallerCardId(options.callerCardId);
                     if (normalizedCallerCardId !== undefined) params.caller_card_id = normalizedCallerCardId;
+                    Tools.Memory._withHostChat(params);
                     return toolCall("query_memory_links", params);
                 },
                 // 更新记忆链接（优先按 linkId）
@@ -1308,6 +1399,7 @@ fun getJsToolsDefinition(): String {
                     if (options.description !== undefined) params.description = options.description;
                     const normalizedCallerCardId = Tools.Memory._normalizeCallerCardId(options.callerCardId);
                     if (normalizedCallerCardId !== undefined) params.caller_card_id = normalizedCallerCardId;
+                    Tools.Memory._withHostChat(params);
                     return toolCall("update_memory_link", params);
                 },
                 // 删除记忆链接（优先按 linkId）
@@ -1323,6 +1415,7 @@ fun getJsToolsDefinition(): String {
                     if (options.linkType) params.link_type = options.linkType;
                     const normalizedCallerCardId = Tools.Memory._normalizeCallerCardId(options.callerCardId);
                     if (normalizedCallerCardId !== undefined) params.caller_card_id = normalizedCallerCardId;
+                    Tools.Memory._withHostChat(params);
                     return toolCall("delete_memory_link", params);
                 }
             },

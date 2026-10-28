@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="orbit_tool_current_location_title">当前位置</string>
+    <string name="orbit_tool_current_location_note">允许获取当前位置，用粗略位置就够了，不需要后台定位。</string>
+    <string name="orbit_tool_geofence_title">地点提醒</string>
+    <string name="orbit_tool_geofence_note">进入或离开地点时提醒，需要精准位置。点下面按钮允许使用期间访问，并开启「使用精确位置」（如有此选项）。Android 10 及以上还需回来后单独开启后台定位。</string>
+    <string name="orbit_tool_geofence_background_note">精准位置已开启。再点下面按钮，将位置权限改为「始终允许」；Android 11 及以上需要在系统设置中选择。</string>
+    <string name="orbit_tool_geofence_services_note">位置权限已齐备。再点下面按钮，开启手机的定位服务，地点提醒才能工作。</string>
+</resources>

@@ -14,7 +14,10 @@ internal data class PendingMessageQueueState(
 )
 
 /** Keeps transient queues per chat for the lifetime of the ViewModel, across UI navigation. */
-internal class PendingMessageQueueStore {
+internal class PendingMessageQueueStore(
+    /** Called when a message goes back into the queue (restored or returned from steering). */
+    private val onBackInQueue: (chatId: String, messageId: Long) -> Unit = { _, _ -> },
+) {
     private val lock = Any()
     private val nextMessageId = AtomicLong(1L)
     private val chatGenerations = mutableMapOf<String, Long>()
@@ -24,25 +27,28 @@ internal class PendingMessageQueueStore {
     val states: StateFlow<Map<String, PendingMessageQueueState>> = _states.asStateFlow()
 
     fun enqueue(chatId: String, text: String, isQueueBlocked: Boolean,
-                attachments: List<com.ai.assistance.operit.data.model.AttachmentInfo> = emptyList()): Boolean {
+                attachments: List<com.ai.assistance.operit.data.model.AttachmentInfo> = emptyList(),
+                replyToMessage: com.ai.assistance.operit.data.model.ChatMessage? = null): Long? {
         synchronized(lock) {
-            if (chatId in inactiveChatIds) return false
+            if (chatId in inactiveChatIds) return null
             val generation = chatGenerations[chatId] ?: 0L
+            val id = nextMessageId.getAndIncrement()
             updateState(chatId) { state ->
                 state.copy(
                     messages =
                         state.messages +
                             PendingQueueMessageItem(
-                                id = nextMessageId.getAndIncrement(),
+                                id = id,
                                 text = text,
                                 chatGeneration = generation,
                                 attachments = attachments.toList(),
+                                replyToMessage = replyToMessage,
                             ),
                     isExpanded = true,
                     wasBlocked = isQueueBlocked,
                 )
             }
-            return true
+            return id
         }
     }
 
@@ -56,6 +62,7 @@ internal class PendingMessageQueueStore {
     }
 
     fun restore(chatId: String, message: PendingQueueMessageItem) {
+        onBackInQueue(chatId, message.id)
         synchronized(lock) {
             if (chatId in inactiveChatIds) return
             if (message.chatGeneration != (chatGenerations[chatId] ?: 0L)) return
@@ -70,13 +77,15 @@ internal class PendingMessageQueueStore {
         synchronized(lock) { updateState(chatId) { it.copy(isExpanded = expanded) } }
     }
 
-    fun returnSteer(chatId: String, message: PendingQueueMessageItem) {
+    fun returnSteer(chatId: String, message: PendingQueueMessageItem, sendLater: Boolean = false) {
+        onBackInQueue(chatId, message.id)
         synchronized(lock) {
             if (!isCurrentGeneration(chatId, message.chatGeneration)) return
             updateState(chatId) { state ->
                 state.copy(
                     messages = state.messages.map { if (it.id == message.id) message else it },
-                    suppressNextAutoDequeue = true,
+                    suppressNextAutoDequeue = !sendLater,
+                    wasBlocked = state.wasBlocked || sendLater,
                 )
             }
         }

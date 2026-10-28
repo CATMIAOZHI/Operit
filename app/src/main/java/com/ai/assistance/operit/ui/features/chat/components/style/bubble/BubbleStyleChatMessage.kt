@@ -1,7 +1,13 @@
 
 package com.ai.assistance.operit.ui.features.chat.components.style.bubble
 
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.key
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
@@ -52,6 +58,7 @@ fun BubbleStyleChatMessage(
 ) {
     when (if (message.displayMode.isCollaborationEvent) "ai" else message.sender) {
         "user" -> {
+            com.ai.assistance.operit.ui.features.chat.components.OrbitReactedUserMessage(message.timestamp) {
             BubbleUserMessageComposable(
                 message = message,
                 backgroundColor = userMessageColor,
@@ -64,6 +71,7 @@ fun BubbleStyleChatMessage(
                 bubbleContentPaddingRight = bubbleUserContentPaddingRight,
                 enableDialogs = enableDialogs,
             )
+            }
         }
         "ai" -> {
             // Cards tune their text to a solid bubble; images and glass have no single color. A nearly
@@ -71,8 +79,19 @@ fun BubbleStyleChatMessage(
             val backdrop = if (aiBubbleImageStyle == null && !aiMessageLiquidGlassEnabled && !aiMessageWaterGlassEnabled &&
                 aiMessageColor.alpha >= .95f) aiMessageColor.copy(alpha = 1f) else Color.Unspecified
             CompositionLocalProvider(LocalDynamicUiBackdrop provides backdrop) {
+            // An Orbit reply can be several messages sent one after another, and the cards its tools
+            // sent: each is its own bubble, stacked. A card is liked, reacted to and replied to on
+            // its own; the words answer for the message.
+            val orbitLook = com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current
+            val english = !androidx.compose.ui.platform.LocalConfiguration.current.locales[0].language.startsWith("zh")
+            val pieces = remember(orbitLook, message.content, message.contentStream, message.displayMode, message.timestamp, english) {
+                if (orbitLook && message.contentStream == null && !message.displayMode.isCollaborationEvent)
+                    com.ai.assistance.operit.ui.features.chat.components.OrbitSpeech.pieceList(message.content, message.timestamp, english)
+                else null
+            }
+            val bubble: @Composable (ChatMessage, ChatMessageHeightMemory?) -> Unit = { shown, memory ->
             BubbleAiMessageComposable(
-                message = message,
+                message = shown,
                 showHeader = showAssistantHeader && !message.displayMode.isCollaborationEvent,
                 inlineContent = if (message.displayMode.isCollaborationEvent) {
                     { com.ai.assistance.operit.ui.features.chat.components.CollaborationMessageCard(message, horizontalPadding = 0.dp) }
@@ -90,11 +109,36 @@ fun BubbleStyleChatMessage(
                 expandThinkToolsGroups = expandThinkToolsGroups,
                 forceShowThinkingProcess = forceShowThinkingProcess,
                 isHidden = isHidden,
-                heightMemory = heightMemory,
+                heightMemory = memory,
                 enableDialogs = enableDialogs,
                 enableToolDetailDialogs = enableToolDetailDialogs,
                 onAvatarLongPressMention = onRoleAvatarLongPress,
             )
+            }
+            if (pieces == null) {
+                com.ai.assistance.operit.ui.features.chat.components.OrbitReactedAiMessage(message.timestamp) {
+                    bubble(message, heightMemory)
+                }
+            } else {
+                    // Always the same stack, even for one bubble: a reply that grows a second bubble
+                    // while streaming keeps the first one as it is drawn. The gap matches the one
+                    // between saved messages, so nothing moves when the parts are saved apart.
+                    Column(
+                        Modifier.fillMaxWidth().then(
+                            if (heightMemory == null || isHidden) Modifier
+                            else Modifier.onSizeChanged { heightMemory.updateMeasured(message.timestamp, it.height) }
+                        ),
+                        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
+                    ) {
+                        pieces.forEachIndexed { i, piece ->
+                            key(i) {
+                                com.ai.assistance.operit.ui.features.chat.components.OrbitPieceFrame(piece) {
+                                    bubble(message.copy(content = piece.content), null)
+                                }
+                            }
+                        }
+                    }
+            }
             }
         }
         "summary" -> {
@@ -102,15 +146,15 @@ fun BubbleStyleChatMessage(
                 message = message,
                 backgroundColor = systemMessageColor.copy(alpha = 0.7f),
                 textColor = systemTextColor,
-                onDelete = {
-                    if (index != -1) {
-                        onDeleteMessage?.invoke(index)
+                onDelete = onDeleteMessage?.let { delete ->
+                    {
+                        if (index != -1) {
+                            delete(index)
+                        }
                     }
                 },
                 enableDialog = enableDialogs,  // 传递弹窗启用状态
-                onEdit = { editedMessage ->
-                    onEditSummary?.invoke(editedMessage)
-                }
+                onEdit = onEditSummary
             )
         }
     }

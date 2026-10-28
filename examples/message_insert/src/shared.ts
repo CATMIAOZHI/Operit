@@ -1067,6 +1067,7 @@ async function buildMemoryContent(
     limit: settings.memoryLimit,
     ...(reuseSnapshot ? { snapshot_id: snapshotId } : {}),
     ...(callerCardId ? { caller_card_id: callerCardId } : {}),
+    ...(String(chatId || "").trim() ? { __operit_package_chat_id: String(chatId).trim() } : {}),
   });
 
   const memories = Array.isArray(result?.memories) ? result.memories : [];

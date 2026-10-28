@@ -15,58 +15,53 @@ import com.ai.assistance.operit.data.preferences.MemorySearchSettingsPreferences
 import kotlinx.coroutines.launch
 
 @Composable
-fun MemoryAutomationPage(profileId: String, onBack: () -> Unit) {
+fun MemoryAutomationPage(profileId: String, interceptBack: Boolean = false, onBack: () -> Unit) {
     val context = LocalContext.current
     val api = remember { ApiPreferences.getInstance(context) }
     val prefs = remember(profileId) { MemorySearchSettingsPreferences(context, profileId) }
     val master by api.enableMemoryAutoUpdateFlow.collectAsState(initial = false)
-    val graph by api.enableLegacyMemoryExtractionFlow.collectAsState(initial = false)
     var autoApprove by remember(profileId) { mutableStateOf(prefs.shouldAutoApproveChanges()) }
     var notes by remember(profileId) { mutableStateOf(prefs.shouldExtractNewMemory()) }
     var skills by remember(profileId) { mutableStateOf(prefs.shouldExtractSkills()) }
     var includeThinking by remember(profileId) { mutableStateOf(prefs.shouldIncludeThinking()) }
     var revise by remember(profileId) { mutableStateOf(prefs.mayReviseLearnedSkills()) }
     var learningDelay by remember(profileId) { mutableStateOf(prefs.learningDelayMinutes()) }
-    var memoryInterval by remember(profileId) { mutableStateOf(prefs.memoryReviewInterval()) }
-    var skillInterval by remember(profileId) { mutableStateOf(prefs.skillReviewInterval()) }
     var delayMenu by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    MemoryLibraryPage(stringResource(R.string.memory_automation_title), profileId, onBack) {
+    MemoryLibraryPage(stringResource(R.string.memory_automation_title), profileId, onBack, interceptBack) {
+        // An Orbit reviews all of its chats into its one memory; the app-wide switch does not apply.
+        val orbitSpace = MemorySearchSettingsPreferences.isOrbitSpace(profileId)
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
-            AutomationSwitch(stringResource(R.string.memory_auto_update),
-                stringResource(R.string.memory_auto_update_desc), master) {
-                scope.launch { api.saveEnableMemoryAutoUpdate(it) }
-            }
-            HorizontalDivider(Modifier.padding(vertical = 12.dp))
-            AutomationSwitch(stringResource(R.string.memory_include_thinking),
-                stringResource(R.string.memory_include_thinking_desc), includeThinking) {
-                prefs.setIncludeThinking(it); includeThinking = it
-            }
-            AutomationSwitch(stringResource(R.string.memory_auto_approve),
-                stringResource(R.string.memory_auto_approve_desc), autoApprove) {
-                prefs.setAutoApproveChanges(it); autoApprove = it
-            }
-            if (!master) Text(stringResource(R.string.memory_auto_master_off),
-                Modifier.padding(bottom = 12.dp), style = MaterialTheme.typography.bodyMedium)
-            AutomationSwitch(stringResource(R.string.memory_extract_old),
-                stringResource(R.string.memory_graph_path_desc), graph) {
-                scope.launch { api.saveEnableLegacyMemoryExtraction(it) }
-            }
-            AutomationSwitch(stringResource(R.string.memory_extract_new),
-                stringResource(R.string.memory_notes_path_desc), notes) {
-                prefs.setExtractNewMemory(it); notes = it
-            }
-            AutomationSwitch(stringResource(R.string.memory_extract_skills),
-                stringResource(R.string.memory_skills_path_desc), skills) {
-                prefs.setExtractSkills(it); skills = it
-            }
-            LearningIntervalSetting(stringResource(R.string.memory_review_interval), memoryInterval,
-                stringResource(R.string.memory_interval_unit_turns)) {
-                prefs.setMemoryReviewInterval(it); memoryInterval = it
-            }
-            LearningIntervalSetting(stringResource(R.string.skill_review_interval), skillInterval,
-                stringResource(R.string.memory_interval_unit_iterations)) {
-                prefs.setSkillReviewInterval(it); skillInterval = it
+            if (orbitSpace) {
+                // Orbit always learns this way, so its page keeps only the timing and says so once.
+                Text(stringResource(R.string.memory_orbit_learning_fixed, com.ai.assistance.operit.ui.features.orbit.rememberOrbitNameForSpace(profileId) ?: stringResource(R.string.nav_orbit)),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+            } else {
+                AutomationSwitch(stringResource(R.string.memory_auto_update),
+                    stringResource(R.string.memory_auto_update_desc), master) {
+                    scope.launch { api.saveEnableMemoryAutoUpdate(it) }
+                }
+                HorizontalDivider(Modifier.padding(vertical = 12.dp))
+                AutomationSwitch(stringResource(R.string.memory_include_thinking),
+                    stringResource(R.string.memory_include_thinking_desc), includeThinking) {
+                    prefs.setIncludeThinking(it); includeThinking = it
+                }
+                AutomationSwitch(stringResource(R.string.memory_auto_approve),
+                    stringResource(R.string.memory_auto_approve_desc), autoApprove) {
+                    prefs.setAutoApproveChanges(it); autoApprove = it
+                }
+                if (!master) Text(stringResource(R.string.memory_auto_master_off),
+                    Modifier.padding(bottom = 12.dp), style = MaterialTheme.typography.bodyMedium)
+                AutomationSwitch(stringResource(R.string.memory_extract_new),
+                    stringResource(R.string.memory_notes_path_desc), notes) {
+                    prefs.setExtractNewMemory(it); notes = it
+                }
+                AutomationSwitch(stringResource(R.string.memory_extract_skills),
+                    stringResource(R.string.memory_skills_path_desc), skills) {
+                    prefs.setExtractSkills(it); skills = it
+                }
             }
             ListItem(
                 headlineContent = { Text(stringResource(R.string.memory_learning_delay)) },
@@ -76,7 +71,7 @@ fun MemoryAutomationPage(profileId: String, onBack: () -> Unit) {
                         TextButton(onClick = { delayMenu = true }) {
                             Text(stringResource(R.string.memory_learning_delay_minutes, learningDelay))
                         }
-                        DropdownMenu(expanded = delayMenu, onDismissRequest = { delayMenu = false }) {
+                        LearningDropdownMenu(orbitSpace, expanded = delayMenu, onDismissRequest = { delayMenu = false }) {
                             listOf(1, 5, 10, 30, 60).forEach { minutes ->
                                 DropdownMenuItem(text = {
                                     Text(stringResource(R.string.memory_learning_delay_minutes, minutes))
@@ -90,37 +85,43 @@ fun MemoryAutomationPage(profileId: String, onBack: () -> Unit) {
                     }
                 }
             )
-            AutomationSwitch(stringResource(R.string.memory_learned_revise),
-                stringResource(R.string.memory_learned_hint), revise) {
-                prefs.setReviseLearnedSkills(it); revise = it
+            if (!orbitSpace) {
+                AutomationSwitch(stringResource(R.string.memory_learned_revise),
+                    stringResource(R.string.memory_learned_hint), revise) {
+                    prefs.setReviseLearnedSkills(it); revise = it
+                }
             }
         }
     }
 }
 
 @Composable
-private fun LearningIntervalSetting(title: String, value: Int, unit: String, onChange: (Int) -> Unit) {
-    var expanded by remember { mutableStateOf(false) }
-    ListItem(headlineContent = { Text(title) }, trailingContent = {
-        Box {
-            // A bare number does not say whether the interval counts turns, replies or tool calls.
-            TextButton(onClick = { expanded = true }) { Text("$value $unit") }
-            DropdownMenu(expanded, onDismissRequest = { expanded = false }) {
-                listOf(5, 10, 20, 50).forEach { interval ->
-                    DropdownMenuItem(text = { Text("$interval $unit") }, onClick = {
-                        onChange(interval); expanded = false
-                    })
-                }
-            }
-        }
-    })
+private fun LearningDropdownMenu(
+    orbitSpace: Boolean,
+    expanded: Boolean,
+    onDismissRequest: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    if (orbitSpace) {
+        com.ai.assistance.operit.ui.features.orbit.OrbitDropdownMenu(
+            expanded = expanded, onDismissRequest = onDismissRequest, content = content,
+        )
+    } else {
+        DropdownMenu(expanded = expanded, onDismissRequest = onDismissRequest, content = content)
+    }
 }
 
 @Composable
-private fun AutomationSwitch(title: String, detail: String, value: Boolean, onChange: (Boolean) -> Unit) {
+private fun AutomationSwitch(
+    title: String,
+    detail: String,
+    value: Boolean,
+    enabled: Boolean = true,
+    onChange: (Boolean) -> Unit,
+) {
     ListItem(
         headlineContent = { Text(title) },
         supportingContent = { Text(detail) },
-        trailingContent = { Switch(value, onChange) }
+        trailingContent = { Switch(value, onChange, enabled = enabled) }
     )
 }

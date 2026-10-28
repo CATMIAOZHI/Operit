@@ -3,7 +3,7 @@ package com.ai.assistance.operit.data.preferences
 import android.content.Context
 import java.security.MessageDigest
 
-class SkillVisibilityPreferences private constructor(private val context: Context) {
+class SkillVisibilityPreferences private constructor(private val context: Context, private val orbitId: String? = null) {
 
     companion object {
         private const val PREFS_NAME = "com.ai.assistance.operit.data.preferences.SkillVisibilityPreferences"
@@ -15,6 +15,10 @@ class SkillVisibilityPreferences private constructor(private val context: Contex
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: SkillVisibilityPreferences(context.applicationContext).also { INSTANCE = it }
             }
+        }
+        fun forOrbit(context: Context, orbitId: String): SkillVisibilityPreferences {
+            require(orbitId.matches(Regex("[a-zA-Z0-9-]+")))
+            return SkillVisibilityPreferences(context.applicationContext, orbitId)
         }
 
         private fun keyForSkillName(skillName: String): String {
@@ -32,13 +36,15 @@ class SkillVisibilityPreferences private constructor(private val context: Contex
             return "skill_visible_${hex.take(16)}"
         }
 
+        private val UNSAFE = Regex("[^a-zA-Z0-9_]")
+
         private fun legacyKeyForSkillName(skillName: String): String {
-            val safe = skillName.trim().replace("[^a-zA-Z0-9_]".toRegex(), "_")
+            val safe = skillName.trim().replace(UNSAFE, "_")
             return "skill_visible_$safe"
         }
     }
 
-    private val prefs by lazy { context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
+    private val prefs by lazy { context.getSharedPreferences(PREFS_NAME + (orbitId?.let { ".$it" } ?: ""), Context.MODE_PRIVATE) }
 
     fun isSkillVisibleToAi(skillName: String): Boolean {
         if (skillName.isBlank()) return true
@@ -57,9 +63,15 @@ class SkillVisibilityPreferences private constructor(private val context: Contex
         return true
     }
 
-    fun setSkillVisibleToAi(skillName: String, visible: Boolean) {
-        if (skillName.isBlank()) return
-        prefs.edit().putBoolean(keyForSkillName(skillName), visible).apply()
-        LearningPromptSnapshotRepository.markChanged(context, "settings")
+    /**
+     * [durable] writes before returning, for a caller that records something else right after it,
+     * and returns whether the write landed.
+     */
+    fun setSkillVisibleToAi(skillName: String, visible: Boolean, durable: Boolean = false): Boolean {
+        if (skillName.isBlank()) return false
+        val edit = prefs.edit().putBoolean(keyForSkillName(skillName), visible)
+        val saved = if (durable) edit.commit() else { edit.apply(); true }
+        LearningPromptSnapshotRepository.markChanged(context, orbitId?.let { "skills:orbit_$it" } ?: "settings")
+        return saved
     }
 }

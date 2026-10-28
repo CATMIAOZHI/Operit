@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="orbit_channels_title">Message channels</string>
+    <string name="orbit_channels_row">Chat from other messaging apps</string>
+    <string name="orbit_channels_intro">Chat with %1$s in other messaging apps.</string>
+    <string name="orbit_channels_available">Available</string>
+    <string name="orbit_channels_connected">Connected</string>
+
+    <string name="orbit_weixin">WeChat</string>
+    <string name="orbit_weixin_intro">Once connected, you can message %1$s from WeChat.</string>
+    <string name="orbit_weixin_detail">If you continue, your conversation with %1$s is linked to a chat of its own in WeChat. %1$s cannot read any of your other WeChat chats, and you can disconnect at any time.</string>
+    <string name="orbit_weixin_footer">Connecting means scanning a code with WeChat to bind a bot of your own. After a long silence in WeChat, WeChat may hold back messages %1$s starts; they go out once you send something there.</string>
+    <string name="orbit_weixin_connect">Connect</string>
+    <string name="orbit_weixin_reconnect">Reconnect</string>
+    <string name="orbit_weixin_open_chat">Open the WeChat chat</string>
+    <string name="orbit_weixin_disconnect">Disconnect</string>
+    <string name="orbit_weixin_disconnect_title">Disconnect WeChat?</string>
+    <string name="orbit_weixin_disconnect_note">Messages from WeChat will no longer reach %1$s. The WeChat chat here and its history stay.</string>
+    <string name="orbit_weixin_disconnect_failed">Could not disconnect. Try again.</string>
+    <string name="orbit_weixin_status">Status</string>
+    <string name="orbit_weixin_online">Online</string>
+    <string name="orbit_weixin_connecting">Connecting…</string>
+    <string name="orbit_weixin_expired">The WeChat login expired. Reconnect.</string>
+    <string name="orbit_weixin_last_in">Last message</string>
+    <string name="orbit_weixin_never">None yet</string>
+    <string name="orbit_weixin_waiting">Waiting to send</string>
+    <string name="orbit_weixin_waiting_count">%1$d</string>
+    <string name="orbit_weixin_error_network">WeChat cannot be reached right now. Trying again.</string>
+    <string name="orbit_weixin_error_send">Some messages could not go out yet, most likely after a long silence in WeChat. They go out once you send something there.</string>
+    <string name="orbit_weixin_error_chats">There are too many side chats. Delete a few to receive WeChat messages.</string>
+    <string name="orbit_weixin_error_other">Something went wrong with WeChat. Trying again.</string>
+
+    <string name="orbit_weixin_loading_qr">Getting the code…</string>
+    <string name="orbit_weixin_scan_title">Scan with WeChat</string>
+    <string name="orbit_weixin_scan_note">Scan the code with WeChat on your phone, then confirm in WeChat. With only this phone, save the code first, then pick it from your photos in WeChat\'s Scan.</string>
+    <string name="orbit_weixin_qr_desc">WeChat login code</string>
+    <string name="orbit_weixin_scanned">Scanned. Confirm in WeChat on your phone.</string>
+    <string name="orbit_weixin_save_qr">Save the code</string>
+    <string name="orbit_weixin_qr_saved">Saved to your photos</string>
+    <string name="orbit_weixin_qr_save_failed">Could not save</string>
+    <string name="orbit_weixin_code_title">Enter the code</string>
+    <string name="orbit_weixin_code_note">WeChat on your phone shows a number. Enter it here.</string>
+    <string name="orbit_weixin_code_wrong">That number did not match. Try again.</string>
+    <string name="orbit_weixin_code_hint">Number</string>
+    <string name="orbit_weixin_code_submit">Continue</string>
+    <string name="orbit_weixin_done">WeChat connected</string>
+    <string name="orbit_weixin_done_note">Try sending %1$s a message in WeChat.</string>
+    <string name="orbit_weixin_finish">Done</string>
+    <string name="orbit_weixin_retry">Try again</string>
+    <string name="orbit_weixin_close">Close</string>
+    <string name="orbit_weixin_fail_expired">The code expired too many times. Try again.</string>
+    <string name="orbit_weixin_fail_blocked">Too many wrong numbers. Try again later.</string>
+    <string name="orbit_weixin_fail_bound">This WeChat is already bound. If messages do not arrive, remove the old bot in WeChat and connect again.</string>
+    <string name="orbit_weixin_fail_timeout">That took too long. Scan again.</string>
+    <string name="orbit_weixin_fail_chats">There are too many side chats. Delete a few, then connect.</string>
+    <string name="orbit_weixin_fail_network">Could not reach WeChat. Check your connection and try again.</string>
+    <string name="orbit_weixin_card_title">Link WeChat</string>
+    <string name="orbit_weixin_card_sub">Scan a code to chat with %1$s in WeChat</string>
+    <string name="orbit_weixin_card_done">Linked. You can now chat with %1$s in WeChat</string>
+</resources>

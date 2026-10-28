@@ -207,6 +207,7 @@ fun FolderNavigator(
     onMemorySpaceRename: (String, String) -> Unit,
     onMemorySpaceDelete: (String) -> Unit,
     onDismissRequest: () -> Unit,
+    showMemorySpaceSelector: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     // 构建文件夹树
@@ -273,7 +274,7 @@ fun FolderNavigator(
 
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
-                ProfileSelector(
+                if (showMemorySpaceSelector) ProfileSelector(
                     profileList = profileList,
                     profileNameMap = profileNameMap,
                     selectedProfileId = selectedProfileId,
@@ -304,8 +305,8 @@ fun FolderNavigator(
                         }
                     }
 
-                    // 新建文件夹按钮
-                    IconButton(
+                    // 新建文件夹按钮（旧记忆只读时不提供）
+                    if (onFolderCreate != null) IconButton(
                         onClick = { showCreateDialog = true },
                         modifier = Modifier.size(32.dp)
                     ) {
@@ -350,9 +351,10 @@ fun FolderNavigator(
                             }
                         },
                         onFolderSelected = onFolderSelected,
-                        onFolderLongClick = { path ->
-                            contextMenuFolder = path
-                        }
+                        // Nothing to offer on a long press when folders cannot be renamed or deleted.
+                        onFolderLongClick = if (onFolderRename != null || onFolderDelete != null) {
+                            { path -> contextMenuFolder = path }
+                        } else null
                     )
                 }
             }
@@ -425,7 +427,7 @@ private fun LazyListScope.renderFolderTree(
     expandedPaths: Set<String>,
     onToggleExpand: (String) -> Unit,
     onFolderSelected: (String) -> Unit,
-    onFolderLongClick: (String) -> Unit
+    onFolderLongClick: ((String) -> Unit)?
 ) {
     nodes.forEach { node ->
         val isExpanded = node.fullPath in expandedPaths
@@ -441,7 +443,7 @@ private fun LazyListScope.renderFolderTree(
                 hasChildren = hasChildren,
                 onToggleExpand = { onToggleExpand(node.fullPath) },
                 onClick = { onFolderSelected(node.fullPath) },
-                onLongClick = { onFolderLongClick(node.fullPath) },
+                onLongClick = onFolderLongClick?.let { longClick -> { longClick(node.fullPath) } },
                 modifier = Modifier.animateItem(placementSpec = tween(durationMillis = 300))
             )
         }

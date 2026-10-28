@@ -118,6 +118,11 @@ class TokenStatsRoomMigrationTest {
                         AppDatabase.MIGRATION_32_33,
                         AppDatabase.MIGRATION_33_34,
                         AppDatabase.MIGRATION_34_35,
+                        AppDatabase.MIGRATION_35_36,
+                        AppDatabase.MIGRATION_36_37,
+                        AppDatabase.MIGRATION_37_38,
+                        AppDatabase.MIGRATION_38_39,
+                        AppDatabase.MIGRATION_39_40, AppDatabase.MIGRATION_40_41, AppDatabase.MIGRATION_41_42, AppDatabase.MIGRATION_42_43, AppDatabase.MIGRATION_43_44, AppDatabase.MIGRATION_44_45,
                     )
                     .allowMainThreadQueries()
                     .build()
@@ -140,7 +145,7 @@ class TokenStatsRoomMigrationTest {
                 // Room 打开时已应用 28→29→30→31→32→33→34，重放 28→29 不改变版本号
                 JdbcSQLiteConnection(dbFile.absolutePath).use { connection ->
                     AppDatabase.MIGRATION_28_29.migrate(connection)
-                    assertEquals(35, userVersion(connection))
+                    assertEquals(45, userVersion(connection))
                 }
             } finally {
                 database.close()
@@ -165,6 +170,11 @@ class TokenStatsRoomMigrationTest {
                         AppDatabase.MIGRATION_32_33,
                         AppDatabase.MIGRATION_33_34,
                         AppDatabase.MIGRATION_34_35,
+                        AppDatabase.MIGRATION_35_36,
+                        AppDatabase.MIGRATION_36_37,
+                        AppDatabase.MIGRATION_37_38,
+                        AppDatabase.MIGRATION_38_39,
+                        AppDatabase.MIGRATION_39_40, AppDatabase.MIGRATION_40_41, AppDatabase.MIGRATION_41_42, AppDatabase.MIGRATION_42_43, AppDatabase.MIGRATION_43_44, AppDatabase.MIGRATION_44_45,
                     )
                     .allowMainThreadQueries()
                     .build()
@@ -401,6 +411,11 @@ reasoningTokens = 50L,
                         AppDatabase.MIGRATION_32_33,
                         AppDatabase.MIGRATION_33_34,
                         AppDatabase.MIGRATION_34_35,
+                        AppDatabase.MIGRATION_35_36,
+                        AppDatabase.MIGRATION_36_37,
+                        AppDatabase.MIGRATION_37_38,
+                        AppDatabase.MIGRATION_38_39,
+                        AppDatabase.MIGRATION_39_40, AppDatabase.MIGRATION_40_41, AppDatabase.MIGRATION_41_42, AppDatabase.MIGRATION_42_43, AppDatabase.MIGRATION_43_44, AppDatabase.MIGRATION_44_45,
                     )
                     .allowMainThreadQueries()
                     .build()
@@ -517,6 +532,11 @@ outputTokens = 500L,
                         AppDatabase.MIGRATION_32_33,
                         AppDatabase.MIGRATION_33_34,
                         AppDatabase.MIGRATION_34_35,
+                        AppDatabase.MIGRATION_35_36,
+                        AppDatabase.MIGRATION_36_37,
+                        AppDatabase.MIGRATION_37_38,
+                        AppDatabase.MIGRATION_38_39,
+                        AppDatabase.MIGRATION_39_40, AppDatabase.MIGRATION_40_41, AppDatabase.MIGRATION_41_42, AppDatabase.MIGRATION_42_43, AppDatabase.MIGRATION_43_44, AppDatabase.MIGRATION_44_45,
                     )
                     .allowMainThreadQueries()
                     .build()
@@ -638,6 +658,11 @@ outputTokens = 500L,
                         AppDatabase.MIGRATION_32_33,
                         AppDatabase.MIGRATION_33_34,
                         AppDatabase.MIGRATION_34_35,
+                        AppDatabase.MIGRATION_35_36,
+                        AppDatabase.MIGRATION_36_37,
+                        AppDatabase.MIGRATION_37_38,
+                        AppDatabase.MIGRATION_38_39,
+                        AppDatabase.MIGRATION_39_40, AppDatabase.MIGRATION_40_41, AppDatabase.MIGRATION_41_42, AppDatabase.MIGRATION_42_43, AppDatabase.MIGRATION_43_44, AppDatabase.MIGRATION_44_45,
                     )
                     .allowMainThreadQueries()
                     .build()
@@ -671,7 +696,7 @@ totalInputTokens = 1000L,
                 // 迁移可重入（ALTER 幂等）：以驱动变体再跑一次
                 JdbcSQLiteConnection(dbFile.absolutePath).use { connection ->
                     AppDatabase.MIGRATION_29_30.migrate(connection)
-                    assertEquals(35, userVersion(connection))
+                    assertEquals(45, userVersion(connection))
                 }
             } finally {
                 database.close()
@@ -694,6 +719,11 @@ totalInputTokens = 1000L,
                         AppDatabase.MIGRATION_32_33,
                         AppDatabase.MIGRATION_33_34,
                         AppDatabase.MIGRATION_34_35,
+                        AppDatabase.MIGRATION_35_36,
+                        AppDatabase.MIGRATION_36_37,
+                        AppDatabase.MIGRATION_37_38,
+                        AppDatabase.MIGRATION_38_39,
+                        AppDatabase.MIGRATION_39_40, AppDatabase.MIGRATION_40_41, AppDatabase.MIGRATION_41_42, AppDatabase.MIGRATION_42_43, AppDatabase.MIGRATION_43_44, AppDatabase.MIGRATION_44_45,
                     )
                     .allowMainThreadQueries()
                     .build()
@@ -717,7 +747,7 @@ totalInputTokens = 1000L,
                 // 迁移可重入（CREATE IF NOT EXISTS）：以驱动变体再跑一次
                 JdbcSQLiteConnection(dbFile.absolutePath).use { connection ->
                     AppDatabase.MIGRATION_30_31.migrate(connection)
-                    assertEquals(35, userVersion(connection))
+                    assertEquals(45, userVersion(connection))
                 }
             } finally {
                 database.close()
@@ -740,6 +770,11 @@ totalInputTokens = 1000L,
                         AppDatabase.MIGRATION_32_33,
                         AppDatabase.MIGRATION_33_34,
                         AppDatabase.MIGRATION_34_35,
+                        AppDatabase.MIGRATION_35_36,
+                        AppDatabase.MIGRATION_36_37,
+                        AppDatabase.MIGRATION_37_38,
+                        AppDatabase.MIGRATION_38_39,
+                        AppDatabase.MIGRATION_39_40, AppDatabase.MIGRATION_40_41, AppDatabase.MIGRATION_41_42, AppDatabase.MIGRATION_42_43, AppDatabase.MIGRATION_43_44, AppDatabase.MIGRATION_44_45,
                     )
                     .allowMainThreadQueries()
                     .build()

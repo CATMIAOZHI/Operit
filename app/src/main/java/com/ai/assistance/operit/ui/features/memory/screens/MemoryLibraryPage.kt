@@ -1,5 +1,7 @@
 package com.ai.assistance.operit.ui.features.memory.screens
 
+import com.ai.assistance.operit.ui.features.orbit.orbitDismissLayer
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
@@ -12,17 +14,43 @@ import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.preferences.preferencesManager
 
-/** Regular in-app destination, without a dialog window or floating surface. */
+/**
+ * Regular in-app destination, without a dialog window or floating surface. An Orbit's pages use
+ * Orbit's own frame (round back button and title) so they match the profile they open from.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MemoryLibraryPage(
     title: String,
     profileId: String,
     onBack: () -> Unit,
+    /**
+     * In an Orbit, a plain back is left to the page stack, which slides the page away with the
+     * swipe; true keeps it here while the page has its own inner view or unsaved work to handle.
+     */
+    interceptBack: Boolean = false,
+    backEnabled: Boolean = true,
     content: @Composable () -> Unit
 ) {
-    val profileNames by preferencesManager.memorySpaceNamesFlow.collectAsState(initial = emptyMap())
-    val profileName = profileNames[profileId] ?: profileId
+    if (com.ai.assistance.operit.data.preferences.MemorySearchSettingsPreferences.isOrbitSpace(profileId)) {
+        com.ai.assistance.operit.ui.features.orbit.OrbitPageBack(onBack = onBack)
+        val motion = com.ai.assistance.operit.ui.features.orbit.rememberOrbitBackMotion()
+        com.ai.assistance.operit.ui.features.orbit.OrbitBackHandler(
+            motion, enabled = interceptBack || !backEnabled, canDismiss = backEnabled,
+        ) { onBack() }
+        Surface(Modifier.fillMaxSize().orbitDismissLayer(motion), color = MaterialTheme.colorScheme.background) {
+            Column(Modifier.fillMaxSize().statusBarsPadding()) {
+                com.ai.assistance.operit.ui.features.orbit.OrbitPageHeader(
+                    title, onBack, Modifier.padding(start = 20.dp, end = 20.dp, top = 8.dp),
+                )
+                Box(Modifier.fillMaxWidth().weight(1f).navigationBarsPadding().imePadding()) { content() }
+            }
+        }
+        return
+    }
+    val profile by remember(profileId) { preferencesManager.getMemorySpaceFlow(profileId) }
+        .collectAsState(initial = null)
+    val profileName = profile?.name.orEmpty()
     BackHandler(onBack = onBack)
     Scaffold(
         modifier = Modifier.fillMaxSize(),

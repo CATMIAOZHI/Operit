@@ -147,7 +147,7 @@ class ConversationService(
             summaryConfig: ConversationSummaryConfig = ConversationSummaryConfig()
     ): String {
         try {
-            val useEnglish = LocaleUtils.getCurrentLanguage(context).lowercase().startsWith("en")
+            val useEnglish = LocaleUtils.usesEnglishPrompt(context)
             val activePromptMetadata = buildActivePromptHookMetadata(context)
             var systemPrompt =
                 FunctionalPrompts.buildSummarySystemPrompt(
@@ -371,7 +371,7 @@ class ConversationService(
         fromRecentConversation: Boolean = false,
     ): String {
         return try {
-            val useEnglish = LocaleUtils.getCurrentLanguage(context).lowercase().startsWith("en")
+            val useEnglish = LocaleUtils.usesEnglishPrompt(context)
             val systemPrompt = FunctionalPrompts.conversationTitleSystemPrompt(useEnglish, fromRecentConversation)
             val userPrompt = if (fromRecentConversation) userText else FunctionalPrompts.conversationTitleUserPrompt(
                 userText = userText,
@@ -501,6 +501,11 @@ class ConversationService(
             dispatchSystemPromptComposeHooks: (PromptHookContext) -> PromptHookContext = PromptHookRegistry::dispatchSystemPromptComposeHooks,
             dispatchToolPromptComposeHooks: (PromptHookContext) -> PromptHookContext = PromptHookRegistry::dispatchToolPromptComposeHooks
     ): List<PromptTurn> {
+        // Settle which Orbit (if any) owns this chat before the first plugin hook runs, so hooks
+        // that cannot look up a chat's parents (an older subagent's, say) still keep to the Orbit's own.
+        chatId?.takeIf { it.isNotBlank() }?.let {
+            com.ai.assistance.operit.features.orbit.OrbitMemoryScope.registerDescendant(context, it)
+        }
         val activePromptMetadata =
             buildActivePromptHookMetadata(
                 context,
@@ -542,26 +547,36 @@ class ConversationService(
         conversationMutex.withLock {
             // Add system prompt if not already present
             if (!effectiveChatHistory.any { it.kind == PromptTurnKind.SYSTEM }) {
-                // user.md describes the one human user. Role cards and group proxy senders describe
-                // assistants, so they must never replace or select a different user document.
+                val orbitSpace = com.ai.assistance.operit.features.orbit.OrbitMemoryScope
+                    .resolve(context, chatId, memorySpaceIdOverride)
+                val privateOwner = orbitSpace?.let {
+                    com.ai.assistance.operit.features.orbit.OrbitMemoryScope.privateOwner(context, it)
+                }
+                val userProfileDocumentRepository = orbitSpace?.let {
+                    UserProfileDocumentRepository.forMemorySpace(context, it)
+                } ?: userProfileDocumentRepository
+                val userRevisionKey = privateOwner?.let { "orbit-user:$it" } ?: "user"
                 val learningSnapshot = chatId?.takeIf { it.isNotBlank() && !isSubTask }?.let {
                     com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository(context,it)
                 }
+                learningSnapshot?.bindMemoryScope(privateOwner ?: "global", privateOwner?.let {
+                    com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.promptRevision(context, it)
+                }.orEmpty())
                 learningSnapshot?.beginEpoch(
                     effectiveChatHistory.lastOrNull { it.kind == PromptTurnKind.SUMMARY }?.content.orEmpty()
                 )
                 val proxyCard = proxySenderName?.takeIf { it.isNotBlank() }
                     ?.let { characterCardManager.findCharacterCardByName(it) }
                 val promptRevisions = com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository.revisions(
-                    context, listOfNotNull("user", "template", "settings",
+                    context, listOfNotNull(userRevisionKey, "template", "settings",
                         roleCardId?.takeIf { it.isNotBlank() }?.let { "card:$it" },
                         proxyCard?.id?.let { "card:$it" })
                 ).toMutableMap()
                 val userProfileMarkdown = learningSnapshot?.getOrPut("user") {
                     userProfileDocumentRepository.load().trim()
                 } ?: userProfileDocumentRepository.load().trim()
-                if (learningSnapshot != null) promptRevisions["user"] =
-                    learningSnapshot.getOrPut("_user_revision") { promptRevisions["user"].orEmpty() }
+                if (learningSnapshot != null) promptRevisions[userRevisionKey] =
+                    learningSnapshot.getOrPut("_user_revision") { promptRevisions[userRevisionKey].orEmpty() }
                 val proxyRolePrompt =
                     proxyCard
                         ?.let { proxyCard ->
@@ -577,7 +592,17 @@ class ConversationService(
                 val activeCard = effectiveRoleCardId?.let {
                     characterCardManager.getCharacterCardFlow(it).first()
                 }
-                val introPrompt = activeCard?.let {
+                // An Orbit chat takes its persona from the Orbit's own Soul.md, not a role card. Its
+                // parts sit around the app's system prompt (see OrbitTools.promptParts), so the
+                // intro slot is left empty for it.
+                val orbitParts =
+                    if (ConversationPromptIsolationPolicy.allowPersonalContext(isSubTask)) {
+                        com.ai.assistance.operit.core.tools.OrbitTools.promptParts(
+                            context, chatId, LocaleUtils.usesEnglishPrompt(context), useToolCallApi)
+                    } else {
+                        null
+                    }
+                val introPrompt = if (orbitParts != null) "" else activeCard?.let {
                     characterCardManager.combinePrompts(
                         it.id,
                         promptFunctionType = promptFunctionType
@@ -590,7 +615,8 @@ class ConversationService(
                         isSubTask = isSubTask,
                         requestTemplate = customSystemPromptTemplate,
                         globalTemplate =
-                            if (isSubTask) {
+                            // The main app's custom template is its own setting; an Orbit uses the built-in one.
+                            if (isSubTask || orbitParts != null) {
                                 ""
                             } else {
                                 apiPreferences.customSystemPromptTemplateFlow.first()
@@ -599,24 +625,28 @@ class ConversationService(
                 val allowPersonalContext =
                     ConversationPromptIsolationPolicy.allowPersonalContext(isSubTask)
                 // Use the same space as memory tools, including a fixed role-card binding.
-                val notesSpaceId = memorySpaceIdOverride?.takeIf { it.isNotBlank() }
+                val notesSpaceId = orbitSpace?.takeIf { it.isNotBlank() }
                     ?: activeCard?.takeIf {
                         com.ai.assistance.operit.data.model.CharacterCardMemoryProfileBindingMode.normalize(it.memoryProfileBindingMode) ==
                             com.ai.assistance.operit.data.model.CharacterCardMemoryProfileBindingMode.FIXED_PROFILE
                     }?.memoryProfileId?.takeIf { it.isNotBlank() }
                     ?: preferencesManager.activeMemorySpaceIdFlow.first()
                 promptRevisions.putAll(com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository.revisions(
-                    context, listOf("notes-policy:$notesSpaceId", "notes-content:$notesSpaceId")))
+                    context, listOf("notes-policy:$notesSpaceId", "notes-content:$notesSpaceId", "skills:$notesSpaceId")))
                 if (learningSnapshot != null) listOf("notes-policy:$notesSpaceId", "notes-content:$notesSpaceId").forEach { key ->
                     promptRevisions[key] = learningSnapshot.getOrPut("_revision:$key") { promptRevisions[key].orEmpty() }
                 }
                 suspend fun loadNotes() = if (allowPersonalContext &&
                     com.ai.assistance.operit.data.preferences.MemorySearchSettingsPreferences(context, notesSpaceId).shouldInjectNotes())
-                    com.ai.assistance.operit.data.preferences.MemoryNotesRepository(context, notesSpaceId).load().markdown else ""
+                    // Section markers only tell the app where a section starts; the headings carry the meaning.
+                    com.ai.assistance.operit.data.preferences.MemoryNoteSections.withoutMarkers(
+                        com.ai.assistance.operit.data.preferences.MemoryNotesRepository(context, notesSpaceId).load().markdown)
+                else ""
                 val memoryNotes = learningSnapshot?.getOrPut("notes:$notesSpaceId") { loadNotes() } ?: loadNotes()
 
                 // 获取工具启用状态
-                val enableTools = apiPreferences.enableToolsFlow.first()
+                val enableTools = apiPreferences.enableToolsFlow.first() ||
+                    com.ai.assistance.operit.core.tools.OrbitTools.isOrbitChat(context, chatId)
                 val disableUserPreferenceDescription =
                         apiPreferences.disableUserPreferenceDescriptionFlow.first()
                 val toolPromptVisibility = runCatching {
@@ -627,12 +657,13 @@ class ConversationService(
                     apiPreferences.safBookmarksFlow.first().map { it.name }
                 }.getOrElse { emptyList() }
 
-                val useEnglish = LocaleUtils.getCurrentLanguage(context).lowercase().startsWith("en")
+                val useEnglish = LocaleUtils.usesEnglishPrompt(context)
                 resolvedUseEnglish = useEnglish
                 val roleCardToolAccess = characterCardToolAccessResolver.resolve(
                     roleCardId = effectiveRoleCardId,
                     packageManager = packageManager,
-                    globalToolVisibility = toolPromptVisibility
+                    globalToolVisibility = toolPromptVisibility,
+                    chatId = chatId
                 )
 
                 // 获取系统提示词，现在传入workspacePath和识图配置状态
@@ -675,27 +706,37 @@ class ConversationService(
                     dispatchToolPromptComposeHooks = dispatchToolPromptComposeHooks
                 )
 
-                // 构建waifu特殊规则
+                // 构建waifu特殊规则。Orbit 有自己的身份和性格，主应用的老婆模式规则不进 Orbit。
                 val waifuRulesText =
-                    if (allowPersonalContext && waifuPreferences.enableWaifuModeFlow.first()) {
+                    if (orbitParts == null && allowPersonalContext && waifuPreferences.enableWaifuModeFlow.first()) {
                         buildWaifuRulesText()
                     } else {
                         ""
                     }
-                // 构建最终的系统提示词
+                // 构建最终的系统提示词：先放少变的部分，Orbit 的 Soul、记忆、资料放最后
                 val finalSystemPrompt = buildString {
+                    if (orbitParts != null) {
+                        append(orbitParts.handbook)
+                        append("\n\n")
+                    }
                     append(systemPrompt)
                     if (!additionalSystemPrompt.isNullOrBlank()) {
                         append("\n\n<subagent_profile source=\"agent_profile\">\n")
                         append(additionalSystemPrompt)
                         append("\n</subagent_profile>")
                     }
-                    if (allowPersonalContext && proxyRolePrompt.isNotEmpty()) {
+                    // A main-app role card never speaks for an Orbit.
+                    if (orbitParts == null && allowPersonalContext && proxyRolePrompt.isNotEmpty()) {
                         append("\n\n<assistant_role source=\"proxy_character_card\">\n")
                         append(proxyRolePrompt)
                         append("\n</assistant_role>")
                     }
                     append(waifuRulesText)
+                    if (orbitParts != null) {
+                        listOf(orbitParts.runtime, orbitParts.identity, orbitParts.soul, orbitParts.alignment)
+                            .filter { it.isNotEmpty() }
+                            .forEach { append("\n\n"); append(it) }
+                    }
                     if (memoryNotes.isNotBlank()) {
                         append("\n\n")
                         append(context.getString(R.string.memory_notes_prompt_intro))
@@ -706,7 +747,8 @@ class ConversationService(
                     }
                     if (
                         allowPersonalContext &&
-                            !disableUserPreferenceDescription &&
+                            // An Orbit always reads its own user.md; the app-wide switch is for other chats.
+                            (privateOwner != null || !disableUserPreferenceDescription) &&
                             userProfileMarkdown.isNotEmpty()
                     ) {
                         append("\n\n<user_profile source=\"user.md\">\n")
@@ -716,16 +758,28 @@ class ConversationService(
                 }
 
                 // 替换提示词中的占位符
-                val aiName = activeCard?.name ?: context.getString(R.string.app_name)
+                // In an Orbit's chats, its subagents' included, {{char}} is the Orbit's own name, never
+                // a main-app role card's.
+                val orbitName = if (orbitSpace != null || orbitParts != null) {
+                    runCatching { com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context, chatId) }
+                        .getOrNull()?.let { owner -> owner.name.trim().ifEmpty { "Orbit" } }
+                } else null
+                val aiName = orbitName ?: activeCard?.name ?: context.getString(R.string.app_name)
                 val finalSystemPromptWithReplacements = replacePromptPlaceholders(
                     finalSystemPrompt,
                     aiName
                 )
+                // An Orbit's prompt layers page shows what the app itself wrote into this prompt.
+                val promptSections = if (privateOwner != null && orbitParts != null) mapOf(
+                    "runtime" to replacePromptPlaceholders(orbitParts.runtime, aiName),
+                    "tools" to replacePromptPlaceholders(systemPrompt.trim(), aiName),
+                ) else emptyMap()
                 val savedSystem = try {
                     learningSnapshot?.bindSystem(finalSystemPromptWithReplacements, promptRevisions,
                         "$useToolCallApi:${toolExposureMode.name}",
                         listOf(roleCardId.orEmpty(), proxyCard?.id.orEmpty(), promptFunctionType.name,
-                            enableGroupOrchestrationHint.toString()).joinToString("|"))
+                            enableGroupOrchestrationHint.toString()).joinToString("|"),
+                        sections = promptSections)
                         ?: finalSystemPromptWithReplacements
                 } catch (_: com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository.IncompatiblePrefixException) {
                     throw IllegalStateException(context.getString(R.string.system_prefix_protocol_changed))
@@ -1234,7 +1288,7 @@ ${FunctionalPrompts.translationUserPrompt(targetLanguage, text)}
         
         val toolList = toolDescriptions.joinToString("\n") { "- $it" }
 
-        val useEnglish = LocaleUtils.getCurrentLanguage(context).lowercase().startsWith("en")
+        val useEnglish = LocaleUtils.usesEnglishPrompt(context)
         val descriptionPrompt =
             FunctionalPrompts.packageDescriptionUserPrompt(
                 pluginName = pluginName,

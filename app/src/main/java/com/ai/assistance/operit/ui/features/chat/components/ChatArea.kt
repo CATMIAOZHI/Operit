@@ -34,7 +34,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.CallSplit
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.Info
@@ -46,10 +48,16 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -95,7 +103,13 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Reply
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.foundation.border
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.material.icons.filled.AccountTree
+import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Summarize
 import androidx.compose.ui.draw.alpha
 import com.ai.assistance.operit.api.chat.llmprovider.MediaLinkParser
@@ -136,6 +150,8 @@ internal fun cleanMessageContentForCopy(content: String): String {
         .let(ChatMarkupRegex::removeOpenAiResponsesReasoningMeta)
         // Keep copy cleanup aligned with the renderer and executable-markup visibility grammar.
         .let(ChatUtils::removeThinkingContent)
+        // Orbit's break between messages it sends one after another copies as a new line.
+        .replace(OrbitSpeech.messageBreak, "\n")
         // 移除状态标签
         .replace(ChatMarkupRegex.statusTag, "")
         .replace(ChatMarkupRegex.statusSelfClosingTag, "")
@@ -176,6 +192,10 @@ fun ChatArea(
     onLoadProcess: (suspend (Long) -> Unit)? = null,
     transcriptReady: Boolean = true,
     activeRunStartedAt: Long? = null,
+    /** The running turn answers what the user said themselves (Orbit shows its typing dots only then). */
+    orbitUserWaiting: Boolean = false,
+    /** A message the user sent that waits for this chat's history summary; shown as sent meanwhile. */
+    summaryHeldSend: com.ai.assistance.operit.services.core.MessageCoordinationDelegate.SummaryHeldSend? = null,
     enableDialogs: Boolean = true,
     allowTranscriptMutation: Boolean = true,
     enableToolDetailDialogs: Boolean? = null,  // 工具详情弹窗开关，null 时跟随 enableDialogs
@@ -239,7 +259,11 @@ fun ChatArea(
     showChatFloatingDotsAnimation: Boolean = true,
 ) {
     if (!transcriptReady) {
-        Box(modifier) { CircularProgressIndicator(Modifier.align(Alignment.Center)) }
+        // A chat switch usually finishes within a few frames; a spinner only for a slow one, so a
+        // quick switch does not flash it.
+        var slow by remember { mutableStateOf(false) }
+        LaunchedEffect(Unit) { kotlinx.coroutines.delay(400); slow = true }
+        Box(modifier) { if (slow) CircularProgressIndicator(Modifier.align(Alignment.Center)) }
         return
     }
     val context = LocalContext.current
@@ -252,14 +276,37 @@ fun ChatArea(
         preferencesManager.showMessageTimingStats.collectAsState(initial = true)
     val showMessageTimestamp by
         preferencesManager.showMessageTimestamp.collectAsState(initial = true)
+    // An Orbit chat draws every message on its own: there is no process to fold.
+    val orbitLook = LocalOrbitChatLook.current
     val responseProcessState =
-        rememberResponseProcessState(chatHistory, currentChatId, !isMultiSelectMode, processMetadata, onLoadProcess)
+        rememberResponseProcessState(chatHistory, currentChatId, !isMultiSelectMode && !orbitLook, processMetadata, onLoadProcess)
     val lastMessage = chatHistory.lastOrNull()
+    // While a reply is being written it is the newest of the assistant's rows. The rows an Orbit
+    // chat shows are cleaned copies without a stream, so this is the only way to tell.
+    val lastAiIndex = remember(chatHistory) { chatHistory.indexOfLast { it.sender == "ai" } }
+    // In an Orbit chat a reply loads before its own row exists; the finished reply above it must
+    // not count as being written meanwhile (its gestures and tapbacks would blink off).
+    val orbitTurnFloor = if (orbitLook) LocalOrbitTurnFloor.current else null
+    val lastAiWritable = !orbitLook || orbitInCurrentTurn(chatHistory.getOrNull(lastAiIndex), orbitTurnFloor)
     var hasLastAiMessageStartedStreaming by remember(lastMessage?.timestamp) {
         mutableStateOf(lastMessage?.run { sender == "ai" && content.isNotBlank() } == true)
     }
 
     val messagesCount = chatHistory.size
+    // Orbit's cards sit after the shown message they followed; hidden steps do not count.
+    val orbitShown = remember(chatHistory, orbitLook) {
+        if (orbitLook) chatHistory.indices.filterNot { OrbitSpeech.hidden(chatHistory[it]) } else emptyList()
+    }
+    val orbitShownAt = remember(orbitShown) { orbitShown.withIndex().associate { it.value to it.index } }
+    val orbitShownTimes = remember(orbitShown, chatHistory) { orbitShown.mapTo(HashSet()) { chatHistory[it].timestamp } }
+    // The loaded page's edges; a card placed beyond them waits for its page.
+    val orbitLoadedFrom = if (hasOlderDisplayHistory) chatHistory.firstOrNull()?.timestamp ?: Long.MIN_VALUE else Long.MIN_VALUE
+    val orbitLoadedUntil = if (hasNewerDisplayHistory) chatHistory.lastOrNull()?.timestamp ?: Long.MAX_VALUE else Long.MAX_VALUE
+    val orbitCardReply = remember(onReplyToMessage) {
+        onReplyToMessage?.let { reply ->
+            { summary: String, time: Long -> reply(ChatMessage(sender = "ai", content = summary, timestamp = time)) }
+        }
+    }
     // A card belongs to the conversation that opened it: leaving that conversation closes it before
     // the next one composes, so coming back never flashes a card the user already left behind.
     DisposableEffect(currentChatId) { onDispose { SubagentDetailHost.clear() } }
@@ -323,8 +370,10 @@ fun ChatArea(
         loadingPage = isLoadingDisplayWindow,
         onOlder = onLoadOlderDisplayWindow,
         onNewer = onLoadNewerDisplayWindow,
-        splitMarkdown = chatStyle == ChatStyle.CURSOR ||
-            (bubbleAiImageStyle == null && !bubbleAiBubbleLiquidGlass && !bubbleAiBubbleWaterGlass),
+        // An Orbit message stays one piece, so it swipes and carries its reaction as a whole.
+        splitMarkdown = !orbitLook && (chatStyle == ChatStyle.CURSOR ||
+            (bubbleAiImageStyle == null && !bubbleAiBubbleLiquidGlass && !bubbleAiBubbleWaterGlass)),
+        skipMessage = if (orbitLook) OrbitSpeech::hidden else null,
         onLatest = onShowLatestDisplayWindow,
         loadLocator = loadMessageLocatorEntries,
         reveal = onRevealMessageForLocator,
@@ -336,6 +385,15 @@ fun ChatArea(
         modifier = modifier,
         renderMessage = { renderIndex ->
             val renderedMessage = chatHistory[renderIndex]
+            // Cards from before the first message sit above it, where they showed.
+            if (orbitLook && !hasOlderDisplayHistory && orbitShownAt[renderIndex] == 0 &&
+                com.ai.assistance.operit.ui.common.markdown.LocalTranscriptMarkdownSlice.current?.first != false) {
+                LocalOrbitChatFooter.current?.let { cards ->
+                    androidx.compose.runtime.CompositionLocalProvider(LocalOrbitLiveCardReply provides orbitCardReply) {
+                        cards(aiMessageColor, OrbitCardSlot(Long.MIN_VALUE, Long.MIN_VALUE, renderedMessage.timestamp, orbitShownTimes, orbitLoadedFrom, orbitLoadedUntil))
+                    }
+                }
+            }
                         MessageItem(
                             index = renderIndex,
                             currentChatId = currentChatId,
@@ -355,7 +413,7 @@ fun ChatArea(
                             thinkingTextColor = thinkingTextColor,
                             onSelectMessageToEdit = onSelectMessageToEdit,
                             onCopyMessage = onCopyMessage,
-                            onDeleteMessage = onDeleteMessage,
+                            onDeleteMessage = if (allowTranscriptMutation) onDeleteMessage else null,
                             onDeleteCurrentMessageVariant = onDeleteCurrentMessageVariant,
                             onDeleteMessagesFrom = onDeleteMessagesFrom,
                             onRollbackToMessage = onRollbackToMessage,
@@ -368,9 +426,9 @@ fun ChatArea(
                             onInsertSummary = onInsertSummary,
                             onMentionRoleFromAvatar = onMentionRoleFromAvatar,
                             chatStyle = chatStyle,
-                            showMessageTokenStats = showMessageTokenStats,
-                            showMessageTimingStats = showMessageTimingStats,
-                            showMessageTimestamp = showMessageTimestamp,
+                            showMessageTokenStats = showMessageTokenStats && !orbitLook,
+                            showMessageTimingStats = showMessageTimingStats && !orbitLook,
+                            showMessageTimestamp = showMessageTimestamp && !orbitLook,
                             cursorUserBubbleLiquidGlass = cursorUserBubbleLiquidGlass,
                             cursorUserBubbleWaterGlass = cursorUserBubbleWaterGlass,
                             bubbleUserBubbleLiquidGlass = bubbleUserBubbleLiquidGlass,
@@ -378,6 +436,7 @@ fun ChatArea(
                             bubbleAiBubbleLiquidGlass = bubbleAiBubbleLiquidGlass,
                             bubbleAiBubbleWaterGlass = bubbleAiBubbleWaterGlass,
                             isHidden = shouldHideLastAiMessage && renderIndex == messagesCount - 1,
+                            isWriting = isLoading && renderIndex == lastAiIndex && lastAiWritable,
                             isMultiSelectMode = isMultiSelectMode,
                             isSelected = selectedMessageIndices.contains(renderIndex),
                             onToggleSelection = { onToggleMessageSelection?.invoke(renderIndex) },
@@ -392,12 +451,112 @@ fun ChatArea(
                             bubbleAiContentPaddingLeft = bubbleAiContentPaddingLeft,
                             bubbleAiContentPaddingRight = bubbleAiContentPaddingRight,
                         )
+            if (orbitLook) {
+                val cards = LocalOrbitChatFooter.current
+                val at = orbitShownAt[renderIndex]
+                if (cards != null && at != null &&
+                    com.ai.assistance.operit.ui.common.markdown.LocalTranscriptMarkdownSlice.current?.last != false) {
+                    val last = at == orbitShown.lastIndex
+                    val time = renderedMessage.timestamp
+                    // After the last loaded message, cards going by their time wait for the newer page
+                    // where they belong; cards already placed after this message stay.
+                    val slot = if (last && hasNewerDisplayHistory) OrbitCardSlot(time, Long.MAX_VALUE, Long.MAX_VALUE, orbitShownTimes, orbitLoadedFrom, orbitLoadedUntil)
+                    else OrbitCardSlot(time, time, if (last) null else chatHistory[orbitShown[at + 1]].timestamp, orbitShownTimes, orbitLoadedFrom, orbitLoadedUntil)
+                    androidx.compose.runtime.CompositionLocalProvider(LocalOrbitLiveCardReply provides orbitCardReply) {
+                        cards(aiMessageColor, slot)
+                    }
+                }
+            }
         },
         footer = {
-            if (showLoadingIndicator && showChatFloatingDotsAnimation) {
-                Box(Modifier.padding(start = 16.dp)) { LoadingDotsIndicator(aiTextColor) }
+            // The user's message waiting for the summary shows at once; it hides when the real one is in.
+            val heldShown = remember(summaryHeldSend, chatHistory, hasNewerDisplayHistory) {
+                summaryHeldSend?.takeIf { held ->
+                    !hasNewerDisplayHistory && (held.sentAfter == null ||
+                        chatHistory.none { it.sender == "user" && it.timestamp > held.sentAfter })
+                }
             }
-            if (isLoading && !hasNewerDisplayHistory && activeRunStartedAt != null) {
+            val heldWaiting = summaryHeldSend != null && summaryHeldSend.sentAfter == null
+            // Drawn by the same parts as a sent user message, so nothing moves when the real one takes its place.
+            // Text only until its full content (attachments, reply) is built, a moment after sending.
+            val heldContent = heldShown?.let { it.content ?: it.text }?.takeIf { it.isNotBlank() }
+            val heldMessage = remember(heldContent) {
+                heldContent?.let { ChatMessage(sender = "user", content = it, timestamp = -1L) }
+            }
+            // Like a sent message's row: a time line after a pause, and the space after the message.
+            val heldTimeLine = heldShown?.heldAt?.takeIf { at ->
+                orbitLook && orbitShown.lastOrNull()?.let { at - chatHistory[it].timestamp >= ORBIT_CHAT_TIME_GAP_MS } != false
+            }
+            val heldBubble: @Composable () -> Unit = {
+                heldMessage?.let { held ->
+                    heldTimeLine?.let { OrbitChatTimeLine(it) }
+                    when (chatStyle) {
+                        ChatStyle.CURSOR -> CursorStyleChatMessage(
+                            message = held,
+                            userMessageColor = userMessageColor,
+                            userMessageLiquidGlassEnabled = cursorUserBubbleLiquidGlass,
+                            userMessageWaterGlassEnabled = cursorUserBubbleWaterGlass,
+                            aiMessageColor = aiMessageColor,
+                            userTextColor = userTextColor,
+                            aiTextColor = aiTextColor,
+                            systemMessageColor = systemMessageColor,
+                            systemTextColor = systemTextColor,
+                            thinkingBackgroundColor = thinkingBackgroundColor,
+                            thinkingTextColor = thinkingTextColor,
+                            enableDialogs = false,
+                        )
+                        ChatStyle.BUBBLE -> BubbleStyleChatMessage(
+                            message = held,
+                            userMessageColor = userMessageColor,
+                            aiMessageColor = aiMessageColor,
+                            userTextColor = userTextColor,
+                            aiTextColor = aiTextColor,
+                            systemMessageColor = systemMessageColor,
+                            systemTextColor = systemTextColor,
+                            userMessageLiquidGlassEnabled = bubbleUserBubbleLiquidGlass,
+                            userMessageWaterGlassEnabled = bubbleUserBubbleWaterGlass,
+                            userBubbleImageStyle = bubbleUserImageStyle,
+                            bubbleUserRoundedCornersEnabled = bubbleUserRoundedCornersEnabled,
+                            bubbleUserContentPaddingLeft = bubbleUserContentPaddingLeft,
+                            bubbleUserContentPaddingRight = bubbleUserContentPaddingRight,
+                            enableDialogs = false,
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
+            }
+            if (orbitLook) {
+                // A chat with no shown message yet still shows its cards.
+                if (orbitShown.isEmpty() && !hasNewerDisplayHistory && !hasOlderDisplayHistory) {
+                    androidx.compose.runtime.CompositionLocalProvider(LocalOrbitLiveCardReply provides orbitCardReply) {
+                        LocalOrbitChatFooter.current?.invoke(aiMessageColor, OrbitCardSlot(Long.MIN_VALUE, Long.MIN_VALUE, null, emptySet()))
+                    }
+                }
+                heldBubble()
+                // Orbit is typing for as long as it works on a reply to the user, like a person would be.
+                // A reply started by a reaction, an approval, a background task or a subagent result
+                // shows no dots; the status under Orbit's name still says what it is doing. A message
+                // waiting for the summary is the user's too, so the dots show while it waits.
+                if (((isLoading && orbitUserWaiting) || heldWaiting) && !hasNewerDisplayHistory) {
+                    val typing = stringResource(R.string.orbit_typing, currentOrbitName())
+                    Surface(
+                        shape = RoundedCornerShape(topStart = 4.dp, topEnd = 20.dp, bottomEnd = 20.dp, bottomStart = 20.dp),
+                        color = aiMessageColor,
+                        modifier = Modifier.padding(top = 4.dp).heightIn(min = 44.dp).semantics {
+                            contentDescription = typing
+                            liveRegion = LiveRegionMode.Polite
+                        },
+                    ) {
+                        Box(Modifier.padding(horizontal = 14.dp, vertical = 8.dp), contentAlignment = Alignment.CenterStart) { LoadingDotsIndicator(aiTextColor) }
+                    }
+                }
+            } else {
+                heldBubble()
+                if (showLoadingIndicator && showChatFloatingDotsAnimation) {
+                    Box(Modifier.padding(start = 16.dp)) { LoadingDotsIndicator(aiTextColor) }
+                }
+            }
+            if (!orbitLook && isLoading && !hasNewerDisplayHistory && activeRunStartedAt != null) {
                 LiveResponseTimer(activeRunStartedAt)
             }
         },
@@ -447,6 +606,7 @@ private fun MessageItem(
     bubbleAiBubbleLiquidGlass: Boolean = false,
     bubbleAiBubbleWaterGlass: Boolean = false,
     isHidden: Boolean = false, // 新增参数控制隐藏
+    isWriting: Boolean = false, // 正在生成的那条回复
     isMultiSelectMode: Boolean = false, // 是否处于多选模式
     isSelected: Boolean = false, // 是否被选中
     onToggleSelection: (() -> Unit)? = null, // 切换选中状态的回调
@@ -477,9 +637,45 @@ private fun MessageItem(
     val isActionable = !message.displayMode.isCollaborationEvent &&
         (message.sender == "user" || message.sender == "ai")
     val isHiddenUserMessage = isHiddenUserPlaceholder(message)
+    val orbitLook = LocalOrbitChatLook.current
+    val orbitUserReactions = LocalOrbitUserReactions.current
+    // Keeping and multi-select in an Orbit chat; null in the developer view and other chats.
+    val orbitMessageHost = if (orbitLook) com.ai.assistance.operit.ui.features.orbit.LocalOrbitMessageHost.current else null
+    val forkOrbitMessage = com.ai.assistance.operit.ui.features.orbit.LocalOrbitForkMessage.current
+    // Developer view of an Orbit chat: label the rows the Orbit chat would hide.
+    val showHiddenRows = LocalShowHiddenChatRows.current
+    val quietOrbitReply = showHiddenRows && message.sender == "ai" && message.contentStream == null &&
+        !message.displayMode.isCollaborationEvent &&
+        com.ai.assistance.operit.ui.common.markdown.LocalTranscriptMarkdownSlice.current?.first != false &&
+        OrbitSpeech.of(message.content).isBlank()
+    var showEmojiPicker by remember { mutableStateOf(false) }
+    val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
+    // The bubble the long-press menu is for: a card inside the reply, or null for the message itself.
+    var menuPiece by remember { mutableStateOf<OrbitPiece?>(null) }
+    val reactionKey = menuPiece?.reactionKey(orbitUserReactions?.byMessage) ?: message.timestamp.toString()
+    val canReactToOrbit = orbitLook && message.sender == "ai" && orbitUserReactions != null && isActionable &&
+        !isMultiSelectMode && !isWriting && message.contentStream == null
+    // Double-tapping one of Orbit's bubbles likes it, like a quick tapback.
+    fun like(key: String, said: String?) {
+        val reactions = orbitUserReactions ?: return
+        if (reactions.byMessage[key] != OrbitQuickLike) {
+            haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+            OrbitEmojiUsage.record(context, OrbitQuickLike)
+            reactions.toggle(key, OrbitQuickLike, said)
+        }
+    }
+    val quickLike: (() -> Unit)? = if (canReactToOrbit) { { like(message.timestamp.toString(), null) } } else null
+    /** What a reply to [piece] quotes: a card's summary, or the message's words without its cards. */
+    fun replyTarget(piece: OrbitPiece?): ChatMessage = when {
+        piece?.summary != null -> message.copy(content = piece.summary, contentStream = null)
+        message.sender == "ai" && orbitLook -> message.copy(content = OrbitSpeech.splitCards(message.content).first, contentStream = null)
+        else -> message
+    }
     var pluginMenuItems by remember(currentChatId, message.timestamp) {
         mutableStateOf<List<ChatMessageMenuItemDefinition>>(emptyList())
     }
+    // Developer view: the message exactly as stored (thinking, tool calls, hidden tags), read-only.
+    var showRawMessage by remember { mutableStateOf(false) }
 
     fun buildPluginMenuItemParams(): ChatMessageMenuItemParams =
         ChatMessageMenuItemParams(
@@ -488,6 +684,32 @@ private fun MessageItem(
             messageIndex = messageIndex,
             message = message
         )
+    val openMessageMenu: () -> Unit = {
+        if (!isMultiSelectMode && isActionable) {
+            menuPiece = null
+            pluginMenuItems =
+                if (!isHiddenUserMessage && allowTranscriptMutation) {
+                    ChatMessageMenuItemRegistry.createMenuItems(buildPluginMenuItemParams())
+                } else {
+                    emptyList()
+                }
+            showContextMenu = true
+        }
+    }
+    // In an Orbit reply each bubble (words, a card, a Dynamic UI card) takes its own gestures.
+    val pieceActions: OrbitPieceActions? =
+        if (canReactToOrbit && !message.displayMode.isCollaborationEvent) {
+            OrbitPieceActions(
+                like = { piece -> like(piece.reactionKey(orbitUserReactions?.byMessage), piece.summary) },
+                menu = { piece ->
+                    openMessageMenu()
+                    menuPiece = piece.takeIf { it.summary != null }
+                },
+                reply = if (allowTranscriptMutation && onReplyToMessage != null) {
+                    { piece -> onReplyToMessage.invoke(replyTarget(piece.takeIf { it.summary != null })) }
+                } else null,
+            )
+        } else null
     // The statistics are drawn outside the card, and only by the row that closes it: drawn inside,
     // they landed on the reply's own background whenever the row shared its turn's card, and a reply
     // written as several messages (waifu mode) carries the same totals on every one of them. The
@@ -497,7 +719,8 @@ private fun MessageItem(
         if (message.sender == "ai" &&
             com.ai.assistance.operit.ui.common.markdown.LocalTranscriptMarkdownSlice.current?.last != false &&
             LocalResponseMessageSection.current != ResponseMessageSection.HEADER &&
-            (message.variantCount > 1 ||
+            // A chat with Orbit reads like messages between people: no version switcher under them.
+            ((message.variantCount > 1 && !orbitLook) ||
                 (closesCard &&
                     ((showMessageTokenStats && hasDisplayableTokenStats(message)) ||
                         (showMessageTimingStats && hasDisplayableTimingStats(message)) ||
@@ -538,23 +761,34 @@ private fun MessageItem(
                         showHiddenUserMessageDialog = true
                     }
                 },
-                onLongClick = { 
-                    if (!isMultiSelectMode && isActionable) {
-                        pluginMenuItems =
-                            if (!isHiddenUserMessage) {
-                                ChatMessageMenuItemRegistry.createMenuItems(
-                                    buildPluginMenuItemParams()
-                                )
-                            } else {
-                                emptyList()
-                            }
-                        showContextMenu = true
-                    }
-                },
+                onLongClick = openMessageMenu,
+                onDoubleClick = quickLike,
             ),
     ) {
-        Column {
-            when (chatStyle) {
+        androidx.compose.runtime.CompositionLocalProvider(
+            LocalOrbitMessageGestures provides
+                if (orbitLook) OrbitMessageGestures(quickLike, openMessageMenu) else null,
+            LocalOrbitPieceActions provides pieceActions,
+        ) {
+        OrbitSwipeToReply(
+            enabled = orbitLook && isActionable && !isHiddenUserMessage && !isMultiSelectMode &&
+                allowTranscriptMutation && onReplyToMessage != null && pieceActions == null,
+            onReply = { onReplyToMessage?.invoke(replyTarget(null)) },
+            rightAligned = message.sender == "user",
+        ) {
+        // While picking messages the whole row is one choice; its cards and links do not take
+        // screen-reader actions underneath it.
+        Column(
+            if (orbitMessageHost != null && isMultiSelectMode && isActionable && !isHiddenUserMessage) {
+                Modifier.clearAndSetSemantics {}
+            } else Modifier
+        ) {
+            if (quietOrbitReply) {
+                OrbitHiddenInChatBadge(Modifier.padding(start = 12.dp, top = 4.dp, bottom = 2.dp))
+            }
+            if (showHiddenRows && isHiddenUserMessage) {
+                OrbitHiddenUserRow(message.content)
+            } else when (chatStyle) {
                 ChatStyle.CURSOR -> {
                     CursorStyleChatMessage(
                         message = message,
@@ -571,11 +805,11 @@ private fun MessageItem(
                         thinkingTextColor = thinkingTextColor,
                         supportToolMarkup = true,
                         initialThinkingExpanded = false,
-                        onDeleteMessage = onDeleteMessage,
+                        onDeleteMessage = if (allowTranscriptMutation) onDeleteMessage else null,
                         index = index,
                         enableDialogs = enableDialogs,
                         enableToolDetailDialogs = enableToolDetailDialogs,
-                        onEditSummary = { summaryMessage ->
+                        onEditSummary = if (!allowTranscriptMutation) null else { summaryMessage ->
                             onSelectMessageToEdit?.invoke(index, summaryMessage, "summary")
                         }
                     )
@@ -604,12 +838,12 @@ private fun MessageItem(
                         bubbleAiContentPaddingLeft = bubbleAiContentPaddingLeft,
                         bubbleAiContentPaddingRight = bubbleAiContentPaddingRight,
                         isHidden = isHidden,
-                        onDeleteMessage = onDeleteMessage,
+                        onDeleteMessage = if (allowTranscriptMutation) onDeleteMessage else null,
                         index = index,
                         enableDialogs = enableDialogs,
                         enableToolDetailDialogs = enableToolDetailDialogs,
                         onRoleAvatarLongPress = onMentionRoleFromAvatar,
-                        onEditSummary = { summaryMessage ->
+                        onEditSummary = if (!allowTranscriptMutation) null else { summaryMessage ->
                             onSelectMessageToEdit?.invoke(index, summaryMessage, "summary")
                         }
                     )
@@ -618,20 +852,96 @@ private fun MessageItem(
 
             footer()
         }
+        }
+        }
 
-        DropdownMenu(
-            expanded = showContextMenu,
-            onDismissRequest = { showContextMenu = false },
-            modifier = Modifier.widthIn(min = 200.dp),
-            shape = RoundedCornerShape(16.dp),
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-            properties = PopupProperties(
-                focusable = true,
-                dismissOnBackPress = true,
-                dismissOnClickOutside = true
-            )
-        ) {
-            if (!isHiddenUserMessage) {
+        // Selecting in an Orbit chat: a tap anywhere on the row picks it, even on a card or a link
+        // that takes taps itself, and a round mark shows on the empty side of the bubble.
+        if (orbitMessageHost != null && isMultiSelectMode && isActionable && !isHiddenUserMessage) {
+            val selectLabel = stringResource(R.string.multi_select)
+            // Read for the screen reader off the main thread; a long reply must not slow picking.
+            val words by androidx.compose.runtime.produceState("", message.timestamp, message.content) {
+                value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                    com.ai.assistance.operit.ui.features.orbit.OrbitMessageActions.shownText(context, message).take(200)
+                }
+            }
+            Box(
+                Modifier.matchParentSize()
+                    .clickable(
+                        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                        indication = null,
+                        onClickLabel = selectLabel,
+                    ) { onToggleSelection?.invoke() }
+                    .semantics {
+                        selected = isSelected
+                        contentDescription = words
+                    },
+            ) {
+                val tint = MaterialTheme.colorScheme.primary
+                Box(
+                    Modifier.align(if (message.sender == "user") Alignment.CenterStart else Alignment.CenterEnd)
+                        .padding(horizontal = 8.dp).size(22.dp)
+                        .clip(androidx.compose.foundation.shape.CircleShape)
+                        .then(
+                            if (isSelected) Modifier.background(tint)
+                            else Modifier.border(1.5.dp, MaterialTheme.colorScheme.outline, androidx.compose.foundation.shape.CircleShape)
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (isSelected) {
+                        Icon(Icons.Default.Check, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onPrimary)
+                    }
+                }
+            }
+        }
+
+        val messageMenu: @Composable (@Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) -> Unit = { content ->
+            if (orbitLook) {
+                com.ai.assistance.operit.ui.features.orbit.OrbitDropdownMenu(
+                    expanded = showContextMenu,
+                    onDismissRequest = { showContextMenu = false },
+                    modifier = Modifier.widthIn(min = 200.dp),
+                    content = content,
+                )
+            } else {
+                DropdownMenu(
+                    expanded = showContextMenu,
+                    onDismissRequest = { showContextMenu = false },
+                    modifier = Modifier.widthIn(min = 200.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    properties = PopupProperties(
+                        focusable = true,
+                        dismissOnBackPress = true,
+                        dismissOnClickOutside = true,
+                    ),
+                    content = content,
+                )
+            }
+        }
+        messageMenu {
+            if (orbitLook && message.sender == "ai" && orbitUserReactions != null) {
+                val current = orbitUserReactions.byMessage[reactionKey]
+                OrbitTapbackRow(
+                    selected = current,
+                    onPick = { emoji ->
+                        // Taking a reaction off does not count as using that emoji.
+                        if (emoji != current) OrbitEmojiUsage.record(context, emoji)
+                        orbitUserReactions.toggle(reactionKey, emoji, menuPiece?.summary)
+                        showContextMenu = false
+                    },
+                    onMore = {
+                        showContextMenu = false
+                        showEmojiPicker = true
+                    },
+                )
+                HorizontalDivider(
+                    modifier = Modifier.padding(vertical = 4.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                )
+            }
+            // A card has no words to copy or read out.
+            if (!isHiddenUserMessage && menuPiece == null) {
                 DropdownMenuItem(
                     text = {
                         Text(
@@ -680,7 +990,7 @@ private fun MessageItem(
                 )
             }
 
-            if (isActionable && !isHiddenUserMessage && pluginMenuItems.isNotEmpty()) {
+            if (allowTranscriptMutation && isActionable && !isHiddenUserMessage && !orbitLook && pluginMenuItems.isNotEmpty()) {
                 pluginMenuItems.forEach { pluginMenuItem ->
                     DropdownMenuItem(
                         text = {
@@ -730,7 +1040,82 @@ private fun MessageItem(
                 }
             }
 
-            if (allowTranscriptMutation) {
+            // Orbit's chat is one long conversation: nothing here may rewrite what was said
+            // (edit, roll back, regenerate, delete, summarize). Reply and a reference-only fork work.
+            if (allowTranscriptMutation && orbitLook && !isHiddenUserMessage) {
+                if (forkOrbitMessage != null && !isWriting && com.ai.assistance.operit.features.orbit.OrbitChatFork.canFork(message)) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.orbit_fork_here), style = MaterialTheme.typography.bodyMedium) },
+                        onClick = {
+                            showContextMenu = false
+                            // Cards move to the end of a reply on screen; their key keeps the source row.
+                            val sourceTime = menuPiece?.key?.let {
+                                com.ai.assistance.operit.features.orbit.OrbitReactions.timeOf(it)
+                            }?.takeIf { it > 0 } ?: message.timestamp
+                            forkOrbitMessage(message.copy(timestamp = sourceTime))
+                        },
+                        leadingIcon = {
+                            Icon(Icons.Default.CallSplit, null, Modifier.size(20.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        },
+                        modifier = Modifier.heightIn(min = 44.dp),
+                    )
+                }
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            stringResource(R.string.reply_message),
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    },
+                    onClick = {
+                        onReplyToMessage?.invoke(replyTarget(menuPiece))
+                        showContextMenu = false
+                    },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.Reply,
+                            contentDescription = stringResource(R.string.reply_message),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    },
+                    modifier = Modifier.heightIn(min = 44.dp)
+                )
+                orbitMessageHost?.let { host ->
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.orbit_favorite_action), style = MaterialTheme.typography.bodyMedium) },
+                        onClick = {
+                            showContextMenu = false
+                            val piece = menuPiece
+                            host.scope.launch {
+                                val favorite = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                                    com.ai.assistance.operit.ui.features.orbit.OrbitMessageActions.favoriteOf(context, host, message, piece)
+                                }
+                                com.ai.assistance.operit.ui.features.orbit.OrbitMessageActions.keep(context, host, listOf(favorite))
+                            }
+                        },
+                        leadingIcon = {
+                            Icon(com.ai.assistance.operit.ui.features.orbit.orbitIcon("star"), null, Modifier.size(20.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        },
+                        modifier = Modifier.heightIn(min = 44.dp),
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.multi_select), style = MaterialTheme.typography.bodyMedium) },
+                        onClick = {
+                            showContextMenu = false
+                            onToggleMultiSelectMode?.invoke(messageIndex)
+                        },
+                        leadingIcon = {
+                            Icon(Icons.Default.CheckCircle, null, Modifier.size(20.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        },
+                        modifier = Modifier.heightIn(min = 44.dp),
+                    )
+                }
+            }
+            if (allowTranscriptMutation && !orbitLook) {
                 // 根据消息发送者显示不同的操作
                 if (message.sender == "user") {
                 if (!isHiddenUserMessage) {
@@ -875,7 +1260,7 @@ private fun MessageItem(
             )
 
                 // 回复选项
-                if (message.sender == "ai") {
+                if (message.sender == "ai" || (orbitLook && !isHiddenUserMessage)) {
                 DropdownMenuItem(
                 text = {
                         Text(
@@ -947,8 +1332,30 @@ private fun MessageItem(
                 )
             }
 
-            // 信息
-            DropdownMenuItem(
+            if (showHiddenRows) DropdownMenuItem(
+                text = {
+                    Text(
+                        stringResource(id = R.string.orbit_dev_view_raw),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                },
+                onClick = {
+                    showContextMenu = false
+                    showRawMessage = true
+                },
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Default.Code,
+                        contentDescription = stringResource(id = R.string.orbit_dev_view_raw),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp)
+                    )
+                },
+                modifier = Modifier.heightIn(min = 44.dp)
+            )
+
+            // 信息 (an Orbit chat keeps model and token details out of sight)
+            if (!orbitLook) DropdownMenuItem(
                 text = {
                     Text(
                         stringResource(id = R.string.info),
@@ -970,7 +1377,7 @@ private fun MessageItem(
                 modifier = Modifier.heightIn(min = 44.dp)
             )
 
-            if (allowTranscriptMutation) {
+            if (allowTranscriptMutation && !orbitLook) {
                 DropdownMenuItem(
                 text = {
                     Text(
@@ -993,6 +1400,19 @@ private fun MessageItem(
                 modifier = Modifier.heightIn(min = 44.dp)
                 )
             }
+        }
+
+        if (showEmojiPicker && orbitUserReactions != null) {
+            val current = orbitUserReactions.byMessage[reactionKey]
+            OrbitEmojiPickerSheet(
+                selected = current,
+                onPick = { emoji ->
+                    if (emoji != current) OrbitEmojiUsage.record(context, emoji)
+                    orbitUserReactions.toggle(reactionKey, emoji, menuPiece?.summary)
+                    showEmojiPicker = false
+                },
+                onDismiss = { showEmojiPicker = false },
+            )
         }
 
         if (enableDialogs && isHiddenUserMessage && showHiddenUserMessageDialog) {
@@ -1021,6 +1441,10 @@ private fun MessageItem(
                 message = message,
                 onDismiss = { showMessageInfoDialog = false }
             )
+        }
+
+        if (showRawMessage) {
+            OrbitRawMessageSheet(message = message, onDismiss = { showRawMessage = false })
         }
 
         if (showDeleteMessageConfirmDialog) {

@@ -8,9 +8,26 @@ import androidx.room.Update
 import com.ai.assistance.operit.data.model.ChatMessageLocatorPreview
 import com.ai.assistance.operit.data.model.MessageEntity
 
+data class OrbitForkSource(
+    val timestamp: Long,
+    val sender: String,
+    val displayMode: String,
+    val selectedVariantIndex: Int,
+)
+
 /** 消息DAO接口，定义对消息表的数据访问方法 */
 @Dao
 interface MessageDao {
+    /** Select source identities before reading any potentially large body or unused variants. */
+    @Query("""
+        SELECT timestamp, sender, displayMode, selectedVariantIndex FROM messages
+        WHERE chatId = :chatId AND timestamp <= :cutoff AND
+            ((sender IN ('user','ai') AND displayMode='NORMAL')
+                OR (sender='ai' AND displayMode='ASSISTANT_INTERMEDIATE'))
+        ORDER BY timestamp DESC LIMIT :limit
+    """)
+    suspend fun getOrbitForkSources(chatId: String, cutoff: Long, limit: Int): List<OrbitForkSource>
+
     @Query("""
         SELECT m.timestamp, m.sender, m.displayMode,
             COALESCE(v.sentAt, m.sentAt) AS sentAt,
@@ -23,6 +40,32 @@ interface MessageDao {
         WHERE m.chatId = :chatId ORDER BY m.timestamp ASC
     """)
     suspend fun getProcessMetadata(chatId: String): List<com.ai.assistance.operit.data.model.ChatMessageProcessMetadata>
+
+    /**
+     * Replies in which the assistant called tools or thought first; both are stored as markup
+     * (`<tool…>`, `<think…>`). A text search also finds quoted markup, so callers check the body.
+     */
+    @Query("""
+        SELECT timestamp FROM messages
+        WHERE chatId = :chatId AND sender = 'ai' AND displayMode = 'NORMAL'
+            AND (instr(content, '<tool') > 0 OR instr(content, '<think') > 0)
+        ORDER BY timestamp ASC
+    """)
+    suspend fun getWorkReplyTimestamps(chatId: String): List<Long>
+
+    /**
+     * Of [timestamps], the assistant rows (final or intermediate) whose shown version may hold a
+     * tool call: the selected variant when there is one, the row itself otherwise. Only the given
+     * rows are searched. A text search also finds quoted markup, so callers check the body.
+     */
+    @Query("""
+        SELECT m.timestamp FROM messages m LEFT JOIN message_variants v
+          ON m.selectedVariantIndex > 0 AND v.chatId = m.chatId
+          AND v.messageTimestamp = m.timestamp AND v.variantIndex = m.selectedVariantIndex
+        WHERE m.chatId = :chatId AND m.timestamp IN (:timestamps) AND m.sender = 'ai'
+          AND instr(COALESCE(v.content, m.content), '<tool') > 0
+    """)
+    suspend fun getToolReplyTimestamps(chatId: String, timestamps: List<Long>): List<Long>
 
     /** Repair repeated persistence of sealed AI segments; differing content or metadata survives. */
     @Query("""
@@ -157,6 +200,12 @@ interface MessageDao {
         "SELECT EXISTS(SELECT 1 FROM messages WHERE chatId = :chatId AND sender = 'user' LIMIT 1)"
     )
     suspend fun existsUserMessage(chatId: String): Boolean
+
+    /** True when the user wrote a visible message in [chatId] after [afterTimestamp]. */
+    @Query(
+        "SELECT EXISTS(SELECT 1 FROM messages WHERE chatId = :chatId AND sender = 'user' AND displayMode = 'NORMAL' AND timestamp > :afterTimestamp LIMIT 1)"
+    )
+    suspend fun existsUserMessageAfter(chatId: String, afterTimestamp: Long): Boolean
 
     @Query("SELECT chatId AS chatId, COUNT(*) AS count FROM messages GROUP BY chatId")
     suspend fun getMessageCountsByChatId(): List<ChatMessageCount>

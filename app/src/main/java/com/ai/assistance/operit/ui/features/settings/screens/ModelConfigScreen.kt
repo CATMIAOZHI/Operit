@@ -23,6 +23,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.ai.assistance.operit.ui.features.settings.components.rememberSettingsCardColor
 import com.ai.assistance.operit.ui.features.settings.components.SettingsCardShape
+import com.ai.assistance.operit.ui.features.settings.components.SettingsAlertDialog as AlertDialog
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogButton as Button
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogTextButton as TextButton
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogs
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogStyle
 import com.ai.assistance.operit.ui.components.CustomScaffold
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -33,7 +38,8 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogWindow as Dialog
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogSurface
 import androidx.compose.ui.window.PopupProperties
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -162,7 +168,17 @@ private fun serializeHeaderEntries(headers: List<Pair<String, String>>): String 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun ModelConfigScreen(
-    entryMode: ModelConfigEntryMode = ModelConfigEntryMode.STANDARD
+    entryMode: ModelConfigEntryMode = ModelConfigEntryMode.STANDARD,
+    dialogStyle: SettingsDialogStyle = SettingsDialogStyle.MATERIAL,
+) {
+    SettingsDialogs(dialogStyle) { ModelConfigContent(entryMode) }
+}
+
+@SuppressLint("LocalContextGetResourceValueCall")
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@Composable
+private fun ModelConfigContent(
+    entryMode: ModelConfigEntryMode,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -1357,7 +1373,7 @@ private fun ConfigSelectDialog(
     }
 
     Dialog(onDismissRequest = onDismiss) {
-        Surface(
+        SettingsDialogSurface(
             modifier = Modifier.fillMaxWidth().heightIn(max = 520.dp),
             shape = RoundedCornerShape(16.dp),
             color = MaterialTheme.colorScheme.surface,

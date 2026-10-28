@@ -9,8 +9,10 @@ import com.ai.assistance.operit.data.model.ModelConfigData
 /** Detached, bounded evidence: never rewrites the foreground transcript or its cached prefix. */
 internal object MemoryLearningSnapshot {
     data class Snapshot(val text: String, val contextWindow: Int)
-    suspend fun build(context: Context, messages: List<Pair<String, String>>, instructionBytes: Int, includeThinking: Boolean = false): Snapshot {
-        val config = EnhancedAIService.getModelConfigForFunction(context, FunctionType.MEMORY)
+    suspend fun build(context: Context, messages: List<Pair<String, String>>, instructionBytes: Int,
+        includeThinking: Boolean = false, chatId: String? = null): Snapshot {
+        val config = if (chatId != null) EnhancedAIService.getChatInstance(context, chatId).getModelConfigForFunction(FunctionType.MEMORY)
+            else EnhancedAIService.getModelConfigForFunction(context, FunctionType.MEMORY)
         val window = modelWindowTokens(config, instructionBytes)
         // UTF-8 bytes are deliberately conservative, leaving most of the window for instructions,
         // tools and responses. A character limit alone badly underestimates Chinese and code.
@@ -93,7 +95,7 @@ internal object MemoryLearningSnapshot {
     /** Share of the model window one batch's source may take. */
     private const val SOURCE_WINDOW_SHARE = 3
     /** Upper bound for one batch's source, so a huge advertised window cannot ask for one giant prompt. */
-    private const val SOURCE_CEILING_BYTES = 96_000
+    private const val SOURCE_CEILING_BYTES = 160_000
     /** Share of the model window a batch may spend in total before it is stopped. */
     internal const val EVIDENCE_WINDOW_FRACTION = 0.75
 

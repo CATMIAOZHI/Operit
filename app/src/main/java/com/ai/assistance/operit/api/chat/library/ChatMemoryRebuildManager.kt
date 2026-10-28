@@ -112,13 +112,15 @@ class ChatMemoryRebuildManager private constructor(private val context: Context)
 
             val plannedChats = selectedHistories.map { history ->
                 coroutineContext.ensureActive()
-                val messages = chatHistoryManager.loadChatMessagesOrThrow(history.id)
+                val profile = resolveMemoryProfileId(history, activeProfileId)
+                val messages = com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.filter(
+                    context, profile, history.id, chatHistoryManager.loadChatMessagesOrThrow(history.id)).second
                 val windows = ChatMemoryWindowPlanner.plan(messages, windowMessageCount, timeScope)
                 PlannedChat(
                     history = history,
                     windowCount = windows.size,
                     sourceMessageCount = windows.sumOf { it.sourceMessageCount },
-                    memoryProfileId = resolveMemoryProfileId(history, activeProfileId)
+                    memoryProfileId = profile
                 )
             }
             var totalWindows = plannedChats.sumOf { it.windowCount }
@@ -149,8 +151,11 @@ class ChatMemoryRebuildManager private constructor(private val context: Context)
                 coroutineContext.ensureActive()
                 // Keep only one chat's hydrated bodies in memory. Chats may have changed while
                 // earlier windows ran, so update totals to this chat's current snapshot.
+                val (learningGuard, legalMessages) = com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.filter(
+                    context, plannedChat.memoryProfileId, plannedChat.history.id,
+                    chatHistoryManager.loadChatMessagesOrThrow(plannedChat.history.id))
                 val windows = ChatMemoryWindowPlanner.plan(
-                    chatHistoryManager.loadChatMessagesOrThrow(plannedChat.history.id),
+                    legalMessages,
                     windowMessageCount,
                     timeScope,
                 )
@@ -189,6 +194,8 @@ class ChatMemoryRebuildManager private constructor(private val context: Context)
                             content = content,
                             aiService = memoryService,
                             profileIdOverride = plannedChat.memoryProfileId,
+                            sourceChatId = plannedChat.history.id,
+                            learningGuard = learningGuard,
                             analysisHistoryLimit = window.messages.size
                         )
                     } catch (error: Exception) {
@@ -231,6 +238,7 @@ class ChatMemoryRebuildManager private constructor(private val context: Context)
         history: ChatHistory,
         activeProfileId: String
     ): String {
+        com.ai.assistance.operit.features.orbit.OrbitMemoryScope.resolve(context, history.id, null)?.let { return it }
         if (!history.characterGroupId.isNullOrBlank()) {
             return activeProfileId
         }

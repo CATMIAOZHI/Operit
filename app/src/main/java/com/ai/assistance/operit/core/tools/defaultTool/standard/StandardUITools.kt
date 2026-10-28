@@ -538,7 +538,7 @@ open class StandardUITools(protected val context: Context) : ToolImplementations
      * Subclasses can override this method if they have a more specialized screenshot pipeline.
      */
     private fun buildUiAutomationSystemPrompt(): String {
-        val useEnglish = LocaleUtils.getCurrentLanguage(context).lowercase().startsWith("en")
+        val useEnglish = LocaleUtils.usesEnglishPrompt(context)
         val formattedDate =
             if (useEnglish) {
                 SimpleDateFormat("yyyy-MM-dd EEEE", Locale.ENGLISH).format(Date())

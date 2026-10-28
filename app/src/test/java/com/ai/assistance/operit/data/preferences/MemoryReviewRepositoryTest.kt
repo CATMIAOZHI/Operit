@@ -14,6 +14,30 @@ import org.mockito.kotlin.whenever
 import org.mockito.kotlin.any
 
 class MemoryReviewRepositoryTest {
+    @Test fun `restoration retains user approval requirement across deduplication and disk reload`() = runBlocking {
+        val repo = MemoryReviewRepository(folder.root, "restore")
+        val original = MemoryReviewChange("", "skill_file", "test-skill", "new")
+        val ordinary = repo.propose(original)
+        val restoration = repo.propose(original.copy(restoredFrom = "past:after"))
+        assertNotEquals(ordinary.id, restoration.id)
+        val loaded = MemoryReviewRepository(folder.root, "restore")
+        assertEquals("past:after", loaded.list().single { it.id == restoration.id }.restoredFrom)
+        val failure = runCatching { loaded.decide(context(), restoration.id, true, "ai", "") }.exceptionOrNull()
+        assertTrue(failure is IllegalStateException)
+        assertEquals("pending", loaded.list().single { it.id == restoration.id }.status)
+    }
+
+    @Test fun `file restore distinguishes empty file from absence and never restores unapproved drafts`() {
+        val empty = MemoryReviewChange("old", "skill_file", "test-skill", "new",
+            baseVersion = LearnedSkillRepository.version("present:"), status = "approved")
+        assertEquals("" to false, skillFileRestoreTarget(empty, true))
+        assertEquals("" to true, skillFileRestoreTarget(empty.copy(baseVersion = LearnedSkillRepository.version("absent")), true))
+        assertEquals("new" to false, skillFileRestoreTarget(empty, false))
+        assertTrue(skillFileRestoreTarget(empty.copy(operation = "remove"), false).second)
+        assertThrows(IllegalArgumentException::class.java) { skillFileRestoreTarget(empty.copy(status = "pending"), false) }
+        assertThrows(IllegalArgumentException::class.java) { skillFileRestoreTarget(empty.copy(kind = "skill_delete"), false) }
+    }
+
     @get:Rule val folder = TemporaryFolder()
     private fun context(): Context = mock<Context>().also {
         whenever(it.filesDir).thenReturn(folder.root)
@@ -22,6 +46,37 @@ class MemoryReviewRepositoryTest {
         whenever(it.getSharedPreferences(any(), any())).thenReturn(preferences)
         whenever(preferences.edit()).thenReturn(editor)
         whenever(editor.putString(any(), any())).thenReturn(editor)
+    }
+
+    @Test fun `new generation never reuses an old identical proposal and old export is settled`() = runBlocking {
+        val boundary = com.ai.assistance.operit.features.orbit.OrbitLearningBoundary(
+            java.io.File(folder.root, "boundary.json")) { 7 }
+        fun review(generation: Long) = MemoryReviewRepository(folder.root, "private",
+            boundary = { boundary }, learningGeneration = generation, evidence = "[{\"message_id\":1}]")
+        val candidate = MemoryReviewChange("", "notes", "memory.md", "draft")
+        val old = review(0).propose(candidate)
+        boundary.edit("user-correction", 0) {}
+        val newer = review(1).propose(candidate)
+        assertNotEquals(old.id, newer.id)
+        assertEquals("superseded", review(1).decide(context(), old.id, true, "user", "").status)
+        val imported = old.copy(id = "exported")
+        review(1).importCompletedBatch(listOf(imported))
+        assertEquals("superseded", review(1).list().single { it.id == "exported" }.status)
+        assertEquals("[{\"message_id\":1}]", review(1).list().single { it.id == newer.id }.evidence)
+    }
+
+    @Test fun `obsolete full queue does not block new proposals after correction`() = runBlocking {
+        val boundary = com.ai.assistance.operit.features.orbit.OrbitLearningBoundary(
+            java.io.File(folder.root, "boundary.json")) { 7 }
+        val old = MemoryReviewRepository(folder.root, "private", boundary = { boundary }, learningGeneration = 0)
+        repeat(MemoryReviewRepository.PENDING_LIMIT) {
+            old.propose(MemoryReviewChange("", "notes", "memory.md", "draft $it"))
+        }
+        boundary.edit("correction", 0) {}
+        val current = MemoryReviewRepository(folder.root, "private", boundary = { boundary }, learningGeneration = 1)
+        current.propose(MemoryReviewChange("", "notes", "memory.md", "new"))
+        assertEquals(1, current.list().count { it.status == "pending" })
+        assertEquals(MemoryReviewRepository.PENDING_LIMIT, current.list().count { it.status == "superseded" })
     }
 
     @Test fun `history keeps unfinished items and only the newest finished ones`() {
@@ -88,6 +143,19 @@ class MemoryReviewRepositoryTest {
         assertEquals("superseded", history.status)
         assertEquals("draft", history.body)
         assertTrue(history.audits.contains("Old audit"))
+    }
+
+    @Test fun `lessons appended on one page accumulate, and an edited lesson is still an append`() = runBlocking {
+        val staged = mutableListOf<MemoryReviewChange>()
+        val repo = MemoryReviewRepository(folder.root, "lessons", staged = staged)
+        repo.proposeOrbitFile("LESSONS.md", "", "- A", addition = "- A")
+        repo.proposeOrbitFile("LESSONS.md", "", "- B", addition = "- B")
+        val page = staged.single()
+        assertEquals("- A\n- B", page.addition)
+        assertEquals("", page.before)
+        val stored = MemoryReviewRepository(folder.root, "lessons")
+        val pending = stored.proposeOrbitFile("LESSONS.md", "", "- C", addition = "- C")
+        assertEquals("- C2", stored.revise(pending.id, "- C2", "").addition)
     }
 
     @Test fun `same content can be proposed again after a terminal decision`() = runBlocking {

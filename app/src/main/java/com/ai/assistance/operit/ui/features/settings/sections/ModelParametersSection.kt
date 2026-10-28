@@ -28,6 +28,9 @@ import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.ai.assistance.operit.ui.features.settings.components.rememberSettingsCardColor
 import com.ai.assistance.operit.ui.features.settings.components.SettingsCardShape
+import com.ai.assistance.operit.ui.features.settings.components.SettingsAlertDialog as AlertDialog
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogButton as Button
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogTextButton as TextButton
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.EnhancedAIService
 import com.ai.assistance.operit.data.model.ModelConfigData
@@ -816,6 +819,7 @@ private fun AddCustomParameterDialog(
     val mustBeJsonText = stringResource(R.string.must_be_valid_json)
 
     AlertDialog(
+        orbitScrollable = false,
         onDismissRequest = onDismiss,
         title = { Text(dialogTitle) },
         text = {

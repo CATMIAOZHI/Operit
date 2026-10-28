@@ -70,11 +70,16 @@ fun AiMessageComposable(
     val displayPreferencesManager = remember { DisplayPreferencesManager.getInstance(context) }
     val showThinkingProcess by preferencesManager.showThinkingProcess.collectAsState(initial = true)
     val showStatusTags by preferencesManager.showStatusTags.collectAsState(initial = true)
-    val effectiveShowThinkingProcess = if (forceShowThinkingProcess) true else showThinkingProcess
+    val effectiveShowThinkingProcess = forceShowThinkingProcess || showThinkingProcess ||
+        com.ai.assistance.operit.ui.features.chat.components.LocalShowHiddenChatRows.current
     
-    val showModelProvider by preferencesManager.showModelProvider.collectAsState(initial = true)
-    val showModelName by preferencesManager.showModelName.collectAsState(initial = true)
-    val showRoleName by preferencesManager.showRoleName.collectAsState(initial = true)
+    val orbitLook = com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current
+    val showModelProviderPref by preferencesManager.showModelProvider.collectAsState(initial = true)
+    val showModelNamePref by preferencesManager.showModelName.collectAsState(initial = true)
+    val showRoleNamePref by preferencesManager.showRoleName.collectAsState(initial = true)
+    val showModelProvider = showModelProviderPref && !orbitLook
+    val showModelName = showModelNamePref && !orbitLook
+    val showRoleName = showRoleNamePref && !orbitLook
     val collapseCompletedProcess by displayPreferencesManager.collapseCompletedProcess.collectAsState(initial = true)
     val toolCollapseMode by displayPreferencesManager.toolCollapseMode.collectAsState(initial = ToolCollapseMode.FULL)
 

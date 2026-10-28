@@ -140,6 +140,15 @@ class AIForegroundService : Service() {
             "com.ai.assistance.operit.action.START_OR_REFRESH_EXTERNAL_HTTP"
         private const val ACTION_STOP_EXTERNAL_HTTP =
             "com.ai.assistance.operit.action.STOP_EXTERNAL_HTTP"
+        private const val ACTION_ORBIT_TASKS =
+            "com.ai.assistance.operit.action.ORBIT_TASKS"
+        private const val ACTION_ORBIT_CHANNELS =
+            "com.ai.assistance.operit.action.ORBIT_CHANNELS"
+
+        /** True while Orbit runs background tasks in this service; it keeps the service up. */
+        private val orbitTasksBusy = java.util.concurrent.atomic.AtomicBoolean(false)
+        /** True while an Orbit message channel (WeChat) is linked; separate from [orbitTasksBusy]. */
+        private val orbitChannelsBusy = java.util.concurrent.atomic.AtomicBoolean(false)
 
         @Volatile
         private var lastRequestedImeVisible: Boolean = false
@@ -249,11 +258,31 @@ class AIForegroundService : Service() {
             return channelId
         }
 
-        private fun loadBitmapFromUri(context: Context, uriString: String): Bitmap? {
+        /**
+         * Decodes a picture for a notification. With [maxSide] the picture is read at a reduced
+         * size (a power of two at least that large), so a big photo never needs its full pixels.
+         */
+        internal fun loadBitmapFromUri(context: Context, uriString: String, maxSide: Int? = null): Bitmap? {
             return try {
+                val sample = maxSide?.let { side ->
+                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    openPictureStream(context, uriString)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+                    var size = 1
+                    while (bounds.outWidth / (size * 2) >= side && bounds.outHeight / (size * 2) >= side) size *= 2
+                    size
+                } ?: 1
+                openPictureStream(context, uriString)?.use { stream ->
+                    BitmapFactory.decodeStream(stream, null, BitmapFactory.Options().apply { inSampleSize = sample })
+                }
+            } catch (e: Exception) {
+                AppLogger.e(TAG, "从URI加载Bitmap失败: ${e.message}", e)
+                null
+            }
+        }
+
+        private fun openPictureStream(context: Context, uriString: String): InputStream? {
                 val uri = Uri.parse(uriString)
-                val inputStream: InputStream? =
-                    when (uri.scheme) {
+                return when (uri.scheme) {
                         "file" -> {
                             val path = uri.path
                             if (path != null && path.startsWith("/android_asset/")) {
@@ -277,13 +306,6 @@ class AIForegroundService : Service() {
                         }
                         else -> context.contentResolver.openInputStream(uri)
                     }
-                inputStream?.use { stream ->
-                    BitmapFactory.decodeStream(stream)
-                }
-            } catch (e: Exception) {
-                AppLogger.e(TAG, "从URI加载Bitmap失败: ${e.message}", e)
-                null
-            }
         }
 
         fun notifyReplyCompleted(
@@ -304,14 +326,22 @@ class AIForegroundService : Service() {
 
                 val appContext = context.applicationContext
                 val displayPreferences = DisplayPreferencesManager.getInstance(appContext)
-                val globalEnableReplyNotification = runBlocking {
-                    displayPreferences.enableReplyNotification.first()
+                // An Orbit chat follows that Orbit's own message-notification switch, under its
+                // name and picture, instead of the app's reply-notification setting.
+                val orbit = runCatching {
+                    com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(appContext)
+                        .loadedSettingsBlocking().orbitForChat(chatId)
+                }.getOrNull()
+                val shouldNotify = if (orbit != null) {
+                    notifyReplyOverride != false && orbit.messageNotifications
+                } else {
+                    notifyReplyOverride ?: runBlocking { displayPreferences.enableReplyNotification.first() }
                 }
-                val shouldNotify = notifyReplyOverride ?: globalEnableReplyNotification
                 if (!shouldNotify) {
                     AppLogger.d(TAG, "回复通知已禁用，跳过发送")
                     return
                 }
+                val title = orbit?.name?.ifBlank { null } ?: characterName
 
                 if (rawReplyContent.isNullOrBlank()) {
                     AppLogger.d(TAG, "回复内容为空，跳过发送回复通知: chatId=$chatId")
@@ -343,7 +373,7 @@ class AIForegroundService : Service() {
                     NotificationCompat.Builder(appContext, replyChannelId)
                         .setSmallIcon(android.R.drawable.ic_dialog_info)
                         .setContentTitle(
-                            characterName
+                            title
                                 ?: appContext.getString(R.string.notification_ai_reply_title)
                         )
                         .setContentText(
@@ -356,7 +386,11 @@ class AIForegroundService : Service() {
                         .setPriority(NotificationCompat.PRIORITY_HIGH)
                         .setDefaults(notificationDefaults)
                         .setCategory(NotificationCompat.CATEGORY_STATUS)
-                        .setContentIntent(createMainActivityPendingIntent(appContext))
+                        .setContentIntent(
+                            if (orbit != null && chatId != null)
+                                com.ai.assistance.operit.features.orbit.OrbitDelivery.openChatIntent(appContext, chatId, "reply-$chatId")
+                            else createMainActivityPendingIntent(appContext)
+                        )
                         .setAutoCancel(true)
 
                 if (cleanedReplyContent.isNotEmpty()) {
@@ -364,13 +398,17 @@ class AIForegroundService : Service() {
                         NotificationCompat.BigTextStyle()
                             .bigText(cleanedReplyContent)
                             .setBigContentTitle(
-                                characterName
+                                    title
                                     ?: appContext.getString(R.string.notification_ai_reply_title)
                             )
                     )
                 }
 
-                if (!avatarUri.isNullOrEmpty()) {
+                if (orbit != null) {
+                    com.ai.assistance.operit.features.orbit.OrbitNotificationIcon
+                        .of(orbit) { loadBitmapFromUri(appContext, it, com.ai.assistance.operit.features.orbit.OrbitNotificationIcon.SIZE) }
+                        ?.let(notificationBuilder::setLargeIcon)
+                } else if (!avatarUri.isNullOrEmpty()) {
                     val bitmap = loadBitmapFromUri(appContext, avatarUri)
                     if (bitmap != null) {
                         notificationBuilder.setLargeIcon(bitmap)
@@ -446,6 +484,92 @@ class AIForegroundService : Service() {
 
         fun ensureRunningForExternalHttp(context: Context) {
             startServiceForAction(context, ACTION_START_OR_REFRESH_EXTERNAL_HTTP)
+        }
+
+        /**
+         * Keeps this service in the foreground while Orbit runs its background tasks, so they are
+         * not bound by the background worker limit. False when Android does not let the app start
+         * a foreground service now (in the background without keep-alive or a battery exemption).
+         */
+        /** Why the last [holdForOrbitTasks] was refused, as the system put it; null after a start worked. */
+        @Volatile
+        var lastOrbitTasksRefusal: String? = null
+            private set
+
+        fun holdForOrbitTasks(context: Context): Boolean {
+            val appContext = context.applicationContext
+            orbitTasksBusy.set(true)
+            val intent = Intent(appContext, AIForegroundService::class.java).apply { action = ACTION_ORBIT_TASKS }
+            if (isRunning.get()) {
+                // A running foreground service makes the app count as foreground here; a service
+                // stopped a moment ago falls through to a foreground start.
+                try {
+                    appContext.startService(intent)
+                    lastOrbitTasksRefusal = null
+                    return true
+                } catch (e: Exception) {
+                    AppLogger.w(TAG, "Orbit tasks: running service not reachable, starting it again", e)
+                }
+            }
+            return try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    appContext.startForegroundService(intent)
+                } else {
+                    appContext.startService(intent)
+                }
+                lastOrbitTasksRefusal = null
+                true
+            } catch (e: Exception) {
+                orbitTasksBusy.set(false)
+                lastOrbitTasksRefusal = "${e.javaClass.simpleName}: ${e.message.orEmpty()}"
+                AppLogger.w(TAG, "Orbit tasks: foreground service start refused: ${e.message}")
+                false
+            }
+        }
+
+        /** Orbit's tasks are done; the service stops unless something else still needs it. */
+        fun releaseForOrbitTasks(context: Context) {
+            if (!orbitTasksBusy.getAndSet(false) || !isRunning.get()) return
+            runCatching {
+                context.applicationContext.startService(
+                    Intent(context.applicationContext, AIForegroundService::class.java).apply { action = ACTION_ORBIT_TASKS }
+                )
+            }.onFailure { AppLogger.w(TAG, "Orbit tasks: release not delivered", it) }
+        }
+
+        /**
+         * Keeps this service up while an Orbit message channel is linked, so the channel keeps
+         * receiving with the app in the background. False when Android refuses the start now.
+         */
+        fun holdForOrbitChannels(context: Context): Boolean {
+            val appContext = context.applicationContext
+            orbitChannelsBusy.set(true)
+            val intent = Intent(appContext, AIForegroundService::class.java).apply { action = ACTION_ORBIT_CHANNELS }
+            if (isRunning.get()) {
+                try {
+                    appContext.startService(intent)
+                    return true
+                } catch (e: Exception) {
+                    AppLogger.w(TAG, "Orbit channels: running service not reachable, starting it again", e)
+                }
+            }
+            return try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) appContext.startForegroundService(intent)
+                else appContext.startService(intent)
+                true
+            } catch (e: Exception) {
+                AppLogger.w(TAG, "Orbit channels: foreground service start refused: ${e.message}")
+                false
+            }
+        }
+
+        fun releaseForOrbitChannels(context: Context) {
+            if (!orbitChannelsBusy.getAndSet(false) || !isRunning.get()) return
+            runCatching {
+                context.applicationContext.startService(
+                    Intent(context.applicationContext, AIForegroundService::class.java).apply { action = ACTION_ORBIT_CHANNELS }
+                )
+            }.onFailure { AppLogger.w(TAG, "Orbit channels: release not delivered", it) }
         }
 
         fun refreshBackgroundKeepAlive(context: Context) {
@@ -913,7 +1037,8 @@ class AIForegroundService : Service() {
         if (!backgroundKeepAliveLoaded) return
         val alwaysListeningEnabled = wakeListeningEnabled || isAlwaysListeningEnabledNow()
         val externalHttpEnabled = externalHttpStateFlow.value.isRunning || isExternalHttpEnabledNow()
-        if (isAiBusy || alwaysListeningEnabled || backgroundKeepAliveEnabled || externalHttpEnabled) {
+        if (isAiBusy || orbitTasksBusy.get() || orbitChannelsBusy.get() || alwaysListeningEnabled ||
+            backgroundKeepAliveEnabled || externalHttpEnabled) {
             return
         }
         if (!ignoreAppForeground && ActivityLifecycleManager.getCurrentActivity() != null) {
@@ -1220,6 +1345,17 @@ class AIForegroundService : Service() {
             }
             stopSelfIfIdle(ignoreAppForeground = true)
             return START_NOT_STICKY
+        }
+
+        if (intent?.action == ACTION_ORBIT_TASKS) {
+            if (!orbitTasksBusy.get()) stopSelfIfIdle(ignoreAppForeground = true)
+            return if (isExternalHttpEnabledNow()) START_STICKY else START_NOT_STICKY
+        }
+
+        if (intent?.action == ACTION_ORBIT_CHANNELS) {
+            if (!orbitChannelsBusy.get()) stopSelfIfIdle(ignoreAppForeground = true)
+            // A linked channel wants the service back if the system stops it; the app reconnects on start.
+            return if (orbitChannelsBusy.get() || isExternalHttpEnabledNow()) START_STICKY else START_NOT_STICKY
         }
 
         if (intent?.action == ACTION_START_OR_REFRESH_EXTERNAL_HTTP || intent == null) {

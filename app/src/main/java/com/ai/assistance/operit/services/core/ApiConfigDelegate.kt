@@ -30,6 +30,10 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -209,6 +213,25 @@ class ApiConfigDelegate(
                         }
                     }
                 }
+                .combine(combine(contextChatId,
+                    com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context).settingsFlow
+                ) { chatId, settings -> settings.ownerForChat(chatId)?.id }) { main, orbitId -> main to orbitId }
+                .flatMapLatest { (main, orbitId) ->
+                    if (orbitId == null) kotlinx.coroutines.flow.flowOf(main)
+                    else {
+                        val orbitModels = com.ai.assistance.operit.data.preferences.OrbitModelPreferences(context)
+                        flow {
+                            emit(orbitModels.current(orbitId))
+                            emitAll(orbitModels.observe(orbitId).filterNotNull())
+                        }.combine(modelConfigManager.configSummariesFlow) { settings, configs ->
+                            val ref = settings.main
+                            val config = configs.firstOrNull { it.id == ref?.configId }
+                            val index = if (ref != null && config != null)
+                                ref.resolveIndex(config.modelName, config.apiProviderTypeId) else -1
+                            EffectiveChatConfigTarget(ref?.configId.orEmpty(), index >= 0, index)
+                        }
+                    }
+                }
                 .stateIn(
                     configScope,
                     kotlinx.coroutines.flow.SharingStarted.Eagerly,
@@ -242,12 +265,30 @@ class ApiConfigDelegate(
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     private val conversationPolicy = contextChatId.flatMapLatest { chatId ->
-        if (chatId == null) contextPreferences.defaults.map { it as ChatContextPolicy? }
+        // The policy and whether the chat is an Orbit's; an Orbit's rules apply after any fallback.
+        if (chatId == null) contextPreferences.defaults.map { (it as ChatContextPolicy?) to false }
         else contextPreferences.observe(chatId).map { it?.let(ChatContextPolicy::decode) }
+            .combine(orbitSettings.map { it.ownerForChat(chatId) != null }.distinctUntilChanged()) { policy, orbit ->
+                policy to orbit
+            }
     }
 
-    val effectiveResolvedContext = combine(effectiveChatConfig, conversationPolicy) { config, policy ->
-        resolveChatContext(policy ?: ChatContextPolicy.fromLegacy(config), config)
+    private val orbitSettings get() =
+        com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context).settingsFlow
+
+    /**
+     * An Orbit chat (its main chat, side chats and the chats it owns) never uses the model's full
+     * window, always compacts on its own and lets the app pick where; only the budget is kept.
+     */
+    private suspend fun forChat(chatId: String?, policy: ChatContextPolicy): ChatContextPolicy =
+        if (chatId != null && com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context)
+                .current().ownerForChat(chatId) != null)
+            com.ai.assistance.operit.features.orbit.OrbitContextSettings.fixed(policy)
+        else policy
+
+    val effectiveResolvedContext = combine(effectiveChatConfig, conversationPolicy) { config, (policy, orbit) ->
+        val base = policy ?: ChatContextPolicy.fromLegacy(config)
+        resolveChatContext(if (orbit) com.ai.assistance.operit.features.orbit.OrbitContextSettings.fixed(base) else base, config)
     }.stateIn(configScope, kotlinx.coroutines.flow.SharingStarted.Eagerly,
         resolveChatContext(ChatContextPolicy(), ModelConfigData(id = "", name = "")))
 
@@ -350,9 +391,10 @@ class ApiConfigDelegate(
     suspend fun resolveChatContextSettings(configIdOverride: String? = null, chatId: String? = contextChatId.value): ChatContextSettings {
         modelConfigManager.initializeIfNeeded()
         val configId = configIdOverride?.trim()?.takeIf { it.isNotEmpty() }
+            ?: com.ai.assistance.operit.features.orbit.OrbitModels.mapping(context, FunctionType.CHAT, chatId)?.configId
             ?: functionalConfigManager.getConfigIdForFunction(FunctionType.CHAT)
         val config = requireNotNull(modelConfigManager.getModelConfig(configId)) { "Model config not found: $configId" }
-        val resolved = resolveChatContext(contextPreferences.resolve(chatId, config), config)
+        val resolved = resolveChatContext(forChat(chatId, contextPreferences.resolve(chatId, config)), config)
         return ChatContextSettings(configId, resolved.policy.windowK, resolved.capacityK,
             resolved.policy.maxMode, resolved.windowK, resolved.compactRatio,
             resolved.policy.autoCompact, resolved.policy.compactEveryUserTurns != null,
@@ -361,20 +403,23 @@ class ApiConfigDelegate(
 
     suspend fun updateChatContextPolicy(chatId: String, configId: String = effectiveChatConfigId.value, transform: (ChatContextPolicy) -> ChatContextPolicy) {
         val config = requireNotNull(modelConfigManager.getModelConfig(configId))
-        contextPreferences.update(chatId, config, transform)
+        val orbit = com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context)
+            .current().ownerForChat(chatId) != null
+        contextPreferences.update(chatId, config) { policy ->
+            transform(policy).let { if (orbit) com.ai.assistance.operit.features.orbit.OrbitContextSettings.fixed(it) else it }
+        }
     }
 
     suspend fun loadChatContext(chatId: String, configId: String): com.ai.assistance.operit.data.model.ResolvedChatContext {
         val config = requireNotNull(modelConfigManager.getModelConfig(configId))
-        return resolveChatContext(contextPreferences.resolve(chatId, config), config)
+        return resolveChatContext(forChat(chatId, contextPreferences.resolve(chatId, config)), config)
     }
 
     private fun updateCurrentPolicy(transform: (ChatContextPolicy) -> ChatContextPolicy) {
         val chatId = contextChatId.value ?: return
         val configId = effectiveChatConfigId.value
         configScope.launch {
-            val config = requireNotNull(modelConfigManager.getModelConfig(configId))
-            contextPreferences.update(chatId, config, transform)
+            updateChatContextPolicy(chatId, configId, transform)
         }
     }
 

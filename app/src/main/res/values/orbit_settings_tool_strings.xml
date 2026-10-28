@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="orbit_settings_title">修改设置</string>
+    <string name="orbit_settings_palette">聊天主题配色</string>
+    <string name="orbit_settings_avatar">头像大小</string>
+    <string name="orbit_settings_color">明暗模式</string>
+    <string name="orbit_settings_weekly">每周额度</string>
+    <string name="orbit_settings_extra">额外额度</string>
+    <string name="orbit_settings_extra_weekly">额外额度每周重置</string>
+    <string name="orbit_settings_refill">补满额外额度</string>
+    <string name="orbit_settings_login">浏览器登录环境</string>
+    <string name="orbit_settings_delay">学习延迟</string>
+    <string name="orbit_settings_developer">开发者模式</string>
+    <string name="orbit_settings_message_notifications">消息通知</string>
+    <string name="orbit_settings_launch">打开 App 默认进入</string>
+    <string name="orbit_settings_pause">暂停整个 Orbit</string>
+    <string name="orbit_settings_missing">这个 Orbit 已删除或正在删除。</string>
+    <string name="orbit_settings_unknown">不支持的设置名；请先用 get 查看。</string>
+    <string name="orbit_settings_unchanged">已经是这个值，无需修改。</string>
+    <string name="orbit_settings_integer">需要 JSON 整数，不能带小数或引号。</string>
+    <string name="orbit_settings_boolean">需要 JSON 布尔值 true 或 false。</string>
+    <string name="orbit_settings_true_only">这个操作只接受 true。</string>
+    <string name="orbit_settings_options">可选值：%1$s。</string>
+    <string name="orbit_settings_range">范围：%1$s 至 %2$s 个 token。</string>
+    <string name="orbit_settings_refill_unchanged">额外额度尚未使用，无需补满。</string>
+    <string name="orbit_settings_pause_only">只允许申请暂停（true）；恢复必须由用户手动操作。</string>
+    <string name="orbit_settings_not_active">当前运行的已不是这个 Orbit，或已经暂停；不能用此申请暂停其他 Orbit。</string>
+    <string name="orbit_settings_login_unsupported">这台手机的 WebView 不支持分开登录，Orbit 只能和主应用共用，无法切换。</string>
+    <string name="orbit_settings_login_note">开启后使用主应用浏览器的账号环境；关闭后换回这个 Orbit 自己的登录环境，原有登录保留。不会读取或返回 Cookie。</string>
+    <string name="orbit_settings_pause_note">同意后当前 Orbit 会停下，后台工作也会暂停；只能由你手动恢复。</string>
+    <string name="orbit_settings_refill_note">current 是额外额度已用的 token 数；true 会将执行时的已用量归零，不删除用量历史，也不重置每周用量。</string>
+    <string name="orbit_settings_get_note">额度单位为原始 token 数；shared_by_all_orbits=true 的项目由所有 Orbit 共用。修改要用 request_change，等用户在卡片上同意。</string>
+    <string name="orbit_settings_requested">批准卡片已放进聊天。现在用一句简短的话结束本轮；用户同意后 App 会修改设置，你会收到逐项结果的隐藏消息。</string>
+    <string name="orbit_settings_change_line">%1$s：%2$s → %3$s%4$s</string>
+    <string name="orbit_settings_shared">（所有 Orbit 共用）</string>
+    <string name="orbit_settings_main_login">主应用的账号环境</string>
+    <string name="orbit_settings_own_login">这个 Orbit 独立的账号环境</string>
+    <string name="orbit_settings_running">运行中</string>
+    <string name="orbit_settings_paused">已暂停</string>
+    <string name="orbit_settings_on">开启</string>
+    <string name="orbit_settings_off">关闭</string>
+    <string name="orbit_settings_tokens">%1$s token</string>
+    <string name="orbit_settings_minutes">%1$s 分钟</string>
+    <string name="orbit_settings_extra_used">已用 %1$s token</string>
+    <string name="orbit_settings_refilled">额外额度已用量归零</string>
+    <string name="orbit_settings_applied">%1$s：已改为%2$s。</string>
+    <string name="orbit_settings_skipped">%1$s：没改，%2$s</string>
+    <string name="orbit_settings_stale">当前值已和申请时不同；请查看新值后重新申请。</string>
+    <string name="orbit_settings_failed">未能保存，请重试。</string>
+</resources>

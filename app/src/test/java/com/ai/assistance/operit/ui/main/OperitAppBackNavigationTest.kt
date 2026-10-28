@@ -20,4 +20,10 @@ class OperitAppBackNavigationTest {
     fun nonChatScreenAlwaysUsesOperitBackHandling() {
         assertTrue(shouldHandleSystemBack(canPop = false, currentScreen = Screen.Packages))
     }
+
+    @Test
+    fun orbitNeverGoesBackToTheMainChat() {
+        assertFalse(shouldHandleSystemBack(canPop = true, currentScreen = Screen.Orbit))
+        assertFalse(shouldHandleSystemBack(canPop = false, currentScreen = Screen.Orbit))
+    }
 }

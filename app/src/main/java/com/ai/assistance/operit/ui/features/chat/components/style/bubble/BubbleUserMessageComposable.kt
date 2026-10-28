@@ -55,6 +55,7 @@ import com.ai.assistance.operit.ui.features.chat.components.attachments.Attachme
 import com.ai.assistance.operit.ui.features.chat.components.attachments.ChatAttachment
 import com.ai.assistance.operit.ui.features.chat.components.style.common.HiddenUserMessagePlaceholderContent
 import com.ai.assistance.operit.api.chat.llmprovider.MediaLinkParser
+import com.ai.assistance.operit.util.ChatImageBitmapCache
 import com.ai.assistance.operit.util.ImageBitmapLimiter
 import com.ai.assistance.operit.util.ImagePoolManager
 import com.ai.assistance.operit.util.ChatMarkupRegex
@@ -129,21 +130,21 @@ fun BubbleUserMessageComposable(
             mutableStateOf(if (isHiddenPlaceholder) {
                 MessageParseResult(processedText = "", trailingAttachments = emptyList())
             } else {
-                parseMessageContent(context, message.content)
+                parseMessageContent(context, message.content).let { parsed ->
+                    // Pictures already decoded show at once.
+                    parsed.copy(imageLinks = parsed.imageLinks.map { image ->
+                        ChatImageBitmapCache.get(image.id)?.let { image.copy(bitmap = it, loading = false) } ?: image
+                    })
+                }
             })
         }
     LaunchedEffect(parsedState) {
         val initial = parsedState.value
-        if (initial.imageLinks.isNotEmpty()) {
+        if (initial.imageLinks.any { it.loading }) {
             val loaded = withContext(Dispatchers.IO) {
                 initial.imageLinks.map { image ->
-                    val data = ImagePoolManager.resolveImage(image.id, image.sourcePath)
-                    val bitmap = data?.let {
-                        runCatching {
-                            ImageBitmapLimiter.decodeDownsampledBitmap(Base64.decode(it.base64, Base64.DEFAULT))
-                        }.getOrNull()
-                    }
-                    image.copy(bitmap = bitmap, loading = false)
+                    if (!image.loading) image
+                    else image.copy(bitmap = ChatImageBitmapCache.load(image.id, image.sourcePath), loading = false)
                 }
             }
             parsedState.value = initial.copy(imageLinks = loaded)
@@ -193,8 +194,10 @@ fun BubbleUserMessageComposable(
         }
     }
     val resolvedDisplayName = if (isProxySender) proxySenderName else globalUserName
-    val shouldShowResolvedName = !isHiddenPlaceholder && if (isProxySender) true else showUserName
-    val shouldShowAvatar = !isHiddenPlaceholder && bubbleShowAvatar
+    val orbitLook = com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current
+    val shouldShowResolvedName =
+        !isHiddenPlaceholder && !orbitLook && if (isProxySender) true else showUserName
+    val shouldShowAvatar = !isHiddenPlaceholder && !orbitLook && bubbleShowAvatar
 
     // 添加状态控制内容预览
     val showContentPreview = remember { mutableStateOf(false) }
@@ -268,7 +271,7 @@ fun BubbleUserMessageComposable(
                         Spacer(modifier = Modifier.width(4.dp))
                         
                         Text(
-                            text = "${reply.sender}: ${reply.content}",
+                            text = if (orbitLook || reply.sender.isBlank()) reply.content else "${reply.sender}: ${reply.content}",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -372,7 +375,7 @@ fun BubbleUserMessageComposable(
         }
 
         // Message bubble
-        if (bubbleWideLayoutEnabled) {
+        if (bubbleWideLayoutEnabled || orbitLook) {
             val headerVisible = shouldShowAvatar || (shouldShowResolvedName && !resolvedDisplayName.isNullOrEmpty())
 
             if (headerVisible) {
@@ -425,7 +428,8 @@ fun BubbleUserMessageComposable(
             }
 
             BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-                val maxBubbleWidth = maxWidth
+                // Orbit keeps the user's bubbles from reaching across to the left edge.
+                val maxBubbleWidth = if (orbitLook) maxWidth * 0.8f else maxWidth
                 val bubbleShape =
                     if (bubbleRoundedCornersEnabled) {
                         RoundedCornerShape(20.dp, 4.dp, 20.dp, 20.dp)

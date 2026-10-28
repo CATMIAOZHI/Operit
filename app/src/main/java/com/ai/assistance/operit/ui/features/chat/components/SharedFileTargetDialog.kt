@@ -19,21 +19,30 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.model.ChatHistory
+import com.ai.assistance.operit.data.preferences.OrbitPreferences
+import com.ai.assistance.operit.data.preferences.OrbitProfile
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import java.util.Locale
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun SharedFileTargetDialog(
@@ -44,6 +53,9 @@ fun SharedFileTargetDialog(
     onCreateNewChat: () -> Unit,
     onSelectChat: (String) -> Unit,
     onDismiss: () -> Unit,
+    /** The running Orbit's name; with [onSendToOrbit], offers to hand the share to Orbit. */
+    orbitName: String? = null,
+    onSendToOrbit: (() -> Unit)? = null,
 ) {
     val dateTimeFormatter = remember {
         DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT).withLocale(Locale.getDefault())
@@ -92,6 +104,30 @@ fun SharedFileTargetDialog(
                             },
                         style = MaterialTheme.typography.bodyMedium
                     )
+
+                    if (orbitName != null && onSendToOrbit != null) {
+                        OutlinedCard(
+                            onClick = onSendToOrbit,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.orbit_share_target, orbitName),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = stringResource(R.string.orbit_share_target_desc, orbitName),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
 
                     OutlinedCard(
                         onClick = onCreateNewChat,
@@ -192,7 +228,15 @@ fun SharedIncomingContentHandler(
     onHandleSharedText: (String, String?) -> Unit,
     onClearSharedFiles: () -> Unit,
     onClearSharedText: () -> Unit,
+    /** Opens the Orbit page; hosts that cannot show it pass null, and Orbit is then not offered. */
+    onOpenOrbit: (() -> Unit)? = null,
 ) {
+    val context = LocalContext.current
+    val resources = LocalResources.current
+    val scope = rememberCoroutineScope()
+    val orbitSettings by remember { OrbitPreferences.getInstance(context).settingsFlow }.collectAsState(initial = null)
+    // Only a running Orbit can take a share; a paused one would have nobody to answer.
+    val activeOrbit = orbitSettings?.active?.takeIf { onOpenOrbit != null }
     var pendingSharedFilesForSelection by remember { mutableStateOf<List<Uri>?>(null) }
     var pendingSharedFileTextForSelection by remember { mutableStateOf<String?>(null) }
     var pendingSharedTextForSelection by remember { mutableStateOf<String?>(null) }
@@ -242,6 +286,54 @@ fun SharedIncomingContentHandler(
         onHandleSharedText(text, targetChatId)
     }
 
+    fun openOrbit(orbit: OrbitProfile) {
+        com.ai.assistance.operit.features.orbit.OrbitNavigation.openChat(orbit.chatId)
+        onOpenOrbit?.invoke()
+    }
+
+    fun shareTextToOrbit(orbit: OrbitProfile) {
+        val text = pendingSharedTextForSelection?.trim()
+        pendingSharedTextForSelection = null
+        onClearSharedText()
+        if (text.isNullOrBlank()) return
+        com.ai.assistance.operit.ui.features.orbit.sendToOrbit(context, orbit, text)
+        openOrbit(orbit)
+    }
+
+    /** Files go into Orbit's own folder first, then Orbit is told where they are. */
+    fun shareFilesToOrbit(orbit: OrbitProfile) {
+        val uris = pendingSharedFilesForSelection ?: return
+        val note = pendingSharedFileTextForSelection?.trim().orEmpty()
+        pendingSharedFilesForSelection = null
+        pendingSharedFileTextForSelection = null
+        onClearSharedFiles()
+        scope.launch {
+            val saved = mutableListOf<String>()
+            val files = com.ai.assistance.operit.features.orbit.OrbitFiles.of(context, orbit.id)
+            try {
+                val paths = withContext(Dispatchers.IO) {
+                    uris.map { uri ->
+                        val name = sharedFileName(context, uri)
+                        context.contentResolver.openInputStream(uri).use { input ->
+                            files.saveBytes("files/shared/$name", checkNotNull(input)).path.also { saved += it }
+                        }
+                    }
+                }
+                val message = listOf(note, resources.getString(R.string.orbit_share_files_message, paths.size,
+                    paths.joinToString("\n") { "- $it" })).filter { it.isNotBlank() }.joinToString("\n\n")
+                com.ai.assistance.operit.ui.features.orbit.sendToOrbit(context, orbit, message)
+                openOrbit(orbit)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Files saved before the failure go to the trash, so a half share does not linger unannounced.
+                saved.forEach { path -> runCatching { files.delete(path) } }
+                android.widget.Toast.makeText(context, resources.getString(R.string.orbit_share_failed, orbit.name),
+                    android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     pendingSharedFilesForSelection?.let { sharedUris ->
         SharedFileTargetDialog(
             fileCount = sharedUris.size,
@@ -253,7 +345,9 @@ fun SharedIncomingContentHandler(
                 pendingSharedFilesForSelection = null
                 pendingSharedFileTextForSelection = null
                 onClearSharedFiles()
-            }
+            },
+            orbitName = activeOrbit?.name,
+            onSendToOrbit = activeOrbit?.let { orbit -> { shareFilesToOrbit(orbit) } },
         )
     }
 
@@ -268,7 +362,20 @@ fun SharedIncomingContentHandler(
             onDismiss = {
                 pendingSharedTextForSelection = null
                 onClearSharedText()
-            }
+            },
+            orbitName = activeOrbit?.name,
+            onSendToOrbit = activeOrbit?.let { orbit -> { shareTextToOrbit(orbit) } },
         )
     }
+}
+
+/** The shared file's own name, made safe for Orbit's folder. */
+private fun sharedFileName(context: android.content.Context, uri: Uri): String {
+    val display = runCatching {
+        context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
+            if (it.moveToFirst()) it.getString(0) else null
+        }
+    }.getOrNull() ?: uri.lastPathSegment?.substringAfterLast('/')
+    return display.orEmpty().replace(Regex("[\\\\/:*?\"<>|\\p{Cntrl}]"), "_").trim().trimStart('.')
+        .take(100).ifBlank { "shared-${System.currentTimeMillis()}" }
 }

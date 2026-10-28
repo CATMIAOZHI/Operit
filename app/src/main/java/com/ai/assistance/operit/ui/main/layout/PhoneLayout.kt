@@ -156,7 +156,9 @@ fun PhoneLayout(
         // 拖拽状态 - 用于控制抽屉拉出和关闭
         val draggableState = rememberDraggableState { delta ->
                 // 如果内部手势已被消费，则不处理全局拖拽
-                if (!GestureStateHolder.isChatScreenGestureConsumed) {
+                // Orbit has its own menu behind its top-left button; a swipe there never opens the app drawer.
+                val swipeOpenAllowed = isDrawerOpen || currentScreen !is Screen.Orbit
+                if (!GestureStateHolder.isChatScreenGestureConsumed && swipeOpenAllowed) {
                         currentDrag += delta
 
                         if (!isDrawerOpen &&

@@ -127,6 +127,30 @@ class ToolErrorRepository internal constructor(context: Context) {
             }
         }
 
+    /** How many records match, without reading them. */
+    suspend fun count(toolName: String?, since: Long): Long =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                val toolFilter = if (toolName == null) "" else " AND tool_name = ?"
+                val arguments = if (toolName == null) arrayOf(since.toString()) else arrayOf(since.toString(), toolName)
+                helper.readableDatabase.rawQuery("SELECT COUNT(*) FROM tool_errors WHERE occurred_at >= ?$toolFilter", arguments)
+                    .use { if (it.moveToFirst()) it.getLong(0) else 0L }
+            }
+        }
+
+    /** Each matching record's JSON, oldest first, from one consistent snapshot. */
+    suspend fun forEachPayload(toolName: String?, since: Long, action: (String) -> Unit) =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                val toolFilter = if (toolName == null) "" else " AND tool_name = ?"
+                val arguments = if (toolName == null) arrayOf(since.toString()) else arrayOf(since.toString(), toolName)
+                helper.readableDatabase.rawQuery(
+                    "SELECT payload FROM tool_errors WHERE occurred_at >= ?$toolFilter ORDER BY occurred_at, id",
+                    arguments,
+                ).use { cursor -> while (cursor.moveToNext()) action(cursor.getString(0)) }
+            }
+        }
+
     /** Stream all matching records, not just the visible page, from one consistent snapshot. */
     suspend fun export(output: OutputStream, toolName: String?, since: Long) =
         withContext(Dispatchers.IO) {
