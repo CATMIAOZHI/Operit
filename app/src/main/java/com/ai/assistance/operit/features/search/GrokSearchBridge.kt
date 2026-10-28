@@ -234,10 +234,7 @@ object GrokSearchBridge {
             .post(payload.toString().toRequestBody("application/json".toMediaType()))
             .header("Accept", "application/json")
             .header("x-grok-session-id", UUID.randomUUID().toString())
-        ProviderAccountManager.GROK_HEADERS.forEach { (key, value) ->
-            // The token-auth headers are only for the CLI proxy.
-            if (viaProxy || key.lowercase() !in setOf("x-xai-token-auth", "x-authenticateresponse")) builder.header(key, value)
-        }
+        com.ai.assistance.operit.data.api.GrokClientIdentity.headers(viaProxy).forEach { (key, value) -> builder.header(key, value) }
         builder.header("Authorization", "Bearer $token")
         val call = client.newCall(builder.build())
         val watcher = CoroutineScope(currentCoroutineContext()).launch(start = CoroutineStart.UNDISPATCHED) {

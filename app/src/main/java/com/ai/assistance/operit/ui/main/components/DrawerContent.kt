@@ -604,13 +604,22 @@ private fun SidebarInfoCard(
         }
 }
 
-/** The drawer's large Orbit entry, styled like the quick action cards below it. */
+/** The drawer's large Orbit entry: the user's Orbit with its own picture and name. */
 @Composable
 private fun SidebarOrbitCard(
         selected: Boolean,
         appearance: NavigationDrawerAppearance,
         onClick: () -> Unit
 ) {
+        val context = LocalContext.current
+        val preferences =
+                remember(context) {
+                        com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context)
+                }
+        // Settings already read show the user's Orbit at once; null means they are still loading.
+        val settings by preferences.settingsFlow.collectAsState(initial = preferences.loadedSnapshot())
+        val loaded = settings != null
+        val orbit = settings?.active?.takeUnless { it.deleting }
         val itemShape = RoundedCornerShape(16.dp)
         val selectedGlassOverlayColor =
                 if (selected) {
@@ -618,7 +627,6 @@ private fun SidebarOrbitCard(
                 } else {
                         Color.Transparent
                 }
-        val accentColor = appearance.selectedContentColor
         Surface(
                 modifier =
                         Modifier.fillMaxWidth()
@@ -651,40 +659,43 @@ private fun SidebarOrbitCard(
                         modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
                         verticalAlignment = Alignment.CenterVertically
                 ) {
-                        Box(
-                                modifier =
-                                        Modifier.size(44.dp)
-                                                .clip(RoundedCornerShape(14.dp))
-                                                .background(accentColor.copy(alpha = 0.12f)),
-                                contentAlignment = Alignment.Center
-                        ) {
-                                Icon(
-                                        imageVector = NavItem.Orbit.icon,
-                                        contentDescription = null,
-                                        tint = accentColor,
-                                        modifier = Modifier.size(24.dp)
+                        val current = orbit
+                        if (current != null) {
+                                com.ai.assistance.operit.ui.features.orbit.OrbitAvatar(
+                                        orbit = current,
+                                        size = 44,
+                                        petVisible = false
                                 )
+                        } else {
+                                Box(
+                                        modifier =
+                                                Modifier.size(44.dp)
+                                                        .clip(CircleShape)
+                                                        .background(Color.White),
+                                        contentAlignment = Alignment.Center
+                                ) {
+                                        if (loaded) {
+                                                com.ai.assistance.operit.ui.features.orbit.OrbitLogoAvatar(
+                                                        activity = com.ai.assistance.operit.pet.PetActivity.IDLE,
+                                                        animate = false,
+                                                        modifier = Modifier.fillMaxSize().padding(8.dp)
+                                                )
+                                        }
+                                }
                         }
                         Spacer(modifier = Modifier.width(12.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                        text = stringResource(id = R.string.nav_orbit),
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color =
-                                                if (selected) appearance.selectedContentColor
-                                                else appearance.titleColor,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                        text = stringResource(id = R.string.orbit_tagline),
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = appearance.itemColor,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                )
-                        }
+                        Text(
+                                text = current?.name?.takeIf { it.isNotBlank() }
+                                        ?: if (loaded) stringResource(id = R.string.nav_orbit) else "",
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color =
+                                        if (selected) appearance.selectedContentColor
+                                        else appearance.titleColor,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                        )
                 }
         }
 }
