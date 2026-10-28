@@ -492,12 +492,13 @@ class ProviderAccountManager private constructor(context: Context, val provider:
         token: String? = null,
         extraHeaders: Map<String, String> = emptyMap(),
     ): JSONObject = withContext(Dispatchers.IO) {
+            val grokHeaders = if (token != null && provider == AccountProvider.GROK) GrokClientIdentity.headers() else emptyMap()
             val request = Request.Builder().url(url).header("Accept", "application/json").apply {
                 if (body != null) post(body)
                 if (token != null) {
                     header("Authorization", "Bearer $token")
                     if (provider == AccountProvider.ANTIGRAVITY) header("User-Agent", ANTIGRAVITY_UA)
-                    else if (provider == AccountProvider.GROK) GROK_HEADERS.forEach { (key, value) -> header(key, value) }
+                    grokHeaders.forEach { (key, value) -> header(key, value) }
                 }
                 extraHeaders.forEach { (key, value) -> header(key, value) }
             }.build()
@@ -512,11 +513,6 @@ class ProviderAccountManager private constructor(context: Context, val provider:
     companion object {
         const val CCA = "https://cloudcode-pa.googleapis.com"
         const val ANTIGRAVITY_UA = "antigravity/ide/2.5.5 (aidev_client; os_type=windows; arch=amd64)"
-        val GROK_HEADERS = mapOf(
-            "x-grok-client-identifier" to "operit", "x-grok-client-version" to "0.2.93",
-            "x-xai-token-auth" to "xai-grok-cli", "x-authenticateresponse" to "authenticate-response",
-            "User-Agent" to "Operit/${com.ai.assistance.operit.BuildConfig.VERSION_NAME}",
-        )
         private const val GOOGLE_TOKEN = "https://oauth2.googleapis.com/token"
         private const val COMMAND_CODE_WHOAMI = "https://api.commandcode.ai/alpha/whoami"
         private const val COMMAND_CODE_CREDITS = "https://api.commandcode.ai/alpha/billing/credits"
