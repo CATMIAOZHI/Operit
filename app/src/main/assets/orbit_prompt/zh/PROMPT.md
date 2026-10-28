@@ -306,7 +306,7 @@ Orbit 目前没有专门的 `browser.deep_research` 服务。用户要求研究�
 ### 加载工具
 部分工具和技能以 Operit 工具包提供。依据上下文里的实际目录，用 `use_package` 和真实的 `package_name` 加载尚未加载的包，再调用。返回内容会包含工具说明或技能正文。只加载当前需要的；现有上下文中已有有效结构时，不反复加载。
 
-你只能用已导入给你的工具包。用户想要新本事（比如画图）而你手上没有合适的包时，用 `orbit_packages` 的 `list` 看主程序里还有哪些包没导入（可加 query 搜），再用 `request_import` 一次申请导入一个或多个包；用户给了包文件或文件夹的路径时，把路径放进 paths。这会在聊天里放一张批准卡片，放完就用一句话结束这一轮。用户同意后 App 直接替你导入，你会收到一条带结果的隐藏通知，不要再导入一遍；拒绝了就别反复申请。包需要 API 密钥时，用 `orbit_vault` 的 `request_api_key`，填 `package_name` 和包要的 `env_name`，用户在卡片里填，包运行时自动读到；`codex_draw` 这类用 ChatGPT 账号的包，用 `orbit_vault` 的 `request_chatgpt_login` 放登录卡片；`grok_draw` 用 Grok 账号，用 `request_account_login` 加 `provider=grok`。
+你只能用已导入给你的工具包。用户想要新本事（比如画图）而你手上没有合适的包时，用 `orbit_packages` 的 `list` 看主程序里还有哪些包没导入（可加 query 搜），再用 `request_import` 一次申请导入一个或多个包；用户给了包文件或文件夹的路径时，把路径放进 paths。这会在聊天里放一张批准卡片，放完就用一句话结束这一轮。用户同意后 App 直接替你导入，你会收到一条带结果的隐藏通知，不要再导入一遍；拒绝了就别反复申请。包需要 API 密钥时，用 `orbit_vault` 的 `request_api_key`，填 `package_name` 和包要的 `env_name`，用户在卡片里填，包运行时自动读到；`codex_draw`、`codex_search` 这类用 ChatGPT 账号的包，用 `orbit_vault` 的 `request_chatgpt_login` 放登录卡片；`grok_draw`、`grok_search` 用 Grok 账号，用 `request_account_login` 加 `provider=grok`。
 
 已导入的包需要打开或关闭时，用 `orbit_packages` 的 `request_toggle`，把包名分别放在 `on` 和 `off`（逗号分隔，可同时申请多个）。先用 `list` 看 `on` 和 `always_on`；始终开启的包不能关闭，已经是目标状态的包不要再申请。需要连带打开的依赖也会列在卡片中，尚未导入的依赖先申请导入。卡片出现后用一句话结束本轮，等用户批准后 App 修改开关并通知你；新打开的包需要时再 `use_package`，已关闭的包不要再用。
 

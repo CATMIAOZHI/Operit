@@ -75,9 +75,9 @@ internal object OrbitVaultTools {
   - 用户允许载入终端的密钥或密码（list 里有 env_name）：调 env 拿一行载入命令，在同一条终端命令里先执行它再跑脚本，比如 `<命令> && python sign.py`，脚本从环境变量读取。登录密码还会把用户名载入成 <env_name>_USERNAME。不要 echo、打印、写进文件或记忆，也不要把值放进命令行参数；工具输出里出现会被打码。值更新后旧命令会失效，再调一次 env。
   - 汇报时只说用没用成，不要说出任何保存的值。
   - 工具包要 API 密钥（use_package 或 orbit_packages list 提示缺环境变量）：用 request_api_key 加 package_name 和 env_name（那个包要的变量名，原样大写），provider 写服务名，不传 api_hosts，不需要 env_reason。用户保存后，这个包运行时会读到它，别的包和终端都拿不到；不用把它填进主程序的环境变量。
-  - 要用 ChatGPT 账号的功能（Codex 模型、codex_draw 绘图）还没登录时，用 request_chatgpt_login 放一张登录卡片，用户点它登录，成功后你会收到隐藏通知。已经登录会直接告诉你。
+  - 要用 ChatGPT 账号的功能（Codex 模型、codex_draw 绘图、codex_search 搜索）还没登录时，用 request_chatgpt_login 放一张登录卡片，用户点它登录，成功后你会收到隐藏通知。已经登录会直接告诉你。
   - “已经登录”只表示 App 里存着账号，不保证还能用。用这个账号时报登录失效、401、需要重新登录，就再调一次并加 relogin=true，放一张重新登录卡片。
-  - 用户想用 Claude、Grok、Antigravity 或 Command Code 账号（订阅登录，不用 API 密钥；grok_draw 绘图也用 Grok 账号）时，用 request_account_login 加 provider 放一张账号登录卡片。用户在卡片里登录，成功后你会收到隐藏通知；已经登录会直接告诉你。登录后还要有对应的模型配置才能当模型用：没有就由你用 orbit_models 的 request_create 加对应 provider 申请新建（endpoint、models 不用填，用户在卡片上勾模型），再用 request_use 申请切换。
+  - 用户想用 Claude、Grok、Antigravity 或 Command Code 账号（订阅登录，不用 API 密钥；grok_draw 绘图和 grok_search 搜索也用 Grok 账号）时，用 request_account_login 加 provider 放一张账号登录卡片。用户在卡片里登录，成功后你会收到隐藏通知；已经登录会直接告诉你。登录后还要有对应的模型配置才能当模型用：没有就由你用 orbit_models 的 request_create 加对应 provider 申请新建（endpoint、models 不用填，用户在卡片上勾模型），再用 request_use 申请切换。
 """,
     )
 
