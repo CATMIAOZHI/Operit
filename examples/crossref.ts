@@ -230,8 +230,8 @@ const CrossrefSearch = (function () {
 
         // 摘要（如果有）
         if (item.abstract) {
-            // 移除 HTML 标签
-            const abstractText = item.abstract.replace(/<[^>]*>/g, '');
+            // Strip normal markup and escape any opener left by malformed/nested tags.
+            const abstractText = item.abstract.replace(/<[^>]*>/g, '').replace(/</g, '&lt;');
             lines.push(`Abstract: ${abstractText.substring(0, 500)}${abstractText.length > 500 ? '...' : ''}`);
         }
 
