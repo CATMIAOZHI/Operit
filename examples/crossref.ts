@@ -230,8 +230,19 @@ const CrossrefSearch = (function () {
 
         // 摘要（如果有）
         if (item.abstract) {
-            // Plain-text abstracts: also strip incomplete tag openers in the same pass.
-            const abstractText = item.abstract.replace(/<[^>]*>|</g, '');
+            // Crossref supplies JATS markup. Keep only text outside tags, without
+            // concatenating partially removed tags into new markup.
+            let abstractText = '';
+            let insideTag = false;
+            for (const character of String(item.abstract)) {
+                if (character === '<') {
+                    insideTag = true;
+                } else if (insideTag) {
+                    if (character === '>') insideTag = false;
+                } else {
+                    abstractText += character;
+                }
+            }
             lines.push(`Abstract: ${abstractText.substring(0, 500)}${abstractText.length > 500 ? '...' : ''}`);
         }
 
