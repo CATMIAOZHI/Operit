@@ -313,6 +313,8 @@ internal fun OrbitPackagesPage(orbit: OrbitProfile, onBack: () -> Unit) {
                 }
             }
         }
+        // The app's MCP servers, with Orbit's own switch for each; hidden while searching packages.
+        if (query.isBlank()) item(key = "mcp") { OrbitMcpSection(orbit) }
         if (state.total == 0 && state.missing.isEmpty()) {
             item(key = "none") {
                 Text(

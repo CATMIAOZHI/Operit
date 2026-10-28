@@ -63,6 +63,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -109,6 +110,8 @@ internal fun OrbitProfilePage(
     onOpenTask: (String) -> Unit,
     /** Opens every task in groups, including finished and cancelled ones. */
     onOpenAllTasks: () -> Unit,
+    /** Opens the page with Orbit's own built-in tasks (alignment review, patrol, Feed, Ideas...). */
+    onOpenSystemTasks: () -> Unit,
     onOpenProcess: (OrbitProcess) -> Unit,
     onOpenSoul: () -> Unit,
     onOpenMemory: () -> Unit,
@@ -223,7 +226,7 @@ internal fun OrbitProfilePage(
                     android.widget.Toast.makeText(context, R.string.orbit_profile_browser_gone, android.widget.Toast.LENGTH_SHORT).show()
                 }
             }
-            OrbitProfileTab.SCHEDULES -> schedulesSection(tasks, onOpenTask, onOpenAllTasks)
+            OrbitProfileTab.SCHEDULES -> schedulesSection(orbit.id, tasks, onOpenTask, onOpenAllTasks, onOpenSystemTasks)
             OrbitProfileTab.IDENTITY -> item(key = "identity") {
                 IdentitySection(
                     orbit = orbit,
@@ -1021,9 +1024,11 @@ private fun LazyListScope.browserSection(
 }
 
 private fun LazyListScope.schedulesSection(
+    orbitId: String,
     tasks: List<OrbitTaskEntity>?,
     onOpenTask: (String) -> Unit,
     onOpenAll: () -> Unit,
+    onOpenSystem: () -> Unit,
 ) {
     if (tasks == null) return loading()
     // Finished, cancelled and one-off tasks are not schedules, but the user can still find them here.
@@ -1037,11 +1042,11 @@ private fun LazyListScope.schedulesSection(
             onClick = onOpenAll,
         )
     }
-    val live = tasks.filter { it.state != "CANCELLED" && it.state != "DONE" && it.kind != "ONCE" }
-    if (live.isEmpty()) {
-        item(key = "empty") { EmptyHint(stringResource(R.string.orbit_profile_schedules_empty)) }
-        return
-    }
+    // Orbit's own routines sit together in one row at the bottom, so the groups show only the user's tasks.
+    val routineIds = com.ai.assistance.operit.features.orbit.OrbitRoutines.routineIds(orbitId)
+    val system = tasks.filter { it.id in routineIds }
+    val live = tasks.filter { it.id !in routineIds && it.state != "CANCELLED" && it.state != "DONE" && it.kind != "ONCE" }
+    if (live.isEmpty()) item(key = "empty") { EmptyHint(stringResource(R.string.orbit_profile_schedules_empty)) }
     val groups = listOf(
         R.string.orbit_geofence_group to live.filter { it.kind == com.ai.assistance.operit.features.orbit.OrbitGeofence.KIND },
         R.string.orbit_profile_schedule_once to live.filter { it.kind != "DAILY" && it.kind != com.ai.assistance.operit.features.orbit.OrbitGeofence.KIND && it.scheduleMode == "ONCE" }
@@ -1073,6 +1078,21 @@ private fun LazyListScope.schedulesSection(
                     else stringResource(R.string.orbit_task_next, relativeTime(task.nextRunAt)),
                 showChevron = true,
                 onClick = { onOpenTask(task.id) },
+            )
+        }
+    }
+    if (system.isNotEmpty()) {
+        // A gap instead of a section title: the row's own title already says "System tasks".
+        item(key = "system-gap") { Spacer(Modifier.height(16.dp)) }
+        item(key = "system-tasks") {
+            val waiting = system.count { it.state == "WAITING_USER" || it.state == "VERIFY" }
+            OrbitListRow(
+                icon = orbitIcon("settings-2"),
+                title = stringResource(R.string.orbit_tasks_group_system),
+                detail = system.joinToString(stringResource(R.string.orbit_tasks_system_separator)) { it.title },
+                meta = if (waiting > 0) pluralStringResource(R.plurals.orbit_tasks_system_waiting, waiting, waiting) else null,
+                showChevron = true,
+                onClick = onOpenSystem,
             )
         }
     }

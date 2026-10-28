@@ -1233,7 +1233,13 @@ object ToolExecutionManager {
                     toolName = resolveDisplayToolName(invocation.tool),
                     success = false,
                     result = StringResultData(""),
-                    error = context.getString(R.string.tool_package_off_in_chat, packageOff)
+                    error = if (roleCardToolAccess?.knownMcpNames?.contains(packageOff) == true) {
+                        com.ai.assistance.operit.features.orbit.OrbitMcp.explain(packageOff,
+                            com.ai.assistance.operit.features.orbit.OrbitMcp.Status(
+                                com.ai.assistance.operit.features.orbit.OrbitMcp.State.OFF_IN_ORBIT))
+                    } else {
+                        context.getString(R.string.tool_package_off_in_chat, packageOff)
+                    }
                 )
             } else if (roleCardToolAccess?.customEnabled == true &&
                 !isInvocationAllowedForRoleCard(invocation, roleCardToolAccess)

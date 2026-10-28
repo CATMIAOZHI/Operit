@@ -162,7 +162,7 @@ class MainActivity : ComponentActivity(), com.ai.assistance.operit.ui.components
         private const val STATE_CURRENT_INSTANCE = "current_route_instance"
         private val processStartupGate = MainProcessStartupGate()
         private val processStartupScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-        private val processPluginLoadingState = PluginLoadingState()
+        private val processPluginLoadingState = PluginLoadingState.process
     }
 
     // ======== 屏幕方向变更状态 ========
@@ -863,8 +863,17 @@ class MainActivity : ComponentActivity(), com.ai.assistance.operit.ui.components
         // slip into the gap and make APP_BOOT appear to have started when it did not.
         val initializationReservation = pluginLoadingState.reserveInitialization()
         if (initializationReservation == null) {
-            processStartupLease?.let(processStartupGate::release)
-            processStartupLease = null
+            if (processStartupLease != null) {
+                // Another start (Orbit starting MCP without a screen) holds it; app startup
+                // (terminal services too) runs once that one is done, instead of being skipped.
+                // It may already have ended between the two checks; the retry then goes straight on.
+                processStartupInitializationStarted = false
+                lifecycleScope.launch {
+                    while (pluginLoadingState.isInitializing()) delay(300)
+                    if (processStartupLease != null) startPluginLoading()
+                }
+                return
+            }
             processStartupInitializationStarted = false
             return
         }

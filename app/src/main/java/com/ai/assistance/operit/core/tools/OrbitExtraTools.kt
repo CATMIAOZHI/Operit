@@ -10,8 +10,16 @@ import com.ai.assistance.operit.data.model.ToolResult
  * role-card gate and background task runs all read it, so a new tool is added in one place.
  */
 internal object OrbitExtraTools {
-    /** [inTasks]: background task runs (the root task chat) get it too, not only the Orbit chat. */
-    data class Spec(val prompt: ToolPrompt, val inTasks: Boolean, val run: (Context, AITool) -> ToolResult)
+    /**
+     * [inTasks]: background task runs (the root task chat) get it too, not only the Orbit chat.
+     * [stream]: a suspend version run in the tool call's coroutine, for a tool that may wait long.
+     */
+    data class Spec(
+        val prompt: ToolPrompt,
+        val inTasks: Boolean,
+        val run: (Context, AITool) -> ToolResult,
+        val stream: (suspend (Context, AITool) -> ToolResult)? = null,
+    )
 
     val specs: List<Spec> by lazy {
         listOf(
@@ -32,6 +40,7 @@ internal object OrbitExtraTools {
             Spec(OrbitModelTools.prompt, false, OrbitModelTools::execute),
             Spec(OrbitComponentTools.prompt, false, OrbitComponentTools::execute),
             Spec(OrbitTerminalSourceTools.prompt, true, OrbitTerminalSourceTools::execute),
+            Spec(OrbitMcpTools.prompt, true, OrbitMcpTools::execute, OrbitMcpTools::run),
             Spec(OrbitSettingsTools.prompt, false, OrbitSettingsTools::execute),
             Spec(OrbitPermissionTools.prompt, false, OrbitPermissionTools::execute),
             Spec(OrbitBrowserHandoffTools.prompt, false, OrbitBrowserHandoffTools::execute),

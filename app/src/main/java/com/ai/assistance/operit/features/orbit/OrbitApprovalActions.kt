@@ -40,6 +40,8 @@ internal object OrbitApprovalActions {
     /** Switch, add, delete a voice profile or change its key ([OrbitVoiceProfiles]). */
     const val VOICE_PROFILE = "voice_profile"
     const val WEIXIN_DISCONNECT = "weixin_disconnect"
+    /** Switch MCP servers on or off for this Orbit ([OrbitMcp]). */
+    const val TOGGLE_MCP = "toggle_mcp"
 
     /** At most this many packages, and this many files, in one request. */
     const val MAX_ITEMS = 20
@@ -239,6 +241,12 @@ internal object OrbitApprovalActions {
         .put("off", JSONArray(off))
         .toString()
 
+    fun toggleMcpAction(on: List<String>, off: List<String>): String = JSONObject()
+        .put("type", TOGGLE_MCP)
+        .put("on", JSONArray(on))
+        .put("off", JSONArray(off))
+        .toString()
+
     /** Includes dependencies that also need switching on, so the card covers every change. */
     fun toggleDetail(context: Context, on: List<Pair<String, String>>, off: List<Pair<String, String>>,
         reason: String): String = buildString {
@@ -377,6 +385,7 @@ internal object OrbitApprovalActions {
         return when (action.optString("type")) {
             IMPORT_PACKAGES -> importPackages(context, orbit, action, english)
             TOGGLE_PACKAGES -> togglePackages(context, orbit, action, english)
+            TOGGLE_MCP -> toggleMcp(context, orbit, action, english)
             USE_MODEL -> OrbitModelSwitch.run(context, orbit, action, english)
             INSTALL_COMPONENTS -> OrbitComponents.start(context, orbit, approval.chatId, action, english)
             CHANGE_SETTINGS -> com.ai.assistance.operit.core.tools.OrbitSettingsTools.applyApproved(context, orbit, action)
@@ -488,6 +497,35 @@ internal object OrbitApprovalActions {
             if (needLogin.isNotEmpty() && !signedIn) parts += "需要登录 ChatGPT：${needLogin.joinToString("、")}。"
             if (needGrok.isNotEmpty()) parts += "需要登录 Grok 账号（orbit_vault request_account_login provider=grok）：${needGrok.joinToString("、")}。"
             if (parts.isEmpty()) parts += "什么都没导入。"
+        }
+        return parts.joinToString("\n")
+    }
+
+    private suspend fun toggleMcp(context: Context, orbit: OrbitProfile, action: JSONObject, english: Boolean): String {
+        fun list(key: String) = action.optJSONArray(key)?.let { a ->
+            (0 until a.length()).map { a.getString(it) }.distinct()
+        }.orEmpty()
+        val on = list("on")
+        val off = list("off")
+        require((on.isNotEmpty() || off.isNotEmpty()) && on.intersect(off.toSet()).isEmpty()) { "Invalid MCP switch request" }
+        val known = OrbitMcp.configured(context).keys
+        val gone = (on + off).filter { it !in known }
+        val before = OrbitMcp.enabled(context, orbit.id)
+        val after = OrbitMcp.set(context, orbit.id, on.filter { it in known }, off.filter { it in known })
+        val opened = after - before
+        val closed = before - after
+        if (opened.isNotEmpty() || closed.isNotEmpty()) OrbitPackages.refreshPromptWhenIdle(context, orbit)
+        val parts = mutableListOf<String>()
+        if (english) {
+            if (opened.isNotEmpty()) parts += "MCP switched on: ${opened.joinToString()}. Load one with use_package when you need it; it starts then if it is not running."
+            if (closed.isNotEmpty()) parts += "MCP switched off: ${closed.joinToString()}. Do not use these any more."
+            if (gone.isNotEmpty()) parts += "No longer set up in the app, unchanged: ${gone.joinToString()}."
+            if (parts.isEmpty()) parts += "Nothing changed; they were already in that state."
+        } else {
+            if (opened.isNotEmpty()) parts += "已打开 MCP：${opened.joinToString("、")}。需要时用 use_package 加载，没启动会在那时启动。"
+            if (closed.isNotEmpty()) parts += "已关闭 MCP：${closed.joinToString("、")}。不要再用它们。"
+            if (gone.isNotEmpty()) parts += "主程序里已没有这些 MCP，未改动：${gone.joinToString("、")}。"
+            if (parts.isEmpty()) parts += "没有变化，原本就是这个状态。"
         }
         return parts.joinToString("\n")
     }
