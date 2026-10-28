@@ -2,6 +2,8 @@
 code_runner.js
 codex_draw.js
 grok_draw.js
+codex_search.js
+grok_search.js
 crossref.js
 daily_life.js
 extended_memory_tools.js

@@ -109,10 +109,10 @@ internal object OrbitApprovalActions {
     }
 
     /** Packages that use the app's ChatGPT login instead of a key. */
-    private val CHATGPT_PACKAGES = setOf("codex_draw")
+    private val CHATGPT_PACKAGES = setOf("codex_draw", "codex_search")
 
     /** Packages that use the app's Grok account login instead of a key. */
-    private val GROK_PACKAGES = setOf("grok_draw")
+    private val GROK_PACKAGES = setOf("grok_draw", "grok_search")
 
     fun type(action: String): String = runCatching { JSONObject(action).optString("type") }.getOrDefault("")
 

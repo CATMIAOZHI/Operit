@@ -1803,6 +1803,9 @@ class JsEngine(private val context: Context) {
                     drawBridgeJobs.remove(normalizedCallId, coroutineContext[Job])
                 }
             }
+            // Let the JS side drop its callback when cancelled, even before the job starts;
+            // the engine is reused across calls.
+            job.invokeOnCompletion { if (it is CancellationException) sendToolPkgIpcResult(callbackId, "Codex 绘图已取消", true) }
             drawBridgeJobs.put(normalizedCallId, job)?.cancel()
             job.start()
         }
@@ -1833,6 +1836,7 @@ class JsEngine(private val context: Context) {
                     drawBridgeJobs.remove(normalizedCallId, coroutineContext[Job])
                 }
             }
+            job.invokeOnCompletion { if (it is CancellationException) sendToolPkgIpcResult(callbackId, "Grok 绘图已取消", true) }
             drawBridgeJobs.put(normalizedCallId, job)?.cancel()
             job.start()
         }
@@ -1840,6 +1844,60 @@ class JsEngine(private val context: Context) {
         @JavascriptInterface
         fun setEnv(key: String, value: String?) {
             JsNativeInterfaceDelegates.setEnv(context = context, key = key, value = value)
+        }
+
+        @JavascriptInterface
+        fun executeCodexSearchAsync(callId: String, callbackId: String, parametersJson: String) {
+            runAccountSearch(callId, callbackId, "codex_search", "Codex 搜索") {
+                com.ai.assistance.operit.features.search.CodexSearchBridge.execute(context, parametersJson)
+            }
+        }
+
+        /** [mode] is "web" or "x". */
+        @JavascriptInterface
+        fun executeGrokSearchAsync(callId: String, callbackId: String, mode: String, parametersJson: String) {
+            runAccountSearch(callId, callbackId, "grok_search", "Grok 搜索") {
+                com.ai.assistance.operit.features.search.GrokSearchBridge.execute(context, mode, parametersJson)
+            }
+        }
+
+        /** Runs a search bridge for its own package only, cancelled with the tool call like the draw bridges. */
+        private fun runAccountSearch(
+            callId: String,
+            callbackId: String,
+            packageName: String,
+            label: String,
+            block: suspend () -> String,
+        ) {
+            val normalizedCallId = callId.trim()
+            val session = resolveExecutionSession(normalizedCallId)?.takeIf {
+                it.packageName == packageName && boundToolPkgContainerName == null
+            }
+            if (session == null) {
+                sendToolPkgIpcResult(callbackId, "${label}仅供${label}包使用", true)
+                return
+            }
+            val job = nativeBridgeScope.launch(start = CoroutineStart.LAZY) {
+                try {
+                    val result = block()
+                    if (resolveExecutionSession(normalizedCallId) === session) {
+                        sendToolPkgIpcResult(callbackId, result, false)
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    if (resolveExecutionSession(normalizedCallId) === session) {
+                        sendToolPkgIpcResult(callbackId, error.message ?: "${label}失败", true)
+                    }
+                } finally {
+                    drawBridgeJobs.remove(normalizedCallId, coroutineContext[Job])
+                }
+            }
+            // Let the JS side drop its callback when cancelled, even before the job starts;
+            // the engine is reused across calls.
+            job.invokeOnCompletion { if (it is CancellationException) sendToolPkgIpcResult(callbackId, "${label}已取消", true) }
+            drawBridgeJobs.put(normalizedCallId, job)?.cancel()
+            job.start()
         }
 
         @JavascriptInterface
