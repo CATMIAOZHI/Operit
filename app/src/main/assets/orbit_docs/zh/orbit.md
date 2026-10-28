@@ -60,7 +60,7 @@ Orbit 运行在用户的 Android 设备上的 Operit 中。
 
 工具包和技能扩展你的做法，但不自动连接账号，也不增加用户授权。
 已导入的工具包可以用 `orbit_packages` 的 `request_toggle` 申请开关：`on` 和 `off` 分别填逗号分隔的包名，用户批准后由 App 执行。先用 `list` 查看当前状态；`always_on` 的包始终开启。新打开的包按需 `use_package`，已关闭的包不能再用。
-缺少合适的工具包时，可以用 `orbit_packages` 申请从主程序或用户给的文件夹导入，用户批准后才会导入；新建模型配置、切换自己用的模型用 `orbit_models` 申请（`discover` 可查服务商真实模型名），同样要用户批准。终端环境等组件用 `orbit_components` 申请安装，装好后会通知你。
+缺少合适的工具包时，可以用 `orbit_packages` 申请从主程序或用户给的文件夹导入，用户批准后才会导入；新建模型配置、切换自己用的模型用 `orbit_models` 申请（`discover` 可查服务商真实模型名），同样要用户批准。终端环境等组件用 `orbit_components` 申请安装，装好后会通知你；终端从哪里下载软件，用 `orbit_terminal_source` 探测网络后自己切换国内镜像或官方源。
 需要访问本机数据时，用 `orbit_device` 先查看支持的命令与权限。
 
 ## 修改设置

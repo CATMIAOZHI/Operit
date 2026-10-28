@@ -311,8 +311,8 @@ private fun OrbitChatPage(
     // Pages pushed over the profile, as names so the stack survives recreation.
     var stackNames by rememberSaveable(orbit.id) { mutableStateOf("") }
     val stack = remember(stackNames) {
-        // A saved stack from before history was removed returns to the Soul file.
-        stackNames.split(',').filter { it.isNotEmpty() && it != "SOUL_HISTORY" }.map(OrbitSubPage::valueOf)
+        // Pages saved by an older build that no longer exist (Soul history, terminal mirrors) are dropped.
+        stackNames.split(',').mapNotNull { name -> OrbitSubPage.entries.firstOrNull { it.name == name } }
     }
     val subPage = stack.lastOrNull()
     fun push(page: OrbitSubPage) { stackNames = (stack + page).joinToString(",") { it.name } }
@@ -947,7 +947,6 @@ private fun OrbitChatPage(
                     onOpenChannels = { push(OrbitSubPage.CHANNELS) },
                     onOpenText = { push(OrbitSubPage.TEXT_SETTINGS) },
                     onOpenAutomation = { push(OrbitSubPage.AUTOMATION_SETTINGS) },
-                    onOpenTerminalSources = { push(OrbitSubPage.TERMINAL_SOURCES) },
                     onOpenBackup = { push(OrbitSubPage.BACKUP) },
                     onPause = back,
                 )
@@ -967,7 +966,6 @@ private fun OrbitChatPage(
                 OrbitSubPage.SPEECH_SETTINGS -> OrbitSpeechSettingsPage(orbit.id, onBack = back)
                 OrbitSubPage.TEXT_SETTINGS -> OrbitTextSettingsPage(onBack = back)
                 OrbitSubPage.AUTOMATION_SETTINGS -> OrbitAutomationSettingsPage(onBack = back)
-                OrbitSubPage.TERMINAL_SOURCES -> OrbitTerminalSourcesPage(onBack = back)
                 OrbitSubPage.BACKUP -> OrbitBackupSettingsPage(onBack = back)
                 OrbitSubPage.PHONE_PERMISSIONS -> OrbitPhonePermissionsPage(onBack = back,
                     onOpenDeviceAccess = { push(OrbitSubPage.DEVICE_ACCESS) })
@@ -1094,7 +1092,7 @@ private fun OrbitChatPage(
     vaultRequest?.takeIf { it.orbitId == orbit.id }?.let { OrbitVaultEntrySheet(orbit = orbit, request = it) }
 }
 
-private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, ALIGNMENT, FILES, PACKAGES, TOOL_PERMISSIONS, TOOL_ACCESS, VAULT, VAULT_ENTRY, USAGE, USAGE_TRENDS, APPEARANCE, MODELS, CONTEXT, MODEL_CONFIG, PHONE_PERMISSIONS, DEVICE_ACCESS, NOTIFICATION_SETTINGS, SPEECH_SETTINGS, CHANNELS, WEIXIN, TEXT_SETTINGS, AUTOMATION_SETTINGS, TERMINAL_SOURCES, BACKUP }
+private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, ALIGNMENT, FILES, PACKAGES, TOOL_PERMISSIONS, TOOL_ACCESS, VAULT, VAULT_ENTRY, USAGE, USAGE_TRENDS, APPEARANCE, MODELS, CONTEXT, MODEL_CONFIG, PHONE_PERMISSIONS, DEVICE_ACCESS, NOTIFICATION_SETTINGS, SPEECH_SETTINGS, CHANNELS, WEIXIN, TEXT_SETTINGS, AUTOMATION_SETTINGS, BACKUP }
 
 /** iOS-like timing: a quick start that settles softly (UIKit's default presentation curve). */
 internal object OrbitMotion {
@@ -1498,7 +1496,6 @@ private fun OrbitSettingsPage(
     onOpenChannels: () -> Unit,
     onOpenText: () -> Unit,
     onOpenAutomation: () -> Unit,
-    onOpenTerminalSources: () -> Unit,
     onOpenBackup: () -> Unit,
     onPause: () -> Unit,
 ) {
@@ -1608,14 +1605,6 @@ private fun OrbitSettingsPage(
                         icon = lucide("scan-line"),
                         searchable = false,
                         onClick = onOpenAutomation,
-                    )
-                    SettingsRowDivider(inset = false)
-                    SettingsNavRow(
-                        title = stringResource(R.string.orbit_terminal_sources_title),
-                        subtitle = stringResource(R.string.orbit_terminal_sources_row),
-                        icon = lucide("square-terminal"),
-                        searchable = false,
-                        onClick = onOpenTerminalSources,
                     )
                     SettingsRowDivider(inset = false)
                     SettingsNavRow(
