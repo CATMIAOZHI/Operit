@@ -1,6 +1,7 @@
 package com.ai.assistance.operit.api.voice
 
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.launch
 
 /** 语音服务接口，定义与不同语音引擎进行交互的标准方法 */
 interface VoiceService {
@@ -82,6 +83,13 @@ interface VoiceService {
     suspend fun setVoice(voiceId: String): Boolean
 
     /**
+     * Makes [text] into an audio file at [out] with the current voice, rate and pitch, without
+     * playing it. False when this engine can only speak aloud (the phone's own voice, on-device
+     * models, live voices); the caller then uses another way.
+     */
+    suspend fun synthesizeToFile(text: String, out: java.io.File): Boolean = false
+
+    /**
      * 表示TTS语音的数据类
      *
      * @property id 语音唯一标识符
@@ -90,4 +98,25 @@ interface VoiceService {
      * @property gender 语音性别，可能为MALE、FEMALE或NEUTRAL
      */
     data class Voice(val id: String, val name: String, val locale: String, val gender: String)
+}
+
+/**
+ * Runs blocking network work [block] and calls [stop] (cancel the call, drop the connection) the
+ * moment the caller is cancelled, while [block] is still blocked, so it ends at once.
+ */
+internal suspend fun <T> stopOnCancel(stop: () -> Unit, block: suspend () -> T): T = kotlinx.coroutines.coroutineScope {
+    val finished = java.util.concurrent.atomic.AtomicBoolean(false)
+    val watcher = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+        try {
+            kotlinx.coroutines.awaitCancellation()
+        } finally {
+            if (!finished.get()) runCatching(stop)
+        }
+    }
+    try {
+        block()
+    } finally {
+        finished.set(true)
+        watcher.cancel()
+    }
 }

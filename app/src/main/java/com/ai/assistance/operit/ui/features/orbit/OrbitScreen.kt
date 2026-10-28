@@ -356,6 +356,10 @@ private fun OrbitChatPage(
     val currentChatId = talkChatId.takeIf { it in orbit.talkChatIds || it == justCreatedChatId } ?: orbit.chatId
     val currentSide = orbit.sideChats.firstOrNull { it.chatId == currentChatId }
     var showChats by remember { mutableStateOf(false) }
+    // The search inside the chat on screen, opened from the round button at the top right.
+    var chatSearchOpen by remember(orbit.id) { mutableStateOf(false) }
+    // Outlives a message's menu, so keeping a message finishes after the menu closes.
+    val messageScope = rememberCoroutineScope()
     var showImport by remember { mutableStateOf(false) }
     val pushState = remember(orbit.id) { OrbitPushState() }
     // Developer option: the same chat drawn as a normal Operit chat (thinking, tools, hidden turns,
@@ -523,6 +527,7 @@ private fun OrbitChatPage(
             showProfile = false
             stackNames = ""
                         showChats = false
+            chatSearchOpen = false
         }
         com.ai.assistance.operit.features.orbit.OrbitNavigation.consume(id)
     }
@@ -532,7 +537,7 @@ private fun OrbitChatPage(
     // The profile is revealed under the back preview without changing the selected chat.
     val profileShown = showProfile && (!devView || devPicture != null)
     val chatOnScreen = tab == OrbitTab.CHAT && !showChats && !profileShown &&
-        subPage == null && !showImport &&
+        subPage == null && !showImport && !chatSearchOpen &&
         lifecycleState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
     LaunchedEffect(currentChatId, unreadChats, chatOnScreen) {
         if (chatOnScreen && currentChatId in unreadChats) com.ai.assistance.operit.features.orbit.OrbitDelivery.markSeen(currentChatId)
@@ -666,7 +671,7 @@ private fun OrbitChatPage(
             }.then(
                 // Pages on the stack cover the chat; screen readers only see the top one.
                 // The recording on its way out covers it too, until the Orbit chat is fully shown.
-                if (showChats || stack.isNotEmpty() || profileShown || editingFile != null || devPicture != null) Modifier.clearAndSetSemantics { }
+                if (showChats || chatSearchOpen || stack.isNotEmpty() || profileShown || editingFile != null || devPicture != null) Modifier.clearAndSetSemantics { }
                 else Modifier
             )
         ) {
@@ -676,6 +681,14 @@ private fun OrbitChatPage(
                 CompositionLocalProvider(
                     LocalOrbitChatLook provides !devView,
                     LocalOrbitOpenPage provides openCardPage,
+                    // Keeping, copying and sharing messages of the chat on screen.
+                    LocalOrbitMessageHost provides
+                        if (devView) null else {
+                            val name = orbitName(orbit)
+                            remember(orbit.id, name, currentChatId, messageScope) {
+                                OrbitMessageHost(orbit.id, name, currentChatId, messageScope)
+                            }
+                        },
                     LocalOrbitForkMessage provides
                         if (!devView && currentChatId == orbit.chatId && !forkingMessage && orbit.canAddSideChat)
                             ::forkMessage else null,
@@ -720,6 +733,7 @@ private fun OrbitChatPage(
                                     activity = orbitActivity(),
                                     avatarAnimated = chatOnScreen,
                                     onOpenProfile = { showProfile = true }, onOpenMenu = { showChats = true },
+                                    onOpenSearch = { chatSearchOpen = true },
                                 )
                                 currentSide?.forkOrigin?.let { origin ->
                                     OrbitForkReference(origin, onOpenMain = {
@@ -792,6 +806,19 @@ private fun OrbitChatPage(
             onOpenSettings = { push(OrbitSubPage.SETTINGS) },
             onLeaveOrbit = leaveOrbit,
         )
+        // Search inside the chat on screen; a result opens its chat on that message.
+        OrbitCoverPage(visible = chatSearchOpen && !devView, onDismiss = { chatSearchOpen = false }, fade = true) {
+            OrbitChatSearchPage(
+                orbit = orbit, chatId = currentChatId, active = chatSearchOpen,
+                onOpen = { chatId, timestamp ->
+                    com.ai.assistance.operit.ui.features.chat.components.TranscriptJumpHost.requestMessage(chatId, timestamp)
+                    talkChatId = chatId
+                    tab = OrbitTab.CHAT
+                    chatSearchOpen = false
+                },
+                onClose = { chatSearchOpen = false },
+            )
+        }
         // Keeps the last file on screen while the page slides away.
         var shownFile by remember(orbit.id) { mutableStateOf(editingFile) }
         LaunchedEffect(editingFile) { editingFile?.let { shownFile = it } }
@@ -916,6 +943,7 @@ private fun OrbitChatPage(
                     onOpenContext = { push(OrbitSubPage.CONTEXT) },
                     onOpenPhonePermissions = { push(OrbitSubPage.PHONE_PERMISSIONS) },
                     onOpenNotificationSettings = { push(OrbitSubPage.NOTIFICATION_SETTINGS) },
+                    onOpenSpeech = { push(OrbitSubPage.SPEECH_SETTINGS) },
                     onOpenChannels = { push(OrbitSubPage.CHANNELS) },
                     onPause = back,
                 )
@@ -932,7 +960,7 @@ private fun OrbitChatPage(
                     onOpenModelConfig = { push(OrbitSubPage.MODEL_CONFIG) })
                 OrbitSubPage.CONTEXT -> OrbitContextPage(orbit, onBack = back)
                 OrbitSubPage.MODEL_CONFIG -> OrbitModelConfigPage(onBack = back)
-                OrbitSubPage.SPEECH_SETTINGS -> OrbitSpeechSettingsPage(onBack = back)
+                OrbitSubPage.SPEECH_SETTINGS -> OrbitSpeechSettingsPage(orbit.id, onBack = back)
                 OrbitSubPage.PHONE_PERMISSIONS -> OrbitPhonePermissionsPage(onBack = back,
                     onOpenDeviceAccess = { push(OrbitSubPage.DEVICE_ACCESS) })
                 OrbitSubPage.DEVICE_ACCESS -> OrbitDeviceAccessPage(orbitName(orbit), onBack = back, onDraft = ::draftToChat)
@@ -1083,6 +1111,8 @@ internal fun OrbitHeader(
     hasUnread: Boolean,
     onOpenProfile: () -> Unit,
     onOpenMenu: () -> Unit,
+    /** Opens the search inside this chat; null where the header has no search (the other tabs). */
+    onOpenSearch: (() -> Unit)? = null,
     /** What Orbit is doing now ([orbitActivity]); null while it rests. */
     activity: String? = null,
     avatarAnimated: Boolean = true,
@@ -1135,6 +1165,15 @@ internal fun OrbitHeader(
                         .background(MaterialTheme.colorScheme.primary)
                 )
             }
+        }
+        // Search this chat's history, at the top right like a messaging app.
+        if (onOpenSearch != null) {
+            OrbitCircleButton(
+                icon = orbitIcon("search"),
+                contentDescription = stringResource(R.string.orbit_chat_search_open),
+                onClick = onOpenSearch,
+                modifier = Modifier.align(Alignment.TopEnd),
+            )
         }
         Box(
             modifier = Modifier.align(Alignment.TopCenter)
@@ -1447,6 +1486,7 @@ private fun OrbitSettingsPage(
     onOpenContext: () -> Unit,
     onOpenPhonePermissions: () -> Unit,
     onOpenNotificationSettings: () -> Unit,
+    onOpenSpeech: () -> Unit,
     onOpenChannels: () -> Unit,
     onPause: () -> Unit,
 ) {
@@ -1509,6 +1549,14 @@ private fun OrbitSettingsPage(
                     icon = lucide("paintbrush"),
                     searchable = false,
                     onClick = onOpenAppearance,
+                )
+                SettingsRowDivider(inset = false)
+                SettingsNavRow(
+                    title = stringResource(R.string.orbit_speech_card_title),
+                    subtitle = stringResource(R.string.orbit_speech_row),
+                    icon = lucide("audio-lines"),
+                    searchable = false,
+                    onClick = onOpenSpeech,
                 )
                 SettingsRowDivider(inset = false)
                 SettingsNavRow(

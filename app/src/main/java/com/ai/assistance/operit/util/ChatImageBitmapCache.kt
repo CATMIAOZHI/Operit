@@ -38,4 +38,20 @@ object ChatImageBitmapCache {
         cache.put(id, bitmap)
         return bitmap
     }
+
+    /** A small copy of the image for a grid tile, no larger than [maxSide] pixels on its long side. */
+    fun loadThumbnail(id: String, sourcePath: String?, maxSide: Int): Bitmap? {
+        val key = "thumb:$maxSide:$id"
+        get(key)?.let { return it }
+        val data = ImagePoolManager.resolveImage(id, sourcePath) ?: return null
+        val bitmap = runCatching {
+            ImageBitmapLimiter.decodeDownsampledBitmap(
+                Base64.decode(data.base64, Base64.DEFAULT),
+                maxPixels = maxSide.toLong() * maxSide,
+                maxDimension = maxSide,
+            )
+        }.getOrNull() ?: return null
+        cache.put(key, bitmap)
+        return bitmap
+    }
 }

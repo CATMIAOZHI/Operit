@@ -103,6 +103,11 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Reply
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.foundation.border
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Summarize
@@ -634,6 +639,8 @@ private fun MessageItem(
     val isHiddenUserMessage = isHiddenUserPlaceholder(message)
     val orbitLook = LocalOrbitChatLook.current
     val orbitUserReactions = LocalOrbitUserReactions.current
+    // Keeping and multi-select in an Orbit chat; null in the developer view and other chats.
+    val orbitMessageHost = if (orbitLook) com.ai.assistance.operit.ui.features.orbit.LocalOrbitMessageHost.current else null
     val forkOrbitMessage = com.ai.assistance.operit.ui.features.orbit.LocalOrbitForkMessage.current
     // Developer view of an Orbit chat: label the rows the Orbit chat would hide.
     val showHiddenRows = LocalShowHiddenChatRows.current
@@ -769,7 +776,13 @@ private fun MessageItem(
             onReply = { onReplyToMessage?.invoke(replyTarget(null)) },
             rightAligned = message.sender == "user",
         ) {
-        Column {
+        // While picking messages the whole row is one choice; its cards and links do not take
+        // screen-reader actions underneath it.
+        Column(
+            if (orbitMessageHost != null && isMultiSelectMode && isActionable && !isHiddenUserMessage) {
+                Modifier.clearAndSetSemantics {}
+            } else Modifier
+        ) {
             if (quietOrbitReply) {
                 OrbitHiddenInChatBadge(Modifier.padding(start = 12.dp, top = 4.dp, bottom = 2.dp))
             }
@@ -840,6 +853,46 @@ private fun MessageItem(
             footer()
         }
         }
+        }
+
+        // Selecting in an Orbit chat: a tap anywhere on the row picks it, even on a card or a link
+        // that takes taps itself, and a round mark shows on the empty side of the bubble.
+        if (orbitMessageHost != null && isMultiSelectMode && isActionable && !isHiddenUserMessage) {
+            val selectLabel = stringResource(R.string.multi_select)
+            // Read for the screen reader off the main thread; a long reply must not slow picking.
+            val words by androidx.compose.runtime.produceState("", message.timestamp, message.content) {
+                value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                    com.ai.assistance.operit.ui.features.orbit.OrbitMessageActions.shownText(context, message).take(200)
+                }
+            }
+            Box(
+                Modifier.matchParentSize()
+                    .clickable(
+                        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                        indication = null,
+                        onClickLabel = selectLabel,
+                    ) { onToggleSelection?.invoke() }
+                    .semantics {
+                        selected = isSelected
+                        contentDescription = words
+                    },
+            ) {
+                val tint = MaterialTheme.colorScheme.primary
+                Box(
+                    Modifier.align(if (message.sender == "user") Alignment.CenterStart else Alignment.CenterEnd)
+                        .padding(horizontal = 8.dp).size(22.dp)
+                        .clip(androidx.compose.foundation.shape.CircleShape)
+                        .then(
+                            if (isSelected) Modifier.background(tint)
+                            else Modifier.border(1.5.dp, MaterialTheme.colorScheme.outline, androidx.compose.foundation.shape.CircleShape)
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (isSelected) {
+                        Icon(Icons.Default.Check, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onPrimary)
+                    }
+                }
+            }
         }
 
         val messageMenu: @Composable (@Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) -> Unit = { content ->
@@ -1029,6 +1082,38 @@ private fun MessageItem(
                     },
                     modifier = Modifier.heightIn(min = 44.dp)
                 )
+                orbitMessageHost?.let { host ->
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.orbit_favorite_action), style = MaterialTheme.typography.bodyMedium) },
+                        onClick = {
+                            showContextMenu = false
+                            val piece = menuPiece
+                            host.scope.launch {
+                                val favorite = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                                    com.ai.assistance.operit.ui.features.orbit.OrbitMessageActions.favoriteOf(context, host, message, piece)
+                                }
+                                com.ai.assistance.operit.ui.features.orbit.OrbitMessageActions.keep(context, host, listOf(favorite))
+                            }
+                        },
+                        leadingIcon = {
+                            Icon(com.ai.assistance.operit.ui.features.orbit.orbitIcon("star"), null, Modifier.size(20.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        },
+                        modifier = Modifier.heightIn(min = 44.dp),
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.multi_select), style = MaterialTheme.typography.bodyMedium) },
+                        onClick = {
+                            showContextMenu = false
+                            onToggleMultiSelectMode?.invoke(messageIndex)
+                        },
+                        leadingIcon = {
+                            Icon(Icons.Default.CheckCircle, null, Modifier.size(20.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        },
+                        modifier = Modifier.heightIn(min = 44.dp),
+                    )
+                }
             }
             if (allowTranscriptMutation && !orbitLook) {
                 // 根据消息发送者显示不同的操作

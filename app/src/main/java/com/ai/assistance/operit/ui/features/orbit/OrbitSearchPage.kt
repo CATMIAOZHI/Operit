@@ -330,7 +330,7 @@ internal fun OrbitSearchPage(
                     else -> LazyColumn(Modifier.fillMaxSize(), state = listState) {
                         itemsIndexed(hits, key = { _, hit -> hit.messageId }) { i, hit ->
                             val chatTitle = titles[hit.chatId] ?: mainTitle
-                            val label = remember(hit.timestamp, chatTitle) { dayLabel(context, hit.timestamp) + " · " + chatTitle }
+                            val label = remember(hit.timestamp, chatTitle) { searchDayLabel(context, hit.timestamp) + " · " + chatTitle }
                             SearchRow(
                                 hit = hit, query = searched,
                                 label = label,
@@ -407,7 +407,7 @@ internal fun OrbitSearchPage(
 }
 
 @Composable
-private fun SearchNote(text: String) {
+internal fun SearchNote(text: String) {
     Text(
         text, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
         textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 32.dp),
@@ -416,7 +416,7 @@ private fun SearchNote(text: String) {
 
 /** A small pill that asks for a page that did not load to be read again. */
 @Composable
-private fun RetryButton(onClick: () -> Unit) {
+internal fun RetryButton(onClick: () -> Unit) {
     Text(
         stringResource(R.string.orbit_search_retry), style = MaterialTheme.typography.labelLarge,
         color = MaterialTheme.colorScheme.onSurface,
@@ -428,7 +428,7 @@ private fun RetryButton(onClick: () -> Unit) {
 }
 
 @Composable
-private fun SearchRow(hit: OrbitSearchHit, query: String, label: String, divider: Boolean, onClick: () -> Unit) {
+internal fun SearchRow(hit: OrbitSearchHit, query: String, label: String, divider: Boolean, onClick: () -> Unit) {
     val strong = MaterialTheme.colorScheme.onSurface
     val text = remember(hit.text, query, strong) {
         highlighted(hit.text, query, SpanStyle(fontWeight = FontWeight.Bold, color = strong))
@@ -468,7 +468,7 @@ private fun highlighted(text: String, query: String, style: SpanStyle): Annotate
 }
 
 /** "Today", "Yesterday", the month and day this year, or the full date for older years. */
-private fun dayLabel(context: Context, timestamp: Long): String {
+internal fun searchDayLabel(context: Context, timestamp: Long): String {
     val now = Calendar.getInstance()
     val then = Calendar.getInstance().apply { timeInMillis = timestamp }
     fun sameDay(a: Calendar, b: Calendar) =

@@ -310,14 +310,41 @@ internal fun startOrbitExport(context: android.content.Context, orbit: com.ai.as
     }
 }
 
-/** The app's voice settings inside Orbit, opened from the voice settings card. */
+/**
+ * The app's voice settings inside Orbit, opened from settings or the voice settings card: which
+ * voice Orbit's voice messages use, then the read-aloud and voice input settings it shares with the app.
+ */
 @Composable
-internal fun OrbitSpeechSettingsPage(onBack: () -> Unit) {
+internal fun OrbitSpeechSettingsPage(orbitId: String, onBack: () -> Unit) {
     OrbitPageBack(onBack = onBack)
+    val context = LocalContext.current
+    var readAloud by remember(orbitId) {
+        mutableStateOf(com.ai.assistance.operit.features.orbit.OrbitVoice.usesReadAloud(context, orbitId))
+    }
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
         .statusBarsPadding().navigationBarsPadding()) {
         OrbitPageHeader(stringResource(R.string.orbit_speech_card_title), onBack,
             Modifier.padding(horizontal = 20.dp).padding(top = 8.dp))
+        com.ai.assistance.operit.ui.features.settings.components.SettingsCard(
+            backgroundColor = com.ai.assistance.operit.ui.features.settings.components.settingsCardColor(false),
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        ) {
+            com.ai.assistance.operit.ui.features.settings.components.SettingsSwitchRow(
+                title = stringResource(R.string.orbit_voice_read_aloud_title),
+                subtitle = stringResource(if (readAloud) R.string.orbit_voice_read_aloud_on else R.string.orbit_voice_read_aloud_off),
+                checked = readAloud,
+                onCheckedChange = {
+                    readAloud = it
+                    com.ai.assistance.operit.features.orbit.OrbitVoice.setUsesReadAloud(context, orbitId, it)
+                },
+                searchable = false,
+            )
+        }
+        Text(
+            stringResource(R.string.orbit_voice_shared_note),
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 28.dp).padding(bottom = 4.dp),
+        )
         Box(Modifier.fillMaxWidth().weight(1f)) {
             com.ai.assistance.operit.ui.features.settings.screens.SpeechServicesSettingsScreen(
                 onBackPressed = onBack,
