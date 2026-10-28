@@ -345,6 +345,7 @@ private fun OrbitChatPage(
             .exceptionOrNull()?.let { if (it is kotlinx.coroutines.CancellationException) throw it }
     }
     var openTaskId by rememberSaveable(orbit.id) { mutableStateOf<String?>(null) }
+    var openSystemTasks by rememberSaveable(orbit.id) { mutableStateOf(false) }
     var openVaultEntryId by rememberSaveable(orbit.id) { mutableStateOf<String?>(null) }
     // Not saved across process death; the page then just closes back to the profile.
     var openProcess by remember(orbit.id) { mutableStateOf<OrbitProcess?>(null) }
@@ -878,10 +879,17 @@ private fun OrbitChatPage(
                         onOpenSettings = { push(OrbitSubPage.SETTINGS) },
                         onOpenTask = {
                             openTaskId = it
+                            openSystemTasks = false
                             push(OrbitSubPage.TASK)
                         },
                         onOpenAllTasks = {
                             openTaskId = null
+                            openSystemTasks = false
+                            push(OrbitSubPage.TASK)
+                        },
+                        onOpenSystemTasks = {
+                            openTaskId = null
+                            openSystemTasks = true
                             push(OrbitSubPage.TASK)
                         },
                         onOpenProcess = {
@@ -1016,12 +1024,14 @@ private fun OrbitChatPage(
                 OrbitSubPage.NOTIFICATIONS -> OrbitNotificationsPage(orbit.id, onBack = back)
                 OrbitSubPage.FILES -> OrbitFilesPage(orbit.id, onBack = back, onDraft = ::draftToChat)
                 // No id opens the grouped list of every task.
-                OrbitSubPage.TASK -> OrbitTasksPage(orbit.id, onBack = back, initialTaskId = openTaskId, onDraft = ::draftToChat)
+                OrbitSubPage.TASK -> OrbitTasksPage(orbit.id, onBack = back, initialTaskId = openTaskId,
+                    openSystem = openSystemTasks, onDraft = ::draftToChat)
                 OrbitSubPage.PROCESS -> {
                     val process = openProcess
                     if (process != null) {
                         OrbitProcessPage(process, onBack = back, onOpenTask = { taskId ->
                             openTaskId = taskId
+                            openSystemTasks = false
                             push(OrbitSubPage.TASK)
                         }, developer = settings.developerMode)
                     } else {

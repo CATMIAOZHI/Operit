@@ -326,9 +326,12 @@ AVAILABLE_TOOLS_SECTION""".trimIndent()
         ?: packageManager.getEnabledPackageNames()
     val packageSystemVisible =
         toolExposureMode == ToolExposureMode.FULL && enableTools && (toolVisibility["use_package"] ?: true)
-    val mcpServers = packageManager.getAvailableServerPackages().filterKeys { serverName ->
-        allowedMcpServerNames?.contains(serverName) ?: true
-    }
+    // An Orbit lists the servers it has switched on, started or not; use_package starts one.
+    val mcpServers: Map<String, String> =
+        com.ai.assistance.operit.features.orbit.OrbitMcp.promptServers(context, chatId)
+            ?: packageManager.getAvailableServerPackages().filterKeys { serverName ->
+                allowedMcpServerNames?.contains(serverName) ?: true
+            }.mapValues { it.value.description }
     suspend fun loadSkillCatalog(): String = org.json.JSONObject(try {
         SkillRepository.forChat(context, chatId)
             .getAiVisibleSkillPackages().mapValues { skillIndexDescription(it.value.description) }
@@ -384,8 +387,8 @@ AVAILABLE_TOOLS_SECTION""".trimIndent()
       }
 
       // List available MCP servers as regular packages
-      for ((serverName, serverConfig) in mcpServers) {
-        packagesSection.appendLine("- $serverName : ${serverConfig.description}")
+      for ((serverName, description) in mcpServers) {
+        packagesSection.appendLine("- $serverName : $description")
       }
 
       // List available Skills as regular packages

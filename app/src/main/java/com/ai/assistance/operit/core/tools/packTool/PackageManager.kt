@@ -3364,7 +3364,15 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
      * Wrapper for tool execution: builds ToolResult for the 'use_package' tool.
      * Keeps registration site minimal by centralizing result construction here.
      */
-    fun executeUsePackageTool(toolName: String, packageName: String): ToolResult {
+    fun executeUsePackageTool(toolName: String, packageName: String): ToolResult =
+        kotlinx.coroutines.runBlocking { executeUsePackageToolSuspending(toolName, packageName) }
+
+    /**
+     * [executeUsePackageTool] as a suspend call, so stopping the chat also stops waiting for an
+     * Orbit's MCP server to start.
+     */
+    suspend fun executeUsePackageToolSuspending(toolName: String, packageName: String): ToolResult {
+        val callerChatId = com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager.currentToolRuntimeContext()?.callerChatId
         if (packageName.isBlank()) {
             return ToolResult(
                 toolName = toolName,
@@ -3384,10 +3392,7 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
             )
         }
 
-        val scopedSkills = kotlinx.coroutines.runBlocking {
-            com.ai.assistance.operit.data.skill.SkillRepository.forChat(context,
-                com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager.currentToolRuntimeContext()?.callerChatId)
-        }
+        val scopedSkills = com.ai.assistance.operit.data.skill.SkillRepository.forChat(context, callerChatId)
         if (!scopedSkills.skillVisibilityPreferences.isSkillVisibleToAi(normalizedPackageName) &&
             scopedSkills.getAvailableSkillPackages().containsKey(normalizedPackageName)
         ) {
@@ -3399,7 +3404,37 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
             )
         }
 
-        val text = usePackage(normalizedPackageName)
+        // In an Orbit chat an MCP server is started here when it is not up yet, or the reason it
+        // cannot be used is returned instead.
+        val gate = com.ai.assistance.operit.features.orbit.OrbitMcp.gate(context, callerChatId, normalizedPackageName)
+        if (gate is com.ai.assistance.operit.features.orbit.OrbitMcp.Gate.Blocked) {
+            return ToolResult(
+                toolName = toolName,
+                success = false,
+                result = StringResultData(""),
+                error = gate.why
+            )
+        }
+
+        val text = usePackage(normalizedPackageName, callerChatId)
+        if (gate is com.ai.assistance.operit.features.orbit.OrbitMcp.Gate.Go) {
+            // useMCPServer reports a failed connection as text; for Orbit it is a failure it can act on.
+            val failed = text.takeIf {
+                it.startsWith("Cannot connect to MCP server") || it.startsWith("Cannot get MCP server configuration") ||
+                    (it.startsWith("MCP server '") && (it.contains("does not exist or is not registered") ||
+                        it.contains("is disabled or unavailable")))
+            }
+            com.ai.assistance.operit.features.orbit.OrbitMcp.connected(context, gate.id, failed)
+            if (failed != null) {
+                return ToolResult(
+                    toolName = toolName,
+                    success = false,
+                    result = StringResultData(""),
+                    error = "$failed Retry with orbit_mcp start; if it keeps failing, tell the user the reason " +
+                        "and to check it in the app's MCP settings."
+                )
+            }
+        }
         return ToolResult(
             toolName = toolName,
             success = true,

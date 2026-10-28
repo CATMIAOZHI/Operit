@@ -120,7 +120,17 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
         handler.registerTool(name = prompt.name, executor = { OrbitBoardTools.execute(context, it) })
     }
     OrbitExtraTools.specs.forEach { spec ->
-        handler.registerTool(name = spec.prompt.name, executor = { spec.run(context, it) })
+        val stream = spec.stream
+        if (stream == null) {
+            handler.registerTool(name = spec.prompt.name, executor = { spec.run(context, it) })
+        } else {
+            handler.registerTool(name = spec.prompt.name, executor = object : ToolExecutor {
+                override fun invoke(tool: AITool): ToolResult = spec.run(context, tool)
+                // Collected in the tool call's coroutine, so stopping the chat stops the wait.
+                override fun invokeAndStream(tool: AITool): kotlinx.coroutines.flow.Flow<ToolResult> =
+                    kotlinx.coroutines.flow.flow { emit(stream(context, tool)) }
+            })
+        }
     }
     OrbitProductTools.prompts.forEach { prompt ->
         handler.registerTool(name = prompt.name, executor = { OrbitProductTools.execute(context, it) })
@@ -1094,11 +1104,17 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val packageName = tool.parameters.find { it.name == "package_name" }?.value ?: ""
                 s(R.string.toolreg_use_package_desc, packageName)
             },
-            executor = { tool ->
-                val packageName = tool.parameters.find { it.name == "package_name" }?.value ?: ""
-                handler
-                    .getOrCreatePackageManager()
-                    .executeUsePackageTool(tool.name, packageName)
+            executor = object : ToolExecutor {
+                private fun packageName(tool: AITool) = tool.parameters.find { it.name == "package_name" }?.value ?: ""
+
+                override fun invoke(tool: AITool): ToolResult =
+                    handler.getOrCreatePackageManager().executeUsePackageTool(tool.name, packageName(tool))
+
+                // Collected in the tool call's coroutine, so stopping the chat stops a wait for an MCP start.
+                override fun invokeAndStream(tool: AITool): kotlinx.coroutines.flow.Flow<ToolResult> =
+                    kotlinx.coroutines.flow.flow {
+                        emit(handler.getOrCreatePackageManager().executeUsePackageToolSuspending(tool.name, packageName(tool)))
+                    }
             }
     )
 

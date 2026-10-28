@@ -110,6 +110,8 @@ internal fun OrbitTasksPage(
     orbitId: String,
     onBack: () -> Unit,
     initialTaskId: String? = null,
+    /** Opens straight on the page of Orbit's built-in tasks. */
+    openSystem: Boolean = false,
     /** Puts a prompt in the main chat's input box and shows the chat; nothing is sent. */
     onDraft: (String) -> Unit,
 ) {
@@ -177,6 +179,8 @@ internal fun OrbitTasksPage(
         when {
             initialTaskId != null -> onBack()
             selected != null -> selected = null
+            // Opened straight on the built-in tasks: leaving them goes back where the user came from.
+            openSystem -> onBack()
             selectedGroup != null -> selectedGroup = null
             else -> onBack()
         }
@@ -241,6 +245,28 @@ internal fun OrbitTasksPage(
         if (initialTaskId != null) {
             // Opened on one task: back leaves the page.
             detail(initialTaskId)
+        } else if (openSystem) {
+            // Opened on the built-in tasks: they are the base page, and a task opens over them.
+            OrbitPushHost(
+                entries = listOfNotNull<TaskPage>(selected?.let { TaskPage.Detail(it) }),
+                onPop = ::back,
+                base = {
+                    Box(Modifier.fillMaxSize().background(pageColor)) {
+                        TaskGroupPage(
+                            group = TaskGroup.SYSTEM,
+                            members = groups.firstOrNull { it.first == TaskGroup.SYSTEM }?.second.orEmpty(),
+                            tasks = tasks,
+                            dues = dues,
+                            latestRuns = latestRuns,
+                            onBack = ::back,
+                            errorBanner = errorBanner,
+                            loadFailed = error,
+                            onOpen = { clearFeedback(); selected = it },
+                        )
+                    }
+                },
+                page = { destination -> if (destination is TaskPage.Detail) detail(destination.taskId) },
+            )
         } else {
             // Opening a task pushes its page in from the right over the list, like iOS; the back
             // swipe slides it away under the finger.
@@ -496,7 +522,6 @@ private fun TaskList(
         errorBanner()
         val system = groups.firstOrNull { it.first == TaskGroup.SYSTEM }?.second.orEmpty()
         val userGroups = groups.filter { it.first != TaskGroup.SYSTEM }
-        if (system.isNotEmpty()) item(key = "system") { SystemTasksRow(system) { onOpenGroup(TaskGroup.SYSTEM) } }
         if (tasks == null && !loadFailed) item(key = "loading") { TaskLoading() }
         else if (tasks != null && userGroups.isEmpty()) item(key = "empty") { EmptyHint(stringResource(R.string.orbit_tasks_empty, who)) }
         userGroups.forEach { (group, members) ->
@@ -508,6 +533,8 @@ private fun TaskList(
                 }
             }
         }
+        // Orbit's own routines go last, so the list above shows only the user's tasks.
+        if (system.isNotEmpty()) item(key = "system") { SystemTasksRow(system) { onOpenGroup(TaskGroup.SYSTEM) } }
     }
 }
 

@@ -48,9 +48,11 @@ object OrbitPackages {
     /**
      * Main-app packages Orbit never gets. extended_chat manages the app's ordinary chats (character
      * cards, and inside Orbit its subagent and review chats too); Orbit's own chats go through
-     * orbit_chat.
+     * orbit_chat. operit_editor edits the main app's models, voice, packages and environment
+     * directly; Orbit has its own tools for those (orbit_models, orbit_voice, orbit_packages,
+     * orbit_vault), which keep its settings apart and ask the user with cards.
      */
-    val NOT_FOR_ORBIT: Set<String> = setOf("extended_chat")
+    val NOT_FOR_ORBIT: Set<String> = setOf("extended_chat", "operit_editor")
 
     private val locks = ConcurrentHashMap<String, Mutex>()
     private val refreshScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -329,6 +331,11 @@ object OrbitPackages {
     suspend fun scopeFor(context: Context, packageManager: PackageManager, chatId: String?): Set<String>? {
         if (chatId.isNullOrBlank()) return null
         val orbit = runCatching { OrbitMemoryScope.owner(context, chatId) }.getOrNull() ?: return null
+        return scopeFor(context, packageManager, orbit)
+    }
+
+    /** [scopeFor] when the chat's Orbit is already known. */
+    suspend fun scopeFor(context: Context, packageManager: PackageManager, orbit: OrbitProfile): Set<String> {
         val enabled = enabled(context, orbit.id, packageManager)
         val candidates = candidates(packageManager, enabled).keys
         return enabled.filterTo(LinkedHashSet()) { name ->
