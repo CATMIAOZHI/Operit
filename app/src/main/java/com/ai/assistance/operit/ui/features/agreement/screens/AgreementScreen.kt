@@ -24,6 +24,7 @@ import kotlinx.coroutines.delay
 fun AgreementScreen(onAgreementAccepted: () -> Unit) {
         val scrollState = rememberScrollState()
         var isButtonEnabled by remember { mutableStateOf(false) }
+        var languageSwitching by remember { mutableStateOf(false) }
         var remainingSeconds by remember { mutableStateOf(5) }
 
         // Timer to enable the button after 5 seconds
@@ -42,7 +43,14 @@ fun AgreementScreen(onAgreementAccepted: () -> Unit) {
                                 .background(MaterialTheme.colorScheme.background),
                 horizontalAlignment = Alignment.CenterHorizontally
         ) {
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // The very first screen: pick the language before reading the agreement.
+                com.ai.assistance.operit.ui.features.startup.components.FirstLaunchLanguagePicker(
+                    onSwitchingChange = { languageSwitching = it },
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
 
                 Text(
                         text = stringResource(R.string.agreement_title),
@@ -171,7 +179,7 @@ fun AgreementScreen(onAgreementAccepted: () -> Unit) {
                 // Agreement button
                 Button(
                         onClick = onAgreementAccepted,
-                        enabled = isButtonEnabled,
+                        enabled = isButtonEnabled && !languageSwitching,
                         modifier = Modifier.fillMaxWidth().height(56.dp),
                         colors =
                                 ButtonDefaults.buttonColors(

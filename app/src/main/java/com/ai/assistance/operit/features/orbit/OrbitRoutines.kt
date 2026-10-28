@@ -97,6 +97,12 @@ internal object OrbitRoutines {
     fun alignmentId(orbitId: String) = taskId(orbitId, ALIGNMENT)
     fun proactiveScanId(orbitId: String) = taskId(orbitId, PROACTIVE_SCAN)
 
+    /** Every routine's id for one Orbit, for checking a whole task list without hashing per task. */
+    fun routineIds(orbitId: String): Set<String> = setOf(
+        selfReviewId(orbitId), goalBriefingId(orbitId), feedId(orbitId),
+        ideasId(orbitId), alignmentId(orbitId), proactiveScanId(orbitId),
+    )
+
     suspend fun ensureSelfReview(context: Context, orbit: OrbitProfile) {
         ensure(context, orbit, SELF_REVIEW, R.string.orbit_routine_self_review, CHAT_SOURCE, "DAILY", SELF_REVIEW_MINUTE,
             background = true) {

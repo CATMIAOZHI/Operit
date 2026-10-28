@@ -190,13 +190,12 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
     val useBackgroundImage by preferencesManager.useBackgroundImage.collectAsState(initial = false)
     val backgroundImageUri by preferencesManager.backgroundImageUri.collectAsState(initial = null)
     val chatHeaderTransparent by preferencesManager.chatHeaderTransparent.collectAsState(initial = false)
-    val chatInputTransparent by preferencesManager.chatInputTransparent.collectAsState(initial = false)
-    val chatInputFloating by preferencesManager.chatInputFloating.collectAsState(initial = true)
+    val chatInputTransparentPref by preferencesManager.chatInputTransparent.collectAsState(initial = false)
+    val chatInputFloatingPref by preferencesManager.chatInputFloating.collectAsState(initial = true)
     val chatInputLiquidGlassRaw by
         preferencesManager.chatInputLiquidGlass.collectAsState(initial = false)
-    val chatInputWaterGlass by
+    val chatInputWaterGlassPref by
         preferencesManager.chatInputWaterGlass.collectAsState(initial = false)
-    val chatInputLiquidGlass = chatInputLiquidGlassRaw && !chatInputWaterGlass
     val chatHeaderHistoryIconColor by preferencesManager.chatHeaderHistoryIconColor.collectAsState(
             initial = null
     )
@@ -218,7 +217,12 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
     // Orbit shows that it is working with its typing bubble; the status line would name its tools.
     val showInputProcessingStatus = showInputProcessingStatusPreference && !orbitLook
     val chatStyle = if (orbitLook) ChatStyle.BUBBLE else chatAppearance.chatStyle
-    val inputStyle = chatAppearance.inputStyle
+    // Orbit keeps its own input box: the default one, whatever input style regular chats use.
+    val inputStyle = if (orbitLook) UserPreferencesManager.INPUT_STYLE_CLASSIC else chatAppearance.inputStyle
+    val chatInputTransparent = !orbitLook && chatInputTransparentPref
+    val chatInputFloating = orbitLook || chatInputFloatingPref
+    val chatInputWaterGlass = !orbitLook && chatInputWaterGlassPref
+    val chatInputLiquidGlass = !orbitLook && chatInputLiquidGlassRaw && !chatInputWaterGlass
     val cursorUserBubbleLiquidGlass = !orbitLook && chatAppearance.cursorUserBubbleLiquidGlass
     val cursorUserBubbleWaterGlass = !orbitLook && chatAppearance.cursorUserBubbleWaterGlass
     val bubbleUserBubbleLiquidGlass = !orbitLook && chatAppearance.bubbleUserBubbleLiquidGlass

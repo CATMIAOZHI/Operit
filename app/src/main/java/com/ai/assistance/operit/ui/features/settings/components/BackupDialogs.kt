@@ -16,16 +16,15 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material3.AlertDialog
+import com.ai.assistance.operit.ui.features.settings.components.SettingsAlertDialog as AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -600,7 +599,7 @@ fun ModelConfigExportWarningDialog(
             }
         },
         confirmButton = {
-            FilledTonalButton(
+            SettingsDialogButton(
                 onClick = onDismiss,
                 colors = ButtonDefaults.filledTonalButtonColors(
                     containerColor = MaterialTheme.colorScheme.primary

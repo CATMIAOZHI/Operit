@@ -41,7 +41,9 @@ import kotlin.math.roundToInt
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun GlobalDisplaySettingsScreen(
-    onBackPressed: () -> Unit
+    onBackPressed: () -> Unit,
+    /** Orbit shows only the automation part: screenshots, virtual screen, Root and keep-alive. */
+    automationOnly: Boolean = false,
 ) {
     val context = LocalContext.current
     val displayPreferencesManager = remember { DisplayPreferencesManager.getInstance(context) }
@@ -182,6 +184,7 @@ fun GlobalDisplaySettingsScreen(
                 .padding(horizontal = 16.dp, vertical = 8.dp)
                 .verticalScroll(scrollState)
         ) {
+            if (!automationOnly) {
             SettingsCard(backgroundColor = componentBackgroundColor) {
                 LaunchModeSettingsRow()
             }
@@ -453,6 +456,7 @@ fun GlobalDisplaySettingsScreen(
             }
 
             Spacer(modifier = Modifier.height(16.dp))
+            }
 
             // ======= 自动化状态指示样式 =======
             SettingsSectionTitle(
@@ -816,6 +820,7 @@ fun GlobalDisplaySettingsScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             // ======= 重置按钮 =======
+            if (!automationOnly) {
             Button(
                 onClick = { showResetConfirm = true },
                 modifier = Modifier
@@ -868,6 +873,7 @@ fun GlobalDisplaySettingsScreen(
                         }
                     }
                 )
+            }
             }
             // 底部间距
             Spacer(modifier = Modifier.height(16.dp))

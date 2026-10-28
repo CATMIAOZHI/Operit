@@ -33,6 +33,7 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -73,13 +74,25 @@ private enum class TaskGroup(val title: Int) {
     ATTENTION(R.string.orbit_tasks_group_attention),
     ACTIVE(R.string.orbit_tasks_group_active),
     PAUSED(R.string.orbit_tasks_group_paused),
-    FINISHED(R.string.orbit_tasks_group_finished);
+    FINISHED(R.string.orbit_tasks_group_finished),
+    /** Orbit's own built-in routines (Feed, Ideas, alignment, patrol...). They live on one sub-page. */
+    SYSTEM(R.string.orbit_tasks_group_system);
 
-    fun contains(task: OrbitTaskEntity): Boolean = when (this) {
-        ATTENTION -> task.state == "WAITING_USER" || task.state == "VERIFY"
-        ACTIVE -> task.state == "ACTIVE"
-        PAUSED -> task.state == "PAUSED"
-        FINISHED -> task.state == "DONE" || task.state == "CANCELLED"
+    /** [routine] comes from [OrbitRoutines.routineIds], worked out once per list. */
+    fun contains(task: OrbitTaskEntity, routine: Boolean): Boolean {
+        if (this == SYSTEM) return routine
+        if (routine) return false
+        return when (this) {
+            ATTENTION -> needsUser(task)
+            ACTIVE -> task.state == "ACTIVE"
+            PAUSED -> task.state == "PAUSED"
+            FINISHED -> task.state == "DONE" || task.state == "CANCELLED"
+            SYSTEM -> false
+        }
+    }
+
+    companion object {
+        fun needsUser(task: OrbitTaskEntity) = task.state == "WAITING_USER" || task.state == "VERIFY"
     }
 }
 
@@ -128,7 +141,9 @@ internal fun OrbitTasksPage(
         // Keep the DAO's newest-created-first order; background runs do not shuffle the list.
         // The retired daily check-in must not linger under "finished".
         val all = tasks.orEmpty().filterNot { OrbitTaskRepository.isRetiredCheckIn(it) }
-        TaskGroup.entries.map { group -> group to all.filter(group::contains) }
+        val routineIds = OrbitRoutines.routineIds(orbitId)
+        val marked = all.map { it to (it.id in routineIds) }
+        TaskGroup.entries.map { group -> group to marked.filter { (task, routine) -> group.contains(task, routine) }.map { it.first } }
             .filter { it.second.isNotEmpty() }
     }
     // A run put off (busy chat, quiet hours) waits on its event; that is the real next time.
@@ -479,9 +494,12 @@ private fun TaskList(
                 color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 4.dp))
         }
         errorBanner()
+        val system = groups.firstOrNull { it.first == TaskGroup.SYSTEM }?.second.orEmpty()
+        val userGroups = groups.filter { it.first != TaskGroup.SYSTEM }
+        if (system.isNotEmpty()) item(key = "system") { SystemTasksRow(system) { onOpenGroup(TaskGroup.SYSTEM) } }
         if (tasks == null && !loadFailed) item(key = "loading") { TaskLoading() }
-        else if (tasks != null && groups.isEmpty()) item(key = "empty") { EmptyHint(stringResource(R.string.orbit_tasks_empty, who)) }
-        groups.forEach { (group, members) ->
+        else if (tasks != null && userGroups.isEmpty()) item(key = "empty") { EmptyHint(stringResource(R.string.orbit_tasks_empty, who)) }
+        userGroups.forEach { (group, members) ->
             item(key = "group-${group.name}") { SectionTitle(stringResource(group.title)) }
             taskRows(members.take(3), tasks.orEmpty(), dues, latestRuns, onOpen)
             if (members.size > 3) item(key = "more-${group.name}") {
@@ -490,6 +508,36 @@ private fun TaskList(
                 }
             }
         }
+    }
+}
+
+/** One row for all built-in routines; tapping it opens them on their own page. */
+@Composable
+private fun SystemTasksRow(members: List<OrbitTaskEntity>, onClick: () -> Unit) {
+    val waiting = members.count(TaskGroup::needsUser)
+    Row(
+        Modifier.fillMaxWidth().padding(top = 12.dp).clip(TaskCardShape).background(taskCardColor())
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        TaskIcon("settings-2")
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(stringResource(R.string.orbit_tasks_group_system), style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Medium)
+            Text(members.joinToString(stringResource(R.string.orbit_tasks_system_separator)) { it.title },
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (waiting > 0) {
+                Text(pluralStringResource(R.plurals.orbit_tasks_system_waiting, waiting, waiting),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            }
+        }
+        Text(members.size.toString(), style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 8.dp))
+        Icon(orbitIcon("chevron-right"), null, Modifier.padding(start = 4.dp).size(20.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
     }
 }
 
