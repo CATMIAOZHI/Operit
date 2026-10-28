@@ -36,7 +36,7 @@ internal object OrbitAvatarTools {
             ToolParameterSchema("orbit_color", description = "default / logo_colors：logo 外圈和两颗卫星的颜色，代表你自己。任意 #RRGGBB（或 #RGB），default 表示恢复默认色；不填就不变", required = false),
         ),
         details = """
-  - 头像只能由你用这个工具换。用户想换头像时，会在 Orbit 资料页选图片或宠物，选好的内容作为一条消息发给你。
+  - 头像只能由你用这个工具换。用户想换头像时，会在 Orbit 资料页选图片或宠物；选好的内容会放进聊天框，他点发送后才会发给你。
   - 图片附件不用先读，直接把它的 id 填进 image_path。
   - 默认 logo 的含义：中间的核心是用户，外圈和两颗卫星是你，你始终围绕着用户转。两种颜色都可以自己挑，也可以按用户的要求填，颜色是头像的一部分，只能由你改。默认色：中间 ${OrbitLogoDefaults.USER_HEX}，外圈 ${OrbitLogoDefaults.ORBIT_HEX}。
   - logo 就是你的头像。聊天配色选「从头像取色」（默认）时，会从中间代表用户的颜色取色，用户的消息气泡也是这个颜色，所以改 user_color 也会改变聊天配色。

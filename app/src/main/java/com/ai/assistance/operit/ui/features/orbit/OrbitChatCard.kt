@@ -339,7 +339,7 @@ private fun ChatGptLoginCard(card: JSONObject) {
 /** The ChatGPT login while it runs, as an Orbit sheet. */
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-private fun OrbitChatGptLoginSheet(view: com.ai.assistance.operit.ui.features.codex.CodexLoginView) {
+internal fun OrbitChatGptLoginSheet(view: com.ai.assistance.operit.ui.features.codex.CodexLoginView) {
     val colors = MaterialTheme.colorScheme
     OrbitModalBottomSheet(
         onDismissRequest = view.onCancel,

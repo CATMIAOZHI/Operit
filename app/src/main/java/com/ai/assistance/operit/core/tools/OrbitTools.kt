@@ -161,12 +161,10 @@ internal object OrbitTools {
                 "reminders and tasks made here report back here unless the user asks for the main chat."
             else "\n这是一个侧聊，标题是「$title」，和主聊天分开，有自己的记录。在这里安排的提醒和任务，结果回到这里，除非用户要求发到主聊天。"
         }.orEmpty()
-        val firstTalk = com.ai.assistance.operit.features.orbit.OrbitOnboarding.hint(context, orbit, chatId, useEnglish)
-            ?.let { "\n$it" }.orEmpty()
         val forkReference = side?.forkOrigin?.takeIf { it.chatId in orbit.talkChatIds }?.let {
             com.ai.assistance.operit.features.orbit.OrbitChatFork.prompt(context, it, useEnglish)
         }.orEmpty()
-        val runtime = "<orbit>\n$body$sideNote$firstTalk\n$controlPrompt\n</orbit>$forkReference"
+        val runtime = "<orbit>\n$body$sideNote\n$controlPrompt\n</orbit>$forkReference"
         return PromptParts(handbook, runtime, identity, soul, alignment)
     }
 

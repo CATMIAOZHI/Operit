@@ -319,9 +319,6 @@ interface OrbitTaskDao {
     suspend fun previousRun(taskId: String, exclude: String): OrbitRunEntity?
     @Query("SELECT sender, SUBSTR(content,-12000) AS content FROM messages WHERE chatId=:chatId ORDER BY orderIndex DESC LIMIT 20")
     suspend fun executionSource(chatId: String): List<OrbitSourceMessage>
-    /** Messages the user typed: hidden turns the app sends in (wakes, task results, notices) do not count. */
-    @Query("SELECT COUNT(*) FROM messages WHERE chatId=:chatId AND sender='user' AND displayMode='NORMAL'")
-    suspend fun userMessageCount(chatId: String): Int
 
     /**
      * The alignment review reads its window in order: the messages of [chatIds] in (since, until]
