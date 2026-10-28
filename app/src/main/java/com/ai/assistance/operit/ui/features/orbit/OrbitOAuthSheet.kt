@@ -55,7 +55,9 @@ internal fun OrbitOAuthSheet(orbit: OrbitProfile, request: OrbitVault.Request) {
             .padding(horizontal = 24.dp).padding(bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(stringResource(R.string.orbit_oauth_title, request.site), style = MaterialTheme.typography.titleLarge)
             Text(stringResource(R.string.orbit_oauth_desc, orbit.name), style = MaterialTheme.typography.bodyMedium)
-            Text(stringResource(R.string.orbit_oauth_authorize_at, OrbitOAuthProtocol.endpoint(request.authorizationUrl).host),
+            Text(stringResource(R.string.orbit_oauth_authorize_at, OrbitOAuthProtocol.origin(request.authorizationUrl)),
+                style = MaterialTheme.typography.bodyMedium)
+            Text(stringResource(R.string.orbit_oauth_token_at, OrbitOAuthProtocol.origin(request.tokenUrl)),
                 style = MaterialTheme.typography.bodyMedium)
             if (request.scope.isNotBlank()) Text(stringResource(R.string.orbit_oauth_scope, request.scope),
                 style = MaterialTheme.typography.bodySmall)

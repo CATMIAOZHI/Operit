@@ -31,13 +31,29 @@ internal object OrbitOAuthProtocol {
     }
 
     fun validate(request: OrbitVault.Request) {
-        endpoint(request.authorizationUrl)
-        endpoint(request.tokenUrl)
+        validateEndpoints(request.authorizationUrl, request.tokenUrl)
         require(request.clientId.isNotBlank() && request.clientId.length <= 500) { "Missing or invalid client_id" }
         require(request.scope.length <= 2000) { "scope is too long" }
         require(request.apiHosts.size in 1..5 && request.apiHosts.all {
             it.matches(Regex("[a-z0-9](?:[a-z0-9.-]{1,118}[a-z0-9])")) && it.contains('.') && !it.contains("..")
         }) { "api_hosts must list 1-5 host names" }
+    }
+
+    /** Generic cards have no trusted provider metadata to authorize a different token origin. */
+    fun validateEndpoints(authorizationUrl: String, tokenUrl: String) {
+        require(authorizationUrl.isNotBlank()) {
+            "OAuth login has no verified authorization origin. Use request_oauth to reconnect."
+        }
+        val authorization = endpoint(authorizationUrl)
+        val token = endpoint(tokenUrl)
+        require(authorization.host == token.host && authorization.port == token.port) {
+            "Generic OAuth requires authorization_url and token_url to have the same HTTPS host and port. " +
+                "Cross-origin providers need a dedicated account login or request_api_key."
+        }
+    }
+
+    fun origin(value: String): String = endpoint(value).let {
+        it.newBuilder().encodedPath("/").query(null).build().toString().removeSuffix("/")
     }
 
     fun authorizationUrl(request: OrbitVault.Request, redirect: String, state: String, verifier: String): String {

@@ -66,7 +66,7 @@ Claude、Grok、Antigravity、Command Code 订阅账号使用 `request_account_l
 这些账号要作为聊天模型使用，还需对应模型配置：登录后用 `orbit_models action=request_create` 加对应的 `provider`（如 `GROK_ACCOUNT`）申请新建，`endpoint` 和 `models` 都不用填，用户在批准卡上从账号的模型列表里勾选；之后用 `orbit_models action=request_use` 申请切换。
 账号登录不自动导入工具包，也不赋予任意网站或服务操作能力。
 
-其他服务可按实际接口使用 `orbit_vault action=request_oauth`，仅支持公开客户端的授权码与 PKCE 流程。
+其他服务可按实际接口使用 `orbit_vault action=request_oauth`，仅支持公开客户端的授权码与 PKCE 流程，授权地址和 token 地址必须同为 HTTPS 且主机、端口一致。
 它需要官方的授权配置和已登记的实际回调地址，不支持需要客户端密钥的流程；OAuth 令牌通过保险箱的 `http_request` 使用，不承诺自动交给工具包。
 网站登录或验证码需要用户操作时，使用浏览器接管，见 [browser.md](browser.md)。
 

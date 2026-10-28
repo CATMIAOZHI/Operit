@@ -66,6 +66,8 @@ internal object OrbitVault {
         val refreshToken: String,
         /** Zero means the provider did not report an expiry. */
         val expiresAt: Long,
+        /** Preserves the approved origin for token use and refresh validation. */
+        val authorizationUrl: String = "",
     )
 
     /** What one card asks the user for. The value never passes through the request. */
@@ -155,7 +157,7 @@ internal object OrbitVault {
                 o.optString("placement"), o.optLong("savedAt"), o.optLong("card"), o.optString("envName"), o.optString("slot"),
                 o.optJSONObject("oauth")?.let { auth ->
                     OAuth(auth.getString("tokenUrl"), auth.getString("clientId"), auth.optString("scope"),
-                        auth.optString("refreshToken"), auth.optLong("expiresAt"))
+                        auth.optString("refreshToken"), auth.optLong("expiresAt"), auth.optString("authorizationUrl"))
                 }, o.optString("packageName"))
         }
     }
@@ -169,6 +171,7 @@ internal object OrbitVault {
                     .apply { if (it.packageName.isNotEmpty()) put("packageName", it.packageName) }
                     .apply { it.oauth?.let { auth ->
                         put("oauth", JSONObject().put("tokenUrl", auth.tokenUrl).put("clientId", auth.clientId)
+                            .put("authorizationUrl", auth.authorizationUrl)
                             .put("scope", auth.scope).put("refreshToken", auth.refreshToken).put("expiresAt", auth.expiresAt))
                     } })
             }
@@ -265,6 +268,7 @@ internal object OrbitVault {
     suspend fun saveOAuth(context: Context, request: Request, tokens: OrbitOAuthProtocol.Tokens): String =
         withContext(Dispatchers.IO) {
             require(request.kind == OAUTH)
+            OrbitOAuthProtocol.validate(request)
             lock(request.orbitId).withLock {
                 val current = read(context, request.orbitId)
                 val same = current.firstOrNull {
@@ -274,7 +278,7 @@ internal object OrbitVault {
                     "", tokens.accessToken, request.apiHosts, "bearer", System.currentTimeMillis(),
                     card = request.requestedAt,
                     oauth = OAuth(request.tokenUrl, request.clientId, tokens.scope ?: request.scope,
-                        tokens.refreshToken.orEmpty(), tokens.expiresAt))
+                        tokens.refreshToken.orEmpty(), tokens.expiresAt, request.authorizationUrl))
                 val next = current.filterNot { it.id == entry.id } + entry
                 require(next.size <= MAX_ENTRIES) { "The vault is full" }
                 write(context, request.orbitId, next)
@@ -289,6 +293,7 @@ internal object OrbitVault {
             val entry = lock(orbitId).withLock { read(context, orbitId).firstOrNull { it.id == id } }
                 ?: error("Credential was deleted; use list")
             val auth = entry.oauth ?: return@withLock entry
+            OrbitOAuthProtocol.validateEndpoints(auth.authorizationUrl, auth.tokenUrl)
             // A 401 can reveal expiry when a provider did not give expires_in. Another caller may already have refreshed it.
             if (rejectedToken != null && rejectedToken != entry.secret) return@withLock entry
             if (rejectedToken == null && !OrbitOAuthProtocol.needsRefresh(auth.expiresAt)) return@withLock entry

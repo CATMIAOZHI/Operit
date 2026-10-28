@@ -7334,6 +7334,7 @@
     <string name="webvisit_title">网页访问中</string>
     <string name="webvisit_url_label">访问网址:</string>
     <string name="webvisit_status_loading_page">正在加载页面...</string>
+    <string name="webvisit_certificate_error">无法验证网站的 HTTPS 证书，已取消连接。请改用可信来源，或联系网站管理员修复证书。</string>
     <string name="webvisit_status_extracting">已读取，等待更多内容加载，%1$d秒后自动继续...</string>
     <string name="webvisit_status_waiting_extraction">正在读取页面内容...</string>
     <string name="webvisit_page_title">页面标题: %1$s</string>
@@ -9682,8 +9683,9 @@
     <string name="orbit_oauth_title">连接 %1$s</string>
     <string name="orbit_oauth_desc">你会在系统浏览器中登录并授权。登录凭据直接存入保险箱，%1$s 看不到原值。取消不会发送消息。</string>
     <string name="orbit_oauth_authorize_at">授权网站：%1$s</string>
+    <string name="orbit_oauth_token_at">授权码接收网站：%1$s</string>
     <string name="orbit_oauth_scope">申请权限：%1$s</string>
-    <string name="orbit_oauth_limit">仅支持无需客户端密钥的 PKCE 授权。服务不支持时，可以改用 API 密钥卡。</string>
+    <string name="orbit_oauth_limit">仅支持无需客户端密钥的 PKCE 授权，授权网站与授权码接收网站的主机、端口必须一致。服务不支持时，可以改用专用账号登录或 API 密钥卡。</string>
     <string name="orbit_oauth_continue">前往授权</string>
     <string name="orbit_oauth_opening">正在打开浏览器…</string>
     <string name="orbit_oauth_open_failed">没能打开授权。请确认已安装支持 Custom Tabs 的浏览器，再点卡片重试。</string>

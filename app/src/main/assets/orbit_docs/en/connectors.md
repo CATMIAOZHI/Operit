@@ -66,7 +66,7 @@ End the turn after sending a new login card. Success sends a hidden notice; skip
 Using these accounts as chat models also requires a matching model configuration. Once signed in, request one with `orbit_models action=request_create` and the matching `provider` (such as `GROK_ACCOUNT`), leaving `endpoint` and `models` out; the user picks models from the account's list on the approval card. Then request a switch with `orbit_models action=request_use`.
 Account login does not import tool packages or grant arbitrary website or service actions.
 
-For other services, `orbit_vault action=request_oauth` supports public-client authorization code with PKCE when the actual interface permits it.
+For other services, `orbit_vault action=request_oauth` supports public-client authorization code with PKCE when the actual interface permits it. Authorization and token endpoints must both use HTTPS and share the same host and port.
 It requires official authorization settings and the registered actual callback address, and does not support flows requiring a client secret. OAuth tokens are used through the vault's `http_request`; do not promise automatic access from packages.
 Use browser handoff when website login or verification requires the user; see [browser.md](browser.md).
 

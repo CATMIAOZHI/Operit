@@ -40,7 +40,7 @@ internal object OrbitVaultTools {
             ToolParameterSchema("provider", description = "request_api_key / request_oauth：服务名，比如 OpenWeather。request_account_login：claude / grok / antigravity / command_code", required = false),
             ToolParameterSchema("api_hosts", description = "request_api_key / request_oauth：凭据只能发往的主机，逗号分隔。终端密钥给了 env_name 时可不填；工具包密钥给了 package_name 时禁止填", required = false),
             ToolParameterSchema("authorization_url", description = "request_oauth：服务商官方 https 授权地址，可含 access_type 等公开参数", required = false),
-            ToolParameterSchema("token_url", description = "request_oauth：服务商官方 https token 地址", required = false),
+            ToolParameterSchema("token_url", description = "request_oauth：服务商官方 https token 地址；必须与 authorization_url 主机、端口一致，跨来源请改用专用账号登录或 request_api_key", required = false),
             ToolParameterSchema("client_id", description = "request_oauth：已注册的公开客户端 ID；回调 URI 必须登记为 ${com.ai.assistance.operit.BuildConfig.APPLICATION_ID}.orbit-oauth://callback/oauth2", required = false),
             ToolParameterSchema("scope", description = "request_oauth：最少需要的授权范围，空格分隔", required = false),
             ToolParameterSchema("oauth_flow", description = "request_oauth：只支持 authorization_code_pkce（默认）；device flow 不支持，改用 request_api_key", required = false),
