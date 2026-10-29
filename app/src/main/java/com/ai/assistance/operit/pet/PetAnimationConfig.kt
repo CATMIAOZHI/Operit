@@ -49,8 +49,11 @@ internal fun PetAnimation.label(): Int = when (this) {
 internal fun CreatePetDialog(onDismiss: () -> Unit, onCreate: (PetSettings) -> Unit) {
     var name by rememberSaveable { mutableStateOf("") }
     var format by rememberSaveable { mutableStateOf(PetMediaType.GIF) }
-    AlertDialog(
+    // Material in the app's settings; Orbit's own dialog inside Orbit.
+    com.ai.assistance.operit.ui.features.settings.components.SettingsAlertDialog(
         onDismissRequest = onDismiss,
+        // The form scrolls itself; Orbit's dialog must not scroll around it as well.
+        orbitScrollable = false,
         title = { Text(stringResource(R.string.pet_create)) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
@@ -68,12 +71,14 @@ internal fun CreatePetDialog(onDismiss: () -> Unit, onCreate: (PetSettings) -> U
             }
         },
         confirmButton = {
-            TextButton(enabled = name.isNotBlank(), onClick = {
+            com.ai.assistance.operit.ui.features.settings.components.SettingsDialogTextButton(enabled = name.isNotBlank(), onClick = {
                 onCreate(PetSettings(name = name.trim(), mediaType = format))
             }) { Text(stringResource(R.string.pet_create)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.pet_cancel)) }
+            com.ai.assistance.operit.ui.features.settings.components.SettingsDialogTextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.pet_cancel))
+            }
         },
     )
 }
@@ -82,14 +87,16 @@ internal fun CreatePetDialog(onDismiss: () -> Unit, onCreate: (PetSettings) -> U
 internal fun PetAnimationFiles(
     settings: PetSettings, importing: Boolean,
     onChoose: (PetAnimation) -> Unit, onClear: (PetAnimation) -> Unit,
+    showTitle: Boolean = true,
 ) {
-    Text(
+    if (showTitle) Text(
         stringResource(R.string.pet_animation_files), style = MaterialTheme.typography.titleSmall,
         modifier = Modifier.padding(top = 12.dp),
     )
     Text(
         stringResource(if (settings.mediaType == PetMediaType.ATLAS) R.string.pet_codex_pack_hint else R.string.pet_animation_files_hint),
         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = if (showTitle) Modifier else Modifier.padding(horizontal = 16.dp),
     )
     val animations = if (settings.mediaType == PetMediaType.ATLAS) listOf(PetAnimation.IDLE) else PetAnimation.entries
     for (animation in animations) {
