@@ -9,6 +9,7 @@ import android.net.Uri
 import android.os.Binder
 import android.os.Bundle
 import android.os.Process
+import com.ai.assistance.operit.features.orbit.OrbitReadingLegado
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -18,7 +19,8 @@ import org.json.JSONObject
  * The provider exposes generated comments only; it does not serve raw chapter text. Disabling
  * the optional auto-commentary subpackage stops future generation but does not
  * hide comments that were already generated; disabling the parent Reading Companion ToolPkg
- * removes this read surface entirely.
+ * hides the main app's comments. The running Orbit's own paragraph comments are served either way
+ * and merged with the main app's (see [OrbitReadingLegado]).
  */
 class ReadingCompanionAnnotationProvider : ContentProvider() {
     private lateinit var store: ReadingCompanionStore
@@ -46,14 +48,22 @@ class ReadingCompanionAnnotationProvider : ContentProvider() {
     ): Cursor {
         enforceLegadoCaller()
         val result = try {
-            if (!ReadingCompanionAutoCommentary.isBasePackageEnabled(requireNotNull(context))) {
-                success(JSONObject().put("enabled", false).put("ready", false))
-            } else {
-                when (matcher.match(uri)) {
-                    MATCH_SUMMARY -> querySummary(uri)
-                    MATCH_DETAIL -> queryDetail(uri)
-                    else -> failure("未知的 AI 段评查询路径")
+            val appContext = requireNotNull(context)
+            val mainEnabled = ReadingCompanionAutoCommentary.isBasePackageEnabled(appContext)
+            when (matcher.match(uri)) {
+                MATCH_SUMMARY -> {
+                    val orbit = runCatching { orbitSummary(appContext, uri) }.getOrNull()
+                    val main = if (!mainEnabled) null else runCatching { querySummary(uri) }
+                        .getOrElse { if (orbit == null) throw it else null }?.optJSONObject("data")
+                    success(OrbitReadingLegado.mergeSummary(main, orbit))
                 }
+                MATCH_DETAIL -> {
+                    val orbit = runCatching { orbitDetail(appContext, uri) }.getOrNull()
+                    val main = if (!mainEnabled) null else runCatching { queryDetail(uri) }
+                        .getOrElse { if (orbit == null) throw it else null }?.optJSONObject("data")
+                    success(OrbitReadingLegado.mergeDetail(main, orbit))
+                }
+                else -> failure("未知的 AI 段评查询路径")
             }
         } catch (error: Throwable) {
             failure(error.message ?: "AI 段评查询失败")
@@ -81,6 +91,25 @@ class ReadingCompanionAnnotationProvider : ContentProvider() {
 
     override fun insert(uri: Uri, values: ContentValues?): Uri? =
         throw SecurityException("AI 段评数据接口为只读")
+
+    private fun orbitSummary(context: android.content.Context, uri: Uri): JSONObject? =
+        OrbitReadingLegado.summary(
+            context,
+            bookId = requireParameter(uri, "bookId"),
+            chapterIndex = requireParameter(uri, "chapterIndex").toInt(),
+            expectedHash = uri.getQueryParameter("contentHash")?.takeIf(String::isNotBlank),
+            mappingRequested =
+                uri.getQueryParameter("mappingVersion") == ReadingCompanionFileStore.PARAGRAPH_MAPPING_VERSION,
+        )
+
+    private fun orbitDetail(context: android.content.Context, uri: Uri): JSONArray? =
+        OrbitReadingLegado.detail(
+            context,
+            bookId = requireParameter(uri, "bookId"),
+            chapterIndex = requireParameter(uri, "chapterIndex").toInt(),
+            paragraphIndex = requireParameter(uri, "paragraphIndex").toInt(),
+            expectedHash = uri.getQueryParameter("contentHash")?.takeIf(String::isNotBlank),
+        )
 
     override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?): Int =
         throw SecurityException("AI 段评数据接口为只读")
