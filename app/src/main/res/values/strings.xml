@@ -9726,7 +9726,7 @@
     <string name="orbit_tools_row">工具权限</string>
     <string name="orbit_tools_row_desc">Orbit 自己的一套，和主应用分开</string>
     <string name="orbit_tools_title">工具权限</string>
-    <string name="orbit_tools_help">只管 Orbit 的聊天和它的后台任务，主应用的工具权限不受影响。Orbit 自己的工具默认始终允许，其他工具默认走自动审核（快速）。</string>
+    <string name="orbit_tools_help">只管 Orbit 的聊天和它的后台任务，主应用的工具权限不受影响。Orbit 自己的工具，以及内置包里只做查询的工具（时间、搜索、天气等），默认直接允许；其他工具默认走自动审核（快速）。</string>
     <string name="orbit_tools_search">搜索工具</string>
     <string name="orbit_tools_empty">没有找到工具</string>
     <string name="orbit_tools_folder_internal">Orbit 内部工具</string>

@@ -67,6 +67,12 @@ import org.json.JSONObject
 import java.io.File
 
 /**
+ * Set by the floating window, which has no screen of its own for sheets and dialogs: cards that
+ * need one open Orbit in the app instead, and pictures and files open there on a tap.
+ */
+internal val LocalOrbitCardsInApp = androidx.compose.runtime.compositionLocalOf<(() -> Unit)?> { null }
+
+/**
  * A card one of Orbit's tools put in the chat ([OrbitChatCards]): a secure entry card that opens
  * the entry sheet, a picture that opens full screen on a tap (with a save button there), a text file shown
  * right here, or any other file, which opens in another app.
@@ -74,6 +80,11 @@ import java.io.File
 @Composable
 fun OrbitChatCard(source: String) {
     val card = remember(source) { runCatching { JSONObject(source.trim()) }.getOrNull() } ?: return
+    val inApp = LocalOrbitCardsInApp.current
+    if (inApp != null && card.optString("kind") in inAppKinds) {
+        OrbitInAppCard(inApp)
+        return
+    }
     when (card.optString("kind")) {
         OrbitChatCards.VAULT_LOGIN, OrbitChatCards.VAULT_KEY, OrbitChatCards.VAULT_OAUTH ->
             // Keyed by the card, so a reused slot never keeps showing an earlier card.
@@ -89,6 +100,14 @@ fun OrbitChatCard(source: String) {
         OrbitChatCards.OPEN_PAGE -> OrbitOpenPageCard(card)
     }
 }
+
+/** Cards that work in sheets or dialogs, so the floating window sends the user to the app for them. */
+private val inAppKinds = setOf(
+    OrbitChatCards.VAULT_LOGIN, OrbitChatCards.VAULT_KEY, OrbitChatCards.VAULT_OAUTH,
+    OrbitChatCards.APPROVAL, OrbitChatCards.PERMISSION, OrbitChatCards.CHATGPT_LOGIN,
+    OrbitChatCards.ACCOUNT_LOGIN, OrbitChatCards.SPEECH_SETTINGS, OrbitChatCards.WEIXIN_LOGIN,
+    OrbitChatCards.DATA_EXPORT, OrbitChatCards.OPEN_PAGE,
+)
 
 /** Cards already checked, so scrolling back to one shows it at once. */
 private val verifiedVaultCards = android.util.LruCache<String, Result<OrbitVault.Request?>>(64)
@@ -421,6 +440,7 @@ internal fun OrbitChatGptLoginSheet(view: com.ai.assistance.operit.ui.features.c
 private fun AttachmentCard(card: JSONObject) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val inApp = LocalOrbitCardsInApp.current
     val name = card.optString("name").ifBlank { card.optString("path").substringAfterLast('/') }
     val path = card.optString("path")
     // Only Orbit's own files/ folder; a card naming anything else draws as missing.
@@ -450,7 +470,7 @@ private fun AttachmentCard(card: JSONObject) {
             shape = RoundedCornerShape(18.dp),
             color = MaterialTheme.colorScheme.surface,
             modifier = Modifier.padding(vertical = 4.dp).clip(RoundedCornerShape(18.dp))
-                .orbitCardGestures(onClick = { viewing = true })
+                .orbitCardGestures(onClick = { if (inApp != null) inApp() else viewing = true })
                 .semantics(mergeDescendants = true) { contentDescription = label },
         ) {
             AsyncImage(
@@ -473,7 +493,11 @@ private fun AttachmentCard(card: JSONObject) {
         color = androidx.compose.ui.graphics.Color.Transparent,
         modifier = Modifier.widthIn(max = 300.dp).padding(vertical = 4.dp).clip(RoundedCornerShape(16.dp))
             .orbitCardGestures(onClick = {
-                if (previewable) previewing = true else current?.let { f -> openOrbitFile(context) { f } }
+                when {
+                    inApp != null -> inApp()
+                    previewable -> previewing = true
+                    else -> current?.let { f -> openOrbitFile(context) { f } }
+                }
             }, enabled = current != null)
             .semantics(mergeDescendants = true) { contentDescription = label },
     ) {

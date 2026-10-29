@@ -115,24 +115,33 @@ private fun BottomInputBar(
 ) {
     val context = LocalContext.current
     val preferences = remember(context) { UserPreferencesManager.getInstance(context) }
+    // Orbit keeps its own default input box, whatever style normal chats use.
+    val orbitLook = com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current
     val inputStyle by preferences.inputStyle.collectAsState(initial = UserPreferencesManager.INPUT_STYLE_CLASSIC)
-    val floating by preferences.chatInputFloating.collectAsState(initial = true)
-    val transparent by preferences.chatInputTransparent.collectAsState(initial = false)
+    val floatingPreference by preferences.chatInputFloating.collectAsState(initial = true)
+    val transparentPreference by preferences.chatInputTransparent.collectAsState(initial = false)
+    val floating = orbitLook || floatingPreference
+    val transparent = !orbitLook && transparentPreference
     val liquid by preferences.chatInputLiquidGlass.collectAsState(initial = false)
     val water by preferences.chatInputWaterGlass.collectAsState(initial = false)
     val useBackgroundImage by preferences.useBackgroundImage.collectAsState(initial = false)
     val backgroundImageUri by preferences.backgroundImageUri.collectAsState(initial = null)
-    val agent = inputStyle == UserPreferencesManager.INPUT_STYLE_AGENT
+    val agent = !orbitLook && inputStyle == UserPreferencesManager.INPUT_STYLE_AGENT
     val liquidEnabled = transparent && liquid && !water && isLiquidGlassSupported()
     val waterEnabled = transparent && water && isWaterGlassSupported()
     val shape = chatComposerShape(agent, floating)
-    val surface = chatComposerColor(agent, transparent, useBackgroundImage && backgroundImageUri != null)
+    val surface = chatComposerColor(agent, transparent, !orbitLook && useBackgroundImage && backgroundImageUri != null)
     val textStyle = chatComposerTextStyle(agent)
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
     var isInputFocused by remember { mutableStateOf(false) }
     val hasContent = floatContext.userMessage.isNotBlank() || floatContext.attachments.isNotEmpty()
-    val isProcessing = floatContext.chatService?.getChatCore()?.isLoading?.collectAsState()?.value ?: false
+    val core = floatContext.chatService?.getChatCore()
+    val isProcessing = core?.isLoading?.collectAsState()?.value ?: false
+    val currentChatId = core?.currentChatId?.collectAsState()?.value
+    val userWaitingChatIds = core?.getMessageProcessingDelegate()?.userWaitingChatIds?.collectAsState()?.value.orEmpty()
+    // Talking to Orbit while it works goes into that work; stopping is for a reply the user waits on.
+    val showCancel = isProcessing && (!orbitLook || (!hasContent && currentChatId in userWaitingChatIds))
 
     fun releaseFocus() {
         focusManager.clearFocus(force = true)
@@ -140,7 +149,7 @@ private fun BottomInputBar(
         floatContext.onInputFocusRequest?.invoke(false)
     }
     fun send() {
-        if (isProcessing || !hasContent) return
+        if ((isProcessing && !orbitLook) || !hasContent) return
         floatContext.onSendMessage?.invoke(floatContext.userMessage, PromptFunctionType.CHAT)
         floatContext.userMessage = ""
         floatContext.showAttachmentPanel = false
@@ -207,7 +216,7 @@ private fun BottomInputBar(
     fun SendButton() {
         IconButton(onClick = {
             when {
-                isProcessing -> floatContext.onCancelMessage?.invoke()
+                showCancel -> floatContext.onCancelMessage?.invoke()
                 hasContent -> send()
                 else -> {
                     releaseFocus()
@@ -217,13 +226,13 @@ private fun BottomInputBar(
                 }
             }
         }, modifier = Modifier.size(48.dp).clip(CircleShape).background(
-            if (isProcessing) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+            if (showCancel) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
         )) {
             Icon(
-                if (isProcessing) Icons.Default.Close else if (hasContent) Icons.Default.Send else Icons.Rounded.GraphicEq,
-                stringResource(if (isProcessing) R.string.floating_cancel else if (hasContent)
+                if (showCancel) Icons.Default.Close else if (hasContent) Icons.Default.Send else Icons.Rounded.GraphicEq,
+                stringResource(if (showCancel) R.string.floating_cancel else if (hasContent)
                     R.string.floating_send else R.string.floating_voice_mode),
-                tint = if (isProcessing) MaterialTheme.colorScheme.onError else MaterialTheme.colorScheme.onPrimary,
+                tint = if (showCancel) MaterialTheme.colorScheme.onError else MaterialTheme.colorScheme.onPrimary,
                 modifier = Modifier.size(24.dp),
             )
         }

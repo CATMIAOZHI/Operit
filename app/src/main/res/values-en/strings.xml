@@ -9749,7 +9749,7 @@
     <string name="orbit_tools_row">Tool permissions</string>
     <string name="orbit_tools_row_desc">Orbit\'s own list, separate from the main app</string>
     <string name="orbit_tools_title">Tool permissions</string>
-    <string name="orbit_tools_help">Only for Orbit\'s chats and its background tasks; the main app\'s tool permissions stay as they are. Orbit\'s own tools are always allowed by default; other tools go through the fast automatic review.</string>
+    <string name="orbit_tools_help">Only for Orbit\'s chats and its background tasks; the main app\'s tool permissions stay as they are. Orbit\'s own tools and the built-in lookup-only tools (time, search, weather and the like) are allowed by default; other tools go through the fast automatic review.</string>
     <string name="orbit_tools_search">Search tools</string>
     <string name="orbit_tools_empty">No tools found</string>
     <string name="orbit_tools_folder_internal">Orbit\'s own tools</string>

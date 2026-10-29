@@ -450,7 +450,9 @@ internal fun VirtualTranscript(
                 knownSizes.putAll(sizes)
                 if (!changed || !listState.canScrollForward) return@collect
                 try {
-                    listState.scrollToItem(currentRows.size)
+                    // The footer's end (sent bubbles waiting for their rows can make it tall); the
+                    // list stops at its end.
+                    listState.scrollToItem(currentRows.size, Int.MAX_VALUE / 2)
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     // A scroll that won the list cancels only this jump; keep following afterwards.
                     kotlinx.coroutines.currentCoroutineContext().ensureActive()

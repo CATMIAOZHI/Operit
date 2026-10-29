@@ -1926,13 +1926,9 @@ private fun ChatInputBottomBar(
 
     fun steerPendingQueueMessage(id: Long) {
         val chatId = currentChatId ?: return
-        val expectedTurnId = actualViewModel.steeringTurnId(chatId)
-        if (expectedTurnId == null) {
-            // While the history is summarized before a send, the message waits in the queue and
-            // goes out after that reply.
-            actualViewModel.showToast(context.getString(
-                if (isSendTriggeredSummarizing) R.string.chat_steer_after_compaction else R.string.chat_steer_unavailable))
-            return
+        if (actualViewModel.steeringTurnId(chatId) == null && isSendTriggeredSummarizing) {
+            // While the history is summarized before a send, the message goes out after that reply.
+            actualViewModel.showToast(context.getString(R.string.chat_steer_after_compaction))
         }
         val item = removePendingQueueMessageById(id) ?: return
         coroutineScope.launch {
@@ -1960,7 +1956,12 @@ private fun ChatInputBottomBar(
                 }
                 showChatInputHookMessage(decision.noticeMessage)
                 val finalItem = item.copy(text = decision.text ?: item.text)
-                resolved = actualViewModel.trySteerQueuedMessage(chatId, expectedTurnId, finalItem)
+                // Into the running reply; when it cannot take it (not open yet, or refused), the
+                // message waits for the chat to be free in the shared line, so later ones (also the
+                // floating window's) go after it.
+                val expectedTurnId = actualViewModel.steeringTurnId(chatId)
+                resolved = (expectedTurnId != null && actualViewModel.trySteerQueuedMessage(chatId, expectedTurnId, finalItem)) ||
+                    actualViewModel.sendQueuedWhenFree(chatId, finalItem)
                 if (!resolved) {
                     actualViewModel.showToast(context.getString(R.string.chat_steer_unavailable))
                 } else {
@@ -1983,6 +1984,9 @@ private fun ChatInputBottomBar(
         val queueChatId = currentChatId ?: return@LaunchedEffect
         if (actualViewModel.hasPendingQueueAutoDequeue(queueChatId, isQueueBlocked)) {
             delay(250)
+            // Orbit's chat may be replying in the floating window's runtime, which this effect does
+            // not observe: wait for it here, so the queue still goes out when it ends.
+            while (actualViewModel.isFloatingOrbitBusy(queueChatId)) delay(300)
             if (!actualViewModel.isPendingQueueTargetBusy(queueChatId)) {
                 actualViewModel.takeNextPendingQueueAutoDequeue(queueChatId)?.let { item ->
                     sendQueuedItemNow(queueChatId, item)
@@ -2020,6 +2024,8 @@ private fun ChatInputBottomBar(
         ) ?: return
         actualViewModel.updateUserMessage(TextFieldValue(""))
         steerPendingQueueMessage(id)
+        // The user just sent it: follow the newest messages again, so it shows.
+        onRequestAutoScrollToBottom()
     }
     // In Orbit a message going into the current turn is already in the chat; the queue bar only
     // shows what still waits, so it does not flash up while the message is handed over.

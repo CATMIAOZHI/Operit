@@ -170,6 +170,7 @@ class FloatingWindowDelegate(
 
             // 先启动并绑定服务
             val intent = Intent(context, FloatingChatService::class.java)
+                .putExtra(FloatingChatService.EXTRA_OPENED_FROM_APP, true)
             colorScheme?.let {
                 intent.putExtra("COLOR_SCHEME", it.toSerializable())
             }
@@ -199,7 +200,8 @@ class FloatingWindowDelegate(
         moveTaskToBackOnReady: Boolean = false
     ) {
         if (_isFloatingMode.value && floatingService != null) {
-            // 如果服务已在运行，直接切换模式
+            // 如果服务已在运行，直接切换模式（仍按“从 App 打开”决定是否显示 Orbit）
+            floatingService?.routeOpenedFromApp()
             floatingService?.switchToMode(mode)
             if (moveTaskToBackOnReady) {
                 _moveTaskToBackEvents.tryEmit(Unit)
@@ -215,6 +217,7 @@ class FloatingWindowDelegate(
 
         // 先启动并绑定服务
         val intent = Intent(context, FloatingChatService::class.java)
+            .putExtra(FloatingChatService.EXTRA_OPENED_FROM_APP, true)
         // 添加初始模式参数
         intent.putExtra("INITIAL_MODE", mode.name)
 
