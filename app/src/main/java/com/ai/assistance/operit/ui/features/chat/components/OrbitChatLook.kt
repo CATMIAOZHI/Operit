@@ -101,6 +101,24 @@ val LocalOrbitReactions = compositionLocalOf<Map<String, String>> { emptyMap() }
  */
 val LocalShowHiddenChatRows = compositionLocalOf { false }
 
+/**
+ * How far a note that rose above Orbit's message box (an "added" confirmation) reaches up, so the
+ * round "back to the newest" button above the box can step over it instead of being covered.
+ */
+val LocalOrbitBottomNoteLift = compositionLocalOf { 0.dp }
+
+/**
+ * Lifts [content] over such a note. Only this small box reads the lift, and the slide is applied
+ * at layout time, so the message list around it is not redrawn on each frame of the slide.
+ */
+@Composable
+fun OrbitNoteLift(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    val lift by androidx.compose.animation.core.animateDpAsState(
+        LocalOrbitBottomNoteLift.current, label = "orbitNoteLift",
+    )
+    Box(modifier.offset { androidx.compose.ui.unit.IntOffset(0, -lift.roundToPx()) }) { content() }
+}
+
 /** Like a messenger: a time line shows above a message that comes this long after the one before. */
 const val ORBIT_CHAT_TIME_GAP_MS = 5 * 60 * 1000L
 

@@ -25,6 +25,12 @@ import com.ai.assistance.operit.ui.features.orbit.orbitName
 import com.ai.assistance.operit.ui.features.orbit.rememberOrbitActivity
 import com.ai.assistance.operit.ui.floating.FloatContext
 
+/**
+ * True while the window's Orbit chat shows its notes above its message box; the window decides it
+ * once, so a page still sliding out on a mode change stops showing them as the top note returns.
+ */
+internal val LocalFloatingOrbitNotesInline = androidx.compose.runtime.compositionLocalOf { false }
+
 /** The Orbit whose chat [chatId] is, following renames and new colors; null for a normal chat. */
 @Composable
 internal fun rememberFloatingOrbit(chatId: String?): OrbitProfile? {

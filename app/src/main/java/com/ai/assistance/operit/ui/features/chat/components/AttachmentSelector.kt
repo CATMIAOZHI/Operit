@@ -567,7 +567,7 @@ fun AttachmentSelectorPopupPanel(
     )
 }
 
-private data class AttachmentPanelItem(
+internal data class AttachmentPanelItem(
         val icon: ImageVector,
         val label: String,
         val onClick: () -> Unit
@@ -575,10 +575,11 @@ private data class AttachmentPanelItem(
 
 /**
  * Orbit's "+" choices, inside its message card: one row of soft grey tiles with plain line icons,
- * like the rest of Orbit. Memory, packages and screen content are left out there.
+ * like the rest of Orbit. Memory, packages and screen content are left out there. The floating
+ * window's Orbit chat uses the same row.
  */
 @Composable
-private fun OrbitAttachmentRow(items: List<AttachmentPanelItem>) {
+internal fun OrbitAttachmentRow(items: List<AttachmentPanelItem>) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(start = 10.dp, end = 10.dp, top = 4.dp, bottom = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp),

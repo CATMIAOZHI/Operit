@@ -154,4 +154,6 @@
     <string name="orbit_attach_file">Files</string>
     <string name="orbit_attach_notifications">Alerts</string>
     <string name="orbit_attach_location">Location</string>
+    <string name="orbit_attach_region">Region</string>
+    <string name="orbit_floating_attach_note">To send photos or files, go back to Orbit\'s chat page</string>
 </resources>

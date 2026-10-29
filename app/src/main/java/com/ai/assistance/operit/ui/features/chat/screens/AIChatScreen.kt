@@ -40,6 +40,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.lifecycle.ViewModel
@@ -936,6 +937,9 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
     var showCharacterSelector by remember { mutableStateOf(false) }
 
     var bottomBarHeightPx by remember { mutableStateOf(0) }
+    // Orbit's "added" note above its message box; the round button above the box steps over it.
+    var orbitNoteHeightPx by remember { mutableStateOf(0) }
+    val noteGapPx = with(density) { 8.dp.roundToPx() }
     var bottomDockHeightPx by remember { mutableStateOf(0) }
     var bottomDockRowCenterPx by remember { mutableStateOf(0) }
     val bottomBarHeightDp = with(density) { bottomBarHeightPx.toDp() }
@@ -1020,6 +1024,8 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                     ) {
                         androidx.compose.runtime.CompositionLocalProvider(
                             com.ai.assistance.operit.ui.features.chat.components.LocalOrbitTurnFloor provides orbitTurnFloor,
+                            com.ai.assistance.operit.ui.features.chat.components.LocalOrbitBottomNoteLift provides
+                                with(density) { orbitNoteHeightPx.toDp() },
                         ) {
                         ChatScreenContent(
                                 modifier = Modifier.fillMaxSize(),
@@ -1259,6 +1265,23 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                                 ChatTodoDock(chatId = currentChatId, todos = todos)
                             }
                         }
+                    }
+
+                    // Orbit: "added" notes and the like rise just above its message box, where the
+                    // finger just was, instead of at the top of the page.
+                    if (orbitLook) {
+                        ChatToastHost(
+                            message = toastEvent,
+                            onDismiss = { actualViewModel.clearToastEvent() },
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .graphicsLayer { translationY = -inputBarTranslationYPx }
+                                .padding(start = 16.dp, end = 16.dp, bottom = bottomBarHeightDp + 8.dp)
+                                // Its height (0 once gone) lifts the "back to the newest" button over it.
+                                .onSizeChanged { orbitNoteHeightPx = if (it.height > 0) it.height + noteGapPx else 0 },
+                            maxHeight = 200.dp,
+                            fromBottom = true,
+                        )
                     }
 
                     CharacterSelectorPanel(
@@ -1588,18 +1611,21 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
             )
         }
 
-        ChatToastHost(
-            message = toastEvent,
-            onDismiss = { actualViewModel.clearToastEvent() },
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .padding(
-                    start = 16.dp,
-                    top = padding.calculateTopPadding() + 50.dp,
-                    end = 16.dp
-                ),
-            maxHeight = 280.dp
-        )
+        // Orbit's own one sits above its message box, which the setup screen does not have.
+        if (!orbitLook || showConfig) {
+            ChatToastHost(
+                message = toastEvent,
+                onDismiss = { actualViewModel.clearToastEvent() },
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(
+                        start = 16.dp,
+                        top = padding.calculateTopPadding() + 50.dp,
+                        end = 16.dp
+                    ),
+                maxHeight = 280.dp
+            )
+        }
     }
 
     // Show popup message dialog when needed
