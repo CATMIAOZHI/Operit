@@ -56,6 +56,10 @@ import com.ai.assistance.operit.ui.components.CustomScaffold
 import java.time.ZoneId
 import kotlinx.coroutines.delay
 import androidx.compose.ui.semantics.contentDescription
+import com.ai.assistance.operit.ui.features.settings.components.SettingsAlertDialog
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogTextButton
+import com.ai.assistance.operit.ui.features.settings.components.LocalSettingsDialogStyle
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogStyle
 
 /** 性能卡指标切换。 */
 internal enum class PerfMetric { TTFT, GENERATION }
@@ -170,7 +174,7 @@ fun TokenUsageStatisticsScreen(
     // 模型/全部删除两步确认（第一步危险确认 → 第二步选择是否同时删除 baseline）。
 
     if (showDeleteRangeDialog) {
-        AlertDialog(
+        SettingsAlertDialog(
             onDismissRequest = { showDeleteRangeDialog = false },
             title = { Text(stringResource(R.string.token_stats_delete_range_title)) },
             text = { Text(stringResource(R.string.token_stats_delete_range_message)) },
@@ -183,7 +187,7 @@ fun TokenUsageStatisticsScreen(
                 )
             },
             dismissButton = {
-                TextButton(onClick = { showDeleteRangeDialog = false }) {
+                SettingsDialogTextButton(onClick = { showDeleteRangeDialog = false }) {
                     Text(stringResource(R.string.settings_cancel))
                 }
             },
@@ -191,12 +195,12 @@ fun TokenUsageStatisticsScreen(
     }
 
     if (showDeleteAllConfirm) {
-        AlertDialog(
+        SettingsAlertDialog(
             onDismissRequest = { showDeleteAllConfirm = false },
             title = { Text(stringResource(R.string.token_stats_delete_all_title)) },
             text = { Text(stringResource(R.string.token_stats_delete_all_message)) },
             confirmButton = {
-                TextButton(
+                SettingsDialogTextButton(
                     onClick = {
                         showDeleteAllConfirm = false
                         showDeleteAllBaseline = true
@@ -209,7 +213,7 @@ fun TokenUsageStatisticsScreen(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showDeleteAllConfirm = false }) {
+                SettingsDialogTextButton(onClick = { showDeleteAllConfirm = false }) {
                     Text(stringResource(R.string.settings_cancel))
                 }
             },
@@ -258,7 +262,7 @@ fun TokenUsageStatisticsScreen(
                 onDismiss = { showDeleteModelBaseline = false },
             )
         } else {
-            AlertDialog(
+            SettingsAlertDialog(
                 onDismissRequest = { deleteModel = null },
                 title = { Text(stringResource(R.string.token_stats_delete_model_title)) },
                 text = {
@@ -271,7 +275,7 @@ fun TokenUsageStatisticsScreen(
                     )
                 },
                 confirmButton = {
-                    TextButton(
+                    SettingsDialogTextButton(
                         onClick = {
                             showDeleteModelBaseline = true
                         },
@@ -283,7 +287,7 @@ fun TokenUsageStatisticsScreen(
                     }
                 },
                 dismissButton = {
-                    TextButton(onClick = { deleteModel = null }) {
+                    SettingsDialogTextButton(onClick = { deleteModel = null }) {
                         Text(stringResource(R.string.settings_cancel))
                     }
                 },
@@ -312,7 +316,7 @@ private fun DeleteBaselineDialog(
             remainingSeconds--
         }
     }
-    AlertDialog(
+    SettingsAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = { Text(message) },
@@ -324,14 +328,26 @@ private fun DeleteBaselineDialog(
             )
         },
         dismissButton = {
-            Row {
+            // Orbit's dialog buttons fill the width, so there they stack.
+            if (LocalSettingsDialogStyle.current == SettingsDialogStyle.ORBIT) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    CountdownDeleteButton(
+                        onClick = onEventsOnly,
+                        remainingSeconds = remainingSeconds,
+                        readyLabel = stringResource(R.string.token_stats_delete_events_only),
+                    )
+                    SettingsDialogTextButton(onClick = onDismiss) {
+                        Text(stringResource(R.string.settings_cancel))
+                    }
+                }
+            } else Row {
                 CountdownDeleteButton(
                     onClick = onEventsOnly,
                     remainingSeconds = remainingSeconds,
                     readyLabel = stringResource(R.string.token_stats_delete_events_only),
                 )
                 Spacer(Modifier.weight(1f))
-                TextButton(onClick = onDismiss) {
+                SettingsDialogTextButton(onClick = onDismiss) {
                     Text(stringResource(R.string.settings_cancel))
                 }
             }
@@ -358,7 +374,7 @@ private fun CountdownDeleteButton(
             }
         }
     }
-    TextButton(
+    SettingsDialogTextButton(
         enabled = remaining == 0,
         onClick = onClick,
         colors = ButtonDefaults.textButtonColors(
@@ -394,7 +410,7 @@ private fun ErrorState(message: String, onRetry: () -> Unit) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(12.dp))
-            TextButton(onClick = onRetry) {
+            SettingsDialogTextButton(onClick = onRetry) {
                 Text(stringResource(R.string.token_stats_retry))
             }
         }
@@ -527,7 +543,7 @@ private fun TokenStatsPageContent(
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
-                            TextButton(onClick = onOpenGroupManagement) {
+                            SettingsDialogTextButton(onClick = onOpenGroupManagement) {
                                 Text(stringResource(R.string.token_stats_group_manage))
                             }
                         }
@@ -709,7 +725,7 @@ private fun TokenStatsChartDetailDialog(
             ChartDetailMetric.TOKENS -> R.string.token_stats_detail_tokens
         }
     )
-    AlertDialog(
+    SettingsAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title, fontWeight = FontWeight.Bold) },
         text = {
@@ -748,7 +764,7 @@ private fun TokenStatsChartDetailDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) {
+            SettingsDialogTextButton(onClick = onDismiss) {
                 Text(stringResource(R.string.token_stats_detail_close))
             }
         },

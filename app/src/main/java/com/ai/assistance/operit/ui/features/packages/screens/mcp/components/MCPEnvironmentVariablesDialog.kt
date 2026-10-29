@@ -15,6 +15,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.window.Dialog
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogWindow
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogTextButton
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogSurface
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogActions
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogButton
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 
 /**
  * 环境变量管理对话框
@@ -45,22 +52,22 @@ fun MCPEnvironmentVariablesDialog(
     var newKey by remember { mutableStateOf("") }
     var newValue by remember { mutableStateOf("") }
 
-    Dialog(onDismissRequest = onDismiss) {
-        Surface(
+    SettingsDialogWindow(onDismissRequest = onDismiss) {
+        SettingsDialogSurface(
                 shape = RoundedCornerShape(16.dp),
                 color = MaterialTheme.colorScheme.surface,
                 tonalElevation = 6.dp,
                 shadowElevation = 8.dp,
                 modifier = Modifier.fillMaxWidth().padding(16.dp)
         ) {
-            Column(modifier = Modifier.padding(16.dp).fillMaxWidth()) {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState()).padding(16.dp).fillMaxWidth()) {
                 Text(text = stringResource(R.string.mcp_manage_env_variables), style = MaterialTheme.typography.headlineSmall)
 
                 Spacer(modifier = Modifier.height(16.dp))
 
                 // 环境变量列表
                 if (envVarsList.isNotEmpty()) {
-                    LazyColumn(modifier = Modifier.weight(1f, false).fillMaxWidth()) {
+                    LazyColumn(modifier = Modifier.heightIn(max = 240.dp).fillMaxWidth()) {
                         items(envVarsList) { (key, value) ->
                             Row(
                                     modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
@@ -129,12 +136,14 @@ fun MCPEnvironmentVariablesDialog(
                 Spacer(modifier = Modifier.height(16.dp))
 
                 // 按钮行
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) }
+                SettingsDialogActions(material = { buttons ->
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { buttons() }
+                }) {
+                    SettingsDialogTextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) }
 
                     Spacer(modifier = Modifier.width(8.dp))
 
-                    Button(
+                    SettingsDialogButton(
                             onClick = { onConfirm(envVarsList.associate { it.first to it.second }) }
                     ) { Text(stringResource(R.string.mcp_confirm)) }
                 }

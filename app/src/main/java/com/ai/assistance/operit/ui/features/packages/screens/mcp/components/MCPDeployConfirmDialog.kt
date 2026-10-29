@@ -15,6 +15,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogWindow
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogTextButton
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogSurface
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogActions
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogButton
+import androidx.compose.foundation.verticalScroll
 
 /** MCP插件部署确认对话框 提供直接部署和自定义部署两个选项 */
 @Composable
@@ -24,17 +30,17 @@ fun MCPDeployConfirmDialog(
         onConfirm: () -> Unit,
         onCustomize: () -> Unit
 ) {
-    Dialog(
+    SettingsDialogWindow(
             onDismissRequest = onDismissRequest,
             properties = DialogProperties(dismissOnBackPress = true, dismissOnClickOutside = true)
     ) {
-        Surface(
+        SettingsDialogSurface(
                 modifier = Modifier.fillMaxWidth().wrapContentHeight(),
                 shape = RoundedCornerShape(16.dp),
                 color = MaterialTheme.colorScheme.surface,
                 tonalElevation = 6.dp
         ) {
-            Column(modifier = Modifier.fillMaxWidth().padding(24.dp)) {
+            Column(modifier = Modifier.fillMaxWidth().verticalScroll(androidx.compose.foundation.rememberScrollState()).padding(24.dp)) {
                 // 标题区域
                 Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -74,19 +80,21 @@ fun MCPDeployConfirmDialog(
                 Spacer(modifier = Modifier.height(24.dp))
 
                 // 底部按钮
-                @OptIn(ExperimentalLayoutApi::class)
-                FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
-                        verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically)
-                ) {
+                SettingsDialogActions(material = { buttons ->
+                    @OptIn(ExperimentalLayoutApi::class)
+                    FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                            verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically)
+                    ) { buttons() }
+                }) {
                     // 取消按钮
-                    TextButton(
+                    SettingsDialogTextButton(
                             onClick = onDismissRequest,
                     ) { Text(stringResource(R.string.mcp_cancel)) }
 
                     // 自定义按钮 - 改为TextButton以节省空间
-                    TextButton(
+                    SettingsDialogTextButton(
                             onClick = {
                                 // 只调用自定义回调，由主程序负责处理确认对话框的关闭
                                 onCustomize()
@@ -98,7 +106,7 @@ fun MCPDeployConfirmDialog(
                     ) { Text(stringResource(R.string.mcp_custom_command)) }
 
                     // 部署按钮
-                    Button(
+                    SettingsDialogButton(
                             onClick = {
                                 onConfirm()
                                 onDismissRequest()

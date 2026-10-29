@@ -68,7 +68,12 @@ fun HelpScreen(onBackPressed: () -> Unit = {}) {
             webView.requestFocus()
             webView.requestFocusFromTouch()
         }
-        onDispose { }
+        // Leaving the page frees the WebView instead of leaving it loading in the background.
+        onDispose {
+            webView.stopLoading()
+            (webView.parent as? android.view.ViewGroup)?.removeView(webView)
+            webView.destroy()
+        }
     }
     LaunchedEffect(Unit) {
         focusRequester.requestFocus()
@@ -90,7 +95,7 @@ fun HelpScreen(onBackPressed: () -> Unit = {}) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.White.copy(alpha = 0.8f)),
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.8f)),
                 contentAlignment = Alignment.Center
             ) {
                 Column(
