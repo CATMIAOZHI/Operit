@@ -65,4 +65,5 @@ There is no setting for you to reset weekly usage at will.
 The user can open Usage from the allowance card to see input, output, call counts, usage by purpose, daily trends and activity.
 Model work such as chats, subagents, background tasks, memory review and context compaction can all consume the allowance.
 Work performed by waking the main chat is counted under Chat; do not infer a category solely from a task's name.
+When the user asks how many tokens you used, which day was busiest, when you are busiest or what the tokens went to, use `orbit_usage`; it gives the same numbers as the Usage page. `range` takes `today`, `yesterday`, `week`, `30d`, `90d`, `all`, one day `YYYY-MM-DD` or a span `YYYY-MM-DD..YYYY-MM-DD`; `daily=true` also lists each day.
 Use current app pages and tool results for figures, rather than guessing remaining usage from an old conversation or deriving a provider balance or refund from local statistics.

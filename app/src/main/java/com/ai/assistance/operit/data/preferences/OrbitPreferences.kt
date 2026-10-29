@@ -120,6 +120,8 @@ data class OrbitSettings(
     val chatOwners: Map<String, String> = emptyMap(),
     /** Developer option: shows the raw conversations, hidden turns and all, for auditing. */
     val developerMode: Boolean = false,
+    /** Orbit opens only after the system check (fingerprint, face or the screen lock). */
+    val appLock: Boolean = false,
 ) {
     val active: OrbitProfile?
         get() = activeOrbitId?.let { id -> orbits.firstOrNull { it.id == id } }
@@ -171,6 +173,7 @@ class OrbitPreferences private constructor(context: Context) {
                 json.keys().asSequence().associateWith { json.getString(it) }
             }.orEmpty(),
             developerMode = preferences[DEVELOPER_MODE] ?: false,
+            appLock = preferences[APP_LOCK] ?: false,
         )
     }
 
@@ -219,6 +222,10 @@ class OrbitPreferences private constructor(context: Context) {
 
     suspend fun setDeveloperMode(enabled: Boolean) {
         dataStore.edit { it[DEVELOPER_MODE] = enabled }
+    }
+
+    suspend fun setAppLock(enabled: Boolean) {
+        dataStore.edit { it[APP_LOCK] = enabled }
     }
 
     suspend fun setCheckInMinuteOfDay(minuteOfDay: Int) {
@@ -552,6 +559,7 @@ class OrbitPreferences private constructor(context: Context) {
         private val LAST_RUN_OUTCOME = stringPreferencesKey("last_run_outcome")
         private val LAST_RUN_DETAIL = stringPreferencesKey("last_run_detail")
         private val DEVELOPER_MODE = booleanPreferencesKey("orbit_developer_mode")
+        private val APP_LOCK = booleanPreferencesKey("orbit_app_lock")
 
         private fun decodeOrbits(raw: String?): List<OrbitProfile> {
             if (raw.isNullOrBlank()) return emptyList()

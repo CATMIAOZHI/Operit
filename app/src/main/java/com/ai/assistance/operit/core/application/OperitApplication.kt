@@ -149,6 +149,7 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
             com.ai.assistance.operit.core.config.DistributionConfig.TERMINAL_REPOSITORY
         )
         com.ai.assistance.operit.util.AppActivityTracker.register(this)
+        com.ai.assistance.operit.features.orbit.OrbitAppLock.register(this)
 
         configureOpenMpEnvironment()
         Thread.setDefaultUncaughtExceptionHandler(GlobalExceptionHandler(this))

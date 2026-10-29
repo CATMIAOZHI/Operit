@@ -176,11 +176,53 @@ fun OrbitScreen(
     chatContent: @Composable (chatId: String, header: @Composable () -> Unit) -> Unit,
 ) {
     val context = LocalContext.current
-    val resources = LocalResources.current
     val preferences = remember { OrbitPreferences.getInstance(context) }
     // Settings already read open the page at once; only the very first visit waits for them.
     val settings by preferences.settingsFlow.collectAsState(initial = preferences.loadedSnapshot())
     val loadedSettings = settings ?: return
+    // Outside the lock, so locking again never hands the screen back to the chat from before.
+    loadedSettings.activeOrbitId?.let { androidx.compose.runtime.key(it) { OrbitRestoresPreviousChat(it) } }
+    // With the app lock on, nothing of Orbit draws until the system check is passed.
+    OrbitAppLockGate(enabled = loadedSettings.appLock, orbit = loadedSettings.active) {
+        OrbitScreenContent(loadedSettings, hasBackgroundImage, onManageRoleCards, chatContent)
+    }
+}
+
+/**
+ * The chat screen follows the app-wide current chat. It shows this Orbit while the page is open;
+ * put the chat the user had back when the page closes. Sending in an Orbit chat always uses
+ * Orbit's own Soul.md, whatever role card is active elsewhere.
+ */
+@Composable
+private fun OrbitRestoresPreviousChat(orbitId: String) {
+    val context = LocalContext.current
+    DisposableEffect(orbitId) {
+        val core = ChatRuntimeHolder.getInstance(context.applicationContext).getCore(ChatRuntimeSlot.MAIN)
+        val orbitPreferences = OrbitPreferences.getInstance(context.applicationContext)
+        fun isThisOrbit(chatId: String?) = orbitPreferences.snapshot.orbitForChat(chatId)?.id == orbitId
+        val previousChatId = core.currentChatId.value?.takeIf { !isThisOrbit(it) }
+        onDispose {
+            if (previousChatId != null) {
+                CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate).launch {
+                    // Read the settings fresh: a side chat made a moment ago may not be in the snapshot yet.
+                    val shown = core.currentChatId.value
+                    if (orbitPreferences.current().orbitForChat(shown)?.id == orbitId) {
+                        core.switchChat(previousChatId, scrollToBottom = false)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun OrbitScreenContent(
+    loadedSettings: OrbitSettings,
+    hasBackgroundImage: Boolean,
+    onManageRoleCards: () -> Unit,
+    chatContent: @Composable (chatId: String, header: @Composable () -> Unit) -> Unit,
+) {
+    val context = LocalContext.current
     val activeOrbitId = loadedSettings.activeOrbitId
 
     // A fresh install with no Orbit yet starts with the quick setup (provider + key + models).
@@ -579,26 +621,6 @@ private fun OrbitChatPage(
         }
     }
 
-    // The chat screen follows the app-wide current chat. It shows this Orbit while the page is
-    // open; put the chat the user had back when the page closes. Sending in an Orbit chat always
-    // uses Orbit's own Soul.md, whatever role card is active elsewhere.
-    DisposableEffect(orbit.id) {
-        val core = ChatRuntimeHolder.getInstance(context.applicationContext).getCore(ChatRuntimeSlot.MAIN)
-        val orbitPreferences = OrbitPreferences.getInstance(context.applicationContext)
-        fun isThisOrbit(chatId: String?) = orbitPreferences.snapshot.orbitForChat(chatId)?.id == orbit.id
-        val previousChatId = core.currentChatId.value?.takeIf { !isThisOrbit(it) }
-        onDispose {
-            if (previousChatId != null) {
-                CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate).launch {
-                    // Read the settings fresh: a side chat made a moment ago may not be in the snapshot yet.
-                    val shown = core.currentChatId.value
-                    if (orbitPreferences.current().orbitForChat(shown)?.id == orbit.id) {
-                        core.switchChat(previousChatId, scrollToBottom = false)
-                    }
-                }
-            }
-        }
-    }
 
     // The chat always stays underneath, so closing the profile never reloads it. The profile
     // grows out of Orbit's picture over it, and the pages opened from it slide in from the right.
@@ -959,6 +981,7 @@ private fun OrbitChatPage(
                     onOpenText = { push(OrbitSubPage.TEXT_SETTINGS) },
                     onOpenAutomation = { push(OrbitSubPage.AUTOMATION_SETTINGS) },
                     onOpenBackup = { push(OrbitSubPage.BACKUP) },
+                    onOpenAbout = { push(OrbitSubPage.ABOUT) },
                     onPause = back,
                 )
                 OrbitSubPage.CHANNELS -> OrbitChannelsPage(orbit, onBack = back,
@@ -979,6 +1002,9 @@ private fun OrbitChatPage(
                 OrbitSubPage.TEXT_SETTINGS -> OrbitTextSettingsPage(onBack = back)
                 OrbitSubPage.AUTOMATION_SETTINGS -> OrbitAutomationSettingsPage(onBack = back)
                 OrbitSubPage.BACKUP -> OrbitBackupSettingsPage(onBack = back)
+                OrbitSubPage.ABOUT -> OrbitAboutPage(onBack = back,
+                    onOpenUpdateHistory = { push(OrbitSubPage.UPDATE_HISTORY) })
+                OrbitSubPage.UPDATE_HISTORY -> OrbitUpdateHistoryPage(onBack = back)
                 OrbitSubPage.PHONE_PERMISSIONS -> OrbitPhonePermissionsPage(onBack = back,
                     onOpenDeviceAccess = { push(OrbitSubPage.DEVICE_ACCESS) })
                 OrbitSubPage.DEVICE_ACCESS -> OrbitDeviceAccessPage(orbitName(orbit), onBack = back, onDraft = ::draftToChat)
@@ -1106,7 +1132,7 @@ private fun OrbitChatPage(
     vaultRequest?.takeIf { it.orbitId == orbit.id }?.let { OrbitVaultEntrySheet(orbit = orbit, request = it) }
 }
 
-private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, ALIGNMENT, FILES, PACKAGES, TOOL_PERMISSIONS, TOOL_ACCESS, VAULT, VAULT_ENTRY, USAGE, USAGE_TRENDS, APPEARANCE, PET, MODELS, CONTEXT, MODEL_CONFIG, PHONE_PERMISSIONS, DEVICE_ACCESS, NOTIFICATION_SETTINGS, SPEECH_SETTINGS, CHANNELS, WEIXIN, TEXT_SETTINGS, AUTOMATION_SETTINGS, BACKUP }
+private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, ALIGNMENT, FILES, PACKAGES, TOOL_PERMISSIONS, TOOL_ACCESS, VAULT, VAULT_ENTRY, USAGE, USAGE_TRENDS, APPEARANCE, PET, MODELS, CONTEXT, MODEL_CONFIG, PHONE_PERMISSIONS, DEVICE_ACCESS, NOTIFICATION_SETTINGS, SPEECH_SETTINGS, CHANNELS, WEIXIN, TEXT_SETTINGS, AUTOMATION_SETTINGS, BACKUP, ABOUT, UPDATE_HISTORY }
 
 /** iOS-like timing: a quick start that settles softly (UIKit's default presentation curve). */
 internal object OrbitMotion {
@@ -1512,6 +1538,7 @@ private fun OrbitSettingsPage(
     onOpenText: () -> Unit,
     onOpenAutomation: () -> Unit,
     onOpenBackup: () -> Unit,
+    onOpenAbout: () -> Unit,
     onPause: () -> Unit,
 ) {
     OrbitPageBack(onBack = onBack)
@@ -1545,7 +1572,7 @@ private fun OrbitSettingsPage(
         onOpenAutomation = onOpenAutomation, onOpenBackup = onOpenBackup,
         onOpenPrompts = onOpenPrompts, onOpenPackages = onOpenPackages,
         onOpenToolAccess = onOpenToolAccess, onOpenVault = onOpenVault, onOpenImport = onOpenImport,
-        onOpenToolPermissions = onOpenToolPermissions,
+        onOpenToolPermissions = onOpenToolPermissions, onOpenAbout = onOpenAbout,
     )
     // Kept while searching, so clearing the search returns to the same place on the page.
     val pageScroll = rememberScrollState()
@@ -1716,6 +1743,43 @@ private fun OrbitSettingsPage(
                     icon = lucide("shield-check"),
                 )
                 SettingsCard(backgroundColor = cardColor) {
+                    // Turning the lock on or off takes the same system check it asks for.
+                    var pendingLock by remember { mutableStateOf<Boolean?>(null) }
+                    val lockCheck = rememberOrbitDeviceCheck { ok ->
+                        val target = pendingLock
+                        pendingLock = null
+                        if (ok && target != null) {
+                            if (target) com.ai.assistance.operit.features.orbit.OrbitAppLock.markUnlocked()
+                            CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate).launch {
+                                preferences.setAppLock(target)
+                            }
+                        }
+                    }
+                    val lockTitleOn = stringResource(R.string.orbit_app_lock_turn_on)
+                    val lockTitleOff = stringResource(R.string.orbit_app_lock_turn_off)
+                    SettingsSwitchRow(
+                        modifier = anchor(SWITCH_APP_LOCK),
+                        title = stringResource(R.string.orbit_app_lock),
+                        subtitle = stringResource(R.string.orbit_app_lock_desc),
+                        checked = settings.appLock,
+                        searchable = false,
+                        onCheckedChange = { enabled ->
+                            if (!com.ai.assistance.operit.features.orbit.OrbitAppLock.deviceSecure(context)) {
+                                // With no screen lock left there is nothing to check; turning off is let through.
+                                if (enabled) {
+                                    toast(context, R.string.orbit_app_lock_no_screen_lock)
+                                } else {
+                                    CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate).launch {
+                                        preferences.setAppLock(false)
+                                    }
+                                }
+                            } else if (pendingLock == null) {
+                                pendingLock = enabled
+                                lockCheck(if (enabled) lockTitleOn else lockTitleOff)
+                            }
+                        },
+                    )
+                    SettingsRowDivider(inset = false)
                     SettingsNavRow(
                         title = stringResource(R.string.orbit_access_title),
                         subtitle = stringResource(R.string.orbit_access_row_desc),
@@ -1827,6 +1891,16 @@ private fun OrbitSettingsPage(
 
             SettingsCard(backgroundColor = cardColor) {
                 SettingsNavRow(
+                    title = stringResource(R.string.nav_about),
+                    subtitle = stringResource(R.string.orbit_about_row),
+                    icon = lucide("info"),
+                    searchable = false,
+                    onClick = onOpenAbout,
+                )
+            }
+
+            SettingsCard(backgroundColor = cardColor) {
+                SettingsNavRow(
                     title = stringResource(R.string.orbit_pause, orbitName(orbit)),
                     subtitle = stringResource(R.string.orbit_pause_desc),
                     icon = lucide("pause"),
@@ -1859,6 +1933,7 @@ private fun OrbitSettingsPage(
 private const val SWITCH_LAUNCH_MODE = "launch_mode"
 private const val SWITCH_SHARED_LOGIN = "shared_login"
 private const val SWITCH_DEVELOPER = "developer"
+private const val SWITCH_APP_LOCK = "app_lock"
 
 /** The rows of Orbit's settings page for its search (same names and notes as shown): pages, and switches on it. */
 @Composable
@@ -1882,6 +1957,7 @@ private fun orbitSettingsEntries(
     onOpenVault: () -> Unit,
     onOpenImport: () -> Unit,
     onOpenToolPermissions: () -> Unit,
+    onOpenAbout: () -> Unit,
 ): List<OrbitSettingsEntry> {
     val settingsTitle = stringResource(R.string.orbit_settings)
     val device = stringResource(R.string.orbit_section_device)
@@ -1908,8 +1984,10 @@ private fun orbitSettingsEntries(
         add(entry(R.string.orbit_access_title, R.string.orbit_access_row_desc, "shield", privacy, onOpenToolAccess))
         add(entry(R.string.orbit_vault_row, R.string.orbit_vault_row_desc, "key-round", privacy, onOpenVault))
         add(entry(R.string.orbit_import_row, R.string.orbit_import_row_desc, "download", privacy, onOpenImport))
+        add(entry(R.string.nav_about, R.string.orbit_about_row, "info", settingsTitle, onOpenAbout))
         // Switches on the page itself: found, they are shown where they are.
         add(entry(R.string.launch_mode_setting_title, R.string.launch_mode_setting_orbit, "rocket", settingsTitle) { onShowSwitch(SWITCH_LAUNCH_MODE) })
+        add(entry(R.string.orbit_app_lock, R.string.orbit_app_lock_desc, "fingerprint", privacy) { onShowSwitch(SWITCH_APP_LOCK) })
         add(entry(R.string.orbit_browser_share_login, R.string.orbit_browser_share_login_off, "link", privacy) { onShowSwitch(SWITCH_SHARED_LOGIN) })
         add(entry(R.string.orbit_developer_switch, R.string.orbit_developer_switch_desc, "code-xml", developer) { onShowSwitch(SWITCH_DEVELOPER) })
         if (developerMode) {

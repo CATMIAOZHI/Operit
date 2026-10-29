@@ -36,8 +36,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.core.config.DistributionConfig
 import com.ai.assistance.operit.data.updates.FullUpdateInstaller
@@ -54,6 +52,16 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import com.ai.assistance.operit.ui.components.CustomScaffold
+import com.ai.assistance.operit.ui.features.orbit.OrbitDialogAction
+import com.ai.assistance.operit.ui.features.settings.components.LocalSettingsDialogStyle
+import com.ai.assistance.operit.ui.features.settings.components.SettingsAlertDialog
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogButton
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogStyle
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogSurface
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogTextButton
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogWindow
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogs
+import com.ai.assistance.operit.ui.features.settings.components.settingsCardColor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
@@ -384,10 +392,12 @@ private fun SettingsGroup(
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit
 ) {
+    // Inside Orbit the groups look like Orbit's own settings cards.
+    val orbit = LocalSettingsDialogStyle.current == SettingsDialogStyle.ORBIT
     Surface(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        shape = RoundedCornerShape(if (orbit) 28.dp else 18.dp),
+        color = if (orbit) settingsCardColor(false) else MaterialTheme.colorScheme.surfaceContainerLow,
         tonalElevation = 0.dp,
         shadowElevation = 0.dp
     ) {
@@ -456,13 +466,23 @@ private fun SettingsRow(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+/** The about page; Orbit opens it with [SettingsDialogStyle.ORBIT] so its cards and dialogs match Orbit. */
 @Composable
 fun AboutScreen(
+    navigateToUpdateHistory: () -> Unit,
+    dialogStyle: SettingsDialogStyle = SettingsDialogStyle.MATERIAL,
+) {
+    SettingsDialogs(dialogStyle) { AboutScreenContent(navigateToUpdateHistory) }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AboutScreenContent(
     navigateToUpdateHistory: () -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val orbitStyle = LocalSettingsDialogStyle.current == SettingsDialogStyle.ORBIT
 
     val preferences = remember { UserPreferencesManager.getInstance(context) }
     val betaEnabled = preferences.betaPlanEnabled.collectAsState(initial = false).value
@@ -843,9 +863,10 @@ fun AboutScreen(
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .background(MaterialTheme.colorScheme.surface)
+                .background(if (orbitStyle) MaterialTheme.colorScheme.background else MaterialTheme.colorScheme.surface)
                 .padding(innerPadding),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+            contentPadding = if (orbitStyle) PaddingValues(start = 20.dp, end = 20.dp, top = 0.dp, bottom = 32.dp)
+                else PaddingValues(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             item {
@@ -1055,7 +1076,7 @@ fun UpdateDialog(
     onDismiss: () -> Unit,
     onConfirm: () -> Unit
 ) {
-    AlertDialog(
+    SettingsAlertDialog(
         onDismissRequest = onDismiss,
         icon = {
             val icon = when (updateStatus) {
@@ -1120,8 +1141,9 @@ fun UpdateDialog(
                 }
             }
         },
+        orbitScrollable = false,
         confirmButton = {
-            Button(
+            SettingsDialogButton(
                 onClick = onConfirm,
                 enabled = updateStatus !is UpdateStatus.Checking
             ) {
@@ -1134,12 +1156,20 @@ fun UpdateDialog(
                 )
             }
         },
-        dismissButton = {
-            if (updateStatus !is UpdateStatus.Checking) {
-                TextButton(onClick = onDismiss) { Text(stringResource(id = R.string.close)) }
-            }
-        }
+        dismissButton = if (updateStatus !is UpdateStatus.Checking) {
+            { SettingsDialogTextButton(onClick = onDismiss) { Text(stringResource(id = R.string.close)) } }
+        } else null
     )
+}
+
+/** The cancel or close button of an update progress window: Orbit's pill inside Orbit. */
+@Composable
+private fun ProgressDialogAction(onClick: () -> Unit, text: String) {
+    if (LocalSettingsDialogStyle.current == SettingsDialogStyle.ORBIT) {
+        OrbitDialogAction(onClick = onClick, secondary = true) { Text(text) }
+    } else {
+        TextButton(onClick = onClick) { Text(text) }
+    }
 }
 
 @Composable
@@ -1150,14 +1180,9 @@ private fun PatchUpdateProgressDialog(
     val isError = state.phase == PatchUpdatePhase.ERROR
     val showCancel = !isError
 
-    Dialog(
-        onDismissRequest = { },
-        properties = DialogProperties(
-            dismissOnBackPress = false,
-            dismissOnClickOutside = false
-        )
-    ) {
-        Surface(
+    // Back and outside taps do nothing: the window closes only through its own button.
+    SettingsDialogWindow(onDismissRequest = { }) {
+        SettingsDialogSurface(
             shape = RoundedCornerShape(16.dp),
             tonalElevation = 6.dp,
             modifier = Modifier.fillMaxWidth()
@@ -1328,13 +1353,9 @@ private fun PatchUpdateProgressDialog(
                     horizontalArrangement = Arrangement.End
                 ) {
                     if (showCancel) {
-                        TextButton(onClick = onCancel) {
-                            Text(stringResource(id = R.string.cancel))
-                        }
+                        ProgressDialogAction(onClick = onCancel, text = stringResource(id = R.string.cancel))
                     } else if (isError) {
-                        TextButton(onClick = onCancel) {
-                            Text(stringResource(id = R.string.close))
-                        }
+                        ProgressDialogAction(onClick = onCancel, text = stringResource(id = R.string.close))
                     }
                 }
             }
@@ -1349,7 +1370,7 @@ private fun FullUpdateMethodDialog(
     onBrowser: () -> Unit,
     onInApp: () -> Unit
 ) {
-    AlertDialog(
+    SettingsAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(id = R.string.select_update_method)) },
         text = {
@@ -1399,7 +1420,9 @@ private fun FullUpdateMethodDialog(
             }
         },
         confirmButton = {},
-        dismissButton = {}
+        dismissButton = {
+            SettingsDialogTextButton(onClick = onDismiss) { Text(stringResource(id = R.string.cancel)) }
+        }
     )
 }
 
@@ -1411,14 +1434,9 @@ private fun FullUpdateProgressDialog(
     val isError = state.phase == FullUpdatePhase.ERROR
     val showCancel = !isError
 
-    Dialog(
-        onDismissRequest = { },
-        properties = DialogProperties(
-            dismissOnBackPress = false,
-            dismissOnClickOutside = false
-        )
-    ) {
-        Surface(
+    // Back and outside taps do nothing: the window closes only through its own button.
+    SettingsDialogWindow(onDismissRequest = { }) {
+        SettingsDialogSurface(
             shape = RoundedCornerShape(16.dp),
             tonalElevation = 6.dp,
             modifier = Modifier.fillMaxWidth()
@@ -1489,13 +1507,9 @@ private fun FullUpdateProgressDialog(
                     horizontalArrangement = Arrangement.End
                 ) {
                     if (showCancel) {
-                        TextButton(onClick = onCancel) {
-                            Text(stringResource(id = R.string.cancel))
-                        }
+                        ProgressDialogAction(onClick = onCancel, text = stringResource(id = R.string.cancel))
                     } else if (isError) {
-                        TextButton(onClick = onCancel) {
-                            Text(stringResource(id = R.string.close))
-                        }
+                        ProgressDialogAction(onClick = onCancel, text = stringResource(id = R.string.close))
                     }
                 }
             }
@@ -1637,7 +1651,7 @@ fun DownloadSourceDialog(
         }
     }
 
-    AlertDialog(
+    SettingsAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(id = R.string.select_download_source)) },
         text = {
@@ -1665,19 +1679,15 @@ fun DownloadSourceDialog(
                 }
             }
         },
+        orbitScrollable = false,
         confirmButton = {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                TextButton(onClick = onDismiss) {
-                    Text(stringResource(id = R.string.cancel))
-                }
-                Spacer(modifier = Modifier.width(8.dp))
-                Button(onClick = { autoSelect() }, enabled = autoEnabled) {
-                    Text(stringResource(id = R.string.auto_select))
-                }
+            SettingsDialogButton(onClick = { autoSelect() }, enabled = autoEnabled) {
+                Text(stringResource(id = R.string.auto_select))
+            }
+        },
+        dismissButton = {
+            SettingsDialogTextButton(onClick = onDismiss) {
+                Text(stringResource(id = R.string.cancel))
             }
         }
     )
@@ -1826,7 +1836,7 @@ fun PatchDownloadSourceDialog(
         }
     }
 
-    AlertDialog(
+    SettingsAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(id = R.string.select_download_source)) },
         text = {
@@ -1865,19 +1875,15 @@ fun PatchDownloadSourceDialog(
                 }
             }
         },
+        orbitScrollable = false,
         confirmButton = {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                TextButton(onClick = onDismiss) {
-                    Text(stringResource(id = R.string.cancel))
-                }
-                Spacer(modifier = Modifier.width(8.dp))
-                Button(onClick = { autoSelect() }, enabled = autoEnabled) {
-                    Text(stringResource(id = R.string.auto_select))
-                }
+            SettingsDialogButton(onClick = { autoSelect() }, enabled = autoEnabled) {
+                Text(stringResource(id = R.string.auto_select))
+            }
+        },
+        dismissButton = {
+            SettingsDialogTextButton(onClick = onDismiss) {
+                Text(stringResource(id = R.string.cancel))
             }
         }
     )
