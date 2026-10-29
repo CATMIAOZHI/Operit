@@ -274,6 +274,24 @@ fun ChatScreenContent(
     val activeRunStartedAt by actualViewModel.activeRunStartedAt.collectAsState()
     val userWaitingChatIds by actualViewModel.userWaitingChatIds.collectAsState()
     val summaryHeldSends by actualViewModel.summaryHeldSends.collectAsState()
+    // Messages handed to Orbit's running turn: shown as sent at once, until their chat rows are in.
+    val pendingQueueStates by actualViewModel.pendingMessageQueueStates.collectAsState()
+    // Sent here while the floating window's runtime runs Orbit's reply: they go through that runtime,
+    // and show here the same way until their rows are in.
+    val floatingSends by com.ai.assistance.operit.services.floating.FloatingOrbit.sending.collectAsState()
+    val steeringSends = remember(pendingQueueStates, floatingSends, currentChatId, chatHistory) {
+        val queued = pendingQueueStates[currentChatId]?.messages?.filter { it.isSteering }.orEmpty()
+        val newestUser = chatHistory.lastOrNull { it.sender == "user" }?.timestamp ?: Long.MIN_VALUE
+        // In the order they were sent, wherever from: the rows come in that order.
+        (queued + floatingSends
+            .filter { it.chatId == currentChatId && (it.sentSince == null || newestUser < it.sentSince) }
+            .map {
+                com.ai.assistance.operit.ui.features.chat.components.style.input.common.PendingQueueMessageItem(
+                    id = Long.MIN_VALUE / 2 - it.id, text = it.content, isSteering = true,
+                    savedAt = it.savedAt, steeringText = it.content, steeringAt = it.at,
+                )
+            }).sortedBy { it.steeringAt }
+    }
     androidx.compose.runtime.CompositionLocalProvider(
         com.ai.assistance.operit.ui.common.dynamicui.LocalDynamicUiSubmit provides
             if (transcriptLocked) null else actualViewModel::submitDynamicUi,
@@ -293,6 +311,7 @@ fun ChatScreenContent(
                         activeRunStartedAt = activeRunStartedAt[currentChatId],
                         orbitUserWaiting = currentChatId in userWaitingChatIds,
                         summaryHeldSend = summaryHeldSends[currentChatId],
+                        steeringSends = steeringSends,
                         enableDialogs = enableMessageDialogs && !readOnlyTranscript,
                         allowTranscriptMutation = !transcriptLocked,
                         enableToolDetailDialogs = enableToolDetailDialogs ?: enableMessageDialogs,
@@ -432,6 +451,7 @@ fun ChatScreenContent(
                         activeRunStartedAt = activeRunStartedAt[currentChatId],
                         orbitUserWaiting = currentChatId in userWaitingChatIds,
                         summaryHeldSend = summaryHeldSends[currentChatId],
+                        steeringSends = steeringSends,
                         enableDialogs = enableMessageDialogs && !readOnlyTranscript,
                         allowTranscriptMutation = !transcriptLocked,
                         enableToolDetailDialogs = enableToolDetailDialogs ?: enableMessageDialogs,
@@ -538,13 +558,16 @@ fun ChatScreenContent(
         }
 
         // 多选模式底部操作栏
+        // In Orbit's chat, an "added" note above the message box lifts the bar over it (0 elsewhere).
+        OrbitNoteLift(
+            Modifier
+                .align(Alignment.BottomCenter)
+                .padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = bottomInset + 16.dp)
+        ) {
         AnimatedVisibility(
             visible = isMultiSelectMode && !transcriptLocked,
             enter = fadeIn() + slideInVertically(initialOffsetY = { it }),
             exit = fadeOut() + slideOutVertically(targetOffsetY = { it }),
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = bottomInset + 16.dp)
         ) {
             if (orbitMessageHost != null) {
                 fun picked() = selectedMessageIndices.sorted().mapNotNull { chatHistory.getOrNull(it) }
@@ -721,6 +744,7 @@ fun ChatScreenContent(
                     }
                 }
             }
+        }
         }
 
         // Stop reading button

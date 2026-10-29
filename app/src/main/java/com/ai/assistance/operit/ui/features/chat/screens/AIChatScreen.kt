@@ -40,6 +40,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.lifecycle.ViewModel
@@ -936,6 +937,9 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
     var showCharacterSelector by remember { mutableStateOf(false) }
 
     var bottomBarHeightPx by remember { mutableStateOf(0) }
+    // Orbit's "added" note above its message box; the round button above the box steps over it.
+    var orbitNoteHeightPx by remember { mutableStateOf(0) }
+    val noteGapPx = with(density) { 8.dp.roundToPx() }
     var bottomDockHeightPx by remember { mutableStateOf(0) }
     var bottomDockRowCenterPx by remember { mutableStateOf(0) }
     val bottomBarHeightDp = with(density) { bottomBarHeightPx.toDp() }
@@ -1020,6 +1024,8 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                     ) {
                         androidx.compose.runtime.CompositionLocalProvider(
                             com.ai.assistance.operit.ui.features.chat.components.LocalOrbitTurnFloor provides orbitTurnFloor,
+                            com.ai.assistance.operit.ui.features.chat.components.LocalOrbitBottomNoteLift provides
+                                with(density) { orbitNoteHeightPx.toDp() },
                         ) {
                         ChatScreenContent(
                                 modifier = Modifier.fillMaxSize(),
@@ -1259,6 +1265,23 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                                 ChatTodoDock(chatId = currentChatId, todos = todos)
                             }
                         }
+                    }
+
+                    // Orbit: "added" notes and the like rise just above its message box, where the
+                    // finger just was, instead of at the top of the page.
+                    if (orbitLook) {
+                        ChatToastHost(
+                            message = toastEvent,
+                            onDismiss = { actualViewModel.clearToastEvent() },
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .graphicsLayer { translationY = -inputBarTranslationYPx }
+                                .padding(start = 16.dp, end = 16.dp, bottom = bottomBarHeightDp + 8.dp)
+                                // Its height (0 once gone) lifts the "back to the newest" button over it.
+                                .onSizeChanged { orbitNoteHeightPx = if (it.height > 0) it.height + noteGapPx else 0 },
+                            maxHeight = 200.dp,
+                            fromBottom = true,
+                        )
                     }
 
                     CharacterSelectorPanel(
@@ -1588,18 +1611,21 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
             )
         }
 
-        ChatToastHost(
-            message = toastEvent,
-            onDismiss = { actualViewModel.clearToastEvent() },
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .padding(
-                    start = 16.dp,
-                    top = padding.calculateTopPadding() + 50.dp,
-                    end = 16.dp
-                ),
-            maxHeight = 280.dp
-        )
+        // Orbit's own one sits above its message box, which the setup screen does not have.
+        if (!orbitLook || showConfig) {
+            ChatToastHost(
+                message = toastEvent,
+                onDismiss = { actualViewModel.clearToastEvent() },
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(
+                        start = 16.dp,
+                        top = padding.calculateTopPadding() + 50.dp,
+                        end = 16.dp
+                    ),
+                maxHeight = 280.dp
+            )
+        }
     }
 
     // Show popup message dialog when needed
@@ -1926,13 +1952,9 @@ private fun ChatInputBottomBar(
 
     fun steerPendingQueueMessage(id: Long) {
         val chatId = currentChatId ?: return
-        val expectedTurnId = actualViewModel.steeringTurnId(chatId)
-        if (expectedTurnId == null) {
-            // While the history is summarized before a send, the message waits in the queue and
-            // goes out after that reply.
-            actualViewModel.showToast(context.getString(
-                if (isSendTriggeredSummarizing) R.string.chat_steer_after_compaction else R.string.chat_steer_unavailable))
-            return
+        if (actualViewModel.steeringTurnId(chatId) == null && isSendTriggeredSummarizing) {
+            // While the history is summarized before a send, the message goes out after that reply.
+            actualViewModel.showToast(context.getString(R.string.chat_steer_after_compaction))
         }
         val item = removePendingQueueMessageById(id) ?: return
         coroutineScope.launch {
@@ -1960,7 +1982,12 @@ private fun ChatInputBottomBar(
                 }
                 showChatInputHookMessage(decision.noticeMessage)
                 val finalItem = item.copy(text = decision.text ?: item.text)
-                resolved = actualViewModel.trySteerQueuedMessage(chatId, expectedTurnId, finalItem)
+                // Into the running reply; when it cannot take it (not open yet, or refused), the
+                // message waits for the chat to be free in the shared line, so later ones (also the
+                // floating window's) go after it.
+                val expectedTurnId = actualViewModel.steeringTurnId(chatId)
+                resolved = (expectedTurnId != null && actualViewModel.trySteerQueuedMessage(chatId, expectedTurnId, finalItem)) ||
+                    actualViewModel.sendQueuedWhenFree(chatId, finalItem)
                 if (!resolved) {
                     actualViewModel.showToast(context.getString(R.string.chat_steer_unavailable))
                 } else {
@@ -1983,6 +2010,9 @@ private fun ChatInputBottomBar(
         val queueChatId = currentChatId ?: return@LaunchedEffect
         if (actualViewModel.hasPendingQueueAutoDequeue(queueChatId, isQueueBlocked)) {
             delay(250)
+            // Orbit's chat may be replying in the floating window's runtime, which this effect does
+            // not observe: wait for it here, so the queue still goes out when it ends.
+            while (actualViewModel.isFloatingOrbitBusy(queueChatId)) delay(300)
             if (!actualViewModel.isPendingQueueTargetBusy(queueChatId)) {
                 actualViewModel.takeNextPendingQueueAutoDequeue(queueChatId)?.let { item ->
                     sendQueuedItemNow(queueChatId, item)
@@ -2020,6 +2050,8 @@ private fun ChatInputBottomBar(
         ) ?: return
         actualViewModel.updateUserMessage(TextFieldValue(""))
         steerPendingQueueMessage(id)
+        // The user just sent it: follow the newest messages again, so it shows.
+        onRequestAutoScrollToBottom()
     }
     // In Orbit a message going into the current turn is already in the chat; the queue bar only
     // shows what still waits, so it does not flash up while the message is handed over.

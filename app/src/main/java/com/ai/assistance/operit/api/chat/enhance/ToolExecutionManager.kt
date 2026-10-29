@@ -862,6 +862,7 @@ object ToolExecutionManager {
                 batchSize = batchSize,
                 deferCircuitBreaker = deferCircuitBreaker,
                 liveAssistantContent = liveAssistantContent,
+                lookupDefault = permissionTool.name == invocation.tool.name,
             )
 
         if (permissionDecision is ToolPermissionDecision.Denied) {
@@ -921,6 +922,11 @@ object ToolExecutionManager {
         resolvedMemorySpaceId: String? = null,
         dynamicUiRunId: String? = null,
     ): List<ToolResult> = coroutineScope {
+        // Marks of calls let through by Orbit's lookup default live only as long as their batch.
+        val batchTargetIds = invocations.map { it.callId ?: "$timingScopeId:${it.invocationIndex}" }
+        coroutineContext[kotlinx.coroutines.Job]?.invokeOnCompletion {
+            toolHandler.getToolPermissionSystem().forgetLookupDefaults(batchTargetIds)
+        }
         // Bind proxy context parameters to host values before any permission review or execution
         // happens, so the reviewed parameter set is exactly the executed one. The model can never
         // supply a reserved package context value. The package lookup is restricted to proxy
@@ -1350,8 +1356,11 @@ object ToolExecutionManager {
         // where order can only decide which reply comes back first.
         val permissionSystem = toolHandler.getToolPermissionSystem()
         val candidateLevels =
-            permissionCandidates.map { (_, _, interceptionTool) ->
-                permissionSystem.getEffectivePermissionLevel(interceptionTool.name, callerChatId)
+            permissionCandidates.map { (_, invocation, interceptionTool) ->
+                permissionSystem.getEffectivePermissionLevel(
+                    interceptionTool.name, callerChatId,
+                    lookupDefault = resolveToolTarget(invocation.tool).tool.name == invocation.tool.name,
+                )
             }
         val reviewsInOrder = batchNeedsReviewOrder(candidateLevels)
 
@@ -1842,6 +1851,36 @@ object ToolExecutionManager {
                         ?.let { com.ai.assistance.operit.features.orbit.OrbitVault.envKeys(context, it.id) }.orEmpty()
                 } catch (e: CancellationException) { throw e } catch (e: Exception) { emptyList() }
                 val executor = toolHandler.getToolExecutorOrActivate(toolName)
+                // Only a direct call can be let through by the lookup default (a proxy call is reviewed).
+                val reviewAgain = executor != null &&
+                    !toolHandler.getToolPermissionSystem()
+                        .orbitDefaultAllowStillHolds(
+                            toolName, invocation.callId ?: "$timingScopeId:${invocation.invocationIndex}", executor,
+                        )
+                if (reviewAgain) {
+                    val changedResult =
+                        ToolResult(
+                            toolName = displayToolName,
+                            success = false,
+                            result = StringResultData(""),
+                            error = "Not run: $toolName was allowed as the app's built-in package tool, " +
+                                "but it now resolves to another source with the same name (such as an MCP server). " +
+                                "Call it again; that call goes through permission review.",
+                        ).withExecutionMetadata(
+                            invocation = invocation,
+                            state = ToolExecutionState.NOT_EXECUTED,
+                        )
+                    ToolExecutionTimingRepository.markFinished(
+                        timingScopeId,
+                        invocation,
+                        changedResult,
+                        durationMs = null,
+                        state = ToolExecutionState.NOT_EXECUTED,
+                    )
+                    recordDiagnostic(invocation, changedResult)
+                    publishResult(changedResult)
+                    return@withContext changedResult
+                }
                 if (executor == null) {
                     // 如果仍然为 null，则构建错误消息
                     val errorMessage =

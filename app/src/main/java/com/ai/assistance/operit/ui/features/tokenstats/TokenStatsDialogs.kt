@@ -55,6 +55,10 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import java.util.Locale
+import com.ai.assistance.operit.ui.features.settings.components.SettingsAlertDialog
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogTextButton
+import com.ai.assistance.operit.ui.features.settings.components.LocalSettingsDialogStyle
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogStyle
 
 // ==== 自定义时间范围（两步日期选择，设备时区自然日边界） ====
 
@@ -135,21 +139,19 @@ internal fun CustomRangeDialog(
             stringResource(R.string.token_stats_custom_range_pick_end)
         }
 
-    DatePickerDialog(
-        onDismissRequest = onDismiss,
-        confirmButton = {
-            TextButton(
+    val confirmButton: @Composable () -> Unit = {
+            SettingsDialogTextButton(
                 enabled = pickerState.selectedDateMillis != null,
                 onClick = {
-                    val selected = pickerState.selectedDateMillis ?: return@TextButton
+                    val selected = pickerState.selectedDateMillis ?: return@SettingsDialogTextButton
                     val date = datePickerMillisToLocalDate(selected)
                     if (step == 0) {
                         startDate = date
                         inlineError = null
                         step = 1
-                        return@TextButton
+                        return@SettingsDialogTextButton
                     }
-                    val start = startDate ?: return@TextButton
+                    val start = startDate ?: return@SettingsDialogTextButton
                     // 结束日包含当天：+1 天 0 点作为半开区间终点（P1-6），同日合法；
                     // 非法边界在对话框内就地提示（不静默停留）。
                     val startMs = start.atStartOfDay(zone).toInstant().toEpochMilli()
@@ -166,9 +168,9 @@ internal fun CustomRangeDialog(
             ) {
                 Text(stringResource(R.string.token_stats_custom_range_confirm))
             }
-        },
-        dismissButton = {
-            TextButton(onClick = { if (step == 0) onDismiss() else step = 0 }) {
+    }
+    val dismissButton: @Composable () -> Unit = {
+            SettingsDialogTextButton(onClick = { if (step == 0) onDismiss() else step = 0 }) {
                 Text(
                     stringResource(
                         if (step == 0) R.string.settings_cancel
@@ -176,8 +178,8 @@ internal fun CustomRangeDialog(
                     )
                 )
             }
-        },
-    ) {
+    }
+    val body: @Composable () -> Unit = {
         Column {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -209,6 +211,26 @@ internal fun CustomRangeDialog(
                     color = MaterialTheme.colorScheme.error,
                 )
             }
+        }
+    }
+    // Inside Orbit the picker sits in Orbit's own dialog; the app keeps Material's date dialog.
+    if (com.ai.assistance.operit.ui.features.settings.components.LocalSettingsDialogStyle.current ==
+        com.ai.assistance.operit.ui.features.settings.components.SettingsDialogStyle.ORBIT
+    ) {
+        SettingsAlertDialog(
+            onDismissRequest = onDismiss,
+            confirmButton = confirmButton,
+            dismissButton = dismissButton,
+            title = { Text(title) },
+            text = body,
+        )
+    } else {
+        DatePickerDialog(
+            onDismissRequest = onDismiss,
+            confirmButton = confirmButton,
+            dismissButton = dismissButton,
+        ) {
+            body()
         }
     }
 }
@@ -319,8 +341,9 @@ internal fun PriceOverrideDialog(
             null
         }
 
-    AlertDialog(
+    SettingsAlertDialog(
         onDismissRequest = onDismiss,
+        orbitScrollable = false,
         title = {
             Text(
                 stringResource(
@@ -420,7 +443,7 @@ internal fun PriceOverrideDialog(
                         value = outputPrice,
                         onChange = { outputPrice = it },
                     )
-                    TextButton(onClick = { showAdvanced = !showAdvanced }) {
+                    SettingsDialogTextButton(onClick = { showAdvanced = !showAdvanced }) {
                         Text(
                             stringResource(
                                 if (showAdvanced) R.string.token_stats_pricing_advanced_hide
@@ -473,7 +496,7 @@ internal fun PriceOverrideDialog(
             }
         },
         confirmButton = {
-            TextButton(
+            SettingsDialogTextButton(
                 enabled = provider.isNotBlank() && model.isNotBlank() && allParsed && configIdValid,
                 onClick = {
                     val parse = { raw: String -> raw.trim().toDoubleOrNull() }
@@ -507,9 +530,26 @@ internal fun PriceOverrideDialog(
             }
         },
         dismissButton = {
-            Row {
+            val orbitStyle = LocalSettingsDialogStyle.current == SettingsDialogStyle.ORBIT
+            // Orbit's dialog buttons fill the width, so there they stack.
+            if (orbitStyle) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (existing != null && onDelete != null) {
-                    TextButton(
+                    SettingsDialogTextButton(
+                        onClick = {
+                            onDelete()
+                            onDismiss()
+                        },
+                        destructive = true,
+                    ) {
+                        Text(stringResource(R.string.token_stats_pricing_delete))
+                    }
+                }
+                SettingsDialogTextButton(onClick = onDismiss) {
+                    Text(stringResource(R.string.settings_cancel))
+                }
+            } else Row {
+                if (existing != null && onDelete != null) {
+                    SettingsDialogTextButton(
                         onClick = {
                             onDelete()
                             onDismiss()
@@ -522,7 +562,7 @@ internal fun PriceOverrideDialog(
                     }
                     Spacer(Modifier.weight(1f))
                 }
-                TextButton(onClick = onDismiss) {
+                SettingsDialogTextButton(onClick = onDismiss) {
                     Text(stringResource(R.string.settings_cancel))
                 }
             }
@@ -576,7 +616,7 @@ internal fun GroupManageDialog(
     var mergeTarget by remember { mutableStateOf<String?>(null) }
     var confirmRestore by remember { mutableStateOf(false) }
 
-    AlertDialog(
+    SettingsAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.token_stats_group_manage)) },
         text = {
@@ -608,7 +648,7 @@ internal fun GroupManageDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                TextButton(
+                SettingsDialogTextButton(
                     enabled = renameInput.isNotBlank(),
                     onClick = {
                         onRename(renameInput.trim())
@@ -632,7 +672,7 @@ internal fun GroupManageDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                TextButton(
+                SettingsDialogTextButton(
                     enabled = newGroupInput.isNotBlank(),
                     onClick = {
                         onCreateAndMerge(newGroupInput.trim())
@@ -663,7 +703,7 @@ internal fun GroupManageDialog(
                         modifier = Modifier.weight(1f),
                     )
                     Box {
-                        TextButton(onClick = { targetExpanded = true }) {
+                        SettingsDialogTextButton(onClick = { targetExpanded = true }) {
                             Text(stringResource(R.string.token_stats_group_pick))
                         }
                         DropdownMenu(expanded = targetExpanded, onDismissRequest = { targetExpanded = false }) {
@@ -684,7 +724,7 @@ internal fun GroupManageDialog(
                         }
                     }
                 }
-                TextButton(
+                SettingsDialogTextButton(
                     enabled = mergeTarget != null,
                     onClick = {
                         onMergeInto(mergeTarget!!)
@@ -698,7 +738,7 @@ internal fun GroupManageDialog(
                 HorizontalDivider()
 
                 // 恢复默认分组（两次点击确认）
-                TextButton(
+                SettingsDialogTextButton(
                     onClick = {
                         if (confirmRestore) {
                             onRestoreDefault()
@@ -722,7 +762,7 @@ internal fun GroupManageDialog(
         },
         confirmButton = {},
         dismissButton = {
-            TextButton(onClick = onDismiss) {
+            SettingsDialogTextButton(onClick = onDismiss) {
                 Text(stringResource(R.string.settings_cancel))
             }
         },

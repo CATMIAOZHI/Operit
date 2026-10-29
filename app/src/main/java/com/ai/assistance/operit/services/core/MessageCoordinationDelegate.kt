@@ -155,6 +155,9 @@ class MessageCoordinationDelegate(
         ConcurrentHashMap<String, PendingAutoContinuationRequest>()
     private val pendingModelPreparationByChatId = ConcurrentHashMap<String, Job>()
 
+    /** A send to [chatId] is still choosing and loading its model; another send is refused until then. */
+    fun isPreparingModel(chatId: String): Boolean = pendingModelPreparationByChatId.containsKey(chatId)
+
     init {
         ensureNonFatalErrorCollectorStarted()
     }

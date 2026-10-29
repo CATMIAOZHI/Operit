@@ -105,6 +105,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
@@ -174,11 +176,53 @@ fun OrbitScreen(
     chatContent: @Composable (chatId: String, header: @Composable () -> Unit) -> Unit,
 ) {
     val context = LocalContext.current
-    val resources = LocalResources.current
     val preferences = remember { OrbitPreferences.getInstance(context) }
     // Settings already read open the page at once; only the very first visit waits for them.
     val settings by preferences.settingsFlow.collectAsState(initial = preferences.loadedSnapshot())
     val loadedSettings = settings ?: return
+    // Outside the lock, so locking again never hands the screen back to the chat from before.
+    loadedSettings.activeOrbitId?.let { androidx.compose.runtime.key(it) { OrbitRestoresPreviousChat(it) } }
+    // With the app lock on, nothing of Orbit draws until the system check is passed.
+    OrbitAppLockGate(enabled = loadedSettings.appLock, orbit = loadedSettings.active) {
+        OrbitScreenContent(loadedSettings, hasBackgroundImage, onManageRoleCards, chatContent)
+    }
+}
+
+/**
+ * The chat screen follows the app-wide current chat. It shows this Orbit while the page is open;
+ * put the chat the user had back when the page closes. Sending in an Orbit chat always uses
+ * Orbit's own Soul.md, whatever role card is active elsewhere.
+ */
+@Composable
+private fun OrbitRestoresPreviousChat(orbitId: String) {
+    val context = LocalContext.current
+    DisposableEffect(orbitId) {
+        val core = ChatRuntimeHolder.getInstance(context.applicationContext).getCore(ChatRuntimeSlot.MAIN)
+        val orbitPreferences = OrbitPreferences.getInstance(context.applicationContext)
+        fun isThisOrbit(chatId: String?) = orbitPreferences.snapshot.orbitForChat(chatId)?.id == orbitId
+        val previousChatId = core.currentChatId.value?.takeIf { !isThisOrbit(it) }
+        onDispose {
+            if (previousChatId != null) {
+                CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate).launch {
+                    // Read the settings fresh: a side chat made a moment ago may not be in the snapshot yet.
+                    val shown = core.currentChatId.value
+                    if (orbitPreferences.current().orbitForChat(shown)?.id == orbitId) {
+                        core.switchChat(previousChatId, scrollToBottom = false)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun OrbitScreenContent(
+    loadedSettings: OrbitSettings,
+    hasBackgroundImage: Boolean,
+    onManageRoleCards: () -> Unit,
+    chatContent: @Composable (chatId: String, header: @Composable () -> Unit) -> Unit,
+) {
+    val context = LocalContext.current
     val activeOrbitId = loadedSettings.activeOrbitId
 
     // A fresh install with no Orbit yet starts with the quick setup (provider + key + models).
@@ -577,26 +621,6 @@ private fun OrbitChatPage(
         }
     }
 
-    // The chat screen follows the app-wide current chat. It shows this Orbit while the page is
-    // open; put the chat the user had back when the page closes. Sending in an Orbit chat always
-    // uses Orbit's own Soul.md, whatever role card is active elsewhere.
-    DisposableEffect(orbit.id) {
-        val core = ChatRuntimeHolder.getInstance(context.applicationContext).getCore(ChatRuntimeSlot.MAIN)
-        val orbitPreferences = OrbitPreferences.getInstance(context.applicationContext)
-        fun isThisOrbit(chatId: String?) = orbitPreferences.snapshot.orbitForChat(chatId)?.id == orbit.id
-        val previousChatId = core.currentChatId.value?.takeIf { !isThisOrbit(it) }
-        onDispose {
-            if (previousChatId != null) {
-                CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate).launch {
-                    // Read the settings fresh: a side chat made a moment ago may not be in the snapshot yet.
-                    val shown = core.currentChatId.value
-                    if (orbitPreferences.current().orbitForChat(shown)?.id == orbit.id) {
-                        core.switchChat(previousChatId, scrollToBottom = false)
-                    }
-                }
-            }
-        }
-    }
 
     // The chat always stays underneath, so closing the profile never reloads it. The profile
     // grows out of Orbit's picture over it, and the pages opened from it slide in from the right.
@@ -811,8 +835,8 @@ private fun OrbitChatPage(
         OrbitCoverPage(visible = chatSearchOpen && !devView, onDismiss = { chatSearchOpen = false }, fade = true) {
             OrbitChatSearchPage(
                 orbit = orbit, chatId = currentChatId, active = chatSearchOpen,
-                onOpen = { chatId, timestamp ->
-                    com.ai.assistance.operit.ui.features.chat.components.TranscriptJumpHost.requestMessage(chatId, timestamp)
+                onOpen = { chatId, timestamp, piece ->
+                    com.ai.assistance.operit.ui.features.chat.components.TranscriptJumpHost.requestMessage(chatId, timestamp, piece)
                     talkChatId = chatId
                     tab = OrbitTab.CHAT
                     chatSearchOpen = false
@@ -947,6 +971,7 @@ private fun OrbitChatPage(
                     onOpenImport = { showImport = true },
                     onOpenUsage = { push(OrbitSubPage.USAGE) },
                     onOpenAppearance = { push(OrbitSubPage.APPEARANCE) },
+                    onOpenPet = { push(OrbitSubPage.PET) },
                     onOpenModels = { push(OrbitSubPage.MODELS) },
                     onOpenContext = { push(OrbitSubPage.CONTEXT) },
                     onOpenPhonePermissions = { push(OrbitSubPage.PHONE_PERMISSIONS) },
@@ -956,6 +981,13 @@ private fun OrbitChatPage(
                     onOpenText = { push(OrbitSubPage.TEXT_SETTINGS) },
                     onOpenAutomation = { push(OrbitSubPage.AUTOMATION_SETTINGS) },
                     onOpenBackup = { push(OrbitSubPage.BACKUP) },
+                    onOpenAbout = { push(OrbitSubPage.ABOUT) },
+                    onOpenLanguage = { push(OrbitSubPage.LANGUAGE) },
+                    onOpenStorage = { push(OrbitSubPage.STORAGE) },
+                    onOpenComponents = { push(OrbitSubPage.COMPONENTS) },
+                    onOpenMcp = { push(OrbitSubPage.MCP_CONFIG) },
+                    onOpenHelp = { push(OrbitSubPage.HELP) },
+                    onOpenAgreement = { push(OrbitSubPage.AGREEMENT) },
                     onPause = back,
                 )
                 OrbitSubPage.CHANNELS -> OrbitChannelsPage(orbit, onBack = back,
@@ -967,6 +999,7 @@ private fun OrbitChatPage(
                     stackNames = ""
                 })
                 OrbitSubPage.APPEARANCE -> OrbitAppearancePage(orbit, onBack = back)
+                OrbitSubPage.PET -> OrbitPetSettingsPage(onBack = back)
                 OrbitSubPage.MODELS -> OrbitModelsPage(orbit, onBack = back,
                     onOpenModelConfig = { push(OrbitSubPage.MODEL_CONFIG) })
                 OrbitSubPage.CONTEXT -> OrbitContextPage(orbit, onBack = back)
@@ -975,13 +1008,30 @@ private fun OrbitChatPage(
                 OrbitSubPage.TEXT_SETTINGS -> OrbitTextSettingsPage(onBack = back)
                 OrbitSubPage.AUTOMATION_SETTINGS -> OrbitAutomationSettingsPage(onBack = back)
                 OrbitSubPage.BACKUP -> OrbitBackupSettingsPage(onBack = back)
+                OrbitSubPage.ABOUT -> OrbitAboutPage(onBack = back,
+                    onOpenUpdateHistory = { push(OrbitSubPage.UPDATE_HISTORY) })
+                OrbitSubPage.UPDATE_HISTORY -> OrbitUpdateHistoryPage(onBack = back)
+                OrbitSubPage.LANGUAGE -> OrbitLanguagePage(onBack = back)
+                OrbitSubPage.STORAGE -> OrbitStoragePage(onBack = back,
+                    onOpenComponents = { push(OrbitSubPage.COMPONENTS) }, onOpenBackup = { push(OrbitSubPage.BACKUP) })
+                OrbitSubPage.COMPONENTS -> OrbitComponentsPage(onBack = back)
+                OrbitSubPage.MCP_CONFIG -> OrbitMcpConfigPage(onBack = back,
+                    onOpenStartupServices = { push(OrbitSubPage.TERMINAL_STARTUP) })
+                OrbitSubPage.TERMINAL_STARTUP -> OrbitTerminalStartupPage(onBack = back)
+                OrbitSubPage.HELP -> OrbitHelpPage(onBack = back)
+                OrbitSubPage.AGREEMENT -> OrbitAgreementPage(onBack = back)
+                OrbitSubPage.APP_COSTS -> OrbitAppCostsPage(onBack = back,
+                    onOpenPricing = { push(OrbitSubPage.APP_PRICING) }, onOpenGroups = { push(OrbitSubPage.APP_GROUPS) })
+                OrbitSubPage.APP_PRICING -> OrbitAppPricingPage(pricing = true, onBack = back)
+                OrbitSubPage.APP_GROUPS -> OrbitAppPricingPage(pricing = false, onBack = back)
                 OrbitSubPage.PHONE_PERMISSIONS -> OrbitPhonePermissionsPage(onBack = back,
                     onOpenDeviceAccess = { push(OrbitSubPage.DEVICE_ACCESS) })
                 OrbitSubPage.DEVICE_ACCESS -> OrbitDeviceAccessPage(orbitName(orbit), onBack = back, onDraft = ::draftToChat)
                 OrbitSubPage.NOTIFICATION_SETTINGS -> OrbitNotificationSettingsPage(orbit, onBack = back,
                     onOpenDelivery = { push(OrbitSubPage.NOTIFICATIONS) })
                 OrbitSubPage.USAGE -> OrbitUsagePage(orbit, onBack = back,
-                    onOpenTrends = { push(OrbitSubPage.USAGE_TRENDS) })
+                    onOpenTrends = { push(OrbitSubPage.USAGE_TRENDS) },
+                    onOpenAppCosts = { push(OrbitSubPage.APP_COSTS) })
                 OrbitSubPage.USAGE_TRENDS -> OrbitUsageTrendsPage(orbit, onBack = back)
                 OrbitSubPage.SOUL -> OrbitSoulFilePage(orbit.id, onBack = back)
                 OrbitSubPage.IDENTITY -> OrbitIdentityFilePage(orbit.id, onBack = back)
@@ -1102,7 +1152,7 @@ private fun OrbitChatPage(
     vaultRequest?.takeIf { it.orbitId == orbit.id }?.let { OrbitVaultEntrySheet(orbit = orbit, request = it) }
 }
 
-private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, ALIGNMENT, FILES, PACKAGES, TOOL_PERMISSIONS, TOOL_ACCESS, VAULT, VAULT_ENTRY, USAGE, USAGE_TRENDS, APPEARANCE, MODELS, CONTEXT, MODEL_CONFIG, PHONE_PERMISSIONS, DEVICE_ACCESS, NOTIFICATION_SETTINGS, SPEECH_SETTINGS, CHANNELS, WEIXIN, TEXT_SETTINGS, AUTOMATION_SETTINGS, BACKUP }
+private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, ALIGNMENT, FILES, PACKAGES, TOOL_PERMISSIONS, TOOL_ACCESS, VAULT, VAULT_ENTRY, USAGE, USAGE_TRENDS, APPEARANCE, PET, MODELS, CONTEXT, MODEL_CONFIG, PHONE_PERMISSIONS, DEVICE_ACCESS, NOTIFICATION_SETTINGS, SPEECH_SETTINGS, CHANNELS, WEIXIN, TEXT_SETTINGS, AUTOMATION_SETTINGS, BACKUP, ABOUT, UPDATE_HISTORY, LANGUAGE, STORAGE, COMPONENTS, MCP_CONFIG, TERMINAL_STARTUP, HELP, AGREEMENT, APP_COSTS, APP_PRICING, APP_GROUPS }
 
 /** iOS-like timing: a quick start that settles softly (UIKit's default presentation curve). */
 internal object OrbitMotion {
@@ -1498,6 +1548,7 @@ private fun OrbitSettingsPage(
     onOpenImport: () -> Unit,
     onOpenUsage: () -> Unit,
     onOpenAppearance: () -> Unit,
+    onOpenPet: () -> Unit,
     onOpenModels: () -> Unit,
     onOpenContext: () -> Unit,
     onOpenPhonePermissions: () -> Unit,
@@ -1507,6 +1558,13 @@ private fun OrbitSettingsPage(
     onOpenText: () -> Unit,
     onOpenAutomation: () -> Unit,
     onOpenBackup: () -> Unit,
+    onOpenAbout: () -> Unit,
+    onOpenLanguage: () -> Unit,
+    onOpenStorage: () -> Unit,
+    onOpenComponents: () -> Unit,
+    onOpenMcp: () -> Unit,
+    onOpenHelp: () -> Unit,
+    onOpenAgreement: () -> Unit,
     onPause: () -> Unit,
 ) {
     OrbitPageBack(onBack = onBack)
@@ -1517,15 +1575,61 @@ private fun OrbitSettingsPage(
     val cardColor = settingsCardColor(hasBackgroundImage)
     val toolPermissions = remember { com.ai.assistance.operit.ui.permissions.ToolPermissionSystem.getInstance(context) }
     val fullAccess by toolPermissions.orbitFullAccessFlow.collectAsState(initial = null)
+    // A search over this page's rows, as in the app's settings; Back first clears it.
+    var query by rememberSaveable { mutableStateOf("") }
+    val searching = query.isNotBlank()
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    BackHandler(enabled = searching) {
+        query = ""
+        focusManager.clearFocus()
+    }
+    // A switch found by the search is shown in place: the search clears and the page scrolls to it.
+    val anchors = remember { mutableMapOf<String, Float>() }
+    var pageTop by remember { mutableStateOf(0f) }
+    var jumpTo by remember { mutableStateOf<String?>(null) }
+    fun anchor(key: String) = Modifier.onGloballyPositioned { anchors[key] = it.positionInRoot().y }
+    val searchEntries = orbitSettingsEntries(
+        developerMode = settings.developerMode,
+        onShowSwitch = { key -> jumpTo = key; query = "" },
+        onOpenModels = onOpenModels, onOpenContext = onOpenContext,
+        onOpenNotificationSettings = onOpenNotificationSettings, onOpenAppearance = onOpenAppearance,
+        onOpenPet = onOpenPet, onOpenText = onOpenText, onOpenSpeech = onOpenSpeech,
+        onOpenPhonePermissions = onOpenPhonePermissions, onOpenChannels = onOpenChannels,
+        onOpenAutomation = onOpenAutomation, onOpenBackup = onOpenBackup,
+        onOpenPrompts = onOpenPrompts, onOpenPackages = onOpenPackages,
+        onOpenToolAccess = onOpenToolAccess, onOpenVault = onOpenVault, onOpenImport = onOpenImport,
+        onOpenToolPermissions = onOpenToolPermissions, onOpenAbout = onOpenAbout,
+        onOpenLanguage = onOpenLanguage, onOpenStorage = onOpenStorage, onOpenComponents = onOpenComponents,
+        onOpenMcp = onOpenMcp, onOpenHelp = onOpenHelp, onOpenAgreement = onOpenAgreement,
+    )
+    // Kept while searching, so clearing the search returns to the same place on the page.
+    val pageScroll = rememberScrollState()
+    val jumpMargin = with(androidx.compose.ui.platform.LocalDensity.current) { 24.dp.toPx() }
+    LaunchedEffect(jumpTo, searching) {
+        val key = jumpTo ?: return@LaunchedEffect
+        if (searching) return@LaunchedEffect
+        androidx.compose.runtime.withFrameNanos { }
+        anchors[key]?.let { y ->
+            pageScroll.animateScrollTo((pageScroll.value + y - pageTop - jumpMargin).toInt().coerceAtLeast(0))
+        }
+        jumpTo = null
+    }
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+        if (searching) {
+            OrbitSettingsSearchResults(searchOrbitSettings(query, searchEntries), cardColor) { entry ->
+                focusManager.clearFocus()
+                entry.onClick()
+            }
+        } else {
         Column(
             modifier =
                 Modifier.fillMaxSize()
+                    .onGloballyPositioned { pageTop = it.positionInRoot().y }
                     .statusBarsPadding()
-                    .verticalScroll(rememberScrollState())
+                    .verticalScroll(pageScroll)
                     .padding(start = 16.dp, end = 16.dp, top = 8.dp)
                     .navigationBarsPadding()
-                    .padding(bottom = 24.dp),
+                    .padding(bottom = OrbitSearchBarClearance),
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
             OrbitPageHeader(stringResource(R.string.orbit_settings), onBack, Modifier.padding(start = 4.dp))
@@ -1552,7 +1656,9 @@ private fun OrbitSettingsPage(
             }
 
             SettingsCard(backgroundColor = cardColor) {
-                com.ai.assistance.operit.ui.features.settings.components.LaunchModeSettingsRow(searchable = false)
+                Box(anchor(SWITCH_LAUNCH_MODE)) {
+                    com.ai.assistance.operit.ui.features.settings.components.LaunchModeSettingsRow(searchable = false)
+                }
                 SettingsRowDivider(inset = false)
                 SettingsNavRow(
                     title = stringResource(R.string.orbit_notification_settings),
@@ -1571,11 +1677,27 @@ private fun OrbitSettingsPage(
                 )
                 SettingsRowDivider(inset = false)
                 SettingsNavRow(
+                    title = stringResource(R.string.pet_title),
+                    subtitle = stringResource(R.string.orbit_pet_row),
+                    icon = lucide("paw-print"),
+                    searchable = false,
+                    onClick = onOpenPet,
+                )
+                SettingsRowDivider(inset = false)
+                SettingsNavRow(
                     title = stringResource(R.string.orbit_text_settings_title),
                     subtitle = stringResource(R.string.orbit_text_settings_row),
                     icon = lucide("type"),
                     searchable = false,
                     onClick = onOpenText,
+                )
+                SettingsRowDivider(inset = false)
+                SettingsNavRow(
+                    title = stringResource(R.string.language_settings),
+                    subtitle = stringResource(R.string.orbit_language_row),
+                    icon = lucide("languages"),
+                    searchable = false,
+                    onClick = onOpenLanguage,
                 )
                 SettingsRowDivider(inset = false)
                 SettingsNavRow(
@@ -1624,6 +1746,22 @@ private fun OrbitSettingsPage(
                         searchable = false,
                         onClick = onOpenBackup,
                     )
+                    SettingsRowDivider(inset = false)
+                    SettingsNavRow(
+                        title = stringResource(R.string.storage_title),
+                        subtitle = stringResource(R.string.orbit_storage_row),
+                        icon = lucide("hard-drive"),
+                        searchable = false,
+                        onClick = onOpenStorage,
+                    )
+                    SettingsRowDivider(inset = false)
+                    SettingsNavRow(
+                        title = stringResource(R.string.components_title),
+                        subtitle = stringResource(R.string.orbit_components_row),
+                        icon = lucide("boxes"),
+                        searchable = false,
+                        onClick = onOpenComponents,
+                    )
                 }
             }
 
@@ -1648,6 +1786,14 @@ private fun OrbitSettingsPage(
                         searchable = false,
                         onClick = onOpenPackages,
                     )
+                    SettingsRowDivider(inset = false)
+                    SettingsNavRow(
+                        title = stringResource(R.string.orbit_mcp_config_title),
+                        subtitle = stringResource(R.string.orbit_mcp_config_row),
+                        icon = lucide("server-cog"),
+                        searchable = false,
+                        onClick = onOpenMcp,
+                    )
                 }
             }
 
@@ -1657,6 +1803,43 @@ private fun OrbitSettingsPage(
                     icon = lucide("shield-check"),
                 )
                 SettingsCard(backgroundColor = cardColor) {
+                    // Turning the lock on or off takes the same system check it asks for.
+                    var pendingLock by remember { mutableStateOf<Boolean?>(null) }
+                    val lockCheck = rememberOrbitDeviceCheck { ok ->
+                        val target = pendingLock
+                        pendingLock = null
+                        if (ok && target != null) {
+                            if (target) com.ai.assistance.operit.features.orbit.OrbitAppLock.markUnlocked()
+                            CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate).launch {
+                                preferences.setAppLock(target)
+                            }
+                        }
+                    }
+                    val lockTitleOn = stringResource(R.string.orbit_app_lock_turn_on)
+                    val lockTitleOff = stringResource(R.string.orbit_app_lock_turn_off)
+                    SettingsSwitchRow(
+                        modifier = anchor(SWITCH_APP_LOCK),
+                        title = stringResource(R.string.orbit_app_lock),
+                        subtitle = stringResource(R.string.orbit_app_lock_desc),
+                        checked = settings.appLock,
+                        searchable = false,
+                        onCheckedChange = { enabled ->
+                            if (!com.ai.assistance.operit.features.orbit.OrbitAppLock.deviceSecure(context)) {
+                                // With no screen lock left there is nothing to check; turning off is let through.
+                                if (enabled) {
+                                    toast(context, R.string.orbit_app_lock_no_screen_lock)
+                                } else {
+                                    CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate).launch {
+                                        preferences.setAppLock(false)
+                                    }
+                                }
+                            } else if (pendingLock == null) {
+                                pendingLock = enabled
+                                lockCheck(if (enabled) lockTitleOn else lockTitleOff)
+                            }
+                        },
+                    )
+                    SettingsRowDivider(inset = false)
                     SettingsNavRow(
                         title = stringResource(R.string.orbit_access_title),
                         subtitle = stringResource(R.string.orbit_access_row_desc),
@@ -1696,6 +1879,7 @@ private fun OrbitSettingsPage(
                     // Switching logins either way asks first: it changes which accounts Orbit acts as.
                     var pendingShare by remember { mutableStateOf<Boolean?>(null) }
                     SettingsSwitchRow(
+                        modifier = anchor(SWITCH_SHARED_LOGIN),
                         title = stringResource(R.string.orbit_browser_share_login),
                         subtitle =
                             when {
@@ -1733,6 +1917,43 @@ private fun OrbitSettingsPage(
                             },
                         )
                     }
+                    SettingsRowDivider(inset = false)
+                    // Signing out of sites is asked first; with shared logins it signs the app out too.
+                    val clearsMainLogins = orbit.browserSharesMainLogin || !separateLoginsSupported
+                    var askClearLogins by remember { mutableStateOf(false) }
+                    SettingsNavRow(
+                        modifier = anchor(ROW_CLEAR_LOGINS),
+                        title = stringResource(R.string.orbit_clear_logins_title),
+                        subtitle = stringResource(
+                            if (clearsMainLogins) R.string.orbit_clear_logins_desc_shared
+                            else R.string.orbit_clear_logins_desc_own,
+                        ),
+                        icon = lucide("cookie"),
+                        searchable = false,
+                        onClick = { askClearLogins = true },
+                    )
+                    if (askClearLogins) {
+                        TaskConfirmSheet(
+                            icon = "cookie",
+                            title = stringResource(R.string.orbit_clear_logins_confirm_title),
+                            message =
+                                if (clearsMainLogins) stringResource(R.string.orbit_clear_logins_confirm_shared)
+                                else stringResource(R.string.orbit_clear_logins_confirm, orbitName(orbit)),
+                            confirmText = stringResource(R.string.orbit_clear_logins_ok),
+                            dismissText = stringResource(R.string.cancel),
+                            destructive = true,
+                            onDismiss = { askClearLogins = false },
+                            onConfirm = {
+                                askClearLogins = false
+                                com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserProfiles
+                                    .clearOrbitLogins(orbit.id, orbit.browserSharesMainLogin) { ok ->
+                                        android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                            toast(context, if (ok) R.string.orbit_clear_logins_done else R.string.orbit_clear_logins_failed)
+                                        }
+                                    }
+                            },
+                        )
+                    }
                 }
             }
 
@@ -1745,6 +1966,7 @@ private fun OrbitSettingsPage(
                 )
                 SettingsCard(backgroundColor = cardColor) {
                     SettingsSwitchRow(
+                        modifier = anchor(SWITCH_DEVELOPER),
                         title = stringResource(R.string.orbit_developer_switch),
                         subtitle = stringResource(R.string.orbit_developer_switch_desc),
                         checked = settings.developerMode,
@@ -1766,6 +1988,32 @@ private fun OrbitSettingsPage(
 
             SettingsCard(backgroundColor = cardColor) {
                 SettingsNavRow(
+                    title = stringResource(R.string.nav_about),
+                    subtitle = stringResource(R.string.orbit_about_row),
+                    icon = lucide("info"),
+                    searchable = false,
+                    onClick = onOpenAbout,
+                )
+                SettingsRowDivider(inset = false)
+                SettingsNavRow(
+                    title = stringResource(R.string.nav_help),
+                    subtitle = stringResource(R.string.orbit_help_row),
+                    icon = lucide("life-buoy"),
+                    searchable = false,
+                    onClick = onOpenHelp,
+                )
+                SettingsRowDivider(inset = false)
+                SettingsNavRow(
+                    title = stringResource(R.string.agreement_title),
+                    subtitle = stringResource(R.string.orbit_agreement_row),
+                    icon = lucide("scroll-text"),
+                    searchable = false,
+                    onClick = onOpenAgreement,
+                )
+            }
+
+            SettingsCard(backgroundColor = cardColor) {
+                SettingsNavRow(
                     title = stringResource(R.string.orbit_pause, orbitName(orbit)),
                     subtitle = stringResource(R.string.orbit_pause_desc),
                     icon = lucide("pause"),
@@ -1779,6 +2027,100 @@ private fun OrbitSettingsPage(
                     },
                 )
             }
+        }
+        }
+
+        OrbitSettingsSearchBar(
+            query = query,
+            onQueryChange = { query = it },
+            onClear = {
+                query = ""
+                focusManager.clearFocus()
+            },
+            onDone = { focusManager.clearFocus() },
+            modifier = Modifier.align(Alignment.BottomCenter),
+        )
+    }
+}
+
+private const val SWITCH_LAUNCH_MODE = "launch_mode"
+private const val SWITCH_SHARED_LOGIN = "shared_login"
+private const val SWITCH_DEVELOPER = "developer"
+private const val SWITCH_APP_LOCK = "app_lock"
+private const val ROW_CLEAR_LOGINS = "clear_logins"
+
+/** The rows of Orbit's settings page for its search (same names and notes as shown): pages, and switches on it. */
+@Composable
+private fun orbitSettingsEntries(
+    developerMode: Boolean,
+    onShowSwitch: (String) -> Unit,
+    onOpenModels: () -> Unit,
+    onOpenContext: () -> Unit,
+    onOpenNotificationSettings: () -> Unit,
+    onOpenAppearance: () -> Unit,
+    onOpenPet: () -> Unit,
+    onOpenText: () -> Unit,
+    onOpenSpeech: () -> Unit,
+    onOpenPhonePermissions: () -> Unit,
+    onOpenChannels: () -> Unit,
+    onOpenAutomation: () -> Unit,
+    onOpenBackup: () -> Unit,
+    onOpenPrompts: () -> Unit,
+    onOpenPackages: () -> Unit,
+    onOpenToolAccess: () -> Unit,
+    onOpenVault: () -> Unit,
+    onOpenImport: () -> Unit,
+    onOpenToolPermissions: () -> Unit,
+    onOpenAbout: () -> Unit,
+    onOpenLanguage: () -> Unit,
+    onOpenStorage: () -> Unit,
+    onOpenComponents: () -> Unit,
+    onOpenMcp: () -> Unit,
+    onOpenHelp: () -> Unit,
+    onOpenAgreement: () -> Unit,
+): List<OrbitSettingsEntry> {
+    val settingsTitle = stringResource(R.string.orbit_settings)
+    val device = stringResource(R.string.orbit_section_device)
+    val prompts = stringResource(R.string.orbit_section_prompts)
+    val privacy = stringResource(R.string.orbit_section_privacy)
+    val developer = stringResource(R.string.orbit_section_developer)
+    @Composable
+    fun entry(title: Int, subtitle: Int, icon: String, section: String, onClick: () -> Unit) =
+        OrbitSettingsEntry(stringResource(title), stringResource(subtitle), lucide(icon), section, onClick)
+    return buildList {
+        add(entry(R.string.orbit_models_title, R.string.orbit_models_entry_note, "brain", settingsTitle, onOpenModels))
+        add(entry(R.string.orbit_context_title, R.string.orbit_context_row, "archive", settingsTitle, onOpenContext))
+        add(entry(R.string.orbit_notification_settings, R.string.orbit_phone_notify_note, "bell", settingsTitle, onOpenNotificationSettings))
+        add(entry(R.string.orbit_appearance_title, R.string.orbit_appearance_note, "paintbrush", settingsTitle, onOpenAppearance))
+        add(entry(R.string.pet_title, R.string.orbit_pet_row, "paw-print", settingsTitle, onOpenPet))
+        add(entry(R.string.orbit_text_settings_title, R.string.orbit_text_settings_row, "type", settingsTitle, onOpenText))
+        add(entry(R.string.language_settings, R.string.orbit_language_row, "languages", settingsTitle, onOpenLanguage))
+        add(entry(R.string.orbit_speech_card_title, R.string.orbit_speech_row, "audio-lines", settingsTitle, onOpenSpeech))
+        add(entry(R.string.orbit_phone_permissions, R.string.orbit_phone_permissions_row, "hand", settingsTitle, onOpenPhonePermissions))
+        add(entry(R.string.orbit_channels_title, R.string.orbit_channels_row, "message-circle", settingsTitle, onOpenChannels))
+        add(entry(R.string.orbit_automation_settings_title, R.string.orbit_automation_settings_row, "scan-line", device, onOpenAutomation))
+        add(entry(R.string.orbit_backup_title, R.string.orbit_backup_row, "database-backup", device, onOpenBackup))
+        add(entry(R.string.storage_title, R.string.orbit_storage_row, "hard-drive", device, onOpenStorage))
+        add(entry(R.string.components_title, R.string.orbit_components_row, "boxes", device, onOpenComponents))
+        add(entry(R.string.orbit_prompt_layers, R.string.orbit_prompt_layers_desc, "layers", prompts, onOpenPrompts))
+        add(entry(R.string.orbit_packages_title, R.string.orbit_packages_row_desc, "package", prompts, onOpenPackages))
+        add(entry(R.string.orbit_mcp_config_title, R.string.orbit_mcp_config_row, "server-cog", prompts, onOpenMcp))
+        add(entry(R.string.orbit_access_title, R.string.orbit_access_row_desc, "shield", privacy, onOpenToolAccess))
+        add(entry(R.string.orbit_vault_row, R.string.orbit_vault_row_desc, "key-round", privacy, onOpenVault))
+        add(entry(R.string.orbit_import_row, R.string.orbit_import_row_desc, "download", privacy, onOpenImport))
+        add(entry(R.string.nav_about, R.string.orbit_about_row, "info", settingsTitle, onOpenAbout))
+        add(entry(R.string.nav_help, R.string.orbit_help_row, "life-buoy", settingsTitle, onOpenHelp))
+        add(entry(R.string.agreement_title, R.string.orbit_agreement_row, "scroll-text", settingsTitle, onOpenAgreement))
+        add(entry(R.string.orbit_clear_logins_title, R.string.orbit_clear_logins_desc_own, "cookie", privacy) { onShowSwitch(ROW_CLEAR_LOGINS) })
+        add(entry(R.string.orbit_web_wait_title, R.string.orbit_web_wait_desc, "timer", device, onOpenAutomation))
+        add(entry(R.string.keep_screen_on, R.string.keep_screen_on_description, "monitor-smartphone", device, onOpenAutomation))
+        // Switches on the page itself: found, they are shown where they are.
+        add(entry(R.string.launch_mode_setting_title, R.string.launch_mode_setting_orbit, "rocket", settingsTitle) { onShowSwitch(SWITCH_LAUNCH_MODE) })
+        add(entry(R.string.orbit_app_lock, R.string.orbit_app_lock_desc, "fingerprint", privacy) { onShowSwitch(SWITCH_APP_LOCK) })
+        add(entry(R.string.orbit_browser_share_login, R.string.orbit_browser_share_login_off, "link", privacy) { onShowSwitch(SWITCH_SHARED_LOGIN) })
+        add(entry(R.string.orbit_developer_switch, R.string.orbit_developer_switch_desc, "code-xml", developer) { onShowSwitch(SWITCH_DEVELOPER) })
+        if (developerMode) {
+            add(entry(R.string.orbit_tools_row, R.string.orbit_tools_row_desc, "shield-check", developer, onOpenToolPermissions))
         }
     }
 }

@@ -236,6 +236,17 @@ internal fun OrbitSpeechSettingsCard() {
     }
 }
 
+/** In the floating window, a card that needs the app's screen: one button opens Orbit there. */
+@Composable
+internal fun OrbitInAppCard(open: () -> Unit) {
+    CardColumn {
+        CardHeading("external-link", stringResource(R.string.orbit_floating_card_title),
+            stringResource(R.string.orbit_floating_card_sub))
+        Spacer(Modifier.height(14.dp))
+        CardButton(stringResource(R.string.orbit_floating_card_open), enabled = true, onClick = open)
+    }
+}
+
 /** Opens one settings page from the chat: the WeChat link, the role cards, or the model settings. */
 @Composable
 internal fun OrbitOpenPageCard(card: JSONObject) {

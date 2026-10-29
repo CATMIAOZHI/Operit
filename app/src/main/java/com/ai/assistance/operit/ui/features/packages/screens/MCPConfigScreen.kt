@@ -62,6 +62,9 @@ import kotlinx.coroutines.launch
 import com.ai.assistance.operit.data.mcp.InstallResult
 import com.ai.assistance.operit.data.mcp.InstallProgress
 import com.ai.assistance.operit.ui.features.startup.screens.LocalPluginLoadingState
+import com.ai.assistance.operit.ui.features.settings.components.SettingsAlertDialog
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogTextButton
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogButton
 
 /** MCP配置屏幕 - 极简风格界面，专注于插件快速部署 */
 @SuppressLint("StateFlowValueCalledInComposition")
@@ -583,7 +586,7 @@ fun MCPConfigScreen(
 
     // 导入插件对话框
     if (showImportDialog) {
-        AlertDialog(
+        SettingsAlertDialog(
             onDismissRequest = { showImportDialog = false },
             title = { Text(stringResource(R.string.import_or_connect_mcp_service)) },
             text = {
@@ -808,7 +811,7 @@ fun MCPConfigScreen(
                             
                             Spacer(modifier = Modifier.height(8.dp))
                             
-                            TextButton(
+                            SettingsDialogTextButton(
                                 onClick = {
                                     val intent = android.content.Intent(android.content.Intent.ACTION_VIEW)
                                     intent.setDataAndType(android.net.Uri.parse(mcpLocalServer.getConfigFilePath()), "application/json")
@@ -861,7 +864,7 @@ fun MCPConfigScreen(
                 }
             },
             confirmButton = {
-                Button(
+                SettingsDialogButton(
                     onClick = {
                         val isRemote = importTabIndex == 2
                         val isConfigImport = importTabIndex == 3
@@ -901,7 +904,7 @@ fun MCPConfigScreen(
                             val proposedId = pluginNameInput.replace(" ", "_").lowercase()
                             if (visiblePluginIds.contains(proposedId)) {
                                 Toast.makeText(context, context.getString(R.string.plugin_already_exists, pluginNameInput), Toast.LENGTH_SHORT).show()
-                                return@Button
+                                return@SettingsDialogButton
                             }
 
                             isImporting = true
@@ -984,7 +987,7 @@ fun MCPConfigScreen(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { 
+                SettingsDialogTextButton(onClick = {
                     repoUrlInput = ""
                     pluginNameInput = ""
                     zipFilePath = ""
@@ -1004,7 +1007,7 @@ fun MCPConfigScreen(
     
     // 文件选择对话框
     if (showFilePickerDialog) {
-        AlertDialog(
+        SettingsAlertDialog(
             onDismissRequest = { showFilePickerDialog = false },
             title = { Text(stringResource(R.string.select_mcp_plugin_zip_title)) },
             text = {
@@ -1057,7 +1060,7 @@ fun MCPConfigScreen(
             },
             confirmButton = {},
             dismissButton = {
-                TextButton(onClick = { showFilePickerDialog = false }) {
+                SettingsDialogTextButton(onClick = { showFilePickerDialog = false }) {
                     Text(stringResource(R.string.cancel))
                 }
             }
@@ -1811,8 +1814,9 @@ fun RemoteServerEditDialog(
     var isRegeneratingDescription by remember(server.id) { mutableStateOf(false) }
     val isRemote = server.type == "remote"
 
-    AlertDialog(
+    SettingsAlertDialog(
         onDismissRequest = onDismiss,
+        orbitScrollable = false,
         title = { Text(if(isRemote) stringResource(R.string.edit_remote_service) else stringResource(R.string.edit_plugin_info)) },
         text = {
             Column(
@@ -1945,7 +1949,7 @@ fun RemoteServerEditDialog(
             }
         },
         confirmButton = {
-            Button(
+            SettingsDialogButton(
                 onClick = {
                     val normalizedName = name.trim()
                     val normalizedDescription = description.trim()
@@ -1966,7 +1970,7 @@ fun RemoteServerEditDialog(
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
+            SettingsDialogTextButton(onClick = onDismiss) {
                 Text(stringResource(R.string.cancel))
             }
         }

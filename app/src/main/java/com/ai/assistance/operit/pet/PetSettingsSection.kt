@@ -21,6 +21,45 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
+/**
+ * Saves the file at [uri] as [target]'s [animation], replacing the previous one. Returns the message
+ * to show and whether it failed.
+ */
+internal suspend fun importPetAnimation(
+    context: android.content.Context, preferences: PetPreferences, target: PetProfile,
+    animation: PetAnimation, uri: Uri,
+): Pair<Int, Boolean> = try {
+    val asset = PetAssets.importPet(context.applicationContext, uri, target.settings.mediaType)
+    val previous = target.settings.animations[animation]
+    val saved = preferences.updatePet(target.id) {
+        it.copy(animations = it.animations + (animation to PetArtwork(asset.id, asset.name)))
+    }
+    if (!saved) {
+        PetAssets.deleteAfterRemoval(context.applicationContext, asset.id)
+    } else if (previous != null) {
+        PetAssets.deleteAfterRemoval(context.applicationContext, previous.id)
+    }
+    (if (saved) R.string.pet_import_success else R.string.pet_import_target_removed) to !saved
+} catch (cancelled: CancellationException) {
+    throw cancelled
+} catch (error: Exception) {
+    when ((error as? PetImportException)?.reason) {
+        PetImportException.Reason.TOO_LARGE -> R.string.pet_import_too_large
+        PetImportException.Reason.INVALID_PACK -> R.string.pet_import_invalid_pack
+        PetImportException.Reason.INVALID_IMAGE -> R.string.pet_import_invalid_image
+        PetImportException.Reason.INVALID_VIDEO -> R.string.pet_import_invalid_video
+        PetImportException.Reason.FORMAT_MISMATCH -> R.string.pet_format_mismatch
+        null -> R.string.pet_import_failed
+    } to true
+}
+
+/** Removes [pet] and the copies of its files kept in the app. */
+internal fun removePet(context: android.content.Context, preferences: PetPreferences, pet: PetProfile) {
+    preferences.remove(pet.id)?.settings?.animations?.values?.map { it.id }?.distinct()?.forEach {
+        PetAssets.deleteAfterRemoval(context.applicationContext, it)
+    }
+}
+
 @Composable
 fun PetSettingsSection() {
     val context = LocalContext.current
@@ -51,30 +90,9 @@ fun PetSettingsSection() {
             importing = true
             importMessage = null
             try {
-                val asset = PetAssets.importPet(context.applicationContext, uri, target.settings.mediaType)
-                val previous = target.settings.animations[animation]
-                val saved = preferences.updatePet(target.id) {
-                    it.copy(animations = it.animations + (animation to PetArtwork(asset.id, asset.name)))
-                }
-                if (!saved) {
-                    PetAssets.deleteAfterRemoval(context.applicationContext, asset.id)
-                } else if (previous != null) {
-                    PetAssets.deleteAfterRemoval(context.applicationContext, previous.id)
-                }
-                importFailed = !saved
-                importMessage = if (saved) R.string.pet_import_success else R.string.pet_import_target_removed
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (error: Exception) {
-                importFailed = true
-                importMessage = when ((error as? PetImportException)?.reason) {
-                    PetImportException.Reason.TOO_LARGE -> R.string.pet_import_too_large
-                    PetImportException.Reason.INVALID_PACK -> R.string.pet_import_invalid_pack
-                    PetImportException.Reason.INVALID_IMAGE -> R.string.pet_import_invalid_image
-                    PetImportException.Reason.INVALID_VIDEO -> R.string.pet_import_invalid_video
-                    PetImportException.Reason.FORMAT_MISMATCH -> R.string.pet_format_mismatch
-                    null -> R.string.pet_import_failed
-                }
+                val (message, failed) = importPetAnimation(context, preferences, target, animation, uri)
+                importMessage = message
+                importFailed = failed
             } finally {
                 importing = false
             }
@@ -308,13 +326,8 @@ fun PetSettingsSection() {
             text = { Text(stringResource(R.string.pet_remove_description)) },
             confirmButton = {
                 TextButton(onClick = {
-                    val removed = preferences.remove(pet.id)
+                    removePet(context, preferences, pet)
                     deletingPet = null
-                    if (removed != null) {
-                        removed.settings.animations.values.map { it.id }.distinct().forEach {
-                            PetAssets.deleteAfterRemoval(context.applicationContext, it)
-                        }
-                    }
                 }) { Text(stringResource(R.string.pet_remove)) }
             },
             dismissButton = {

@@ -51,6 +51,9 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.font.FontWeight
@@ -237,9 +240,13 @@ internal fun RecentChatSelectorOverlay(
     val userPreferencesManager = remember { UserPreferencesManager.getInstance(context) }
     val coroutineScope = rememberCoroutineScope()
     val orbitChatIds by com.ai.assistance.operit.features.orbit.rememberOrbitChatIds()
-    val items = remember(chatHistories, orbitChatIds) {
+    // Showing Orbit, the list is its own chats (its main chat and side chats); otherwise Orbit's stay out.
+    val orbit = rememberFloatingOrbit(currentChatId)
+    val orbitTalk = orbit?.talkChatIds
+    val items = remember(chatHistories, orbitChatIds, orbitTalk) {
         chatHistories
-            .filterNot { it.chatKind == ChatKind.SUBAGENT.name || it.isHidden || it.id in orbitChatIds }
+            .filterNot { it.chatKind == ChatKind.SUBAGENT.name || it.isHidden }
+            .filter { if (orbitTalk != null) it.id in orbitTalk else it.id !in orbitChatIds }
             .sortedByDescending { it.updatedAt }
             .take(20)
     }
@@ -313,7 +320,9 @@ internal fun RecentChatSelectorOverlay(
                                     .background(MaterialTheme.colorScheme.secondaryContainer),
                                 contentAlignment = Alignment.Center
                             ) {
-                                if (!avatarUri.isNullOrBlank()) {
+                                if (orbit != null) {
+                                    com.ai.assistance.operit.ui.features.orbit.OrbitAvatar(orbit, size = 36)
+                                } else if (!avatarUri.isNullOrBlank()) {
                                     Image(
                                         painter = rememberAsyncImagePainter(model = Uri.parse(avatarUri)),
                                         contentDescription = null,
@@ -331,7 +340,8 @@ internal fun RecentChatSelectorOverlay(
                             Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = history.title,
+                                    text = if (orbit != null && history.id == orbit.chatId)
+                                        com.ai.assistance.operit.ui.features.orbit.orbitName(orbit) else history.title,
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.Medium,
                                     maxLines = 1,
@@ -698,15 +708,45 @@ internal fun ChatMessagesView(
     val hasNewerDisplayHistory = hasNewerDisplayHistoryState.value
     val isLoadingDisplayWindow = isLoadingDisplayWindowState.value
     val scrollState = floatContext.messageListState
-    val messagesCount = floatContext.messages.size
+    val orbitLook = com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current
+    val inputProcessingState = floatContext.inputProcessingState.value
+    val isLoading =
+        inputProcessingState !is InputProcessingState.Idle &&
+            inputProcessingState !is InputProcessingState.Error &&
+            inputProcessingState !is InputProcessingState.Completed
+    // Orbit's chat shows only what it said, as it says it, with its cards after its reply, the same
+    // as on its page; its thinking and tool steps stay out of the window.
+    val rawMessages = floatContext.messages
+    val orbitStreaming = if (orbitLook) {
+        rawMessages.lastOrNull { it.sender == "ai" && it.contentStream != null && !it.displayMode.isCollaborationEvent }
+    } else null
+    val orbitLive by com.ai.assistance.operit.ui.features.chat.components.rememberOrbitLiveSpeech(orbitStreaming)
+    val orbitTurnFloor = com.ai.assistance.operit.ui.features.chat.components.rememberOrbitTurnFloor(
+        currentChatId, isLoading && orbitLook, rawMessages,
+        ready = floatContext.displayedChatId == currentChatId && !isLoadingDisplayWindow,
+    ).takeIf { orbitLook }
+    val orbitBusy = orbitLook && isLoading && !hasNewerDisplayHistory &&
+        com.ai.assistance.operit.ui.features.chat.components.orbitInCurrentTurn(rawMessages.lastOrNull(), orbitTurnFloor)
+    val orbitSpoken = remember(rawMessages, orbitLook, orbitBusy) {
+        if (orbitLook) com.ai.assistance.operit.ui.features.chat.components.OrbitSpeech.history(rawMessages, busy = orbitBusy)
+        else rawMessages
+    }
+    val messages = remember(rawMessages, orbitSpoken, orbitLook, orbitLive) {
+        if (orbitLook) com.ai.assistance.operit.ui.features.chat.components.OrbitSpeech.withLive(rawMessages, orbitSpoken, orbitLive)
+        else rawMessages
+    }
+    // Orbit types only while it answers the user's own words, not a reaction or a background task.
+    val userWaitingChatIds = chatCore?.getMessageProcessingDelegate()?.userWaitingChatIds?.collectAsState()?.value.orEmpty()
+    val messagesCount = messages.size
     val displayMessages =
-        floatContext.messages
-            .filter { it.sender != "think" }
+        messages
+            .filter { it.sender != "think" && !(orbitLook && com.ai.assistance.operit.ui.features.chat.components.OrbitSpeech.hidden(it)) }
             .asReversed()
     val messageHeightMemory = rememberChatMessageHeightMemory(displayMessages)
     val coroutineScope = rememberCoroutineScope()
-    val lastMessage = floatContext.messages.lastOrNull()
-    val appearance = rememberChatAppearance()
+    val lastMessage = messages.lastOrNull()
+    val baseAppearance = rememberChatAppearance()
+    val appearance = if (orbitLook) baseAppearance.forOrbit() else baseAppearance
     val context = androidx.compose.ui.platform.LocalContext.current
     val preferences = remember(context) { UserPreferencesManager.getInstance(context) }
     val showTokenStats by preferences.showMessageTokenStats.collectAsState(initial = true)
@@ -726,8 +766,8 @@ internal fun ChatMessagesView(
 
     LaunchedEffect(
         messagesCount,
-        floatContext.messages.firstOrNull()?.timestamp,
-        floatContext.messages.lastOrNull()?.timestamp,
+        messages.firstOrNull()?.timestamp,
+        messages.lastOrNull()?.timestamp,
         autoScrollToBottom,
         hasNewerDisplayHistory,
         isLoadingDisplayWindow,
@@ -735,31 +775,78 @@ internal fun ChatMessagesView(
     ) {
         if (autoScrollToBottom && hasNewerDisplayHistory && !isLoadingDisplayWindow && chatCore != null) {
             chatCore.showLatestMessagesForCurrentChat()
-        } else if (floatContext.messages.isNotEmpty() && autoScrollToBottom) {
+        } else if (messages.isNotEmpty() && autoScrollToBottom) {
             scrollState.animateScrollToItem(0)
         }
     }
 
-    val inputProcessingState = floatContext.inputProcessingState.value
-    val isLoading =
-        inputProcessingState !is InputProcessingState.Idle &&
-            inputProcessingState !is InputProcessingState.Error &&
-            inputProcessingState !is InputProcessingState.Completed
     val showLoadingIndicator =
-        isLoading &&
-            (
-                lastMessage?.sender == "user" ||
-                    (lastMessage?.sender == "ai" && lastMessage.content.isBlank())
-            )
+        if (orbitLook) {
+            isLoading && currentChatId in userWaitingChatIds && !hasNewerDisplayHistory
+        } else {
+            isLoading &&
+                (
+                    lastMessage?.sender == "user" ||
+                        (lastMessage?.sender == "ai" && lastMessage.content.isBlank())
+                )
+        }
     val loadMoreText = stringResource(id = R.string.load_more_history)
     val loadNewerText = stringResource(id = R.string.load_newer_history)
     val loadMoreTextStyle = MaterialTheme.typography.bodyMedium
     val responseProcessState =
         com.ai.assistance.operit.ui.features.chat.components.rememberResponseProcessState(
-            floatContext.messages, currentChatId,
+            // An Orbit chat draws every message on its own, as on its page: nothing is folded, so
+            // nothing is grouped either (no work on each streamed update).
+            if (orbitLook) emptyList() else messages, currentChatId,
+            enabled = !orbitLook,
             metadata = processMetadata,
             loadProcess = { key -> chatCore?.loadTranscriptProcess(key) },
         )
+    // Messages sent from the window into Orbit's running reply (or waiting for it to finish) show as
+    // sent at once; each steps aside when its row is in, keyed by its own id so equal texts stay two.
+    val windowSending by com.ai.assistance.operit.services.floating.FloatingOrbit.sending.collectAsState()
+    val appSending by com.ai.assistance.operit.services.floating.FloatingOrbit.appSending.collectAsState()
+    // The window's and the app's, in the order they were sent.
+    val allSending = remember(windowSending, appSending) { (windowSending + appSending).sortedBy { it.at } }
+    val sendingShown = remember(allSending, rawMessages, currentChatId, orbitLook, hasNewerDisplayHistory) {
+        if (!orbitLook || hasNewerDisplayHistory || allSending.none { it.chatId == currentChatId }) emptyList()
+        else {
+            val times = rawMessages.mapTo(hashSetOf()) { it.timestamp }
+            val newestUser = rawMessages.lastOrNull { it.sender == "user" }?.timestamp ?: Long.MIN_VALUE
+            allSending.filter {
+                it.chatId == currentChatId && (it.savedAt == null || it.savedAt !in times) &&
+                    (it.sentSince == null || newestUser < it.sentSince)
+            }
+                .map { FloatingSendingItem(it.id, it.at, ChatMessage(sender = "user", content = it.content, timestamp = -2L - it.id)) }
+        }
+    }
+    // Orbit's chat has no per-message totals; like a messenger, a time line shows above a message
+    // that comes five minutes or more after the one before, the same as on its page.
+    val orbitTimeRows = remember(messages, sendingShown, orbitLook) {
+        if (!orbitLook) emptyMap()
+        else com.ai.assistance.operit.ui.features.chat.components.orbitChatTimeRows(
+            messages
+                .filter { it.sender != "think" && !com.ai.assistance.operit.ui.features.chat.components.OrbitSpeech.hidden(it) }
+                .map { "${it.sender}:${it.timestamp}" to it.timestamp.takeIf { time -> time > 0L } } +
+                sendingShown.map { "floating_sending:${it.id}" to it.at },
+        )
+    }
+    // A bubble or the typing dots added at the bottom (no new chat row yet) come into view too.
+    // A message the user just sent brings the window back to the newest messages, as in a messenger.
+    // Seen even while older messages are paged in (then the window first goes back to the newest).
+    val sentIds = remember(allSending, currentChatId) {
+        allSending.filter { it.chatId == currentChatId && it.savedAt == null }.map { it.id }
+    }
+    val sendingIds = sendingShown.map { it.id }
+    var seenSendingIds by remember(currentChatId) { mutableStateOf(emptySet<Long>()) }
+    LaunchedEffect(sentIds, sendingIds, showLoadingIndicator) {
+        val justSent = sentIds.any { it !in seenSendingIds }
+        seenSendingIds = sentIds.toSet()
+        if (justSent) floatContext.autoScrollToBottom = true
+        if ((justSent || autoScrollToBottom) && !hasNewerDisplayHistory && (sendingIds.isNotEmpty() || showLoadingIndicator)) {
+            scrollState.animateScrollToItem(0)
+        }
+    }
     val renderItems = buildList<Any> {
         if (hasNewerDisplayHistory) {
             add(FloatingLoadNewerItem)
@@ -767,6 +854,7 @@ internal fun ChatMessagesView(
         if (showLoadingIndicator) {
             add(FloatingLoadingItem)
         }
+        addAll(sendingShown.asReversed())
         addAll(displayMessages)
         if (hasOlderDisplayHistory) {
             add(FloatingLoadOlderItem)
@@ -774,6 +862,9 @@ internal fun ChatMessagesView(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
+        CompositionLocalProvider(
+            com.ai.assistance.operit.ui.features.chat.components.LocalOrbitTurnFloor provides orbitTurnFloor,
+        ) {
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize(),
@@ -789,6 +880,7 @@ internal fun ChatMessagesView(
                         FloatingLoadOlderItem -> "floating_load_older_history"
                         FloatingLoadNewerItem -> "floating_load_newer_history"
                         FloatingLoadingItem -> "floating_loading_indicator"
+                        is FloatingSendingItem -> "floating_sending:${item.id}"
                         else -> item.hashCode()
                     }
                 },
@@ -841,14 +933,16 @@ internal fun ChatMessagesView(
                     is ChatMessage -> {
                         val messageListOffset =
                             (if (hasNewerDisplayHistory) 1 else 0) +
-                                (if (showLoadingIndicator) 1 else 0)
+                                (if (showLoadingIndicator) 1 else 0) + sendingShown.size
                         val displayIndex = renderIndex - messageListOffset
-                        val actualIndex = floatContext.messages.indexOfFirst { it.timestamp == item.timestamp && it.sender == item.sender }
+                        val actualIndex = messages.indexOfFirst { it.timestamp == item.timestamp && it.sender == item.sender }
 
                         com.ai.assistance.operit.ui.features.chat.components.ResponseProcessMessage(
                             responseProcessState, actualIndex, appearance.aiTextColor,
                         ) { messageIndex ->
-                        val floatingMessage = floatContext.messages[messageIndex]
+                        val floatingMessage = messages[messageIndex]
+                        // The time goes above the message's first part only.
+                        val timeLine = if (messageIndex == actualIndex) orbitTimeRows["${item.sender}:${item.timestamp}"] else null
                         FloatingMessageItem(
                             index = messageIndex,
                             message = floatingMessage,
@@ -858,33 +952,85 @@ internal fun ChatMessagesView(
                             // is not what closes this reply here either.
                             closesTurn =
                                 floatingMessage.sentAt <= 0L ||
-                                    floatContext.messages
+                                    messages
                                         .asSequence()
                                         .drop(messageIndex + 1)
                                         .firstOrNull { !it.displayMode.isCollaborationEvent }
                                         ?.sentAt != floatingMessage.sentAt,
                             showAssistantHeader =
                                 !com.ai.assistance.operit.ui.features.chat.components.isAssistantContinuation(
-                                    floatContext.messages, messageIndex,
+                                    messages, messageIndex,
                                 ),
                             appearance = appearance,
                             heightMemory = messageHeightMemory,
+                            showFooter = !orbitLook,
                             showTokenStats = showTokenStats,
                             showTimingStats = showTimingStats,
                             showTimestamp = showTimestamp,
+                            timeLine = timeLine,
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         }
                     }
 
+                    is FloatingSendingItem -> {
+                        // Drawn like the sent row that replaces it (the window's Orbit chat is in bubbles).
+                        Column(Modifier.fillMaxWidth()) {
+                            orbitTimeRows["floating_sending:${item.id}"]?.let {
+                                com.ai.assistance.operit.ui.features.chat.components.OrbitChatTimeLine(it)
+                            }
+                            with(appearance) {
+                                BubbleStyleChatMessage(
+                                    message = item.message,
+                                    userMessageColor = userMessageColor,
+                                    aiMessageColor = aiMessageColor,
+                                    userTextColor = userTextColor,
+                                    aiTextColor = aiTextColor,
+                                    systemMessageColor = systemMessageColor,
+                                    systemTextColor = systemTextColor,
+                                    userMessageLiquidGlassEnabled = bubbleUserBubbleLiquidGlass,
+                                    userMessageWaterGlassEnabled = bubbleUserBubbleWaterGlass,
+                                    userBubbleImageStyle = bubbleUserImageStyle,
+                                    bubbleUserRoundedCornersEnabled = bubbleUserRoundedCornersEnabled,
+                                    bubbleUserContentPaddingLeft = bubbleUserContentPaddingLeft,
+                                    bubbleUserContentPaddingRight = bubbleUserContentPaddingRight,
+                                    enableDialogs = false,
+                                )
+                            }
+                            // Inside the item like the sent row's spacing, so it sits on the same side.
+                            Spacer(modifier = Modifier.height(8.dp))
+                        }
+                    }
+
                     FloatingLoadingItem -> {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 0.dp)
-                        ) {
-                            Box(modifier = Modifier.padding(start = 16.dp)) {
-                                LoadingDotsIndicator(MaterialTheme.colorScheme.onSurface)
+                        if (orbitLook) {
+                            // Orbit's typing bubble, as on its page.
+                            val typing = stringResource(
+                                R.string.orbit_typing,
+                                com.ai.assistance.operit.ui.features.chat.components.currentOrbitName(),
+                            )
+                            Surface(
+                                shape = RoundedCornerShape(topStart = 4.dp, topEnd = 20.dp, bottomEnd = 20.dp, bottomStart = 20.dp),
+                                color = appearance.aiMessageColor,
+                                modifier = Modifier.padding(top = 4.dp, bottom = 8.dp).heightIn(min = 44.dp)
+                                    .then(Modifier.semantics {
+                                        contentDescription = typing
+                                        liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite
+                                    }),
+                            ) {
+                                Box(Modifier.padding(horizontal = 14.dp, vertical = 8.dp), contentAlignment = Alignment.CenterStart) {
+                                    LoadingDotsIndicator(appearance.aiTextColor)
+                                }
+                            }
+                        } else {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 0.dp)
+                            ) {
+                                Box(modifier = Modifier.padding(start = 16.dp)) {
+                                    LoadingDotsIndicator(MaterialTheme.colorScheme.onSurface)
+                                }
                             }
                         }
                     }
@@ -893,8 +1039,13 @@ internal fun ChatMessagesView(
                 }
             }
         }
+        }
 
         // 滚动到底部按钮
+        // Only this small box follows an Orbit "added" note, so the message list stays put.
+        com.ai.assistance.operit.ui.features.chat.components.OrbitNoteLift(
+            Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp)
+        ) {
         ScrollToBottomButton(
             scrollState = scrollState,
             coroutineScope = coroutineScope,
@@ -905,10 +1056,8 @@ internal fun ChatMessagesView(
             },
             reverseLayout = true,
             onAutoScrollToBottomChange = onAutoScrollToBottomChange,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 16.dp)
         )
+        }
     }
 }
 
@@ -918,6 +1067,9 @@ private data object FloatingLoadNewerItem
 
 private data object FloatingLoadingItem
 
+/** A message sent from the window that is not a chat row yet. */
+private data class FloatingSendingItem(val id: Long, val at: Long, val message: ChatMessage)
+
 @Composable
 private fun FloatingMessageItem(
     index: Int,
@@ -925,13 +1077,16 @@ private fun FloatingMessageItem(
     closesTurn: Boolean,
     appearance: ChatAppearance,
     heightMemory: ChatMessageHeightMemory,
+    showFooter: Boolean,
     showTokenStats: Boolean,
     showTimingStats: Boolean,
     showTimestamp: Boolean,
     showAssistantHeader: Boolean,
+    timeLine: Long?,
 ) {
     // A reverse LazyColumn reverses separate roots within an item as well.
     Column(Modifier.fillMaxWidth()) {
+        timeLine?.let { com.ai.assistance.operit.ui.features.chat.components.OrbitChatTimeLine(it) }
         with(appearance) {
             when (chatStyle) {
                 ChatStyle.CURSOR -> CursorStyleChatMessage(
@@ -978,7 +1133,7 @@ private fun FloatingMessageItem(
                 )
             }
         }
-        if (message.sender == "ai" && closesTurn) {
+        if (showFooter && message.sender == "ai" && closesTurn) {
             MessageFooterBar(
                 message = message,
                 showMessageTokenStats = showTokenStats,
@@ -1414,7 +1569,10 @@ private fun BoxScope.BottomResizeHandle(
 @Composable
 internal fun ProcessingStatusIndicator(floatContext: FloatContext) {
     val state = floatContext.inputProcessingState.value
-    
+    // Orbit says what it is doing under its name; only a failure shows here.
+    if (com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current &&
+        state !is InputProcessingState.Error) return
+
     if (state !is InputProcessingState.Idle && state !is InputProcessingState.Completed) {
         val text = when (state) {
             is InputProcessingState.Processing -> state.message

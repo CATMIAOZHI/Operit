@@ -1,5 +1,8 @@
 package com.ai.assistance.operit.ui.features.settings.screens
 
+import com.ai.assistance.operit.ui.features.settings.components.SettingsAlertDialog
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogTextButton
+
 import android.text.format.Formatter
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -46,7 +49,8 @@ import kotlinx.coroutines.withTimeout
 @Composable
 fun StorageManagementScreen(
     onManageComponents: () -> Unit,
-    onManageChats: () -> Unit,
+    /** Orbit has no page for the app's chats, so it leaves this out and the button is hidden. */
+    onManageChats: (() -> Unit)?,
     onBackup: () -> Unit
 ) {
     val context = LocalContext.current
@@ -231,7 +235,7 @@ fun StorageManagementScreen(
                     )
                     val action: Pair<String, () -> Unit>? = when (category) {
                         StorageCategory.COMPONENTS -> stringResource(R.string.components_title) to onManageComponents
-                        StorageCategory.DATABASES -> stringResource(R.string.settings_chat_history_management) to onManageChats
+                        StorageCategory.DATABASES -> onManageChats?.let { stringResource(R.string.settings_chat_history_management) to it }
                         StorageCategory.PREVIEW_CACHE -> stringResource(R.string.storage_clear_preview) to { confirmClear = true }
                         else -> null
                     }
@@ -259,17 +263,17 @@ fun StorageManagementScreen(
         }
     }
     if (confirmClear) {
-        AlertDialog(
+        SettingsAlertDialog(
             onDismissRequest = { confirmClear = false },
             title = { Text(stringResource(R.string.storage_clear_preview)) },
             text = { Text(stringResource(R.string.storage_clear_preview_confirm)) },
             confirmButton = {
-                TextButton(onClick = { confirmClear = false; refresh(true) }) {
+                SettingsDialogTextButton(onClick = { confirmClear = false; refresh(true) }) {
                     Text(stringResource(R.string.storage_clear_preview))
                 }
             },
             dismissButton = {
-                TextButton(onClick = { confirmClear = false }) { Text(stringResource(R.string.cancel)) }
+                SettingsDialogTextButton(onClick = { confirmClear = false }) { Text(stringResource(R.string.cancel)) }
             }
         )
     }

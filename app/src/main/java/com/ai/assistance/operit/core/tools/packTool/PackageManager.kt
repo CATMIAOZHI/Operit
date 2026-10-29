@@ -1981,6 +1981,7 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
     ): ToolPackage? {
         try {
             val jsContent = file.readText()
+            // Only the app's own assets are built in; a file cannot say it is one.
             return parseJsPackage(jsContent) { key, error ->
                 reportPackageLoadError(
                     key,
@@ -1989,7 +1990,7 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
                         sourcePath = file.path
                     )
                 )
-            }
+            }?.copy(isBuiltIn = false)
         } catch (e: Exception) {
             AppLogger.e(TAG, "Error loading package from JS file: ${file.path}", e)
             reportPackageLoadError(
@@ -3497,6 +3498,8 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
                 name = toolName,
                 executor =
                     object : ToolExecutor, JsPackageToolExecutorMarker {
+                        override val registeredFromBuiltIn: Boolean = toolPackage.isBuiltIn
+
                         override fun parameterNames(tool: AITool): Set<String> =
                             packageTool.parameters.map { it.name }.toSet()
 

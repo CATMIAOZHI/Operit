@@ -32,6 +32,10 @@ import com.ai.assistance.operit.ui.common.markdown.ResponseActivityHeader
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.filterNotNull
+import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.layout.onPlaced
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.gestures.stopScroll
@@ -229,6 +233,19 @@ internal fun VirtualTranscript(
         }
     }
     var pendingJump by remember(chatId) { mutableStateOf<Long?>(null) }
+    /** For a jump to a picture or card bubble: the jump's message time and that bubble's key. */
+    var pendingPiece by remember(chatId) { mutableStateOf<Pair<Long, String>?>(null) }
+    /** The jump that already asked for the page after its target, so it asks once. */
+    var jumpTopUp by remember(chatId) { mutableStateOf<Long?>(null) }
+    /** Counts the reader's drags, so a jump still loading its page gives way to one. */
+    var userDrags by remember(chatId) { mutableStateOf(0) }
+    /** The search jump being loaded and the drag count when it came. */
+    var requestDrags by remember(chatId) { mutableStateOf<Pair<Long, Int>?>(null) }
+    /** Changes with every search jump, so a new one to the same message replaces the one before. */
+    var jumpToken by remember(chatId) { mutableStateOf(0L) }
+    val pieceSpot = remember(chatId) { OrbitPieceSpot() }
+    val listPlacement = remember { arrayOfNulls<androidx.compose.ui.layout.LayoutCoordinates>(1) }
+    val topPaddingPx = with(androidx.compose.ui.platform.LocalDensity.current) { topPadding.toPx() }
     val currentRows by key(chatId) { rememberUpdatedState(rows) }
     val currentBaseRows by rememberUpdatedState(baseRows)
     val currentMessages by key(chatId) { rememberUpdatedState(messages) }
@@ -328,6 +345,7 @@ internal fun VirtualTranscript(
                         (after.first == before.first && after.second < before.second) || available.y > 0
                     ) -1 else 1
                     pendingJump = null
+                    userDrags++
                 }
                 return Offset.Zero
             }
@@ -450,7 +468,9 @@ internal fun VirtualTranscript(
                 knownSizes.putAll(sizes)
                 if (!changed || !listState.canScrollForward) return@collect
                 try {
-                    listState.scrollToItem(currentRows.size)
+                    // The footer's end (sent bubbles waiting for their rows can make it tall); the
+                    // list stops at its end.
+                    listState.scrollToItem(currentRows.size, Int.MAX_VALUE / 2)
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     // A scroll that won the list cancels only this jump; keep following afterwards.
                     kotlinx.coroutines.currentCoroutineContext().ensureActive()
@@ -458,16 +478,69 @@ internal fun VirtualTranscript(
             }
         }
     }
-    LaunchedEffect(pendingJump, rows.map { it.key }) {
-        val timestamp = pendingJump ?: return@LaunchedEffect
-        val shownTimestamp = if (look) com.ai.assistance.operit.features.orbit.OrbitChatFork
-            .displayTimestamp(messages, timestamp) else timestamp
+    LaunchedEffect(pendingJump, jumpToken, rows.map { it.key }, loadingPage) {
+        val timestamp = pendingJump ?: run {
+            pieceSpot.target = null
+            pendingPiece = null
+            jumpTopUp = null
+            return@LaunchedEffect
+        }
+        if (loadingPage && jumpTopUp == timestamp) {
+            // Waiting for the page after the target asked for below; one that never ends still ends the jump.
+            kotlinx.coroutines.delay(10_000)
+            pendingJump = null
+            return@LaunchedEffect
+        }
+        val piece = pendingPiece?.takeIf { it.first == timestamp }?.second
+        val fork = com.ai.assistance.operit.features.orbit.OrbitChatFork
+        // Orbit shows a turn's cards at the end of its reply, so a card lands where it shows now.
+        val shownTimestamp = when {
+            !look -> timestamp
+            // Reading every loaded message for the card is kept off the main thread.
+            else -> piece?.let { key -> val shown = messages; kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { fork.pieceTimestamp(shown, key) } }
+                ?: fork.displayTimestamp(messages, timestamp)
+        }
         val index = rows.indexOfFirst { row ->
             row.section != ResponseMessageSection.HEADER &&
                 messages.getOrNull(row.messageIndex)?.timestamp == shownTimestamp
         }
         if (index >= 0) {
-            listState.scrollToItem(index)
+            val retry = jumpTopUp == timestamp
+            // The page loaded for a jump ends with the target's turn, so a target among its last rows
+            // could not reach the top: the next page comes first, and the jump lands once. The new
+            // rows (or the page's loading) run this again; a page that never starts still lands it.
+            if (!retry && hasNewer && onNewer != null && index >= rows.size - 3) {
+                jumpTopUp = timestamp
+                onNewer()
+                kotlinx.coroutines.delay(3000)
+            }
+            // On the second pass the target is usually on screen already: it moves only by the rest.
+            val onScreen = listState.layoutInfo.visibleItemsInfo.any { it.index == index }
+            if (!(retry && piece != null && onScreen)) listState.scrollToItem(index)
+            if (piece != null) {
+                // Then that very bubble, not the words before it, goes to the top.
+                pieceSpot.top = null
+                pieceSpot.owner = null
+                pieceSpot.target = piece
+                // It stays held for a moment: pictures above it that finish loading grow and would
+                // push it down. A drag ends the jump (and this) at once.
+                kotlinx.coroutines.withTimeoutOrNull(1500) {
+                    snapshotFlow { pieceSpot.top }.filterNotNull().collect { top ->
+                        val listTop = listPlacement[0]?.takeIf { it.isAttached }?.positionInRoot()?.y
+                            ?: return@collect
+                        val off = top - listTop - topPaddingPx
+                        if (kotlin.math.abs(off) > 1f) listState.scrollBy(off)
+                    }
+                }
+                pieceSpot.target = null
+            }
+            repeat(2) { androidx.compose.runtime.withFrameNanos { } }
+            if (!listState.canScrollForward && hasNewer && onNewer != null && jumpTopUp != timestamp) {
+                // Taller rows than guessed above: the target still could not reach the top.
+                jumpTopUp = timestamp
+                onNewer()
+                kotlinx.coroutines.delay(3000)
+            }
             pendingJump = null
         } else {
             val messageIndex = messages.indexOfFirst { it.timestamp == timestamp }
@@ -486,13 +559,20 @@ internal fun VirtualTranscript(
         val request = jumpRequest ?: return@LaunchedEffect
         // A search result names its message: load the page holding it if needed, then land there.
         request.timestamp?.let { timestamp ->
+            // A drag while the target's page loads means the reader went their own way.
+            val since = requestDrags?.takeIf { it.first == request.token }?.second
+                ?: userDrags.also { requestDrags = request.token to it }
             if (messages.none { it.timestamp == timestamp } && reveal?.invoke(timestamp) != true) {
                 TranscriptJumpHost.consume(request.token)
                 return@LaunchedEffect
             }
             TranscriptJumpHost.consume(request.token)
+            if (userDrags != since) return@LaunchedEffect
             restoring = false
             onFollowingChange?.invoke(false)
+            jumpTopUp = null
+            jumpToken = request.token
+            pendingPiece = request.piece?.let { timestamp to it }
             pendingJump = timestamp
             return@LaunchedEffect
         }
@@ -574,7 +654,7 @@ internal fun VirtualTranscript(
     Box(modifier) {
         LazyColumn(
             state = listState,
-            modifier = Modifier.fillMaxSize().nestedScroll(connection),
+            modifier = Modifier.fillMaxSize().nestedScroll(connection).onPlaced { listPlacement[0] = it },
             contentPadding = PaddingValues(
                 start = horizontalPadding, end = horizontalPadding,
                 top = topPadding, bottom = bottomPadding + 16.dp,
@@ -594,6 +674,7 @@ internal fun VirtualTranscript(
                                 )
                             },
                         LocalResponseMessageSection provides row.section,
+                        LocalOrbitPieceSpot provides pieceSpot.takeIf { look },
                         LocalResponseProcessExpanded provides row.group?.let { process.isExpanded(it.key) },
                         LocalTranscriptMarkdownSlice provides row.markdownSlice,
                         LocalTranscriptRuns provides runSnapshot,
@@ -664,9 +745,10 @@ internal fun VirtualTranscript(
             }
         }
         // Orbit: a round button just above the message box, in the middle.
-        if (look) androidx.compose.animation.AnimatedVisibility(
+        if (look) {
+        OrbitNoteLift(Modifier.align(Alignment.BottomCenter).padding(bottom = bottomPadding + 12.dp)) {
+        androidx.compose.animation.AnimatedVisibility(
             visible = !following || hasNewer,
-            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = bottomPadding + 12.dp),
             enter = androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(150)) +
                 androidx.compose.animation.scaleIn(androidx.compose.animation.core.tween(150), initialScale = 0.8f),
             exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(120)) +
@@ -686,6 +768,8 @@ internal fun VirtualTranscript(
                     )
                 }
             }
+        }
+        }
         }
         if (loadingPage) CircularProgressIndicator(Modifier.align(Alignment.TopCenter).size(20.dp))
     }

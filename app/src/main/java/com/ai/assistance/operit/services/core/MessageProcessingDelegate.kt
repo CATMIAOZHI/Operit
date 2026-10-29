@@ -1385,7 +1385,7 @@ class MessageProcessingDelegate(
                                 displayMode = ChatMessageDisplayMode.ASSISTANT_INTERMEDIATE,
                             )).forEach { row -> sentAsMessages(chatId, row).forEach { addMessageToChat(chatId, it) } }
                             texts.forEach { input ->
-                                addMessageToChat(chatId, ChatMessage(
+                                val row = ChatMessage(
                                     sender = "user", content = input.text,
                                     roleName = input.agentPath ?: context.getString(R.string.message_role_user),
                                     displayMode = when {
@@ -1393,7 +1393,10 @@ class MessageProcessingDelegate(
                                         input.startsAgentTurn -> ChatMessageDisplayMode.COLLABORATION_TASK
                                         else -> ChatMessageDisplayMode.COLLABORATION_EVENT
                                     },
-                                ))
+                                )
+                                // The sender's stand-in bubble steps aside once this row is shown.
+                                input.saved(row.timestamp)
+                                addMessageToChat(chatId, row)
                             }
                             val nextAssistantTimestamp = ChatMessageTimestampAllocator.next()
                             chatRuntime.steeredTranscript.add(

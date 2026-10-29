@@ -86,6 +86,10 @@ class FloatingChatService : Service(), FloatingWindowCallback {
     // 聊天服务核心 - 整合所有业务逻辑
     private var selectedCore by mutableStateOf<ChatServiceCore?>(null)
     private val boundCore: ChatServiceCore get() = checkNotNull(selectedCore)
+    /** True while this window shares the app's runtime only because it shows Orbit's chat. */
+    private var boundForOrbit = false
+    /** Choosing Orbit's chat for a window opened without one; a later explicit chat cancels it. */
+    private var orbitRouting: kotlinx.coroutines.Job? = null
     var currentChatSlot: ChatRuntimeSlot = ChatRuntimeSlot.FLOATING
         private set
     private var coreObservation: kotlinx.coroutines.Job? = null
@@ -121,6 +125,8 @@ class FloatingChatService : Service(), FloatingWindowCallback {
         const val EXTRA_CHAT_SLOT = "PET_CHAT_SLOT"
         const val EXTRA_CHAT_ID = "PET_CHAT_ID"
         const val EXTRA_KEEP_IF_EXISTS = "KEEP_IF_EXISTS"
+        /** Set by the app's own floating buttons: the window starts from the chat on screen. */
+        const val EXTRA_OPENED_FROM_APP = "OPENED_FROM_APP"
 
         fun getInstance(): FloatingChatService? = instance
     }
@@ -382,6 +388,37 @@ class FloatingChatService : Service(), FloatingWindowCallback {
         }
     }
 
+    /**
+     * A window opened without a chosen chat: Orbit's chat open in the app is shared live; in Orbit
+     * mode a window opened from outside goes to Orbit. Otherwise a window that only showed Orbit
+     * goes back to its own runtime.
+     */
+    private fun routeOrbit(openedFromApp: Boolean) {
+        orbitRouting?.cancel()
+        val main = ChatRuntimeHolder.getInstance(applicationContext).getCore(ChatRuntimeSlot.MAIN)
+        val mainChatId = main.currentChatId.value
+        // Settings are usually loaded already, so this finishes before the window draws.
+        orbitRouting = serviceScope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+            val target = com.ai.assistance.operit.services.floating.FloatingOrbit.target(
+                applicationContext, mainChatId, openedFromApp,
+            )
+            if (target == null) {
+                if (boundForOrbit) {
+                    boundForOrbit = false
+                    bindChatCore(ChatRuntimeSlot.FLOATING)
+                }
+                return@launch
+            }
+            val (slot, chatId) = target
+            boundForOrbit = true
+            bindChatCore(slot)
+            if (boundCore.currentChatId.value != chatId) boundCore.switchChatLocal(chatId)
+        }
+    }
+
+    /** The app opened the window again while it was running: show what an opening from the app shows. */
+    fun routeOpenedFromApp() = routeOrbit(openedFromApp = true)
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (!isServiceReady) {
             sendLifecycleBroadcast(ACTION_FLOATING_CHAT_WINDOW_SHOW_FAILED)
@@ -399,6 +436,9 @@ class FloatingChatService : Service(), FloatingWindowCallback {
         try {
 
             intent?.getStringExtra(EXTRA_CHAT_SLOT)?.let { name ->
+                orbitRouting?.cancel()
+                orbitRouting = null
+                boundForOrbit = false
                 ChatRuntimeSlot.entries.firstOrNull { it.name == name }?.let(::bindChatCore)
                 intent.getStringExtra(EXTRA_CHAT_ID)?.takeIf { it != boundCore.currentChatId.value }?.let {
                     boundCore.switchChatLocal(it)
@@ -408,6 +448,9 @@ class FloatingChatService : Service(), FloatingWindowCallback {
 
             val keepIfExists = intent?.getBooleanExtra(EXTRA_KEEP_IF_EXISTS, false) == true
             val isFirstStart = !hasHandledStartCommand
+            if (intent != null && !intent.hasExtra(EXTRA_CHAT_SLOT) && !(keepIfExists && !isFirstStart)) {
+                routeOrbit(openedFromApp = intent.getBooleanExtra(EXTRA_OPENED_FROM_APP, false))
+            }
             if (keepIfExists && instance != null && !isFirstStart) {
                 AppLogger.d(TAG, "Service already running; keep_if_exists=true, skip mode change")
             } else {
@@ -448,9 +491,17 @@ class FloatingChatService : Service(), FloatingWindowCallback {
             }
 
             if (wakeLaunchedExtra) {
+                val routing = orbitRouting
                 serviceScope.launch {
+                    routing?.join()
                     val enabled = wakePrefs.wakeCreateNewChatOnWakeEnabledFlow.first()
-                    if (enabled) {
+                    // Orbit keeps one conversation; waking it never starts a normal chat. The routing
+                    // decision counts at once: the switch to Orbit's chat may still be on its way.
+                    val showingOrbit = boundForOrbit || com.ai.assistance.operit.services.floating.FloatingOrbit.owner(
+                        com.ai.assistance.operit.services.floating.FloatingOrbit.settings(applicationContext),
+                        boundCore.currentChatId.value,
+                    ) != null
+                    if (enabled && !showingOrbit) {
                         val currentChatId = boundCore.currentChatId.value
                         if (currentChatId != null) {
                             var history = boundCore.chatHistory.value
@@ -744,7 +795,8 @@ class FloatingChatService : Service(), FloatingWindowCallback {
         
         // 直接使用 boundCore 发送消息，不再通过 SharedFlow
         val targetCore = boundCore
-        serviceScope.launch {
+        // The input has been cleared already: the send goes on even if the window closes meanwhile.
+        com.ai.assistance.operit.services.floating.FloatingOrbit.launch {
             try {
                 // A subagent chat is a read-only transcript; nothing in the floating surface may
                 // append a user message to it.
@@ -753,9 +805,56 @@ class FloatingChatService : Service(), FloatingWindowCallback {
                     AppLogger.w(TAG, "忽略发送：Subagent 对话为只读记录")
                     return@launch
                 }
+                val orbitSettings = com.ai.assistance.operit.services.floating.FloatingOrbit.settings(applicationContext)
+                if (com.ai.assistance.operit.features.orbit.OrbitAppLock.isLocked(applicationContext, orbitSettings, chatId)) {
+                    if (chatId != null) {
+                        if (!com.ai.assistance.operit.ui.floating.FloatContext.hasDraft(chatId)) {
+                            com.ai.assistance.operit.ui.floating.FloatContext.restoreDraft(chatId, message)
+                        } else {
+                            android.widget.Toast.makeText(
+                                applicationContext, getString(R.string.orbit_send_lost, message),
+                                android.widget.Toast.LENGTH_LONG,
+                            ).show()
+                        }
+                        com.ai.assistance.operit.services.floating.FloatingOrbit.openInApp(applicationContext, chatId)
+                    }
+                    return@launch
+                }
+                val orbit = com.ai.assistance.operit.services.floating.FloatingOrbit.owner(orbitSettings, chatId)
+                if (orbit != null && chatId != null &&
+                    com.ai.assistance.operit.services.floating.FloatingOrbit.busyRuntime(applicationContext, chatId) != null) {
+                    // Talking to Orbit while it replies goes into that reply instead of waiting.
+                    // The reply may run in the app's runtime (a background task); the message goes
+                    // there. The window's attachments go with the message and leave the composer once taken.
+                    val attachments = targetCore.attachments.value
+                    if (message.isBlank() && attachments.isEmpty()) return@launch
+                    targetCore.clearAttachments()
+                    com.ai.assistance.operit.services.floating.FloatingOrbit.sendWhileBusy(
+                        applicationContext, targetCore, chatId, message, attachments,
+                    ) {
+                        AppLogger.w(TAG, "Orbit 悬浮窗消息未发出")
+                        // Back into the window's composer, whole, only when nothing new is in it (no text,
+                        // no files), so a new message never picks up the old one's parts.
+                        val restored = !com.ai.assistance.operit.ui.floating.FloatContext.hasDraft(chatId) &&
+                            targetCore.attachments.value.isEmpty() &&
+                            (attachments.isEmpty() || targetCore.currentChatId.value == chatId)
+                        if (restored) {
+                            com.ai.assistance.operit.ui.floating.FloatContext.restoreDraft(chatId, message)
+                            targetCore.getAttachmentDelegate().addAttachments(attachments)
+                        }
+                        android.widget.Toast.makeText(
+                            applicationContext,
+                            if (restored) getString(R.string.orbit_send_lost_restored)
+                            else getString(R.string.orbit_send_lost, message.ifBlank { attachments.joinToString("、") { it.fileName } }),
+                            android.widget.Toast.LENGTH_LONG,
+                        ).show()
+                    }
+                    return@launch
+                }
                 // Capture the selected runtime before suspending.
                 targetCore.sendUserMessage(
-                    promptFunctionType = promptType,
+                    // Orbit answers voice like chat: same model, reasoning and prompt.
+                    promptFunctionType = if (orbit != null) PromptFunctionType.CHAT else promptType,
                     messageTextOverride = message,
                     turnOptions = com.ai.assistance.operit.data.model.ChatTurnOptions(useComposerReply = false),
                 )
@@ -883,5 +982,17 @@ class FloatingChatService : Service(), FloatingWindowCallback {
      * @return ChatServiceCore 聊天服务核心实例
      */
     fun getChatCore(): ChatServiceCore = boundCore
+
+    /** A reply option tapped in Orbit's chat in this window; false when that chat is not shown. */
+    fun sendOrbitOption(chatId: String, text: String, waiting: () -> Boolean, onLost: () -> Unit): Boolean {
+        val core = boundCore
+        if (core.currentChatId.value != chatId || text.isBlank()) return false
+        if (com.ai.assistance.operit.features.orbit.OrbitAppLock.isLocked(
+                applicationContext, com.ai.assistance.operit.data.preferences.OrbitPreferences
+                    .getInstance(applicationContext).loadedSnapshot(), chatId,
+            )) return false
+        com.ai.assistance.operit.services.floating.FloatingOrbit.sendOption(applicationContext, core, chatId, text, waiting, onLost)
+        return true
+    }
 
 }

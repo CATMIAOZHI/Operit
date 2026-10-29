@@ -1114,6 +1114,7 @@ fun ClassicChatInputSection(
                 onAttachPackage = onAttachPackage,
                 onTakePhoto = onTakePhoto,
                 userQuery = userMessage.text,
+                orbit = isOrbitChat,
                 onDismiss = { setShowAttachmentPanel(false) }
             )
 

@@ -96,7 +96,7 @@ class GrokAccountProvider(
         super.applyAuthenticationHeaders(builder, currentApiKey)
         val session = currentCoroutineContext()[OpenCodeSessionContext]?.sessionId ?: fallbackSession
         builder.header("x-grok-conv-id", session).header("x-grok-session-id", session)
-        ProviderAccountManager.GROK_HEADERS.forEach { (key, value) -> builder.header(key, value) }
+        com.ai.assistance.operit.data.api.GrokClientIdentity.headers().forEach { (key, value) -> builder.header(key, value) }
     }
     override fun applyRequestIdentityHeaders(builder: Request.Builder, logicalRequestId: String) {
         builder.header("x-grok-req-id", logicalRequestId)

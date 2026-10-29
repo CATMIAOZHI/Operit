@@ -706,7 +706,7 @@ private val colorSchemeFieldByToken: Map<String, java.lang.reflect.Field> by laz
 @Suppress("UNUSED_PARAMETER")
 @Composable
 fun ToolPkgComposeDslToolScreen(
-    navController: NavController,
+    navController: NavController? = null,
     routeInstanceId: String,
     containerPackageName: String,
     uiModuleId: String,

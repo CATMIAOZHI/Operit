@@ -19,7 +19,7 @@
         {"name": "query", "type": "string", "required": false, "description": {"zh": "一个搜索词；和 queries 二选一", "en": "One query; use this or queries"}},
         {"name": "queries", "type": "array", "required": false, "description": {"zh": "多个搜索词的数组，最多 5 个，会并行搜索", "en": "Array of up to 5 queries, searched in parallel"}},
         {"name": "search_context_size", "type": "string", "required": false, "description": {"zh": "搜索读取的内容量：low、medium（默认）、high。越高越全，也越慢、越耗额度", "en": "How much the search reads: low, medium (default) or high. Higher is fuller but slower and uses more quota"}},
-        {"name": "model", "type": "string", "required": false, "description": {"zh": "可选，默认 gpt-5.4-mini；也可用 gpt-5.5、gpt-5.4 等 Codex 模型", "en": "Optional, default gpt-5.4-mini; other Codex models such as gpt-5.5 or gpt-5.4 also work"}}
+        {"name": "model", "type": "string", "required": false, "description": {"zh": "可选，默认 gpt-6-luna；也可填其他 gpt 开头的 Codex 模型", "en": "Optional, default gpt-6-luna; other Codex models starting with gpt also work"}}
       ]
     }
   ]

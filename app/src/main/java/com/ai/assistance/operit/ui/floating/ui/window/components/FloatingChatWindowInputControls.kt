@@ -36,7 +36,9 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material3.Icon
@@ -71,6 +73,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ai.assistance.operit.R
@@ -115,24 +120,65 @@ private fun BottomInputBar(
 ) {
     val context = LocalContext.current
     val preferences = remember(context) { UserPreferencesManager.getInstance(context) }
+    // Orbit keeps its own default input box, whatever style normal chats use.
+    val orbitLook = com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current
     val inputStyle by preferences.inputStyle.collectAsState(initial = UserPreferencesManager.INPUT_STYLE_CLASSIC)
-    val floating by preferences.chatInputFloating.collectAsState(initial = true)
-    val transparent by preferences.chatInputTransparent.collectAsState(initial = false)
+    val floatingPreference by preferences.chatInputFloating.collectAsState(initial = true)
+    val transparentPreference by preferences.chatInputTransparent.collectAsState(initial = false)
+    val floating = orbitLook || floatingPreference
+    val transparent = !orbitLook && transparentPreference
     val liquid by preferences.chatInputLiquidGlass.collectAsState(initial = false)
     val water by preferences.chatInputWaterGlass.collectAsState(initial = false)
     val useBackgroundImage by preferences.useBackgroundImage.collectAsState(initial = false)
     val backgroundImageUri by preferences.backgroundImageUri.collectAsState(initial = null)
-    val agent = inputStyle == UserPreferencesManager.INPUT_STYLE_AGENT
+    val agent = !orbitLook && inputStyle == UserPreferencesManager.INPUT_STYLE_AGENT
     val liquidEnabled = transparent && liquid && !water && isLiquidGlassSupported()
     val waterEnabled = transparent && water && isWaterGlassSupported()
     val shape = chatComposerShape(agent, floating)
-    val surface = chatComposerColor(agent, transparent, useBackgroundImage && backgroundImageUri != null)
+    val surface = chatComposerColor(agent, transparent, !orbitLook && useBackgroundImage && backgroundImageUri != null)
     val textStyle = chatComposerTextStyle(agent)
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
     var isInputFocused by remember { mutableStateOf(false) }
     val hasContent = floatContext.userMessage.isNotBlank() || floatContext.attachments.isNotEmpty()
-    val isProcessing = floatContext.chatService?.getChatCore()?.isLoading?.collectAsState()?.value ?: false
+    val core = floatContext.chatService?.getChatCore()
+    val isProcessing = core?.isLoading?.collectAsState()?.value ?: false
+    val currentChatId = core?.currentChatId?.collectAsState()?.value
+    val userWaitingChatIds = core?.getMessageProcessingDelegate()?.userWaitingChatIds?.collectAsState()?.value.orEmpty()
+    // Talking to Orbit while it works goes into that work; stopping is for a reply the user waits on.
+    val showCancel = isProcessing && (!orbitLook || (!hasContent && currentChatId in userWaitingChatIds))
+    // Orbit has no voice conversation, as on its page: its microphone only fills the message box,
+    // and nothing is sent until the user sends it.
+    val dictation = if (orbitLook) {
+        com.ai.assistance.operit.ui.features.chat.components.style.input.common.rememberDraftVoiceController(
+            currentChatId,
+            androidx.compose.ui.text.input.TextFieldValue(
+                floatContext.userMessage,
+                androidx.compose.ui.text.TextRange(floatContext.userMessage.length),
+            ),
+        ) { floatContext.userMessage = it.text }
+    } else null
+    val dictating = dictation?.isActive == true
+    fun startDictation() {
+        if (dictation == null) return
+        if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.RECORD_AUDIO) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            // A floating window cannot ask for it, so the app's settings open where it can be allowed.
+            android.widget.Toast.makeText(context, R.string.orbit_floating_mic_permission, android.widget.Toast.LENGTH_LONG).show()
+            runCatching {
+                context.startActivity(
+                    android.content.Intent(
+                        android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        android.net.Uri.fromParts("package", context.packageName, null),
+                    ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+            }
+            return
+        }
+        floatContext.showAttachmentPanel = false
+        dictation.open()
+    }
 
     fun releaseFocus() {
         focusManager.clearFocus(force = true)
@@ -140,7 +186,7 @@ private fun BottomInputBar(
         floatContext.onInputFocusRequest?.invoke(false)
     }
     fun send() {
-        if (isProcessing || !hasContent) return
+        if ((isProcessing && !orbitLook) || !hasContent) return
         floatContext.onSendMessage?.invoke(floatContext.userMessage, PromptFunctionType.CHAT)
         floatContext.userMessage = ""
         floatContext.showAttachmentPanel = false
@@ -157,6 +203,35 @@ private fun BottomInputBar(
     @Composable
     fun InputField(modifier: Modifier) {
         val fieldShape = RoundedCornerShape(14.dp)
+        if (dictation != null && dictating) {
+            // What is being heard, in place of the message box until it lands there.
+            val error = dictation.errorText
+            val live = dictation.liveText
+            val hint = stringResource(R.string.voice_draft_hint)
+            Column(
+                modifier.heightIn(min = 44.dp)
+                    .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.72f), fieldShape)
+                    .clip(fieldShape)
+                    .padding(horizontal = 14.dp, vertical = 14.dp)
+                    .semantics(mergeDescendants = true) {
+                        liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite
+                    },
+            ) {
+                if (live.isNotBlank()) {
+                    Text(live, style = textStyle, color = MaterialTheme.colorScheme.onSurface, maxLines = 4,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                }
+                // The reason stays on screen even when part of it was already heard.
+                val line = error ?: if (live.isBlank()) dictation.statusText.ifBlank { hint } else null
+                if (line != null) {
+                    Text(line, style = if (live.isBlank()) textStyle else MaterialTheme.typography.labelMedium,
+                        color = if (error != null) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 3, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                }
+            }
+            return
+        }
         BasicTextField(
             value = floatContext.userMessage,
             onValueChange = { floatContext.userMessage = it },
@@ -190,6 +265,15 @@ private fun BottomInputBar(
     }
     @Composable
     fun AttachmentButton() {
+        if (dictation != null && dictating) {
+            // Throws away what was heard and goes back to the message box.
+            IconButton(onClick = { dictation.cancel() }, modifier = Modifier.size(48.dp).clip(CircleShape)
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))) {
+                Icon(Icons.Default.Close, stringResource(R.string.cancel),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(22.dp))
+            }
+            return
+        }
         IconButton(onClick = {
             releaseFocus()
             viewModel.toggleAttachmentPanel()
@@ -205,10 +289,51 @@ private fun BottomInputBar(
     }
     @Composable
     fun SendButton() {
+        if (dictation != null && dictating) {
+            val busy = dictation.isPreparing || dictation.isProcessing
+            val recording = dictation.isRecording
+            // After a failure, what was already heard can still go into the message box.
+            val keepHeard = !busy && !recording && dictation.errorText != null && dictation.liveText.isNotBlank()
+            val busyText = dictation.statusText.ifBlank { stringResource(R.string.voice_draft_hint) }
+            IconButton(
+                enabled = !busy,
+                onClick = {
+                    when {
+                        recording -> dictation.finishRecording()
+                        keepHeard -> dictation.confirmNow()
+                        else -> dictation.open()
+                    }
+                },
+                modifier = Modifier.size(48.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary)
+                    .then(if (busy) Modifier.semantics { contentDescription = busyText } else Modifier),
+            ) {
+                if (busy) {
+                    androidx.compose.material3.CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp), strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                    )
+                } else {
+                    Icon(
+                        if (recording || keepHeard) Icons.Default.Check else Icons.Default.Mic,
+                        stringResource(when {
+                            recording -> R.string.voice_draft_finish
+                            keepHeard -> R.string.voice_draft_fill_message_box
+                            else -> R.string.voice_draft_retry
+                        }),
+                        tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(24.dp),
+                    )
+                }
+            }
+            return
+        }
         IconButton(onClick = {
             when {
-                isProcessing -> floatContext.onCancelMessage?.invoke()
+                showCancel -> floatContext.onCancelMessage?.invoke()
                 hasContent -> send()
+                dictation != null -> {
+                    releaseFocus()
+                    startDictation()
+                }
                 else -> {
                     releaseFocus()
                     floatContext.voiceAutoTimeout = false
@@ -217,13 +342,15 @@ private fun BottomInputBar(
                 }
             }
         }, modifier = Modifier.size(48.dp).clip(CircleShape).background(
-            if (isProcessing) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+            if (showCancel) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
         )) {
             Icon(
-                if (isProcessing) Icons.Default.Close else if (hasContent) Icons.Default.Send else Icons.Rounded.GraphicEq,
-                stringResource(if (isProcessing) R.string.floating_cancel else if (hasContent)
-                    R.string.floating_send else R.string.floating_voice_mode),
-                tint = if (isProcessing) MaterialTheme.colorScheme.onError else MaterialTheme.colorScheme.onPrimary,
+                if (showCancel) Icons.Default.Close else if (hasContent) Icons.Default.Send
+                    else if (dictation != null) Icons.Default.Mic else Icons.Rounded.GraphicEq,
+                stringResource(if (showCancel) R.string.floating_cancel else if (hasContent)
+                    R.string.floating_send else if (dictation != null) R.string.voice_draft_button
+                    else R.string.floating_voice_mode),
+                tint = if (showCancel) MaterialTheme.colorScheme.onError else MaterialTheme.colorScheme.onPrimary,
                 modifier = Modifier.size(24.dp),
             )
         }

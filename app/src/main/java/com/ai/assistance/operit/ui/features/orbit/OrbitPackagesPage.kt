@@ -212,6 +212,9 @@ internal fun OrbitPackagesPage(orbit: OrbitProfile, onBack: () -> Unit) {
     // The package whose details are open; kept while the page slides away.
     var detail by remember { mutableStateOf<PackageRow?>(null) }
     var detailShown by remember { mutableStateOf(false) }
+    // A plugin's own settings screen, opened from its details on top of them.
+    var plugin by remember { mutableStateOf<PackageManager.ToolPkgToolboxUiModule?>(null) }
+    var pluginShown by remember { mutableStateOf(false) }
 
     fun reason(e: Exception, fallback: Int): String = when (e) {
         is OrbitPackages.NeedsMissingException ->
@@ -433,8 +436,15 @@ internal fun OrbitPackagesPage(orbit: OrbitProfile, onBack: () -> Unit) {
                 onBack = { detailShown = false },
                 onToggle = { toggle(row.name, it, on) },
                 onRemove = { detailShown = false; remove(row.name) },
+                onOpenPlugin = { module ->
+                    plugin = module
+                    pluginShown = true
+                },
             )
         }
+    }
+    OrbitCoverPage(visible = pluginShown, onDismiss = { pluginShown = false }) {
+        plugin?.let { module -> OrbitPluginSettingsPage(module, onBack = { pluginShown = false }) }
     }
 }
 
@@ -447,11 +457,22 @@ private fun OrbitPackageDetailPage(
     onBack: () -> Unit,
     onToggle: (Boolean) -> Unit,
     onRemove: () -> Unit,
+    onOpenPlugin: (PackageManager.ToolPkgToolboxUiModule) -> Unit,
 ) {
     val context = LocalContext.current
     val resources = LocalResources.current
     val pkg by produceState<ToolPackage?>(null, row.name) {
         value = withContext(Dispatchers.IO) { runCatching { packageManager.resolvePackageForDisplay(row.name) }.getOrNull() }
+    }
+    // Screens a plugin package brings for its own settings.
+    val plugins by produceState(emptyList<PackageManager.ToolPkgToolboxUiModule>(), row.name) {
+        value = withContext(Dispatchers.IO) {
+            runCatching {
+                if (packageManager.isToolPkgContainer(row.name)) {
+                    packageManager.getToolPkgContainerDetails(row.name, context)?.toolboxUiModules.orEmpty()
+                } else emptyList()
+            }.getOrDefault(emptyList())
+        }
     }
     LazyColumn(
         Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
@@ -497,6 +518,27 @@ private fun OrbitPackageDetailPage(
                             color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(end = 8.dp))
                     }
                     Switch(checked = on || row.required, onCheckedChange = null, enabled = !row.required)
+                }
+            }
+            plugins.forEach { module ->
+                Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                    modifier = Modifier.fillMaxWidth().padding(top = 10.dp)) {
+                    Row(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp))
+                            .clickable { onOpenPlugin(module) }
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(stringResource(R.string.orbit_plugin_settings), style = MaterialTheme.typography.bodyLarge)
+                            if (module.title.isNotBlank() && plugins.size > 1) {
+                                Text(module.title, style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                        Icon(orbitIcon("chevron-right"), null, Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             }
         }

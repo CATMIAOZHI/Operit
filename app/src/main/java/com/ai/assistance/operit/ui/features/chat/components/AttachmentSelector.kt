@@ -46,6 +46,11 @@ import androidx.compose.material.icons.filled.ScreenshotMonitor
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.outlined.Description as OutlinedDescription
+import androidx.compose.material.icons.outlined.Image as OutlinedImage
+import androidx.compose.material.icons.outlined.LocationOn as OutlinedLocationOn
+import androidx.compose.material.icons.outlined.Notifications as OutlinedNotifications
+import androidx.compose.material.icons.outlined.PhotoCamera as OutlinedPhotoCamera
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -100,6 +105,7 @@ fun AttachmentSelectorPanel(
         onTakePhoto: (Uri) -> Unit,
         userQuery: String = "",
         chatId: String? = null,
+        orbit: Boolean = false,
         onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -156,6 +162,44 @@ fun AttachmentSelectorPanel(
                             shrinkTowards = androidx.compose.ui.Alignment.Bottom
                     ) + fadeOut()
     ) {
+        if (orbit) {
+            OrbitAttachmentRow(
+                items = listOf(
+                    AttachmentPanelItem(
+                        icon = Icons.Outlined.OutlinedImage,
+                        label = context.getString(R.string.orbit_attach_photo),
+                        onClick = { imagePickerLauncher.launch("image/*") }
+                    ),
+                    AttachmentPanelItem(
+                        icon = Icons.Outlined.OutlinedPhotoCamera,
+                        label = context.getString(R.string.orbit_attach_camera),
+                        onClick = launchCameraCapture
+                    ),
+                    AttachmentPanelItem(
+                        icon = Icons.Outlined.OutlinedDescription,
+                        label = context.getString(R.string.orbit_attach_file),
+                        onClick = { filePickerLauncher.launch("*/*") }
+                    ),
+                    AttachmentPanelItem(
+                        icon = Icons.Outlined.OutlinedNotifications,
+                        label = context.getString(R.string.orbit_attach_notifications),
+                        onClick = {
+                            onAttachNotifications()
+                            onDismiss()
+                        }
+                    ),
+                    AttachmentPanelItem(
+                        icon = Icons.Outlined.OutlinedLocationOn,
+                        label = context.getString(R.string.orbit_attach_location),
+                        onClick = {
+                            onAttachLocation()
+                            onDismiss()
+                        }
+                    ),
+                )
+            )
+            return@AnimatedVisibility
+        }
         Surface(
                 color = MaterialTheme.colorScheme.surface,
                 shadowElevation = 1.dp,
@@ -523,11 +567,60 @@ fun AttachmentSelectorPopupPanel(
     )
 }
 
-private data class AttachmentPanelItem(
+internal data class AttachmentPanelItem(
         val icon: ImageVector,
         val label: String,
         val onClick: () -> Unit
 )
+
+/**
+ * Orbit's "+" choices, inside its message card: one row of soft grey tiles with plain line icons,
+ * like the rest of Orbit. Memory, packages and screen content are left out there. The floating
+ * window's Orbit chat uses the same row.
+ */
+@Composable
+internal fun OrbitAttachmentRow(items: List<AttachmentPanelItem>) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(start = 10.dp, end = 10.dp, top = 4.dp, bottom = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        items.forEach { item ->
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.weight(1f)
+                    .clip(RoundedCornerShape(18.dp))
+                    .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = item.onClick)
+                    .padding(vertical = 6.dp),
+            ) {
+                Box(
+                    modifier = Modifier.size(52.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = item.icon,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(24.dp),
+                    )
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = item.label,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    // Short words; a large font can still need a second line rather than "…".
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
+    }
+}
 
 private enum class AttachmentPackageKind {
     PACKAGE,

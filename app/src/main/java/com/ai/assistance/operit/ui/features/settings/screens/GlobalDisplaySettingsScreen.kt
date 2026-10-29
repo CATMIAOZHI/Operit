@@ -44,6 +44,8 @@ fun GlobalDisplaySettingsScreen(
     onBackPressed: () -> Unit,
     /** Orbit shows only the automation part: screenshots, virtual screen, Root and keep-alive. */
     automationOnly: Boolean = false,
+    /** Orbit's own rows, shown first on its automation page. */
+    leadingContent: (@Composable () -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val displayPreferencesManager = remember { DisplayPreferencesManager.getInstance(context) }
@@ -184,6 +186,10 @@ fun GlobalDisplaySettingsScreen(
                 .padding(horizontal = 16.dp, vertical = 8.dp)
                 .verticalScroll(scrollState)
         ) {
+            leadingContent?.let {
+                it()
+                Spacer(Modifier.height(16.dp))
+            }
             if (!automationOnly) {
             SettingsCard(backgroundColor = componentBackgroundColor) {
                 LaunchModeSettingsRow()

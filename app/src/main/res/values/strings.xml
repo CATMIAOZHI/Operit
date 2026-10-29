@@ -8770,6 +8770,9 @@
     <string name="floating_voice_answering">正在回答…</string>
     <string name="floating_voice_starting">正在启动语音…</string>
     <string name="screen_ocr_capturing">正在截取屏幕…</string>
+    <string name="screen_ocr_hint">用手指圈出想发送的地方</string>
+    <string name="screen_ocr_reselect">重选</string>
+    <string name="screen_ocr_add">添加</string>
     <string name="model_protocol_title">API 协议</string>
     <string name="model_protocol_desc">仅应用到当前模型，默认继承提供商配置。</string>
     <string name="model_protocol_inherit">继承提供商</string>
@@ -9726,7 +9729,7 @@
     <string name="orbit_tools_row">工具权限</string>
     <string name="orbit_tools_row_desc">Orbit 自己的一套，和主应用分开</string>
     <string name="orbit_tools_title">工具权限</string>
-    <string name="orbit_tools_help">只管 Orbit 的聊天和它的后台任务，主应用的工具权限不受影响。Orbit 自己的工具默认始终允许，其他工具默认走自动审核（快速）。</string>
+    <string name="orbit_tools_help">只管 Orbit 的聊天和它的后台任务，主应用的工具权限不受影响。Orbit 自己的工具，以及内置包里只做查询的工具（时间、搜索、天气等），默认直接允许；其他工具默认走自动审核（快速）。</string>
     <string name="orbit_tools_search">搜索工具</string>
     <string name="orbit_tools_empty">没有找到工具</string>
     <string name="orbit_tools_folder_internal">Orbit 内部工具</string>
@@ -9871,6 +9874,16 @@
     <string name="orbit_automation_settings_row">截图、虚拟屏幕、Root 执行方式、后台保活</string>
     <string name="orbit_backup_title">数据备份</string>
     <string name="orbit_backup_row">备份或恢复聊天记录、记忆、模型配置和数据库</string>
+    <string name="orbit_about_row">版本、检查更新、更新日志和开源许可</string>
+    <string name="orbit_app_lock">应用锁</string>
+    <string name="orbit_app_lock_desc">打开 Orbit 时，用指纹、面容或锁屏密码验证。离开超过 1 分钟再回来会重新验证</string>
+    <string name="orbit_app_lock_turn_on">开启应用锁</string>
+    <string name="orbit_app_lock_turn_off">关闭应用锁</string>
+    <string name="orbit_app_lock_prompt_title">解锁 %1$s</string>
+    <string name="orbit_app_lock_prompt_note">用指纹、面容或锁屏密码验证</string>
+    <string name="orbit_app_lock_locked_note">已锁定，验证身份后继续</string>
+    <string name="orbit_app_lock_unlock">解锁</string>
+    <string name="orbit_app_lock_no_screen_lock">手机还没有设置锁屏，请先在系统设置里设置锁屏密码或指纹</string>
     <string name="orbit_voice_read_aloud_title">语音消息用朗读声音</string>
     <string name="orbit_voice_read_aloud_on">发语音时用下面选的朗读服务</string>
     <string name="orbit_voice_read_aloud_off">发语音时始终用手机自带的声音</string>

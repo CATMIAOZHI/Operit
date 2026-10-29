@@ -355,6 +355,7 @@ class ToolPermissionSystem private constructor(private val context: Context) {
         batchSize: Int = 1,
         deferCircuitBreaker: Boolean = false,
         liveAssistantContent: CharSequence? = null,
+        lookupDefault: Boolean = true,
     ): ToolPermissionDecision {
         AppLogger.d(TAG, "Starting permission check: ${tool.name}")
 
@@ -394,8 +395,12 @@ class ToolPermissionSystem private constructor(private val context: Context) {
             }
         }
 
-        val effectiveLevel = getEffectivePermissionLevel(tool.name, callerChatId)
-        val currentRoute = resolveCurrentPermissionRoute(tool, reviewContext)
+        val effectiveLevel = getEffectivePermissionLevel(tool.name, callerChatId, lookupDefault)
+        if (targetId != null && lookupDefault && effectiveLevel == PermissionLevel.ALLOW &&
+            ranByOrbitLookupDefault(tool.name, callerChatId)) {
+            lookupDefaultAllowed.add(targetId)
+        }
+        val currentRoute = resolveCurrentPermissionRoute(tool, reviewContext, lookupDefault)
         if (
             !callerChatId.isNullOrBlank() &&
                 currentRoute == PermissionRoute.REVIEWER &&
@@ -452,6 +457,7 @@ class ToolPermissionSystem private constructor(private val context: Context) {
     suspend fun getEffectivePermissionLevel(
         toolName: String,
         callerChatId: String? = null,
+        lookupDefault: Boolean = true,
     ): PermissionLevel {
         val preferences = context.toolPermissionsDataStore.data.first()
         val masterSwitch = PermissionLevel.fromString(preferences[MASTER_SWITCH] ?: DEFAULT_MASTER_SWITCH)
@@ -460,13 +466,61 @@ class ToolPermissionSystem private constructor(private val context: Context) {
             val stored = preferences[orbitToolPermissionKey(toolName)]?.let { PermissionLevel.fromString(it) }
             return orbitPermissionLevel(
                 storedToolLevel = stored,
-                defaultToolLevel = orbitDefaultPermissionLevel(toolName, preferences[ORBIT_FULL_ACCESS] ?: false),
+                defaultToolLevel = orbitDefaultPermissionLevel(
+                    toolName, preferences[ORBIT_FULL_ACCESS] ?: false,
+                    // Called through a proxy, a lookup tool is reviewed: the proxy picks what runs it later.
+                    if (lookupDefault) ::isBuiltInPackageTool else { _ -> false },
+                ),
             )
         }
         val overrideLevel =
             preferences[key]?.let { PermissionLevel.fromString(it) }
                 ?: defaultPermissionLevelFor(toolName, masterSwitch)
         return resolveEffectivePermissionLevel(masterSwitch, overrideLevel)
+    }
+
+    /**
+     * [toolName] ("package:tool") runs from the app's own copy of its package: the package is the
+     * built-in one, and the tool registered under that name is that package's (an MCP server of the
+     * same name can register over it).
+     */
+    private fun isBuiltInPackageTool(toolName: String): Boolean =
+        isBuiltInPackageTool(com.ai.assistance.operit.core.tools.AIToolHandler.getInstance(context), toolName)
+
+    /** Calls ([targetId]s) let through unreviewed only because their tool is a built-in lookup tool. */
+    private val lookupDefaultAllowed: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
+    /** [toolName] is allowed in Orbit's chat [callerChatId] only by the built-in lookup default. */
+    private suspend fun ranByOrbitLookupDefault(toolName: String, callerChatId: String?): Boolean {
+        if (':' !in toolName || toolName !in ORBIT_DEFAULT_ALLOW_TOOLS || !isOrbitChat(callerChatId)) return false
+        val preferences = context.toolPermissionsDataStore.data.first()
+        return preferences[ORBIT_FULL_ACCESS] != true && preferences[orbitToolPermissionKey(toolName)] == null
+    }
+
+    /**
+     * False when the call [targetId] of [toolName] ran unreviewed only as the app's own package tool,
+     * but the [executor] that will run it now is something else (an MCP server of the same name may
+     * register while earlier tools of the batch run). Such a call must be reviewed again. A call that
+     * was reviewed, or allowed by the user, runs on whatever it was approved for.
+     */
+    /** The batch that made the calls [targetIds] is over: their marks go. */
+    fun forgetLookupDefaults(targetIds: Collection<String>) {
+        lookupDefaultAllowed.removeAll(targetIds.toSet())
+    }
+
+    fun orbitDefaultAllowStillHolds(
+        toolName: String,
+        targetId: String,
+        executor: com.ai.assistance.operit.core.tools.ToolExecutor?,
+    ): Boolean {
+        val defaultAllowed = lookupDefaultAllowed.remove(targetId)
+        // No executor: nothing runs, and the call reports the tool as unavailable.
+        if (!defaultAllowed || executor == null || ':' !in toolName || toolName !in ORBIT_DEFAULT_ALLOW_TOOLS) return true
+        // Still the app's own package (an imported one of the same name may have replaced it), and the
+        // executor itself was registered from it (a stale executor can outlive a catalog switch).
+        val handler = com.ai.assistance.operit.core.tools.AIToolHandler.getInstance(context)
+        return handler.getOrCreatePackageManager().getPackageTools(toolName.substringBefore(':'))?.isBuiltIn == true &&
+            (executor as? com.ai.assistance.operit.core.tools.JsPackageToolExecutorMarker)?.registeredFromBuiltIn == true
     }
 
     private suspend fun isOrbitChat(chatId: String?): Boolean =
@@ -859,8 +913,9 @@ class ToolPermissionSystem private constructor(private val context: Context) {
     private suspend fun resolveCurrentPermissionRoute(
         tool: AITool,
         reviewContext: ToolPermissionReviewContext,
+        lookupDefault: Boolean = true,
     ): PermissionRoute {
-        val level = getEffectivePermissionLevel(tool.name, reviewContext.callerChatId)
+        val level = getEffectivePermissionLevel(tool.name, reviewContext.callerChatId, lookupDefault)
         val workspaceApproved = level == PermissionLevel.AUTO_REVIEW && isInsideApprovedScope(tool, reviewContext)
         return resolvePermissionRoute(level, workspaceApproved)
     }
@@ -1191,11 +1246,89 @@ internal fun isOrbitInternalTool(toolName: String): Boolean =
         defaultPermissionLevelFor(toolName, PermissionLevel.AUTO_REVIEW) == PermissionLevel.ALLOW
 
 /**
- * The level a tool takes in Orbit's chats when the user has not changed it in Orbit's list. With
- * [fullAccess] every tool runs unreviewed; otherwise only Orbit's own tools do.
+ * Built-in tools that only look things up (time, train tickets, papers, web and image search, the
+ * weather, device and app state) or draw the cards of the reply being written, and so run in Orbit's
+ * chats without a review, saving its tokens. Each is listed by full name: a package that both reads
+ * and acts keeps its acting tools reviewed. Tools that read private things (notifications, location,
+ * files, chats), open any web address, write memory, notes or skills, stop a phone task, or can write
+ * a file through a parameter are left out on purpose. The card tools only change cards of the reply
+ * in progress, which is no more than writing that reply.
  */
-internal fun orbitDefaultPermissionLevel(toolName: String, fullAccess: Boolean): PermissionLevel =
-    if (fullAccess || isOrbitInternalTool(toolName)) PermissionLevel.ALLOW else PermissionLevel.AUTO_REVIEW
+internal val ORBIT_DEFAULT_ALLOW_TOOLS: Set<String> = buildSet {
+    fun pkg(name: String, vararg tools: String) = tools.forEach { add("$name:$it") }
+    pkg("time", "get_time", "format_time")
+    pkg("12306_ticket", "get_current_date", "get_stations_code_in_city", "get_station_code_of_citys",
+        "get_station_code_by_names", "get_station_by_telecode", "get_tickets", "get_interline_tickets",
+        "get_train_route_stations")
+    pkg("crossref", "search_by_doi", "search_by_keyword", "search_by_author", "search_by_title", "search_by_issn")
+    pkg("google_search", "search_web", "search_scholar", "search_scholar_mirror")
+    pkg("various_search", "search_bing", "search_baidu", "search_sogou", "search_quark", "search", "search_web",
+        "search_bing_images", "search_wikimedia_images", "search_duckduckgo_images", "search_ecosia_images",
+        "search_pexels_images", "search_pixabay_images", "combined_search")
+    pkg("tavily", "search", "extract", "crawl", "map")
+    pkg("deepseek_search", "search", "fetch_page")
+    pkg("ollama_search", "search", "fetch_page")
+    pkg("zhipu_search", "search", "test")
+    pkg("codex_search", "web_search")
+    pkg("grok_search", "web_search", "x_search")
+    pkg("daily_life", "get_current_date", "device_status", "search_weather")
+    pkg("dynamic_ui", "read_guide", "prepare_html", "list_icons", "prepare_card", "patch_card_data",
+        "update_card", "read_example")
+    pkg("extended_file_tools", "file_exists", "file_info")
+    pkg("workflow", "usage_advice", "get_all_workflows", "get_workflow")
+    pkg("system_tools", "get_system_setting", "list_installed_apps", "get_bluetooth_state",
+        "list_bluetooth_bonded_devices", "get_device_info")
+    pkg("phone_control", "observe")
+    pkg("super_admin", "shell_wait")
+    pkg("codex_draw", "read_skill")
+    pkg("grok_draw", "read_skill")
+    // The app's own tools (not from a package).
+    addAll(listOf(
+        "calculate", "sleep", "device_info", "ffmpeg_info", "music_status",
+        "get_system_setting", "list_installed_apps", "get_bluetooth_state", "list_bluetooth_bonded_devices",
+        "list_sandbox_packages", "get_skills_directory", "get_speech_services_config", "list_model_configs",
+        "list_function_model_configs", "get_function_model_config",
+        "get_all_workflows", "get_workflow",
+        "poll_shell_task", "poll_terminal_task", "get_terminal_session_screen",
+    ))
+}
+
+/**
+ * The tool registered as [toolName] ("package:tool") is the app's own package tool: its package is
+ * built in and the executor is that package's, not an MCP tool registered over the same name. A tool
+ * not registered yet cannot run, so it counts by its package alone (the list of defaults shows it so).
+ */
+internal fun isBuiltInPackageTool(handler: com.ai.assistance.operit.core.tools.AIToolHandler, toolName: String): Boolean {
+    if (handler.getOrCreatePackageManager().getPackageTools(toolName.substringBefore(':'))?.isBuiltIn != true) return false
+    val executor = handler.getToolExecutor(toolName)
+    return executor == null ||
+        (executor as? com.ai.assistance.operit.core.tools.JsPackageToolExecutorMarker)?.registeredFromBuiltIn == true
+}
+
+/**
+ * A tool from [ORBIT_DEFAULT_ALLOW_TOOLS]. A package tool counts only while it runs from the app's
+ * own copy ([isBuiltInPackageTool]): an imported package or MCP server of the same name is reviewed
+ * like any other.
+ */
+internal fun isOrbitLookupTool(toolName: String, isBuiltInPackageTool: (String) -> Boolean): Boolean =
+    toolName in ORBIT_DEFAULT_ALLOW_TOOLS &&
+        (':' !in toolName || isBuiltInPackageTool(toolName))
+
+/**
+ * The level a tool takes in Orbit's chats when the user has not changed it in Orbit's list. With
+ * [fullAccess] every tool runs unreviewed; otherwise Orbit's own tools and the built-in lookup tools
+ * ([isOrbitLookupTool]) do.
+ */
+internal fun orbitDefaultPermissionLevel(
+    toolName: String,
+    fullAccess: Boolean,
+    isBuiltInPackageTool: (String) -> Boolean,
+): PermissionLevel =
+    if (fullAccess || isOrbitInternalTool(toolName) || isOrbitLookupTool(toolName, isBuiltInPackageTool)) {
+        PermissionLevel.ALLOW
+    } else {
+        PermissionLevel.AUTO_REVIEW
+    }
 
 /**
  * The level a tool takes when the user has not chosen one for it, or null when it simply follows the

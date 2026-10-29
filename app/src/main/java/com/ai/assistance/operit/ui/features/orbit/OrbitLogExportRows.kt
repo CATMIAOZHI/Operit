@@ -5,10 +5,18 @@ import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.material.icons.rounded.Build
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -33,10 +41,20 @@ import kotlinx.coroutines.launch
 
 private enum class LogExport { APP, TOOL_ERRORS }
 
+/** Ranges offered for tool errors, the same as the app's tool-error page: days back, 0 for all. */
+private val TOOL_ERROR_RANGES = listOf(
+    0 to R.string.tool_errors_all_time,
+    1 to R.string.tool_errors_day,
+    7 to R.string.tool_errors_week,
+    14 to R.string.tool_errors_fortnight,
+    30 to R.string.tool_errors_month,
+)
+
 /** [warning]: set when the newest log lines may be missing from the file. */
 private class SavedLog(val name: String, val uri: Uri, val warning: String? = null)
 
 /** Settings rows that save the app log or the tool-error records to Download/operit, ready to share. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun OrbitLogExportSection(cardColor: Color) {
     val context = LocalContext.current
@@ -44,8 +62,14 @@ internal fun OrbitLogExportSection(cardColor: Color) {
     val scope = rememberCoroutineScope()
     var running by remember { mutableStateOf<LogExport?>(null) }
     var saved by remember { mutableStateOf<SavedLog?>(null) }
+    // Each export asks first; tool errors also pick how far back to go.
+    var asking by remember { mutableStateOf<LogExport?>(null) }
+    var toolDays by remember { mutableStateOf(0) }
+    var toolCount by remember { mutableStateOf<Long?>(null) }
 
-    fun export(kind: LogExport) {
+    fun sinceFor(days: Int) = if (days == 0) 0L else System.currentTimeMillis() - days * 86_400_000L
+
+    fun export(kind: LogExport, days: Int) {
         if (running != null) return
         running = kind
         scope.launch {
@@ -60,11 +84,15 @@ internal fun OrbitLogExportSection(cardColor: Color) {
                         } else SavedLog(result.fileName.orEmpty(), uri, result.message.takeUnless { result.complete })
                     }
                     LogExport.TOOL_ERRORS -> {
-                        if (ToolErrorRepository.getInstance(context).load(null, 0L, 0).total == 0L) {
-                            logToast(context, resources.getString(R.string.orbit_log_export_no_tool_errors))
+                        val since = sinceFor(days)
+                        if (ToolErrorRepository.getInstance(context).count(null, since) == 0L) {
+                            logToast(context, resources.getString(
+                                if (days == 0) R.string.orbit_log_export_no_tool_errors
+                                else R.string.orbit_log_export_no_tool_errors_range,
+                            ))
                             null
                         } else {
-                            val result = ToolErrorExportHelper.export(context, null, 0L)
+                            val result = ToolErrorExportHelper.export(context, null, since)
                             SavedLog(result.name, result.uri)
                         }
                     }
@@ -87,7 +115,7 @@ internal fun OrbitLogExportSection(cardColor: Color) {
                 subtitle = stringResource(R.string.orbit_log_export_app_desc),
                 icon = "scroll-text",
                 running = running == LogExport.APP,
-                onClick = { export(LogExport.APP) },
+                onClick = { if (running == null) asking = LogExport.APP },
             )
             SettingsRowDivider(inset = false)
             LogExportRow(
@@ -95,9 +123,72 @@ internal fun OrbitLogExportSection(cardColor: Color) {
                 subtitle = stringResource(R.string.orbit_log_export_tool_errors_desc),
                 icon = "file-warning",
                 running = running == LogExport.TOOL_ERRORS,
-                onClick = { export(LogExport.TOOL_ERRORS) },
+                onClick = { if (running == null) asking = LogExport.TOOL_ERRORS },
             )
         }
+    }
+
+    // How many tool errors the chosen range holds, shown before exporting.
+    LaunchedEffect(asking, toolDays) {
+        if (asking != LogExport.TOOL_ERRORS) return@LaunchedEffect
+        toolCount = null
+        toolCount = try {
+            ToolErrorRepository.getInstance(context).count(null, sinceFor(toolDays))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    when (asking) {
+        LogExport.APP -> TaskConfirmSheet(
+            icon = "scroll-text",
+            title = stringResource(R.string.orbit_log_export_app_confirm_title),
+            message = stringResource(R.string.orbit_log_export_app_confirm),
+            confirmText = stringResource(R.string.orbit_log_export_confirm_ok),
+            dismissText = stringResource(R.string.cancel),
+            destructive = false,
+            onDismiss = { asking = null },
+            onConfirm = {
+                asking = null
+                export(LogExport.APP, 0)
+            },
+        )
+        LogExport.TOOL_ERRORS -> TaskConfirmSheet(
+            icon = "file-warning",
+            title = stringResource(R.string.orbit_log_export_tool_errors_confirm_title),
+            message = stringResource(R.string.orbit_log_export_tool_errors_confirm),
+            confirmText = stringResource(R.string.orbit_log_export_confirm_ok),
+            dismissText = stringResource(R.string.cancel),
+            destructive = false,
+            onDismiss = { asking = null },
+            onConfirm = {
+                asking = null
+                export(LogExport.TOOL_ERRORS, toolDays)
+            },
+            extra = {
+                FlowRow(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, androidx.compose.ui.Alignment.CenterHorizontally),
+                ) {
+                    TOOL_ERROR_RANGES.forEach { (days, label) ->
+                        FilterChip(
+                            selected = toolDays == days,
+                            onClick = { toolDays = days },
+                            label = { Text(stringResource(label)) },
+                        )
+                    }
+                }
+                Text(
+                    text = toolCount?.let { stringResource(R.string.orbit_log_export_tool_errors_count, it) }
+                        ?: stringResource(R.string.orbit_log_export_counting),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            },
+        )
+        null -> Unit
     }
 
     saved?.let { log ->

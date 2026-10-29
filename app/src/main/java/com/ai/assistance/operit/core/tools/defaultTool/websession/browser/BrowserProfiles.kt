@@ -102,6 +102,33 @@ internal object BrowserProfiles {
     private const val PENDING_KEY = "pending_delete"
 
     /**
+     * Signs the browser an Orbit uses out of every site: its cookies and site storage. With
+     * [shared] logins (or a WebView without profiles) that is the main app's browser. Main thread
+     * only; [onDone] gets whether it worked.
+     */
+    fun clearOrbitLogins(orbitId: String, shared: Boolean, onDone: (Boolean) -> Unit) {
+        val profile = if (shared || !isSupported()) MAIN else orbitProfileName(orbitId)
+        try {
+            val storage =
+                if (profile == MAIN) android.webkit.WebStorage.getInstance()
+                else ProfileStore.getInstance().getOrCreateProfile(profile).webStorage
+            storage.deleteAllData()
+            val cookies = cookieManager(profile)
+            cookies.removeAllCookies {
+                // Writing cookies to disk can take a moment; keep it off the main thread.
+                val main = Handler(Looper.getMainLooper())
+                Thread {
+                    val flushed = runCatching { cookies.flush() }.isSuccess
+                    main.post { onDone(flushed) }
+                }.start()
+            }
+        } catch (e: Throwable) {
+            AppLogger.w(TAG, "Could not clear the browser logins: ${e.message}")
+            onDone(false)
+        }
+    }
+
+    /**
      * Removes a deleted Orbit's logins. WebView refuses to delete a profile this process has
      * already loaded, so the name is written down first and removed for good at the next start,
      * before anything loads it. A profile this process never touched goes right away.

@@ -45,6 +45,8 @@ fun ChatToastHost(
     modifier: Modifier = Modifier,
     maxWidth: Dp = 720.dp,
     maxHeight: Dp = 240.dp,
+    /** Sits at the bottom (above a message box) and slides up from below instead of down from the top. */
+    fromBottom: Boolean = false,
 ) {
     val scrollState = rememberScrollState()
 
@@ -55,18 +57,19 @@ fun ChatToastHost(
         onDismiss()
     }
 
-    Box(modifier = modifier, contentAlignment = Alignment.TopCenter) {
+    val slide = if (fromBottom) 1 else -1
+    Box(modifier = modifier, contentAlignment = if (fromBottom) Alignment.BottomCenter else Alignment.TopCenter) {
         AnimatedVisibility(
             visible = !message.isNullOrBlank(),
             enter = fadeIn(animationSpec = tween(durationMillis = 180)) +
                 slideInVertically(
                     animationSpec = tween(durationMillis = 220),
-                    initialOffsetY = { -it / 2 }
+                    initialOffsetY = { slide * it / 2 }
                 ),
             exit = fadeOut(animationSpec = tween(durationMillis = 140)) +
                 slideOutVertically(
                     animationSpec = tween(durationMillis = 180),
-                    targetOffsetY = { -it / 2 }
+                    targetOffsetY = { slide * it / 2 }
                 )
         ) {
             Surface(

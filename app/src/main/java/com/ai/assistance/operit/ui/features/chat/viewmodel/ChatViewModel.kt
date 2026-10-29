@@ -688,6 +688,21 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         viewModelScope.launch {
             currentChatId.collect { dismissContextEditor() }
         }
+        // Messages sent here into Orbit's running reply show in the floating window too until their rows are in.
+        viewModelScope.launch {
+            pendingMessageQueueStore.states.collect { states ->
+                com.ai.assistance.operit.services.floating.FloatingOrbit.publishAppSending(
+                    states.flatMap { (chatId, state) ->
+                        state.messages.filter { it.isSteering }.map {
+                            com.ai.assistance.operit.services.floating.FloatingOrbit.Sending(
+                                id = Long.MIN_VALUE / 2 - it.id, chatId = chatId,
+                                content = it.steeringText ?: it.text, savedAt = it.savedAt, at = it.steeringAt,
+                            )
+                        }
+                    },
+                )
+            }
+        }
         setupComposerPredictions()
 
         // Setup additional components
@@ -1873,8 +1888,56 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         invalidateCurrentComposerPrediction()
         if (isCurrentTranscriptReadOnly()) return
         hideMentionSuggestionPanel()
+        if (promptFunctionType == PromptFunctionType.CHAT && sendIntoFloatingOrbitTurn()) return
         messageCoordinationDelegate.sendUserMessage(promptFunctionType)
     }
+
+    /**
+     * Orbit is replying in the floating window's runtime (the window started it): the composer's
+     * message goes into that reply, or waits for it, instead of starting a second reply here.
+     */
+    private fun sendIntoFloatingOrbitTurn(): Boolean {
+        val chatId = currentChatId.value ?: return false
+        if (!isOrbitChat(chatId) || !floatingBusyOn(chatId)) return false
+        val text = userMessage.value.text.trim()
+        val taken = attachments.value.toList()
+        if (text.isBlank() && taken.isEmpty()) return true
+        // The quote goes with this message, as when it waits in the queue.
+        val reply = _replyToMessage.value
+        updateUserMessage(TextFieldValue(""))
+        taken.forEach { attachmentDelegate.removeAttachment(it.filePath) }
+        if (reply != null && _replyToMessage.value == reply) _replyToMessage.value = null
+        com.ai.assistance.operit.services.floating.FloatingOrbit.sendWhileBusy(context, mainChatCore, chatId, text, taken, reply) {
+            restoreLostOrbitMessage(chatId, text, taken, reply)
+        }
+        return true
+    }
+
+    /** Orbit's [chatId] is replying in the floating window's runtime (not in this one). */
+    fun isFloatingOrbitBusy(chatId: String): Boolean = isOrbitChat(chatId) && floatingBusyOn(chatId)
+
+    /** A message that did not go out after all: back where the user wrote it, unless they are writing something else there now. */
+    private fun restoreLostOrbitMessage(
+        chatId: String, text: String, taken: List<com.ai.assistance.operit.data.model.AttachmentInfo>, reply: ChatMessage?,
+    ) {
+        AppLogger.w(TAG, "Orbit 消息未发出")
+        if (currentChatId.value == chatId && userMessage.value.text.isBlank() && attachments.value.isEmpty()) {
+            updateUserMessage(TextFieldValue(text, androidx.compose.ui.text.TextRange(text.length)))
+            attachmentDelegate.addAttachments(taken)
+            if (reply != null && _replyToMessage.value == null) _replyToMessage.value = reply
+            showToast(context.getString(R.string.orbit_send_lost_restored))
+        } else {
+            showToast(context.getString(R.string.orbit_send_lost, text.ifBlank { taken.joinToString("、") { it.fileName } }))
+        }
+    }
+
+    private fun isOrbitChat(chatId: String): Boolean =
+        com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context).snapshot.orbitForChat(chatId) != null
+
+    /** The floating window's runtime is working on [chatId] while this one is not. */
+    private fun floatingBusyOn(chatId: String): Boolean =
+        !messageProcessingDelegate.isChatLoading(chatId) &&
+            chatRuntimeHolder.getCore(ChatRuntimeSlot.FLOATING).isChatBusy(chatId)
 
     fun sendTextMessage(text: String, promptFunctionType: PromptFunctionType = PromptFunctionType.CHAT) {
         invalidateCurrentComposerPrediction()
@@ -1906,6 +1969,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     private fun startOrbitOption(chatId: String, text: String): Boolean {
         if (currentChatId.value != chatId || isCurrentTranscriptReadOnly() || text.isBlank()) return false
+        if (floatingBusyOn(chatId)) {
+            // Orbit is replying in the floating window's runtime: the option goes into that reply.
+            com.ai.assistance.operit.services.floating.FloatingOrbit.sendWhileBusy(context, mainChatCore, chatId, text, emptyList()) {}
+            return true
+        }
         if (!isChatBusy(chatId)) {
             return messageCoordinationDelegate.trySendUserMessageToExistingChat(
                 promptFunctionType = PromptFunctionType.CHAT,
@@ -1919,10 +1987,18 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         com.ai.assistance.operit.features.orbit.OrbitOptions.queued(chatId, text, id) {
             pendingMessageQueueStore.states.value[chatId]?.messages?.any { it.id == id && !it.isSteering } == true
         }
-        val turnId = steeringTurnId(chatId) ?: return true
         val item = pendingMessageQueueStore.remove(chatId, id) ?: return true
+        // Into the running reply; when it cannot take it, it waits in the shared line (so later
+        // messages, also the floating window's, go after it).
+        val turnId = steeringTurnId(chatId)
+        if (turnId == null) {
+            if (!sendQueuedWhenFree(chatId, item)) pendingMessageQueueStore.restore(chatId, item)
+            return true
+        }
         viewModelScope.launch {
-            if (!trySteerQueuedMessage(chatId, turnId, item)) pendingMessageQueueStore.restore(chatId, item)
+            if (!trySteerQueuedMessage(chatId, turnId, item) && !sendQueuedWhenFree(chatId, item)) {
+                pendingMessageQueueStore.restore(chatId, item)
+            }
         }
         return true
     }
@@ -1933,7 +2009,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             withTimeoutOrNull(30 * 60_000L) {
                 var idleSince = 0L
                 while (waiting()) {
-                    val queued = pendingMessageQueueStore.states.value[chatId]?.messages?.any { it.text == text } == true
+                    val queued = pendingMessageQueueStore.states.value[chatId]?.messages?.any { it.text == text } == true ||
+                        com.ai.assistance.operit.services.floating.FloatingOrbit.isSending(chatId)
                     val now = System.currentTimeMillis()
                     if (queued || isChatBusy(chatId)) idleSince = 0L
                     else if (idleSince == 0L) idleSince = now
@@ -1944,22 +2021,75 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
     }
 
+    /**
+     * An Orbit message the running turn cannot take (not open for messages yet, or it refused):
+     * it waits for the chat to be free in the one shared line, with the floating window's, so
+     * messages go out in the order sent. Shown as sent meanwhile. False when it cannot go at all.
+     */
+    fun sendQueuedWhenFree(chatId: String, item: PendingQueueMessageItem): Boolean {
+        if (!pendingMessageQueueStore.isCurrentGeneration(chatId, item.chatGeneration)) return false
+        if (chatId == currentChatId.value && isCurrentTranscriptReadOnly()) return false
+        pendingMessageQueueStore.remove(chatId, item.id)
+        // A tapped option counts as on its way, so its saved row confirms it.
+        com.ai.assistance.operit.features.orbit.OrbitOptions.dispatching(chatId, item.id)
+        com.ai.assistance.operit.services.floating.FloatingOrbit.sendWhenFree(
+            context, mainChatCore, chatId, item.text, item.attachments, item.replyToMessage,
+        ) { restoreLostOrbitMessage(chatId, item.text, item.attachments, item.replyToMessage) }
+        return true
+    }
+
     suspend fun trySteerQueuedMessage(chatId: String, expectedTurnId: String, item: PendingQueueMessageItem): Boolean {
         if (!pendingMessageQueueStore.isCurrentGeneration(chatId, item.chatGeneration)) return false
         if (chatId == currentChatId.value && isCurrentTranscriptReadOnly()) return false
+        // Shown as sent at once (its text, or its files' names), also while an earlier message is
+        // still being handed over; then handed over in the order sent, with the floating window's too.
+        val sentAt = System.currentTimeMillis()
+        pendingMessageQueueStore.restore(
+            chatId,
+            item.copy(
+                isSteering = true, steeringAt = sentAt,
+                steeringText = item.text.ifBlank { item.attachments.joinToString("、") { it.fileName } },
+            ),
+        )
+        return try {
+            com.ai.assistance.operit.services.floating.FloatingOrbit.inOrder(chatId) {
+                steerQueued(chatId, expectedTurnId, item, sentAt)
+            }
+        } catch (e: CancellationException) {
+            pendingMessageQueueStore.remove(chatId, item.id)
+            throw e
+        }
+    }
+
+    private suspend fun steerQueued(
+        chatId: String, expectedTurnId: String, item: PendingQueueMessageItem, sentAt: Long,
+    ): Boolean {
+        if (com.ai.assistance.operit.services.floating.FloatingOrbit.isWaitingFree(chatId)) {
+            // An earlier message waits for the chat to be free: this one waits behind it, in order.
+            return sendQueuedWhenFree(chatId, item)
+        }
+        fun giveBack(): Boolean {
+            pendingMessageQueueStore.remove(chatId, item.id)
+            return false
+        }
         val preparedText = try {
             messageProcessingDelegate.prepareSteeringInput(
                 chatId, expectedTurnId, item.text, item.attachments, item.replyToMessage
-            ) ?: return false
+            ) ?: return giveBack()
         } catch (e: CancellationException) {
+            pendingMessageQueueStore.remove(chatId, item.id)
             throw e
         } catch (e: Exception) {
             AppLogger.e(TAG, "Failed to prepare queued attachments for steering", e)
-            return false
+            return giveBack()
         }
-        if (!pendingMessageQueueStore.isCurrentGeneration(chatId, item.chatGeneration)) return false
-        if (chatId == currentChatId.value && isCurrentTranscriptReadOnly()) return false
-        pendingMessageQueueStore.restore(chatId, item.copy(isSteering = true))
+        if (!pendingMessageQueueStore.isCurrentGeneration(chatId, item.chatGeneration)) return giveBack()
+        if (chatId == currentChatId.value && isCurrentTranscriptReadOnly()) return giveBack()
+        // Its bubble now shows what its row will (attachments, quote).
+        pendingMessageQueueStore.replace(
+            chatId,
+            item.copy(isSteering = true, steeringText = preparedText, steeringAt = sentAt),
+        )
         com.ai.assistance.operit.features.orbit.OrbitOptions.dispatching(chatId, item.id)
         val accepted = messageProcessingDelegate.trySteerMessage(
             chatId,
@@ -1967,6 +2097,16 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             com.ai.assistance.operit.core.chat.TurnInputInbox.Input(
                 text = preparedText,
                 consumed = { pendingMessageQueueStore.remove(chatId, item.id) },
+                saved = { rowTimestamp ->
+                    pendingMessageQueueStore.markSaved(chatId, item.id, rowTimestamp)
+                    com.ai.assistance.operit.services.floating.FloatingOrbit.appSaved(
+                        context,
+                        com.ai.assistance.operit.services.floating.FloatingOrbit.Sending(
+                            id = Long.MIN_VALUE / 2 - item.id, chatId = chatId, content = preparedText,
+                            savedAt = rowTimestamp, at = sentAt,
+                        ),
+                    )
+                },
                 returned = { pendingMessageQueueStore.returnSteer(chatId, item) },
                 // The turn only paused to compact its context: send the message once it goes on.
                 returnedForSummary = { pendingMessageQueueStore.returnSteer(chatId, item, sendLater = true) },
@@ -2032,7 +2172,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 messageCoordinationDelegate.sendTriggeredSummarizingChatId.value == chatId
         return messageProcessingDelegate.isChatLoading(chatId) ||
             summarizingThisChat ||
-            sendTriggeredSummaryForThisChat
+            sendTriggeredSummaryForThisChat ||
+            // An Orbit chat has one reply at a time, wherever it runs.
+            (isOrbitChat(chatId) && floatingBusyOn(chatId))
     }
 
     /**
@@ -2976,6 +3118,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     override fun onCleared() {
+        com.ai.assistance.operit.services.floating.FloatingOrbit.publishAppSending(emptyList())
         super.onCleared()
         inputProcessingStateListenerJob?.cancel()
         voiceStateCollectionJob?.cancel()

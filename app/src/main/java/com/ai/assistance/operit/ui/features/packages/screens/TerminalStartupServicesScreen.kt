@@ -72,10 +72,13 @@ import com.ai.assistance.operit.data.terminal.startup.stopRuntimeThenDeletePersi
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.ai.assistance.operit.ui.features.settings.components.SettingsAlertDialog
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogTextButton
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogButton
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TerminalStartupServicesScreen(onOpenTerminal: () -> Unit) {
+fun TerminalStartupServicesScreen(onOpenTerminal: (() -> Unit)?) {
     val context = LocalContext.current
     val repository = remember { TerminalStartupServiceRepository.getInstance(context) }
     val loadErrorMessage = remember(repository) { repository.loadErrorMessage() }
@@ -185,7 +188,8 @@ fun TerminalStartupServicesScreen(onOpenTerminal: () -> Unit) {
                             ) {
                                 Icon(Icons.Default.Stop, stringResource(R.string.terminal_startup_stop))
                             }
-                            IconButton(
+                            // Hosts without a terminal page (Orbit) leave this out.
+                            if (onOpenTerminal != null) IconButton(
                                 onClick = {
                                     val sessionId = manager.getManagedSessionId(service.id) ?: return@IconButton
                                     Terminal.getInstance(context).switchToSession(sessionId)
@@ -242,7 +246,7 @@ fun TerminalStartupServicesScreen(onOpenTerminal: () -> Unit) {
     }
 
     logServiceId?.let { serviceId ->
-        AlertDialog(
+        SettingsAlertDialog(
             onDismissRequest = { logServiceId = null },
             title = { Text(stringResource(R.string.terminal_startup_logs)) },
             text = {
@@ -253,7 +257,7 @@ fun TerminalStartupServicesScreen(onOpenTerminal: () -> Unit) {
                     style = MaterialTheme.typography.bodySmall
                 )
             },
-            confirmButton = { TextButton(onClick = { logServiceId = null }) { Text(stringResource(R.string.close)) } }
+            confirmButton = { SettingsDialogTextButton(onClick = { logServiceId = null }) { Text(stringResource(R.string.close)) } }
         )
     }
 
@@ -263,12 +267,12 @@ fun TerminalStartupServicesScreen(onOpenTerminal: () -> Unit) {
             stringResource(R.string.terminal_startup_message_previous_process_timeout)
         val deleteRestoreRuntimeError =
             stringResource(R.string.terminal_startup_error_delete_restore_runtime)
-        AlertDialog(
+        SettingsAlertDialog(
             onDismissRequest = { deleting = null },
             title = { Text(stringResource(R.string.terminal_startup_delete_title)) },
             text = { Text(stringResource(R.string.terminal_startup_delete_message, service.name)) },
             confirmButton = {
-                TextButton(onClick = {
+                SettingsDialogTextButton(onClick = {
                     deleting = null
                     deletingServiceIds = deletingServiceIds + service.id
                     scope.launch {
@@ -327,7 +331,7 @@ fun TerminalStartupServicesScreen(onOpenTerminal: () -> Unit) {
                     }
                 }) { Text(stringResource(R.string.delete)) }
             },
-            dismissButton = { TextButton(onClick = { deleting = null }) { Text(stringResource(R.string.cancel)) } }
+            dismissButton = { SettingsDialogTextButton(onClick = { deleting = null }) { Text(stringResource(R.string.cancel)) } }
         )
     }
 }
@@ -367,7 +371,7 @@ private fun TerminalStartupServiceEditor(
         }
     }
 
-    AlertDialog(
+    SettingsAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(if (initial == null) R.string.terminal_startup_add else R.string.terminal_startup_edit)) },
         text = {
@@ -405,7 +409,7 @@ private fun TerminalStartupServiceEditor(
             }
         },
         confirmButton = {
-            Button(onClick = {
+            SettingsDialogButton(onClick = {
                 val environment = linkedMapOf<String, String>()
                 val envError = runCatching {
                     envText.lineSequence().filter { it.isNotBlank() }.forEach { line ->
@@ -451,7 +455,7 @@ private fun TerminalStartupServiceEditor(
                 }
             }) { Text(stringResource(R.string.save)) }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } }
+        dismissButton = { SettingsDialogTextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } }
     )
 }
 

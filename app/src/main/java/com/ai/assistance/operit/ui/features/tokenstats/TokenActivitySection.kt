@@ -108,6 +108,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import com.ai.assistance.operit.ui.features.settings.components.SettingsAlertDialog
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogTextButton
 
 internal data class AvatarImportDecision(
     val applyAvatar: Boolean,
@@ -506,12 +508,12 @@ private fun TokenActivityProfileCard() {
                 remaining--
             }
         }
-        AlertDialog(
+        SettingsAlertDialog(
             onDismissRequest = { showImportConfirm = false },
             title = { Text(stringResource(R.string.token_activity_profile_import_title)) },
             text = { Text(stringResource(R.string.token_activity_profile_import_message)) },
             confirmButton = {
-                TextButton(
+                SettingsDialogTextButton(
                     enabled = remaining == 0,
                     onClick = {
                         showImportConfirm = false
@@ -561,7 +563,7 @@ private fun TokenActivityProfileCard() {
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showImportConfirm = false }) {
+                SettingsDialogTextButton(onClick = { showImportConfirm = false }) {
                     Text(stringResource(R.string.settings_cancel))
                 }
             },
@@ -571,7 +573,7 @@ private fun TokenActivityProfileCard() {
     if (showEdit) {
         var editingName by remember(nickname) { mutableStateOf(nickname) }
         var editingEmail by remember(email) { mutableStateOf(email) }
-        AlertDialog(
+        SettingsAlertDialog(
             onDismissRequest = { showEdit = false },
             title = { Text(stringResource(R.string.token_activity_profile_edit)) },
             text = {
@@ -592,7 +594,7 @@ private fun TokenActivityProfileCard() {
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
+                SettingsDialogTextButton(onClick = {
                     nickname = editingName
                     email = editingEmail
                     prefs.edit().putString(KEY_NICKNAME, nickname).putString(KEY_EMAIL, email).apply()
@@ -600,23 +602,23 @@ private fun TokenActivityProfileCard() {
                 }) { Text(stringResource(R.string.token_activity_save)) }
             },
             dismissButton = {
-                TextButton(onClick = { showEdit = false }) { Text(stringResource(R.string.settings_cancel)) }
+                SettingsDialogTextButton(onClick = { showEdit = false }) { Text(stringResource(R.string.settings_cancel)) }
             },
         )
     }
 
     if (showAvatarActions) {
-        AlertDialog(
+        SettingsAlertDialog(
             onDismissRequest = { showAvatarActions = false },
             title = { Text(stringResource(R.string.token_activity_avatar)) },
             text = {
                 Column {
-                    TextButton(onClick = {
+                    SettingsDialogTextButton(onClick = {
                         showAvatarActions = false
                         picker.launch("image/*")
                     }) { Text(stringResource(R.string.token_activity_avatar_pick)) }
                     if (avatarPath != null) {
-                        TextButton(onClick = {
+                        SettingsDialogTextButton(onClick = {
                             File(avatarPath.orEmpty()).delete()
                             val revision = maxOf(System.currentTimeMillis(), avatarRevision + 1L)
                             avatarPath = null
@@ -632,7 +634,7 @@ private fun TokenActivityProfileCard() {
             },
             confirmButton = {},
             dismissButton = {
-                TextButton(onClick = { showAvatarActions = false }) { Text(stringResource(R.string.settings_cancel)) }
+                SettingsDialogTextButton(onClick = { showAvatarActions = false }) { Text(stringResource(R.string.settings_cancel)) }
             },
         )
     }

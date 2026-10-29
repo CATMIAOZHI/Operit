@@ -173,7 +173,7 @@ private fun rememberUsageView(
 
 /** A range with nothing in it, for the moment before the first grouping is ready. */
 private fun emptyUsageView(today: LocalDate) = UsageView(emptyList(), 0L, 0L,
-    listOf(UsageDay(today, 0L, 0L, 0L)), emptyList(), 0L, 0, 0)
+    listOf(UsageDay(today, 0L, 0L, 0L)), emptyList(), List(24) { 0L }, 0L, 0, 0)
 
 /** "已使用 5%"; a little use never shows as 0%, and an allowance of nothing shows as off. */
 @Composable
@@ -473,7 +473,7 @@ private enum class UsageRange(@StringRes val label: Int, val days: Int?) {
 }
 
 @StringRes
-private fun purposeLabel(purpose: OrbitQuota.Purpose): Int = when (purpose) {
+internal fun purposeLabel(purpose: OrbitQuota.Purpose): Int = when (purpose) {
     OrbitQuota.Purpose.CHAT -> R.string.orbit_usage_chat
     OrbitQuota.Purpose.SUBAGENT -> R.string.orbit_usage_subagent
     OrbitQuota.Purpose.TASK -> R.string.orbit_usage_task
@@ -507,12 +507,12 @@ private fun purposeIcon(purpose: OrbitQuota.Purpose): String = when (purpose) {
     OrbitQuota.Purpose.OTHER -> "circle-ellipsis"
 }
 
-private class UsageLine(val key: String, val label: String, val icon: String, val tokens: Long, val calls: Long)
+internal class UsageLine(val key: String, val label: String, val icon: String, val tokens: Long, val calls: Long)
 
 /** One day of the chart: everything every Orbit spent that day. */
-private class UsageDay(val date: LocalDate, val input: Long, val output: Long, val calls: Long)
+internal class UsageDay(val date: LocalDate, val input: Long, val output: Long, val calls: Long)
 
-private class UsageView(
+internal class UsageView(
     val lines: List<UsageLine>,
     val total: Long,
     val calls: Long,
@@ -520,6 +520,8 @@ private class UsageView(
     val days: List<UsageDay>,
     /** The busiest hours of the day in the range, busiest first; at most three. */
     val topHours: List<Int>,
+    /** Calls in each hour of the day (0 to 23) over the range. */
+    val callsByHour: List<Long>,
     val peakDayTokens: Long,
     val activeDays: Int,
     /** Days in a row with use, up to today (or yesterday, before today's first call). */
@@ -539,13 +541,38 @@ private fun usageView(
     val today = LocalDate.now(zone)
     val first = when {
         range.days != null -> today.minusDays((range.days - 1).toLong())
-        range == UsageRange.ALL -> data.rows.minOfOrNull { it.day }
-            ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }?.coerceAtMost(today) ?: today
-        else -> Instant.ofEpochMilli(weekStart + 2 * 86_400_000L).atZone(zone).toLocalDate()
-            .with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+        range == UsageRange.ALL -> usageFirstDay(data)?.coerceAtMost(today) ?: today
+        else -> usageWeekStart(weekStart, zone)
     }
+    return usageViewBetween(context, data, first, today, orbitId, otherLabel, zone)
+}
+
+/** The Monday of the allowance's week in [zone], the first day "this week" covers. */
+internal fun usageWeekStart(weekStart: Long, zone: ZoneId): LocalDate =
+    Instant.ofEpochMilli(weekStart + 2 * 86_400_000L).atZone(zone).toLocalDate()
+        .with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+
+/** The first day with any recorded use, or null with none; "all time" starts here. */
+internal fun usageFirstDay(data: OrbitQuota.UsageData): LocalDate? =
+    data.rows.minOfOrNull { it.day }?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+
+/**
+ * The usage page's numbers for the days [first] to [last], both included: what the page shows for
+ * a range, and what Orbit's usage tool reports, so the two always agree.
+ */
+internal fun usageViewBetween(
+    context: android.content.Context,
+    data: OrbitQuota.UsageData,
+    first: LocalDate,
+    last: LocalDate,
+    orbitId: String,
+    otherLabel: String,
+    zone: ZoneId,
+): UsageView {
+    val today = LocalDate.now(zone)
     val from = first.toString()
-    val inRange = data.rows.filter { it.day >= from }
+    val to = last.toString()
+    val inRange = data.rows.filter { it.day >= from && it.day <= to }
     val mine = inRange.filter { it.orbitId == orbitId }
     val others = inRange.filter { it.orbitId != orbitId }
     val lines = buildList {
@@ -556,12 +583,12 @@ private fun usageView(
         if (others.isNotEmpty()) add(UsageLine("others", otherLabel, "bot", others.sumOf { it.tokens }, others.sumOf { it.calls }))
     }.sortedByDescending { it.tokens }
     val byDay = inRange.groupBy { it.day }
-    val days = generateSequence(first) { it.plusDays(1) }.takeWhile { !it.isAfter(today) }.map { date ->
+    val days = generateSequence(first) { it.plusDays(1) }.takeWhile { !it.isAfter(last) }.map { date ->
         val rows = byDay[date.toString()].orEmpty()
         UsageDay(date, rows.sumOf { it.input }, rows.sumOf { it.output }, rows.sumOf { it.calls })
     }.toList()
     val perHour = LongArray(24)
-    data.hours.filter { it.day >= from }.forEach { h -> h.calls.forEachIndexed { i, n -> if (i < 24) perHour[i] += n } }
+    data.hours.filter { it.day >= from && it.day <= to }.forEach { h -> h.calls.forEachIndexed { i, n -> if (i < 24) perHour[i] += n } }
     val topHours = (0 until 24).filter { perHour[it] > 0 }
         .sortedWith(compareByDescending<Int> { perHour[it] }.thenBy { it }).take(3)
     val used = data.rows.filter { it.tokens > 0 || it.calls > 0 }.map { it.day }.toSet()
@@ -577,6 +604,7 @@ private fun usageView(
         calls = lines.sumOf { it.calls },
         days = days,
         topHours = topHours,
+        callsByHour = perHour.toList(),
         peakDayTokens = days.maxOfOrNull { it.input + it.output } ?: 0L,
         activeDays = days.count { it.calls > 0 || it.input + it.output > 0 },
         streak = streak,
@@ -644,7 +672,7 @@ private fun chartBuckets(days: List<UsageDay>, zone: ZoneId): List<TokenStatsTre
  * the tokens went to.
  */
 @Composable
-internal fun OrbitUsagePage(orbit: OrbitProfile, onBack: () -> Unit, onOpenTrends: () -> Unit) {
+internal fun OrbitUsagePage(orbit: OrbitProfile, onBack: () -> Unit, onOpenTrends: () -> Unit, onOpenAppCosts: () -> Unit) {
     OrbitPageBack(onBack = onBack)
     val context = LocalContext.current
     val loaded = rememberQuotaState()
@@ -697,7 +725,7 @@ internal fun OrbitUsagePage(orbit: OrbitProfile, onBack: () -> Unit, onOpenTrend
             }
             UsageInsightsCard(view, ready, range, cardColor, onRange = { range = it })
             UsageHeatmapCard(heatmap, today.zone, cardColor, onMode = { heatmapMode = it })
-            UsageTrendsRow(cardColor, onOpenTrends)
+            UsageTrendsRow(cardColor, onOpenTrends, onOpenAppCosts)
             Text(stringResource(R.string.orbit_usage_by_purpose), style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp))
             SettingsCard(backgroundColor = cardColor, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)) {
@@ -972,7 +1000,7 @@ private fun UsageHeatmapCard(
 
 /** The way into the trend charts, which have a page of their own. */
 @Composable
-private fun UsageTrendsRow(cardColor: androidx.compose.ui.graphics.Color, onOpen: () -> Unit) {
+private fun UsageTrendsRow(cardColor: androidx.compose.ui.graphics.Color, onOpen: () -> Unit, onOpenAppCosts: () -> Unit) {
     SettingsCard(backgroundColor = cardColor, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp)) {
         SettingsNavRow(
             title = stringResource(R.string.orbit_usage_trends),
@@ -980,6 +1008,15 @@ private fun UsageTrendsRow(cardColor: androidx.compose.ui.graphics.Color, onOpen
             icon = orbitIcon("chart-line"),
             searchable = false,
             onClick = onOpen,
+        )
+        SettingsRowDivider(inset = false)
+        // The whole app's numbers, normal chats included, with costs and model prices.
+        SettingsNavRow(
+            title = stringResource(R.string.orbit_app_costs_title),
+            subtitle = stringResource(R.string.orbit_app_costs_row),
+            icon = orbitIcon("receipt"),
+            searchable = false,
+            onClick = onOpenAppCosts,
         )
     }
 }

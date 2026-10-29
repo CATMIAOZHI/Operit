@@ -120,6 +120,13 @@ data class OrbitSettings(
     val chatOwners: Map<String, String> = emptyMap(),
     /** Developer option: shows the raw conversations, hidden turns and all, for auditing. */
     val developerMode: Boolean = false,
+    /** Orbit opens only after the system check (fingerprint, face or the screen lock). */
+    val appLock: Boolean = false,
+    /**
+     * Seconds visit_web waits on a page for late content when Orbit reads it. Orbit's pages are
+     * never handed to the user, so it waits briefly; the main app keeps its own longer wait.
+     */
+    val webWaitSeconds: Int = DEFAULT_WEB_WAIT_SECONDS,
 ) {
     val active: OrbitProfile?
         get() = activeOrbitId?.let { id -> orbits.firstOrNull { it.id == id } }
@@ -136,6 +143,8 @@ data class OrbitSettings(
 
     companion object {
         const val DEFAULT_CHECK_IN_MINUTE = 9 * 60
+        const val DEFAULT_WEB_WAIT_SECONDS = 1
+        const val MAX_WEB_WAIT_SECONDS = 10
         const val MAX_FOCUS_NOTES_LENGTH = 1000
         const val MAX_NAME_LENGTH = 24
         const val MAX_SIDE_CHATS = 20
@@ -171,6 +180,9 @@ class OrbitPreferences private constructor(context: Context) {
                 json.keys().asSequence().associateWith { json.getString(it) }
             }.orEmpty(),
             developerMode = preferences[DEVELOPER_MODE] ?: false,
+            appLock = preferences[APP_LOCK] ?: false,
+            webWaitSeconds = (preferences[WEB_WAIT_SECONDS] ?: OrbitSettings.DEFAULT_WEB_WAIT_SECONDS)
+                .coerceIn(0, OrbitSettings.MAX_WEB_WAIT_SECONDS),
         )
     }
 
@@ -219,6 +231,14 @@ class OrbitPreferences private constructor(context: Context) {
 
     suspend fun setDeveloperMode(enabled: Boolean) {
         dataStore.edit { it[DEVELOPER_MODE] = enabled }
+    }
+
+    suspend fun setAppLock(enabled: Boolean) {
+        dataStore.edit { it[APP_LOCK] = enabled }
+    }
+
+    suspend fun setWebWaitSeconds(seconds: Int) {
+        dataStore.edit { it[WEB_WAIT_SECONDS] = seconds.coerceIn(0, OrbitSettings.MAX_WEB_WAIT_SECONDS) }
     }
 
     suspend fun setCheckInMinuteOfDay(minuteOfDay: Int) {
@@ -552,6 +572,8 @@ class OrbitPreferences private constructor(context: Context) {
         private val LAST_RUN_OUTCOME = stringPreferencesKey("last_run_outcome")
         private val LAST_RUN_DETAIL = stringPreferencesKey("last_run_detail")
         private val DEVELOPER_MODE = booleanPreferencesKey("orbit_developer_mode")
+        private val APP_LOCK = booleanPreferencesKey("orbit_app_lock")
+        private val WEB_WAIT_SECONDS = intPreferencesKey("orbit_web_wait_seconds")
 
         private fun decodeOrbits(raw: String?): List<OrbitProfile> {
             if (raw.isNullOrBlank()) return emptyList()

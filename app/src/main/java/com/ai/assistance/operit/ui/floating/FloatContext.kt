@@ -188,9 +188,16 @@ class FloatContext(
 
     // 对话框与内容显示状态
     var showInputDialog: Boolean by mutableStateOf(false)
-    private companion object {
+    companion object {
         // A window can be closed while the app/runtime stays alive. Its unsent drafts survive it.
-        val drafts = mutableStateMapOf<String, String>()
+        private val drafts = mutableStateMapOf<String, String>()
+
+        fun hasDraft(chatId: String): Boolean = !drafts[chatId].isNullOrEmpty()
+
+        /** Puts a message that did not go out back as [chatId]'s draft (callers check [hasDraft] first). */
+        fun restoreDraft(chatId: String, text: String) {
+            if (text.isNotBlank()) drafts[chatId] = text
+        }
     }
     var draftKey by mutableStateOf("")
     var userMessage: String

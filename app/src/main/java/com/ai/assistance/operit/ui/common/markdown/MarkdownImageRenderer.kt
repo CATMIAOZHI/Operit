@@ -39,6 +39,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.contentDescription
@@ -125,6 +127,15 @@ fun MarkdownImageRenderer(
     if (imageUrl.isEmpty()) {
         return
     }
+
+    // Orbit's chat search can look for this very picture; then it reports where it was laid out.
+    val spot = com.ai.assistance.operit.ui.features.chat.components.LocalOrbitPieceSpot.current
+    val said = com.ai.assistance.operit.ui.common.dynamicui.LocalDynamicUiOwner.current?.timestamp
+    val self = androidx.compose.runtime.remember { Any() }
+    @Suppress("NAME_SHADOWING")
+    val modifier = if (spot != null && said != null && spot.target == "md:$said:$imageUrl") {
+        modifier.then(Modifier.onGloballyPositioned { spot.report(self, it.positionInRoot().y) })
+    } else modifier
 
     if (isLikelyVideoUrl(imageUrl)) {
         MarkdownVideoRenderer(

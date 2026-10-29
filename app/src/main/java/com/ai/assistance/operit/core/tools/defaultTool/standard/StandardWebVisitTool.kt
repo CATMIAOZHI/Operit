@@ -407,8 +407,12 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
         // Use WebView to visit the page and extract content. The visit ends itself well before this;
         // the outer limit only catches a main thread that never ran it, so the tool can never hang.
         val extractedJson = runBlocking {
-            val waitSeconds = DisplayPreferencesManager.getInstance(context).visitWebWaitSeconds.first()
-                .coerceIn(0, MAX_LAZY_WAIT_SECONDS)
+            // Orbit (a quiet visit) has its own short wait; the main app keeps the display setting.
+            val waitSeconds = if (quiet) {
+                com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context).current().webWaitSeconds
+            } else {
+                DisplayPreferencesManager.getInstance(context).visitWebWaitSeconds.first()
+            }.coerceIn(0, MAX_LAZY_WAIT_SECONDS)
             withTimeoutOrNull(totalBudgetMs(waitSeconds) + OUTER_SLACK_MS) {
                 loadWebPageAndExtractContent(url, headers, userAgent, includeImageLinks, waitSeconds, quiet)
             } ?: errorJson("The page did not respond in time. Try again later or use another source.")

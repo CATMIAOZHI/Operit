@@ -34,7 +34,7 @@ import org.json.JSONObject
  */
 object GrokSearchBridge {
     private val ENDPOINTS = listOf("https://api.x.ai/v1", "https://cli-chat-proxy.grok.com/v1")
-    private const val DEFAULT_MODEL = "grok-4.3"
+    private const val DEFAULT_MODEL = "grok-4.7"
     private val MODEL_PATTERN = Regex("""grok-[a-z0-9.\-]+""")
     private const val MAX_QUERIES = 5
     private const val MAX_QUERY_CHARS = 2_000
@@ -234,10 +234,7 @@ object GrokSearchBridge {
             .post(payload.toString().toRequestBody("application/json".toMediaType()))
             .header("Accept", "application/json")
             .header("x-grok-session-id", UUID.randomUUID().toString())
-        ProviderAccountManager.GROK_HEADERS.forEach { (key, value) ->
-            // The token-auth headers are only for the CLI proxy.
-            if (viaProxy || key.lowercase() !in setOf("x-xai-token-auth", "x-authenticateresponse")) builder.header(key, value)
-        }
+        com.ai.assistance.operit.data.api.GrokClientIdentity.headers(viaProxy).forEach { (key, value) -> builder.header(key, value) }
         builder.header("Authorization", "Bearer $token")
         val call = client.newCall(builder.build())
         val watcher = CoroutineScope(currentCoroutineContext()).launch(start = CoroutineStart.UNDISPATCHED) {

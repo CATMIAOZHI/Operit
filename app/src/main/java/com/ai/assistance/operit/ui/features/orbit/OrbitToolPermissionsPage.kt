@@ -105,8 +105,12 @@ internal fun OrbitToolPermissionsPage(onBack: () -> Unit) {
         ) + byPackage.map { (pkg, tools) -> ToolFolder("pkg:$pkg", pkg, "package", tools) })
             .filter { it.tools.isNotEmpty() }
     }
+    // A lookup tool runs unreviewed only from the app's own package of that name (same check as a run).
+    val isBuiltIn: (String) -> Boolean = remember(toolHandler) {
+        { name -> com.ai.assistance.operit.ui.permissions.isBuiltInPackageTool(toolHandler, name) }
+    }
     fun levelOf(name: String): PermissionLevel =
-        orbitPermissionLevel(stored?.get(name), orbitDefaultPermissionLevel(name, fullAccess))
+        orbitPermissionLevel(stored?.get(name), orbitDefaultPermissionLevel(name, fullAccess, isBuiltIn))
 
     LazyColumn(
         Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
@@ -171,7 +175,7 @@ internal fun OrbitToolPermissionsPage(onBack: () -> Unit) {
     }
 
     picking?.let { name ->
-        val default = orbitDefaultPermissionLevel(name, fullAccess)
+        val default = orbitDefaultPermissionLevel(name, fullAccess, isBuiltIn)
         LevelSheet(
             toolName = name,
             current = levelOf(name),
