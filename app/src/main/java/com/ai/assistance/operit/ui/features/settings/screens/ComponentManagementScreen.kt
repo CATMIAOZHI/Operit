@@ -211,15 +211,20 @@ fun ComponentManagementScreen() {
         }
     }
     deletion?.let { id ->
-        AlertDialog(
+        com.ai.assistance.operit.ui.features.settings.components.SettingsAlertDialog(
             onDismissRequest = { deletion = null },
             title = { Text(stringResource(R.string.voice_model_delete_title, label(id))) },
             text = { Text(stringResource(R.string.component_delete_detail)) },
-            dismissButton = { TextButton(onClick = { deletion = null }) { Text(stringResource(R.string.voice_model_keep)) } },
+            dismissButton = {
+                com.ai.assistance.operit.ui.features.settings.components.SettingsDialogTextButton(onClick = { deletion = null }) {
+                    Text(stringResource(R.string.voice_model_keep))
+                }
+            },
             confirmButton = {
-                TextButton(
+                com.ai.assistance.operit.ui.features.settings.components.SettingsDialogTextButton(
                     enabled = !active(id) && !protected(id),
                     colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                    destructive = true,
                     onClick = {
                         deletion = null
                         busy = id

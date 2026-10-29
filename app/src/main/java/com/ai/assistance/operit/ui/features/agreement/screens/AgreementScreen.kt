@@ -22,7 +22,6 @@ import kotlinx.coroutines.delay
 
 @Composable
 fun AgreementScreen(onAgreementAccepted: () -> Unit) {
-        val scrollState = rememberScrollState()
         var isButtonEnabled by remember { mutableStateOf(false) }
         var languageSwitching by remember { mutableStateOf(false) }
         var remainingSeconds by remember { mutableStateOf(5) }
@@ -81,10 +80,52 @@ fun AgreementScreen(onAgreementAccepted: () -> Unit) {
                 Spacer(modifier = Modifier.height(24.dp))
 
                 // Agreement text content
+                AgreementDocument(Modifier.weight(1f).fillMaxWidth())
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                // Agreement button
+                Button(
+                        onClick = onAgreementAccepted,
+                        enabled = isButtonEnabled && !languageSwitching,
+                        modifier = Modifier.fillMaxWidth().height(56.dp),
+                        colors =
+                                ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.primary,
+                                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                                        disabledContainerColor =
+                                                MaterialTheme.colorScheme.primary.copy(
+                                                        alpha = 0.5f
+                                                ),
+                                        disabledContentColor =
+                                                MaterialTheme.colorScheme.onPrimary.copy(
+                                                        alpha = 0.7f
+                                                )
+                                )
+                ) {
+                        Text(
+                                text =
+                                        if (isButtonEnabled)
+                                            stringResource(R.string.agreement_accept)
+                                        else
+                                            stringResource(R.string.agreement_wait, remainingSeconds),
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.Medium
+                        )
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+        }
+}
+
+
+/** The agreement text itself: the branch notice, the plain version and the legal version. */
+@Composable
+internal fun AgreementDocument(modifier: Modifier = Modifier) {
+        val scrollState = rememberScrollState()
                 Box(
                         modifier =
-                                Modifier.weight(1f)
-                                        .fillMaxWidth()
+                                modifier
                                         .background(
                                                 MaterialTheme.colorScheme.surfaceVariant,
                                                 shape = MaterialTheme.shapes.medium
@@ -173,39 +214,4 @@ fun AgreementScreen(onAgreementAccepted: () -> Unit) {
                                 )
                         }
                 }
-
-                Spacer(modifier = Modifier.height(24.dp))
-
-                // Agreement button
-                Button(
-                        onClick = onAgreementAccepted,
-                        enabled = isButtonEnabled && !languageSwitching,
-                        modifier = Modifier.fillMaxWidth().height(56.dp),
-                        colors =
-                                ButtonDefaults.buttonColors(
-                                        containerColor = MaterialTheme.colorScheme.primary,
-                                        contentColor = MaterialTheme.colorScheme.onPrimary,
-                                        disabledContainerColor =
-                                                MaterialTheme.colorScheme.primary.copy(
-                                                        alpha = 0.5f
-                                                ),
-                                        disabledContentColor =
-                                                MaterialTheme.colorScheme.onPrimary.copy(
-                                                        alpha = 0.7f
-                                                )
-                                )
-                ) {
-                        Text(
-                                text =
-                                        if (isButtonEnabled)
-                                            stringResource(R.string.agreement_accept)
-                                        else
-                                            stringResource(R.string.agreement_wait, remainingSeconds),
-                                style = MaterialTheme.typography.bodyLarge,
-                                fontWeight = FontWeight.Medium
-                        )
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-        }
 }

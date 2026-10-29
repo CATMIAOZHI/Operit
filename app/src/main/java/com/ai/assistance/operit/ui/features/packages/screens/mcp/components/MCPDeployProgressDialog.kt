@@ -24,6 +24,12 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.mcp.plugins.MCPDeployer.DeploymentStatus
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogWindow
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogSurface
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogActions
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogButton
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogOutlinedButton
+import androidx.compose.foundation.verticalScroll
 
 /** MCP插件部署进度对话框 - 简约风格 */
 @Composable
@@ -45,7 +51,7 @@ fun MCPDeployProgressDialog(
         }
     }
 
-    Dialog(
+    SettingsDialogWindow(
             onDismissRequest = onDismissRequest,
             properties =
                     DialogProperties(
@@ -53,13 +59,13 @@ fun MCPDeployProgressDialog(
                             dismissOnClickOutside = deploymentStatus !is DeploymentStatus.InProgress
                     )
     ) {
-        Surface(
+        SettingsDialogSurface(
                 modifier = Modifier.fillMaxWidth().wrapContentHeight(),
                 shape = RoundedCornerShape(16.dp),
                 color = MaterialTheme.colorScheme.surface,
                 tonalElevation = 6.dp
         ) {
-            Column(modifier = Modifier.fillMaxWidth().padding(24.dp)) {
+            Column(modifier = Modifier.fillMaxWidth().verticalScroll(androidx.compose.foundation.rememberScrollState()).padding(24.dp)) {
                 // 标题区域
                 Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -232,12 +238,14 @@ fun MCPDeployProgressDialog(
 
                 // 底部按钮
                 Spacer(modifier = Modifier.height(16.dp))
-                Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End
-                ) {
+                SettingsDialogActions(material = { buttons ->
+                    Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End
+                    ) { buttons() }
+                }) {
                     if (deploymentStatus is DeploymentStatus.Error && onRetry != null) {
-                        OutlinedButton(
+                        SettingsDialogOutlinedButton(
                                 onClick = onRetry,
                                 modifier = Modifier.padding(end = 8.dp),
                                 colors = ButtonDefaults.outlinedButtonColors(
@@ -255,7 +263,7 @@ fun MCPDeployProgressDialog(
                     }
 
                     if (deploymentStatus !is DeploymentStatus.InProgress) {
-                        Button(
+                        SettingsDialogButton(
                                 onClick = onDismissRequest,
                                 colors = ButtonDefaults.buttonColors(
                                         containerColor = if (deploymentStatus is DeploymentStatus.Success)

@@ -67,7 +67,12 @@ import kotlinx.coroutines.launch
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LanguageSettingsScreen(
-    onBackPressed: () -> Unit
+    onBackPressed: () -> Unit,
+    /**
+     * Shows the new language without starting the app over. Orbit recreates its activity, so its
+     * page stack is kept and the user lands back where they changed it.
+     */
+    restartInPlace: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     var currentLanguage by remember { mutableStateOf(LocaleUtils.getCurrentLanguage(context)) }
@@ -106,6 +111,10 @@ fun LanguageSettingsScreen(
         // 延迟重启应用以确保语言设置完全生效
         scope.launch {
             delay(600) // 短暂延迟确保设置已保存
+            restartInPlace?.let {
+                it()
+                return@launch
+            }
             val intent = Intent(context, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
             }

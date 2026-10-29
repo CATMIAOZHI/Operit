@@ -475,12 +475,16 @@ internal fun TaskConfirmSheet(
     confirmText: String,
     dismissText: String,
     destructive: Boolean,
+    /** Extra controls between the message and the buttons, such as a choice of range. */
+    extra: (@Composable ColumnScope.() -> Unit)? = null,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
 ) {
     OrbitModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(
-            Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 20.dp).padding(bottom = 20.dp),
+            // Scrolls when the screen is too short to show everything with the buttons.
+            Modifier.fillMaxWidth().verticalScroll(androidx.compose.foundation.rememberScrollState())
+                .navigationBarsPadding().padding(horizontal = 20.dp).padding(bottom = 20.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -488,6 +492,7 @@ internal fun TaskConfirmSheet(
             Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
             Text(message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 8.dp))
+            extra?.invoke(this)
             Spacer(Modifier.height(4.dp))
             TaskButton(confirmText, icon, primary = !destructive, destructive = destructive, onClick = onConfirm)
             TaskButton(dismissText, "x", onClick = onDismiss)

@@ -67,6 +67,8 @@ import com.ai.assistance.operit.data.stats.TokenStatsRangeData
 import com.ai.assistance.operit.data.stats.TokenStatsTokenAggregate
 import java.time.ZoneId
 import java.util.Locale
+import com.ai.assistance.operit.ui.features.settings.components.SettingsAlertDialog
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogTextButton
 
 // ==== 通用格式 ====
 
@@ -84,6 +86,10 @@ internal fun formatPricePerRequest(price: Double, currency: PricingCurrency): St
 
 internal fun formatCount(value: Long): String = String.format(Locale.US, "%,d", value)
 
+/** 白卡外页面原本的配色；卡片里弹出的对话框用它，不沿用卡片的浅色文字配色。 */
+internal val LocalTokenStatsPageScheme =
+    androidx.compose.runtime.staticCompositionLocalOf<androidx.compose.material3.ColorScheme?> { null }
+
 /** 统计页统一白色卡片；局部浅色 scheme 保证深色主题下控件与文字仍清晰。 */
 @Composable
 internal fun TokenStatsWhiteCard(
@@ -91,6 +97,9 @@ internal fun TokenStatsWhiteCard(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
+    androidx.compose.runtime.CompositionLocalProvider(
+        LocalTokenStatsPageScheme provides (LocalTokenStatsPageScheme.current ?: scheme),
+    ) {
     MaterialTheme(
         colorScheme =
             scheme.copy(
@@ -111,6 +120,7 @@ internal fun TokenStatsWhiteCard(
             ),
             content = content,
         )
+    }
     }
 }
 
@@ -593,7 +603,8 @@ internal fun TokenStatsFilterBar(
             }
 
             if (showCostModeHelp) {
-                AlertDialog(
+                MaterialTheme(colorScheme = LocalTokenStatsPageScheme.current ?: MaterialTheme.colorScheme) {
+                SettingsAlertDialog(
                     onDismissRequest = { showCostModeHelp = false },
                     title = { Text(stringResource(R.string.token_stats_mode_help_title)) },
                     text = {
@@ -603,16 +614,17 @@ internal fun TokenStatsFilterBar(
                             Text(
                                 text = stringResource(R.string.token_stats_mode_rate_help),
                                 style = MaterialTheme.typography.bodySmall,
-                                color = TokenStatsCardMuted,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                     },
                     confirmButton = {
-                        TextButton(onClick = { showCostModeHelp = false }) {
+                        SettingsDialogTextButton(onClick = { showCostModeHelp = false }) {
                             Text(stringResource(R.string.token_stats_help_got_it))
                         }
                     },
                 )
+                }
             }
         }
     }
@@ -1214,7 +1226,7 @@ internal fun TokenStatsRateCard(
                     ),
                     modifier = Modifier.weight(1f),
                 )
-                TextButton(
+                SettingsDialogTextButton(
                     onClick = {
                         val parsed = rateInput.toDoubleOrNull()
                         if (parsed == null || !onSaveRate(parsed)) {

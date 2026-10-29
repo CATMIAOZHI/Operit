@@ -672,7 +672,7 @@ private fun chartBuckets(days: List<UsageDay>, zone: ZoneId): List<TokenStatsTre
  * the tokens went to.
  */
 @Composable
-internal fun OrbitUsagePage(orbit: OrbitProfile, onBack: () -> Unit, onOpenTrends: () -> Unit) {
+internal fun OrbitUsagePage(orbit: OrbitProfile, onBack: () -> Unit, onOpenTrends: () -> Unit, onOpenAppCosts: () -> Unit) {
     OrbitPageBack(onBack = onBack)
     val context = LocalContext.current
     val loaded = rememberQuotaState()
@@ -725,7 +725,7 @@ internal fun OrbitUsagePage(orbit: OrbitProfile, onBack: () -> Unit, onOpenTrend
             }
             UsageInsightsCard(view, ready, range, cardColor, onRange = { range = it })
             UsageHeatmapCard(heatmap, today.zone, cardColor, onMode = { heatmapMode = it })
-            UsageTrendsRow(cardColor, onOpenTrends)
+            UsageTrendsRow(cardColor, onOpenTrends, onOpenAppCosts)
             Text(stringResource(R.string.orbit_usage_by_purpose), style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp))
             SettingsCard(backgroundColor = cardColor, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)) {
@@ -1000,7 +1000,7 @@ private fun UsageHeatmapCard(
 
 /** The way into the trend charts, which have a page of their own. */
 @Composable
-private fun UsageTrendsRow(cardColor: androidx.compose.ui.graphics.Color, onOpen: () -> Unit) {
+private fun UsageTrendsRow(cardColor: androidx.compose.ui.graphics.Color, onOpen: () -> Unit, onOpenAppCosts: () -> Unit) {
     SettingsCard(backgroundColor = cardColor, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp)) {
         SettingsNavRow(
             title = stringResource(R.string.orbit_usage_trends),
@@ -1008,6 +1008,15 @@ private fun UsageTrendsRow(cardColor: androidx.compose.ui.graphics.Color, onOpen
             icon = orbitIcon("chart-line"),
             searchable = false,
             onClick = onOpen,
+        )
+        SettingsRowDivider(inset = false)
+        // The whole app's numbers, normal chats included, with costs and model prices.
+        SettingsNavRow(
+            title = stringResource(R.string.orbit_app_costs_title),
+            subtitle = stringResource(R.string.orbit_app_costs_row),
+            icon = orbitIcon("receipt"),
+            searchable = false,
+            onClick = onOpenAppCosts,
         )
     }
 }

@@ -73,6 +73,8 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
+import com.ai.assistance.operit.ui.features.settings.components.SettingsAlertDialog
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogTextButton
 
 private enum class ManagementTab { GROUPS, PRICING }
 private enum class PricingFilter { ALL, MISSING, CUSTOM }
@@ -225,7 +227,7 @@ private fun GroupManagementTab(
                         modifier = Modifier.weight(1f),
                         fontWeight = FontWeight.Medium,
                     )
-                    TextButton(onClick = { showCreate = true }) {
+                    SettingsDialogTextButton(onClick = { showCreate = true }) {
                         Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(4.dp))
                         Text(stringResource(R.string.token_stats_group_new_short))
@@ -272,18 +274,18 @@ private fun GroupManagementTab(
         )
     }
     restoreTarget?.let { group ->
-        AlertDialog(
+        SettingsAlertDialog(
             onDismissRequest = { restoreTarget = null },
             title = { Text(stringResource(R.string.token_stats_group_restore)) },
             text = { Text(stringResource(R.string.token_stats_group_restore_message, group.displayName)) },
             confirmButton = {
-                TextButton(onClick = {
+                SettingsDialogTextButton(onClick = {
                     onRestore(group.displayModelId)
                     restoreTarget = null
                 }) { Text(stringResource(R.string.token_stats_group_restore_confirm_short)) }
             },
             dismissButton = {
-                TextButton(onClick = { restoreTarget = null }) {
+                SettingsDialogTextButton(onClick = { restoreTarget = null }) {
                     Text(stringResource(R.string.settings_cancel))
                 }
             },
@@ -508,36 +510,36 @@ private fun PricingManagementTab(
         )
     }
     restoreBuiltInTarget?.let { (override, legacyKey) ->
-        AlertDialog(
+        SettingsAlertDialog(
             onDismissRequest = { restoreBuiltInTarget = null },
             title = { Text(stringResource(R.string.token_stats_pricing_restore_builtin)) },
             text = { Text(stringResource(R.string.token_stats_pricing_restore_message)) },
             confirmButton = {
-                TextButton(onClick = {
+                SettingsDialogTextButton(onClick = {
                     onRestoreBuiltIn(override, legacyKey)
                     restoreBuiltInTarget = null
                 }) { Text(stringResource(R.string.token_stats_pricing_restore_confirm)) }
             },
             dismissButton = {
-                TextButton(onClick = { restoreBuiltInTarget = null }) {
+                SettingsDialogTextButton(onClick = { restoreBuiltInTarget = null }) {
                     Text(stringResource(R.string.settings_cancel))
                 }
             },
         )
     }
     resetConfigTarget?.let { override ->
-        AlertDialog(
+        SettingsAlertDialog(
             onDismissRequest = { resetConfigTarget = null },
             title = { Text(stringResource(R.string.token_stats_pricing_restore_model)) },
             text = { Text(stringResource(R.string.token_stats_pricing_restore_message)) },
             confirmButton = {
-                TextButton(onClick = {
+                SettingsDialogTextButton(onClick = {
                     onResetConfig(override)
                     resetConfigTarget = null
                 }) { Text(stringResource(R.string.token_stats_pricing_restore_confirm)) }
             },
             dismissButton = {
-                TextButton(onClick = { resetConfigTarget = null }) {
+                SettingsDialogTextButton(onClick = { resetConfigTarget = null }) {
                     Text(stringResource(R.string.settings_cancel))
                 }
             },
@@ -609,7 +611,7 @@ private fun PricingModelCard(
                 }
             }
             if (providerOverride != null || option.legacyPricing != null) {
-                TextButton(onClick = {
+                SettingsDialogTextButton(onClick = {
                     onRestoreBuiltIn(providerOverride, option.legacyProviderModel)
                 }) {
                     Text(stringResource(R.string.token_stats_pricing_restore_builtin))
@@ -747,7 +749,7 @@ private fun TextInputDialog(
     onDismiss: () -> Unit,
 ) {
     var value by remember(initialValue) { mutableStateOf(initialValue) }
-    AlertDialog(
+    SettingsAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
@@ -759,13 +761,13 @@ private fun TextInputDialog(
             )
         },
         confirmButton = {
-            TextButton(
+            SettingsDialogTextButton(
                 enabled = value.isNotBlank(),
                 onClick = { onConfirm(value.trim()); onDismiss() },
             ) { Text(confirmLabel) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.settings_cancel)) }
+            SettingsDialogTextButton(onClick = onDismiss) { Text(stringResource(R.string.settings_cancel)) }
         },
     )
 }
@@ -777,7 +779,7 @@ private fun ChoiceDialog(
     onSelect: (TokenStatsGroupModelInfo) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    AlertDialog(
+    SettingsAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
@@ -801,7 +803,7 @@ private fun ChoiceDialog(
         },
         confirmButton = {},
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.settings_cancel)) }
+            SettingsDialogTextButton(onClick = onDismiss) { Text(stringResource(R.string.settings_cancel)) }
         },
     )
 }
@@ -950,10 +952,10 @@ private fun PricingCatalogStatusCard(
                 }
             }
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                TextButton(onClick = onRefresh, enabled = !busy) {
+                SettingsDialogTextButton(onClick = onRefresh, enabled = !busy) {
                     Text(stringResource(R.string.token_stats_pricing_catalog_refresh))
                 }
-                TextButton(onClick = onApply, enabled = state?.canApply == true) {
+                SettingsDialogTextButton(onClick = onApply, enabled = state?.canApply == true) {
                     // 下载到的目录与当前价格一致时没有可覆盖的更新：按钮置灰并直说“已是最新”，
                     // 否则“已覆盖”配上详情里的下载版本会让人以为还有更新没应用。
                     val catalogUpToDate = state?.downloadedRevision != null &&
