@@ -136,6 +136,7 @@ fun FloatingChatWindow(
     // itself; decided here from the same chat and mode that pick that screen, so one place shows them.
     val selectedOrbit =
         com.ai.assistance.operit.ui.floating.ui.window.screen.rememberFloatingOrbit(selectedChatId)
+    if (com.ai.assistance.operit.ui.floating.ui.window.screen.FloatingOrbitLockScreen(floatContext, selectedChatId)) return
     val orbitNotesInline = selectedOrbit != null &&
         (floatContext.currentMode == FloatingMode.WINDOW ||
             (floatContext.currentMode == FloatingMode.FULLSCREEN && !floatContext.voiceMode))

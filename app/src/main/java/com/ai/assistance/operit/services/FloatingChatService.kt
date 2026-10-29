@@ -805,9 +805,22 @@ class FloatingChatService : Service(), FloatingWindowCallback {
                     AppLogger.w(TAG, "忽略发送：Subagent 对话为只读记录")
                     return@launch
                 }
-                val orbit = com.ai.assistance.operit.services.floating.FloatingOrbit.owner(
-                    com.ai.assistance.operit.services.floating.FloatingOrbit.settings(applicationContext), chatId,
-                )
+                val orbitSettings = com.ai.assistance.operit.services.floating.FloatingOrbit.settings(applicationContext)
+                if (com.ai.assistance.operit.features.orbit.OrbitAppLock.isLocked(applicationContext, orbitSettings, chatId)) {
+                    if (chatId != null) {
+                        if (!com.ai.assistance.operit.ui.floating.FloatContext.hasDraft(chatId)) {
+                            com.ai.assistance.operit.ui.floating.FloatContext.restoreDraft(chatId, message)
+                        } else {
+                            android.widget.Toast.makeText(
+                                applicationContext, getString(R.string.orbit_send_lost, message),
+                                android.widget.Toast.LENGTH_LONG,
+                            ).show()
+                        }
+                        com.ai.assistance.operit.services.floating.FloatingOrbit.openInApp(applicationContext, chatId)
+                    }
+                    return@launch
+                }
+                val orbit = com.ai.assistance.operit.services.floating.FloatingOrbit.owner(orbitSettings, chatId)
                 if (orbit != null && chatId != null &&
                     com.ai.assistance.operit.services.floating.FloatingOrbit.busyRuntime(applicationContext, chatId) != null) {
                     // Talking to Orbit while it replies goes into that reply instead of waiting.
@@ -974,6 +987,10 @@ class FloatingChatService : Service(), FloatingWindowCallback {
     fun sendOrbitOption(chatId: String, text: String, waiting: () -> Boolean, onLost: () -> Unit): Boolean {
         val core = boundCore
         if (core.currentChatId.value != chatId || text.isBlank()) return false
+        if (com.ai.assistance.operit.features.orbit.OrbitAppLock.isLocked(
+                applicationContext, com.ai.assistance.operit.data.preferences.OrbitPreferences
+                    .getInstance(applicationContext).loadedSnapshot(), chatId,
+            )) return false
         com.ai.assistance.operit.services.floating.FloatingOrbit.sendOption(applicationContext, core, chatId, text, waiting, onLost)
         return true
     }

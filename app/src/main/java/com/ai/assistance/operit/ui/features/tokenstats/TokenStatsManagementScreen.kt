@@ -781,6 +781,7 @@ private fun ChoiceDialog(
 ) {
     SettingsAlertDialog(
         onDismissRequest = onDismiss,
+        orbitScrollable = false,
         title = { Text(title) },
         text = {
             LazyColumn(modifier = Modifier.fillMaxWidth()) {

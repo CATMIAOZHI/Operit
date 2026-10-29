@@ -343,6 +343,7 @@ internal fun PriceOverrideDialog(
 
     SettingsAlertDialog(
         onDismissRequest = onDismiss,
+        orbitScrollable = false,
         title = {
             Text(
                 stringResource(

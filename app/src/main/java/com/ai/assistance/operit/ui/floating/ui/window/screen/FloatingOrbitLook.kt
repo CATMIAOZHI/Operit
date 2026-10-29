@@ -5,6 +5,15 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.*
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
+import com.ai.assistance.operit.R
+import com.ai.assistance.operit.features.orbit.OrbitAppLock
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
@@ -30,6 +39,49 @@ import com.ai.assistance.operit.ui.floating.FloatContext
  * once, so a page still sliding out on a mode change stops showing them as the top note returns.
  */
 internal val LocalFloatingOrbitNotesInline = androidx.compose.runtime.compositionLocalOf { false }
+
+/** No chat/voice subtree is composed until Orbit's system check has passed in the app. */
+@Composable
+internal fun FloatingOrbitLockScreen(floatContext: FloatContext, chatId: String?): Boolean {
+    val context = LocalContext.current
+    val preferences = remember(context) { OrbitPreferences.getInstance(context.applicationContext) }
+    val settings by preferences.settingsFlow.collectAsState(initial = preferences.loadedSnapshot())
+    OrbitAppLock.refreshBackgroundLock()
+    val unlocked by OrbitAppLock.unlocked.collectAsState()
+    if (settings != null && (unlocked || !OrbitAppLock.isLocked(context, settings, chatId))) return false
+    Surface(Modifier.fillMaxSize(), shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp)) {
+        BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            if (settings == null) {
+                CircularProgressIndicator(Modifier.size(24.dp))
+            } else {
+                val open = {
+                    if (chatId != null) FloatingOrbit.openInApp(context, chatId)
+                    floatContext.onModeChange(com.ai.assistance.operit.ui.floating.FloatingMode.BALL)
+                }
+                if (maxHeight < 120.dp) {
+                    IconButton(onClick = open) {
+                        Icon(
+                            com.ai.assistance.operit.ui.common.dynamicui.CardIcons.get("lucide:lock-keyhole")
+                                ?: androidx.compose.material.icons.Icons.Default.Lock,
+                            contentDescription = stringResource(R.string.orbit_app_lock_unlock),
+                        )
+                    }
+                } else {
+                    Column(
+                        Modifier.padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Text(stringResource(R.string.orbit_app_lock_locked_note))
+                        Button(onClick = open) { Text(stringResource(R.string.orbit_app_lock_unlock)) }
+                        TextButton(onClick = floatContext.onClose) { Text(stringResource(R.string.close)) }
+                    }
+                }
+            }
+        }
+    }
+    return true
+}
 
 /** The Orbit whose chat [chatId] is, following renames and new colors; null for a normal chat. */
 @Composable
