@@ -154,3 +154,22 @@ internal fun OrbitBackupSettingsPage(onBack: () -> Unit) {
         ChatBackupSettingsScreen(dialogStyle = SettingsDialogStyle.ORBIT)
     }
 }
+
+/** Version, updates, the update log, the project page and licenses; its dialogs follow Orbit's style. */
+@Composable
+internal fun OrbitAboutPage(onBack: () -> Unit, onOpenUpdateHistory: () -> Unit) {
+    OrbitEmbeddedSettingsPage(stringResource(R.string.nav_about), onBack) {
+        com.ai.assistance.operit.ui.features.about.screens.AboutScreen(
+            navigateToUpdateHistory = onOpenUpdateHistory,
+            dialogStyle = SettingsDialogStyle.ORBIT,
+        )
+    }
+}
+
+/** The release notes opened from the about page; back returns to it. */
+@Composable
+internal fun OrbitUpdateHistoryPage(onBack: () -> Unit) {
+    OrbitEmbeddedSettingsPage(stringResource(R.string.update_history), onBack) {
+        com.ai.assistance.operit.ui.features.update.screens.UpdateScreen(onNavigateToThemeSettings = {})
+    }
+}

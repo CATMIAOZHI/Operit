@@ -8,21 +8,23 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.OpenInBrowser
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.ui.features.settings.components.SettingsAlertDialog
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogButton
 
 data class OpenSourceLibrary(
     val name: String,
@@ -135,13 +137,16 @@ fun LicenseDialog(onDismiss: () -> Unit) {
     val libraries = remember { getOpenSourceLibraries() }
     val context = LocalContext.current
 
-    AlertDialog(
+    SettingsAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(id = R.string.open_source_licenses)) },
+        orbitScrollable = false,
         text = {
             LazyColumn(modifier = Modifier.fillMaxWidth()) {
                 items(libraries) { library ->
                     ListItem(
+                        // The rows take the dialog's own color in either style.
+                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                         headlineContent = { Text(library.name, fontWeight = FontWeight.Bold) },
                         supportingContent = {
                             Column {
@@ -181,7 +186,7 @@ fun LicenseDialog(onDismiss: () -> Unit) {
             }
         },
         confirmButton = {
-            Button(onClick = onDismiss) {
+            SettingsDialogButton(onClick = onDismiss) {
                 Text(stringResource(id = R.string.ok))
             }
         }

@@ -9874,6 +9874,16 @@
     <string name="orbit_automation_settings_row">截图、虚拟屏幕、Root 执行方式、后台保活</string>
     <string name="orbit_backup_title">数据备份</string>
     <string name="orbit_backup_row">备份或恢复聊天记录、记忆、模型配置和数据库</string>
+    <string name="orbit_about_row">版本、检查更新、更新日志和开源许可</string>
+    <string name="orbit_app_lock">应用锁</string>
+    <string name="orbit_app_lock_desc">打开 Orbit 时，用指纹、面容或锁屏密码验证。离开超过 1 分钟再回来会重新验证</string>
+    <string name="orbit_app_lock_turn_on">开启应用锁</string>
+    <string name="orbit_app_lock_turn_off">关闭应用锁</string>
+    <string name="orbit_app_lock_prompt_title">解锁 %1$s</string>
+    <string name="orbit_app_lock_prompt_note">用指纹、面容或锁屏密码验证</string>
+    <string name="orbit_app_lock_locked_note">已锁定，验证身份后继续</string>
+    <string name="orbit_app_lock_unlock">解锁</string>
+    <string name="orbit_app_lock_no_screen_lock">手机还没有设置锁屏，请先在系统设置里设置锁屏密码或指纹</string>
     <string name="orbit_voice_read_aloud_title">语音消息用朗读声音</string>
     <string name="orbit_voice_read_aloud_on">发语音时用下面选的朗读服务</string>
     <string name="orbit_voice_read_aloud_off">发语音时始终用手机自带的声音</string>
