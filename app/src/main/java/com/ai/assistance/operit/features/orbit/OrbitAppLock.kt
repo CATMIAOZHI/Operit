@@ -3,14 +3,20 @@ package com.ai.assistance.operit.features.orbit
 import android.app.Activity
 import android.app.Application
 import android.app.KeyguardManager
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.hardware.biometrics.BiometricManager
 import android.hardware.biometrics.BiometricPrompt
 import android.os.Build
 import android.os.Bundle
 import android.os.CancellationSignal
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
+import com.ai.assistance.operit.data.preferences.OrbitSettings
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -33,9 +39,41 @@ object OrbitAppLock : Application.ActivityLifecycleCallbacks {
 
     private var startedActivities = 0
     private var backgroundSince = 0L
+    private val handler by lazy { Handler(Looper.getMainLooper()) }
+    private val relock = Runnable { if (startedActivities == 0) lock() }
+    private var registered = false
+
+    /** Handler delays pause in deep sleep; service-only entry points must also check elapsed time. */
+    fun refreshBackgroundLock() {
+        if (startedActivities == 0 && backgroundSince != 0L &&
+            SystemClock.elapsedRealtime() - backgroundSince >= RELOCK_AFTER_MS
+        ) lock()
+    }
+
+    /** Floating windows have no Activity lifecycle of their own. */
+    fun isLocked(context: Context, settings: OrbitSettings?, chatId: String?): Boolean {
+        refreshBackgroundLock()
+        if (settings == null) return true
+        return settings.appLock && settings.ownerForChat(chatId) != null &&
+            !_unlocked.value && deviceSecure(context)
+    }
 
     fun register(application: Application) {
+        if (registered) return
+        registered = true
         application.registerActivityLifecycleCallbacks(this)
+        // An already open overlay can survive screen-off without starting an Activity again.
+        ContextCompat.registerReceiver(
+            application,
+            object : BroadcastReceiver() {
+                override fun onReceive(context: Context, intent: Intent) = refreshBackgroundLock()
+            },
+            IntentFilter().apply {
+                addAction(Intent.ACTION_SCREEN_ON)
+                addAction(Intent.ACTION_USER_PRESENT)
+            },
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
     }
 
     fun markUnlocked() {
@@ -48,6 +86,7 @@ object OrbitAppLock : Application.ActivityLifecycleCallbacks {
     }
 
     override fun onActivityStarted(activity: Activity) {
+        handler.removeCallbacks(relock)
         if (startedActivities == 0 && backgroundSince != 0L &&
             SystemClock.elapsedRealtime() - backgroundSince > RELOCK_AFTER_MS
         ) {
@@ -59,7 +98,11 @@ object OrbitAppLock : Application.ActivityLifecycleCallbacks {
 
     override fun onActivityStopped(activity: Activity) {
         startedActivities = (startedActivities - 1).coerceAtLeast(0)
-        if (startedActivities == 0) backgroundSince = SystemClock.elapsedRealtime()
+        if (startedActivities == 0) {
+            backgroundSince = SystemClock.elapsedRealtime()
+            handler.removeCallbacks(relock)
+            handler.postDelayed(relock, RELOCK_AFTER_MS)
+        }
     }
 
     override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit

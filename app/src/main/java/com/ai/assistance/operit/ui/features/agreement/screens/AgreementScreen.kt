@@ -123,7 +123,7 @@ fun AgreementScreen(onAgreementAccepted: () -> Unit) {
 @Composable
 internal fun AgreementDocument(modifier: Modifier = Modifier) {
         val scrollState = rememberScrollState()
-                Box(
+        Box(
                         modifier =
                                 modifier
                                         .background(
@@ -213,5 +213,5 @@ internal fun AgreementDocument(modifier: Modifier = Modifier) {
                                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                                 )
                         }
-                }
+        }
 }

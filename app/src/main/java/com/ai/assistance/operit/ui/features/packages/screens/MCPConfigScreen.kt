@@ -1816,6 +1816,7 @@ fun RemoteServerEditDialog(
 
     SettingsAlertDialog(
         onDismissRequest = onDismiss,
+        orbitScrollable = false,
         title = { Text(if(isRemote) stringResource(R.string.edit_remote_service) else stringResource(R.string.edit_plugin_info)) },
         text = {
             Column(
