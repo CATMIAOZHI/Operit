@@ -8770,6 +8770,9 @@
     <string name="floating_voice_answering">正在回答…</string>
     <string name="floating_voice_starting">正在启动语音…</string>
     <string name="screen_ocr_capturing">正在截取屏幕…</string>
+    <string name="screen_ocr_hint">用手指圈出想发送的地方</string>
+    <string name="screen_ocr_reselect">重选</string>
+    <string name="screen_ocr_add">添加</string>
     <string name="model_protocol_title">API 协议</string>
     <string name="model_protocol_desc">仅应用到当前模型，默认继承提供商配置。</string>
     <string name="model_protocol_inherit">继承提供商</string>

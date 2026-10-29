@@ -14,8 +14,6 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
@@ -33,7 +31,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -70,6 +67,10 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.absoluteOffset
 import androidx.compose.material3.CircularProgressIndicator
 import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.data.model.AITool
@@ -295,6 +296,7 @@ fun FloatingScreenOcrScreen(floatContext: FloatContext) {
     var selectionRect by remember { mutableStateOf<Rect?>(null) }
     var showConfirm by remember { mutableStateOf(false) }
     var isBusy by remember { mutableStateOf(false) }
+    var addJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
 
     var activeHandle by remember { mutableStateOf(SelectionDragHandle.NONE) }
     var handleStartRect by remember { mutableStateOf<Rect?>(null) }
@@ -693,68 +695,83 @@ fun FloatingScreenOcrScreen(floatContext: FloatContext) {
             }
         }
 
-        // 3. 操作按钮：仅在有选区时显示
+        // 3. 操作按钮：仅在有选区时显示，一条胶囊跟在选区下方
         if (showConfirm && selectionRect != null) {
             val rect = selectionRect!!
-            // 计算按钮位置：在选区底部居中，如果太靠下则放在内部
             val density = androidx.compose.ui.platform.LocalDensity.current
-            val btnSize = 56.dp
-            val btnSizePx = with(density) { btnSize.toPx() }
-            val spacing = 16.dp
-            val spacingPx = with(density) { spacing.toPx() }
-
-            // 默认显示在 Rect 底部下方
-            var btnY = rect.bottom + spacingPx
-            // 如果超出屏幕底部，则显示在 Rect 内部底部
-            if (btnY + btnSizePx > overlaySize.height) {
-                btnY = rect.bottom - btnSizePx - spacingPx
+            val spacingPx = with(density) { 16.dp.roundToPx() }
+            val fallbackHeightPx = with(density) { 56.dp.roundToPx() }
+            val edgePx = with(density) { 16.dp.roundToPx() }
+            var barSize by remember { mutableStateOf(IntSize.Zero) }
+            val navInsets = androidx.compose.foundation.layout.WindowInsets.navigationBars
+            val layoutDirection = androidx.compose.ui.platform.LocalLayoutDirection.current
+            val navBottomPx = navInsets.getBottom(density)
+            val safeLeftPx = navInsets.getLeft(density, layoutDirection) + edgePx
+            val safeRightPx = navInsets.getRight(density, layoutDirection) + edgePx
+            val maxBarWidthDp = with(density) {
+                (overlaySize.width - safeLeftPx - safeRightPx).coerceAtLeast(0).toDp()
             }
-            // 居中 X
-            val centerX = rect.left + rect.width / 2f
+            val centerX = (rect.left + rect.width / 2f).toInt()
 
-            Row(
+            Surface(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .offset { IntOffset(0, btnY.toInt()) }, // 使用 Absolute offset 可能更简单，这里用box align logic?
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.Top
+                    .align(androidx.compose.ui.AbsoluteAlignment.TopLeft)
+                    .widthIn(max = maxBarWidthDp)
+                    .onSizeChanged { barSize = it }
+                    // Physical coordinates (selection and insets are both physical), so no RTL mirroring.
+                    .absoluteOffset {
+                        // Centered under the selection; if there is no room below it, inside its
+                        // bottom edge. Always on screen and above the navigation bar.
+                        val barW = barSize.width
+                        val barH = if (barSize.height > 0) barSize.height else fallbackHeightPx
+                        val maxX = (overlaySize.width - barW - safeRightPx).coerceAtLeast(safeLeftPx)
+                        val safeBottom = overlaySize.height - navBottomPx - spacingPx
+                        var y = rect.bottom.toInt() + spacingPx
+                        if (y + barH > safeBottom) {
+                            y = minOf(rect.bottom.toInt() - spacingPx, safeBottom) - barH
+                        }
+                        IntOffset((centerX - barW / 2).coerceIn(safeLeftPx, maxX), y.coerceAtLeast(spacingPx))
+                    },
+                shape = RoundedCornerShape(28.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                shadowElevation = 6.dp,
             ) {
-                 // To position strictly relative to the rect, we might need a Box container or explicit offset.
-                 // A modifier.offset with calculation relative to screen 0,0 is easiest if usage is Absolute.
-                 // But Row is inside Box(fillMaxSize). So offset is relative to screen.
-            }
-
-            // 使用 Box + offset 而不是 Row + alignment，因为要精确定位到 Rect 附近
-
-            Box(
-                modifier = Modifier
-                    .offset { IntOffset(centerX.toInt() - (btnSizePx.toInt() * 2 + spacingPx.toInt()) / 2, btnY.toInt()) }
-            ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    // 取消/重选按钮
-                    androidx.compose.material3.FloatingActionButton(
+                Row(
+                    modifier = Modifier.padding(6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    // 重选；添加中变成「取消」，停下保存并退出
+                    TextButton(
                         onClick = {
-                            points.clear()
-                            selectionRect = null
-                            showConfirm = false
+                            if (isBusy) {
+                                addJob?.cancel()
+                                floatContext.onModeChange(floatContext.previousMode)
+                            } else {
+                                points.clear()
+                                selectionRect = null
+                                showConfirm = false
+                            }
                         },
-                        containerColor = MaterialTheme.colorScheme.errorContainer,
-                        contentColor = MaterialTheme.colorScheme.onErrorContainer
+                        modifier = Modifier.heightIn(min = 44.dp).widthIn(min = 72.dp),
                     ) {
-                        Icon(Icons.Default.Close, context.getString(R.string.cancel))
+                        Text(
+                            stringResource(if (isBusy) R.string.cancel else R.string.screen_ocr_reselect),
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
                     }
 
-                    // 确认按钮
-                    androidx.compose.material3.FloatingActionButton(
+                    // 添加到聊天
+                    androidx.compose.material3.Button(
                         onClick = {
-                            if (isBusy) return@FloatingActionButton
-                            val srcBitmap = screenshotBitmap ?: return@FloatingActionButton
-                            val bounds = computeCropBounds(srcBitmap, rect, overlaySize) ?: return@FloatingActionButton
+                            if (isBusy) return@Button
+                            val srcBitmap = screenshotBitmap ?: return@Button
+                            val bounds = computeCropBounds(srcBitmap, rect, overlaySize) ?: return@Button
 
                             val attachmentDelegate = floatContext.chatService
-                                ?.getChatCore()?.getAttachmentDelegate() ?: return@FloatingActionButton
+                                ?.getChatCore()?.getAttachmentDelegate() ?: return@Button
                             isBusy = true
-                            floatContext.coroutineScope.launch {
+                            addJob = floatContext.coroutineScope.launch {
                                 var imageFile: File? = null
                                 try {
                                     val file = withContext(Dispatchers.IO) {
@@ -801,14 +818,19 @@ fun FloatingScreenOcrScreen(floatContext: FloatContext) {
                                 }
                             }
                         },
-                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                        shape = RoundedCornerShape(22.dp),
+                        modifier = Modifier.heightIn(min = 44.dp),
                     ) {
                         if (isBusy) {
-                            androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                            androidx.compose.material3.CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp), strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onPrimary,
+                            )
                         } else {
-                            Icon(Icons.Default.Check, context.getString(R.string.confirm))
+                            Icon(Icons.Default.Check, null, Modifier.size(18.dp))
                         }
+                        Spacer(Modifier.width(6.dp))
+                        Text(stringResource(R.string.screen_ocr_add))
                     }
                 }
             }
@@ -842,51 +864,47 @@ fun FloatingScreenOcrScreen(floatContext: FloatContext) {
             }
         }
 
-        // 关闭按钮 (Top Left) - 精致化，更小，且带立体感 (Card 风格)
-        val cardShape = RoundedCornerShape(8.dp)
-        Surface(
+        // Before a selection: what to do, and a way out, in one bar at the bottom (no corner button
+        // over the screen). It steps aside while a finger is drawing.
+        val drawing by androidx.compose.runtime.remember {
+            androidx.compose.runtime.derivedStateOf { points.isNotEmpty() }
+        }
+        androidx.compose.animation.AnimatedVisibility(
+            visible = bitmap != null && !showConfirm && !drawing,
             modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(16.dp)
-                .size(32.dp),
-            shape = cardShape,
-            color = Color.Transparent,
-            tonalElevation = 2.dp,
-            shadowElevation = 2.dp
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(start = 24.dp, end = 24.dp, bottom = 32.dp),
+            enter = androidx.compose.animation.fadeIn(tween(160)),
+            exit = androidx.compose.animation.fadeOut(tween(120)),
         ) {
-            Box(
+            // Drawn without Surface so touches on the text still reach the Canvas behind it;
+            // only the cancel button takes taps.
+            val hintShape = RoundedCornerShape(28.dp)
+            Row(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        brush = Brush.linearGradient(
-                            colors = listOf(
-                                Color.White.copy(alpha = 0.25f),
-                                Color.Black.copy(alpha = 0.45f)
-                            )
-                        )
-                    )
-                    .border(
-                        width = 0.5.dp,
-                        brush = Brush.linearGradient(
-                            colors = listOf(
-                                Color.White.copy(alpha = 0.4f),
-                                Color.Transparent,
-                                Color.Black.copy(alpha = 0.2f)
-                            )
-                        ),
-                        shape = cardShape
-                    )
-                    .clickable {
-                        floatContext.onModeChange(floatContext.previousMode)
-                    },
-                contentAlignment = Alignment.Center
+                    .shadow(6.dp, hintShape)
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh, hintShape)
+                    .padding(start = 20.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(
-                    imageVector = Icons.Default.Close,
-                    contentDescription = context.getString(R.string.close),
-                    tint = Color.White,
-                    modifier = Modifier.size(18.dp)
-                )
+                androidx.compose.runtime.CompositionLocalProvider(
+                    androidx.compose.material3.LocalContentColor provides MaterialTheme.colorScheme.onSurface,
+                ) {
+                    Text(
+                        stringResource(R.string.screen_ocr_hint),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    TextButton(
+                        onClick = { floatContext.onModeChange(floatContext.previousMode) },
+                        modifier = Modifier.heightIn(min = 44.dp),
+                    ) {
+                        Text(stringResource(R.string.cancel), color = MaterialTheme.colorScheme.primary)
+                    }
+                }
             }
         }
     }

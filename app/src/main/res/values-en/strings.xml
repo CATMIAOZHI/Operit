@@ -8794,6 +8794,9 @@
     <string name="floating_voice_answering">Responding…</string>
     <string name="floating_voice_starting">Starting voice chat…</string>
     <string name="screen_ocr_capturing">Capturing screen…</string>
+    <string name="screen_ocr_hint">Circle the part you want to send</string>
+    <string name="screen_ocr_reselect">Redo</string>
+    <string name="screen_ocr_add">Add</string>
     <string name="model_protocol_title">API Protocol</string>
     <string name="model_protocol_desc">Applies only to this model. Inherits the provider by default.</string>
     <string name="model_protocol_inherit">Inherit provider</string>
