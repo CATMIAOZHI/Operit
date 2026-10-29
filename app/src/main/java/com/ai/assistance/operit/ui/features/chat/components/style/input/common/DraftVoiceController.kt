@@ -214,6 +214,16 @@ fun rememberDraftVoiceController(
     onValueChange: (TextFieldValue) -> Unit,
 ): DraftVoiceController {
     val chatId by viewModel.currentChatId.collectAsState()
+    return rememberDraftVoiceController(chatId, value, onValueChange)
+}
+
+/** The same, for a composer that is not backed by a [ChatViewModel] (the floating window). */
+@Composable
+fun rememberDraftVoiceController(
+    chatId: String?,
+    value: TextFieldValue,
+    onValueChange: (TextFieldValue) -> Unit,
+): DraftVoiceController {
     val context = LocalContext.current
     val view = LocalView.current
     val scope = rememberCoroutineScope()

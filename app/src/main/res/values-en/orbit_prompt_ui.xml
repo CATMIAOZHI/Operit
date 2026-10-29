@@ -148,4 +148,5 @@
     <string name="orbit_backup_section_data">Back up and restore</string>
     <string name="orbit_backup_section_advanced">Advanced</string>
     <string name="orbit_backup_section_help">FAQ</string>
+    <string name="orbit_floating_mic_permission">The floating window can\'t ask for the microphone. App settings are open: allow the microphone under Permissions, then try again.</string>
 </resources>
