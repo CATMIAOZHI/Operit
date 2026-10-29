@@ -43,6 +43,7 @@ internal object OrbitExtraTools {
             Spec(OrbitMcpTools.prompt, true, OrbitMcpTools::execute, OrbitMcpTools::run),
             Spec(OrbitSettingsTools.prompt, false, OrbitSettingsTools::execute),
             Spec(OrbitUsageTools.prompt, true, OrbitUsageTools::execute),
+            Spec(OrbitReadingTools.prompt, true, OrbitReadingTools::execute, OrbitReadingTools::run),
             Spec(OrbitPermissionTools.prompt, false, OrbitPermissionTools::execute),
             Spec(OrbitBrowserHandoffTools.prompt, false, OrbitBrowserHandoffTools::execute),
             Spec(OrbitBrowserShowTools.prompt, false, OrbitBrowserShowTools::execute),

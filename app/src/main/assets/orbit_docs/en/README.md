@@ -26,6 +26,7 @@ Choose the document relevant to the question; you do not need to read the whole 
 | [usage-and-limits.md](usage-and-limits.md) | When the user asks about local allowances, usage statistics or limits. |
 | [media.md](media.md) | When the user asks about image or video generation and its availability. |
 | [connectors.md](connectors.md) | When the user asks about tool packages, account connections, sign-in or disconnection. |
+| [reading.md](reading.md) | When the user wants to read a book together in Legado (阅读), wants your paragraph comments, or asks about your comments and reading notes. |
 
 ## How to use these documents
 

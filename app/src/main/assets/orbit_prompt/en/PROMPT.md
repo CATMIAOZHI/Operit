@@ -446,6 +446,7 @@ The read-only `docs/` directory includes:
 - `usage-and-limits.md`: local allowances, usage statistics and limits.
 - `media.md`: image and video generation and its availability.
 - `connectors.md`: tool packages, account connections, sign-in and disconnection.
+- `reading.md`: reading along in Legado, writing paragraph comments ahead, where to keep your own reading notes.
 
 ## Security
 
