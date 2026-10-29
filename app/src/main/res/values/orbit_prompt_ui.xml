@@ -149,4 +149,9 @@
     <string name="orbit_backup_section_advanced">高级</string>
     <string name="orbit_backup_section_help">常见问题</string>
     <string name="orbit_floating_mic_permission">悬浮窗里没法弹出麦克风授权。已打开应用设置，在「权限」里允许麦克风后再试。</string>
+    <string name="orbit_attach_photo">照片</string>
+    <string name="orbit_attach_camera">拍照</string>
+    <string name="orbit_attach_file">文件</string>
+    <string name="orbit_attach_notifications">通知</string>
+    <string name="orbit_attach_location">位置</string>
 </resources>

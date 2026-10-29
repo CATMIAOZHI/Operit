@@ -149,4 +149,9 @@
     <string name="orbit_backup_section_advanced">Advanced</string>
     <string name="orbit_backup_section_help">FAQ</string>
     <string name="orbit_floating_mic_permission">The floating window can\'t ask for the microphone. App settings are open: allow the microphone under Permissions, then try again.</string>
+    <string name="orbit_attach_photo">Photos</string>
+    <string name="orbit_attach_camera">Camera</string>
+    <string name="orbit_attach_file">Files</string>
+    <string name="orbit_attach_notifications">Alerts</string>
+    <string name="orbit_attach_location">Location</string>
 </resources>
