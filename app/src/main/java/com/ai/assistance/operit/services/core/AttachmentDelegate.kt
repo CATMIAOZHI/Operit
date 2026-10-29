@@ -631,17 +631,9 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
         var capturedFile: File? = null
         var attachmentFile: File? = null
         try {
-            val screenshotResult = toolHandler.executeTool(AITool(name = "capture_screenshot"))
-            if (!screenshotResult.success) {
-                _toastEvent.emit(context.getString(
-                    R.string.attachment_screen_content_failed,
-                    screenshotResult.error ?: context.getString(R.string.attachment_screenshot_failed)
-                ))
-                return@withContext
-            }
-
-            val screenshotPath = screenshotResult.result.toString().trim()
-            if (screenshotPath.isBlank()) {
+            // The user's own capture, so it does not go through the model's (retired) phone tools.
+            val screenshotPath = com.ai.assistance.operit.core.tools.UserScreenCapture.capture(context)
+            if (screenshotPath == null) {
                 _toastEvent.emit(context.getString(
                     R.string.attachment_screen_content_failed,
                     context.getString(R.string.attachment_screenshot_failed)

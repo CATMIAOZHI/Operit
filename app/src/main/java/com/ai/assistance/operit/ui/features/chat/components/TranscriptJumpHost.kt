@@ -17,12 +17,14 @@ import androidx.compose.runtime.setValue
  * what makes the match exact rather than a guess.
  *
  * A request with a [timestamp] (a search result) names the message itself and lands right on it.
+ * With a [piece] too (a picture or card bubble) it lands on that bubble, wherever the chat shows it.
  */
 internal data class TranscriptJumpRequest(
     val chatId: String,
     val marker: String,
     val token: Long,
     val timestamp: Long? = null,
+    val piece: String? = null,
 )
 
 internal object TranscriptJumpHost {
@@ -36,9 +38,9 @@ internal object TranscriptJumpHost {
     }
 
     /** Files a request to land on the message saved at [timestamp] in [chatId]. */
-    fun requestMessage(chatId: String?, timestamp: Long) {
+    fun requestMessage(chatId: String?, timestamp: Long, piece: String? = null) {
         val id = chatId?.takeIf { it.isNotBlank() } ?: return
-        request = TranscriptJumpRequest(chatId = id, marker = "", token = ++issued, timestamp = timestamp)
+        request = TranscriptJumpRequest(chatId = id, marker = "", token = ++issued, timestamp = timestamp, piece = piece)
     }
 
     /** The request waiting for [chatId], or null. Reading it does not take it. */

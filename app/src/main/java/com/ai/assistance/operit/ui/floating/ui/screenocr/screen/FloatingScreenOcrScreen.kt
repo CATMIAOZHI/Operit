@@ -337,18 +337,9 @@ fun FloatingScreenOcrScreen(floatContext: FloatContext) {
         showConfirm = false
         previewBitmap = null
         try {
-            val toolHandler = AIToolHandler.getInstance(context)
-            val result = withContext(Dispatchers.IO) {
-                toolHandler.executeTool(AITool(name = "capture_screenshot"))
-            }
-
-            if (!result.success) {
-                captureError = result.error ?: context.getString(R.string.screen_ocr_capture_failed)
-                return@LaunchedEffect
-            }
-
-            val path = result.result.toString().trim()
-            if (path.isBlank()) {
+            // The user's own capture, so it does not go through the model's (retired) phone tools.
+            val path = com.ai.assistance.operit.core.tools.UserScreenCapture.capture(context)
+            if (path == null) {
                 captureError = context.getString(R.string.screen_ocr_capture_failed)
                 return@LaunchedEffect
             }

@@ -813,8 +813,8 @@ private fun OrbitChatPage(
         OrbitCoverPage(visible = chatSearchOpen && !devView, onDismiss = { chatSearchOpen = false }, fade = true) {
             OrbitChatSearchPage(
                 orbit = orbit, chatId = currentChatId, active = chatSearchOpen,
-                onOpen = { chatId, timestamp ->
-                    com.ai.assistance.operit.ui.features.chat.components.TranscriptJumpHost.requestMessage(chatId, timestamp)
+                onOpen = { chatId, timestamp, piece ->
+                    com.ai.assistance.operit.ui.features.chat.components.TranscriptJumpHost.requestMessage(chatId, timestamp, piece)
                     talkChatId = chatId
                     tab = OrbitTab.CHAT
                     chatSearchOpen = false

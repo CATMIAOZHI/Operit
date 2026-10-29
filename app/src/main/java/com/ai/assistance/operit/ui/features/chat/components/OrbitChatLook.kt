@@ -23,12 +23,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -268,15 +271,43 @@ class OrbitPieceActions(
 
 val LocalOrbitPieceActions = compositionLocalOf<OrbitPieceActions?> { null }
 
+/**
+ * The bubble a jump from the chat search is looking for ([target], a piece key) and where it was
+ * last laid out ([top], in root pixels), so the list can bring that very picture or card to the top
+ * instead of the start of the message holding it.
+ */
+class OrbitPieceSpot {
+    var target by androidx.compose.runtime.mutableStateOf<String?>(null)
+    var top by androidx.compose.runtime.mutableStateOf<Float?>(null)
+    /** The first bubble laid out for [target]; only it reports, when a picture shows twice. */
+    var owner: Any? = null
+
+    /** Records where [who] (a bubble showing [target]) was laid out, if it is the one followed. */
+    fun report(who: Any, y: Float) {
+        if (owner == null) owner = who
+        if (owner == who) top = y
+    }
+}
+
+val LocalOrbitPieceSpot = compositionLocalOf<OrbitPieceSpot?> { null }
+
 /** One bubble with its own gestures and its own reaction under it. */
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun OrbitPieceFrame(piece: OrbitPiece, content: @Composable () -> Unit) {
+    val spot = LocalOrbitPieceSpot.current
+    val wanted = spot != null && spot.target == piece.key
     // Every Dynamic UI card knows which one of its message it is, gestures or not (also while
     // Orbit is still writing), so its state never moves to another card.
     androidx.compose.runtime.CompositionLocalProvider(
         com.ai.assistance.operit.ui.common.dynamicui.LocalDynamicUiBlockIndex provides piece.uiIndex,
-    ) { OrbitPieceGestures(piece, content) }
+    ) {
+        // Always the same box: only its modifier changes, so the bubble inside is never rebuilt.
+        Box(
+            if (wanted) Modifier.onGloballyPositioned { spot?.report(piece.key, it.positionInRoot().y) }
+            else Modifier
+        ) { OrbitPieceGestures(piece, content) }
+    }
 }
 
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
