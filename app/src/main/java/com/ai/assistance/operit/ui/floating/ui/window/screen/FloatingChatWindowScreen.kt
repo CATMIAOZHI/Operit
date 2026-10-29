@@ -1042,6 +1042,10 @@ internal fun ChatMessagesView(
         }
 
         // 滚动到底部按钮
+        // Only this small box follows an Orbit "added" note, so the message list stays put.
+        com.ai.assistance.operit.ui.features.chat.components.OrbitNoteLift(
+            Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp)
+        ) {
         ScrollToBottomButton(
             scrollState = scrollState,
             coroutineScope = coroutineScope,
@@ -1052,10 +1056,8 @@ internal fun ChatMessagesView(
             },
             reverseLayout = true,
             onAutoScrollToBottomChange = onAutoScrollToBottomChange,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 16.dp)
         )
+        }
     }
 }
 

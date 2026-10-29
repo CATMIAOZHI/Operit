@@ -27,6 +27,9 @@ import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material.icons.filled.ScreenshotMonitor
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.outlined.Crop as OutlinedCrop
+import androidx.compose.material.icons.outlined.LocationOn as OutlinedLocationOn
+import androidx.compose.material.icons.outlined.Notifications as OutlinedNotifications
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -58,6 +61,18 @@ fun FloatingAttachmentPanel(
     onAttachPackage: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
+    // Orbit's chat in the window: the same few choices and grey tiles as on its page, in a card
+    // like its message box. Screen content and packages are left out there.
+    if (com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current) {
+        OrbitFloatingAttachmentPanel(
+            visible = visible,
+            onAttachNotifications = onAttachNotifications,
+            onAttachLocation = onAttachLocation,
+            onAttachScreenOcr = onAttachScreenOcr,
+            onDismiss = onDismiss,
+        )
+        return
+    }
 
     // 定义附件选项列表，便于使用LazyRow
     val attachmentOptions = listOf(
@@ -158,6 +173,55 @@ fun FloatingAttachmentPanel(
         }
     }
 
+}
+
+@Composable
+private fun OrbitFloatingAttachmentPanel(
+    visible: Boolean,
+    onAttachNotifications: () -> Unit,
+    onAttachLocation: () -> Unit,
+    onAttachScreenOcr: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val notifications = stringResource(R.string.orbit_attach_notifications)
+    val location = stringResource(R.string.orbit_attach_location)
+    val region = stringResource(R.string.orbit_attach_region)
+    AnimatedVisibility(
+        visible = visible,
+        enter = expandVertically(animationSpec = tween(200), expandFrom = Alignment.Bottom) + fadeIn(),
+        exit = shrinkVertically(animationSpec = tween(200), shrinkTowards = Alignment.Bottom) + fadeOut()
+    ) {
+        val shape = RoundedCornerShape(22.dp)
+        Surface(
+            color = MaterialTheme.colorScheme.surface,
+            shape = shape,
+            shadowElevation = 4.dp,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+        ) {
+            Column(Modifier.fillMaxWidth().padding(top = 10.dp)) {
+                com.ai.assistance.operit.ui.features.chat.components.OrbitAttachmentRow(
+                    listOf(
+                        com.ai.assistance.operit.ui.features.chat.components.AttachmentPanelItem(
+                            Icons.Outlined.OutlinedNotifications, notifications,
+                        ) { onAttachNotifications(); onDismiss() },
+                        com.ai.assistance.operit.ui.features.chat.components.AttachmentPanelItem(
+                            Icons.Outlined.OutlinedLocationOn, location,
+                        ) { onAttachLocation(); onDismiss() },
+                        com.ai.assistance.operit.ui.features.chat.components.AttachmentPanelItem(
+                            Icons.Outlined.OutlinedCrop, region,
+                        ) { onAttachScreenOcr(); onDismiss() },
+                    )
+                )
+                Text(
+                    text = stringResource(R.string.orbit_floating_attach_note),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
+                )
+            }
+        }
+    }
 }
 
 // 附件选项数据类

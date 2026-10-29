@@ -132,6 +132,13 @@ fun FloatingChatWindow(
         chatCore?.getUiStateDelegate()?.toastEvent?.collectAsState(initial = null)
             ?: remember { mutableStateOf<String?>(null) }
     val toastEvent by toastEventState
+    // An Orbit chat in the window (not its voice screen) shows its notes above its message box
+    // itself; decided here from the same chat and mode that pick that screen, so one place shows them.
+    val selectedOrbit =
+        com.ai.assistance.operit.ui.floating.ui.window.screen.rememberFloatingOrbit(selectedChatId)
+    val orbitNotesInline = selectedOrbit != null &&
+        (floatContext.currentMode == FloatingMode.WINDOW ||
+            (floatContext.currentMode == FloatingMode.FULLSCREEN && !floatContext.voiceMode))
 
     // 将窗口缩放限制在合理范围内 - 已通过回调和状态源头处理，不再需要
     // LaunchedEffect(initialWindowScale) {
@@ -147,6 +154,9 @@ fun FloatingChatWindow(
 
     // 根据currentMode参数渲染对应界面，使用AnimatedContent添加炫酷过渡动画
     Box {
+        CompositionLocalProvider(
+            com.ai.assistance.operit.ui.floating.ui.window.screen.LocalFloatingOrbitNotesInline provides orbitNotesInline,
+        ) {
         AnimatedContent(
             contentKey = { if (it == FloatingMode.WINDOW || it == FloatingMode.FULLSCREEN) "conversation" else it.name },
             targetState = currentMode, // 只监听 currentMode，避免消息更新时触发动画
@@ -213,15 +223,18 @@ fun FloatingChatWindow(
                 FloatingMode.SCREEN_OCR -> FloatingScreenOcrMode(floatContext = floatContext)
             }
         }
+        }
 
-        ChatToastHost(
-            message = toastEvent,
-            onDismiss = { chatCore?.getUiStateDelegate()?.clearToastEvent() },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 12.dp),
-            maxWidth = 360.dp,
-            maxHeight = 200.dp
-        )
+        if (!orbitNotesInline) {
+            ChatToastHost(
+                message = toastEvent,
+                onDismiss = { chatCore?.getUiStateDelegate()?.clearToastEvent() },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 12.dp),
+                maxWidth = 360.dp,
+                maxHeight = 200.dp
+            )
+        }
     }
 }

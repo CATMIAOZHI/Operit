@@ -558,13 +558,16 @@ fun ChatScreenContent(
         }
 
         // 多选模式底部操作栏
+        // In Orbit's chat, an "added" note above the message box lifts the bar over it (0 elsewhere).
+        OrbitNoteLift(
+            Modifier
+                .align(Alignment.BottomCenter)
+                .padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = bottomInset + 16.dp)
+        ) {
         AnimatedVisibility(
             visible = isMultiSelectMode && !transcriptLocked,
             enter = fadeIn() + slideInVertically(initialOffsetY = { it }),
             exit = fadeOut() + slideOutVertically(targetOffsetY = { it }),
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = bottomInset + 16.dp)
         ) {
             if (orbitMessageHost != null) {
                 fun picked() = selectedMessageIndices.sorted().mapNotNull { chatHistory.getOrNull(it) }
@@ -741,6 +744,7 @@ fun ChatScreenContent(
                     }
                 }
             }
+        }
         }
 
         // Stop reading button

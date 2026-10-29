@@ -666,9 +666,10 @@ internal fun VirtualTranscript(
             }
         }
         // Orbit: a round button just above the message box, in the middle.
-        if (look) androidx.compose.animation.AnimatedVisibility(
+        if (look) {
+        OrbitNoteLift(Modifier.align(Alignment.BottomCenter).padding(bottom = bottomPadding + 12.dp)) {
+        androidx.compose.animation.AnimatedVisibility(
             visible = !following || hasNewer,
-            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = bottomPadding + 12.dp),
             enter = androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(150)) +
                 androidx.compose.animation.scaleIn(androidx.compose.animation.core.tween(150), initialScale = 0.8f),
             exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(120)) +
@@ -688,6 +689,8 @@ internal fun VirtualTranscript(
                     )
                 }
             }
+        }
+        }
         }
         if (loadingPage) CircularProgressIndicator(Modifier.align(Alignment.TopCenter).size(20.dp))
     }

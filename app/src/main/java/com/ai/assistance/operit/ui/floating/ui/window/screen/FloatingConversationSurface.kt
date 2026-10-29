@@ -15,6 +15,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
@@ -198,6 +199,12 @@ internal fun FloatingConversationSurface(floatContext: FloatContext, fullscreen:
                 ) {
                 Column(Modifier.fillMaxSize()) {
                 Box(Modifier.weight(1f).fillMaxWidth()) {
+                    // The note's height (0 once gone) lifts the round "back to the newest" button over it.
+                    var noteHeightPx by remember { mutableIntStateOf(0) }
+                    val noteLift = with(androidx.compose.ui.platform.LocalDensity.current) { noteHeightPx.toDp() }
+                    CompositionLocalProvider(
+                        com.ai.assistance.operit.ui.features.chat.components.LocalOrbitBottomNoteLift provides noteLift,
+                    ) {
                     if (floatContext.messages.isEmpty()) {
                         Column(
                             Modifier.align(Alignment.Center).padding(24.dp),
@@ -213,6 +220,23 @@ internal fun FloatingConversationSurface(floatContext: FloatContext, fullscreen:
                         }
                     } else {
                         ChatMessagesView(floatContext, viewModel)
+                    }
+                    }
+                    // Orbit: "added" notes rise just above its message box, as on its page (the
+                    // window then leaves out its own note at the top, from the same chat and mode).
+                    if (orbit != null && LocalFloatingOrbitNotesInline.current) {
+                        val note = core?.getUiStateDelegate()?.toastEvent?.collectAsState()?.value
+                        com.ai.assistance.operit.ui.features.chat.components.ChatToastHost(
+                            message = note,
+                            onDismiss = { core?.getUiStateDelegate()?.clearToastEvent() },
+                            modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 8.dp)
+                                // The button sits 16dp up and the note 8dp up, so its height leaves 8dp between.
+                                .onSizeChanged { noteHeightPx = it.height },
+                            maxWidth = 360.dp,
+                            maxHeight = 200.dp,
+                            fromBottom = true,
+                        )
                     }
                 }
                 ProcessingStatusIndicator(floatContext)

@@ -154,4 +154,6 @@
     <string name="orbit_attach_file">文件</string>
     <string name="orbit_attach_notifications">通知</string>
     <string name="orbit_attach_location">位置</string>
+    <string name="orbit_attach_region">圈选</string>
+    <string name="orbit_floating_attach_note">要发照片或文件，请回到 Orbit 聊天页</string>
 </resources>
