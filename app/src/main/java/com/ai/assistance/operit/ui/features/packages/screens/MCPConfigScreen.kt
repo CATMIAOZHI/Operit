@@ -987,7 +987,7 @@ fun MCPConfigScreen(
                 }
             },
             dismissButton = {
-                SettingsDialogTextButton(onClick = { 
+                SettingsDialogTextButton(onClick = {
                     repoUrlInput = ""
                     pluginNameInput = ""
                     zipFilePath = ""
