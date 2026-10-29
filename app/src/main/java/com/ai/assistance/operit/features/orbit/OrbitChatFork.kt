@@ -90,6 +90,14 @@ object OrbitChatFork {
         }?.timestamp ?: sourceTimestamp
     }
 
+    /** The row a card bubble ([piece], "card:<time>:<n>") shows in now, or null when it is not on the list. */
+    internal fun pieceTimestamp(messages: List<ChatMessage>, piece: String): Long? =
+        messages.firstOrNull { message ->
+            OrbitSpeech.splitCards(message.content).second.any { card ->
+                runCatching { JSONObject(card).optString(OrbitChatCards.PIECE_KEY) }.getOrNull() == piece
+            }
+        }?.timestamp
+
     suspend fun prompt(context: Context, origin: OrbitChatOrigin, english: Boolean): String {
         val rows = read(context, origin, english)
         val instruction = if (english) {

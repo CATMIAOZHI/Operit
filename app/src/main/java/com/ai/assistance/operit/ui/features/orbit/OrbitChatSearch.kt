@@ -79,6 +79,7 @@ import com.ai.assistance.operit.data.db.AppDatabase
 import com.ai.assistance.operit.data.preferences.OrbitProfile
 import com.ai.assistance.operit.features.orbit.OrbitApprovals
 import com.ai.assistance.operit.features.orbit.OrbitChatCards
+import com.ai.assistance.operit.features.orbit.OrbitReactions
 import com.ai.assistance.operit.features.orbit.OrbitFavorites
 import com.ai.assistance.operit.features.orbit.OrbitFiles
 import com.ai.assistance.operit.ui.features.chat.components.OrbitSpeech
@@ -127,6 +128,11 @@ internal data class OrbitFound(
     val approvalId: String? = null,
     /** For a kept message: its favorite, so it can be taken off. */
     val favoriteId: String? = null,
+    /**
+     * For a card or Dynamic UI card: that bubble ("card:<time>:<n>"), so the chat lands on it.
+     * Orbit's cards are shown at the end of the reply, not in the message they came from.
+     */
+    val pieceKey: String? = null,
 )
 
 /**
@@ -283,23 +289,27 @@ internal object OrbitChatFind {
         val (speech, cards) = OrbitSpeech.splitCards(shown)
         // Audio, pictures and video Orbit put in its words as Markdown (a voice message is one).
         if (kind == OrbitFindKind.MEDIA || kind == OrbitFindKind.MUSIC || kind == OrbitFindKind.FILE) {
-            markdownMedia.findAll(speech).forEach { m ->
+            // A picture shown twice in one reply is one result, landing on where it shows first.
+            markdownMedia.findAll(speech).distinctBy { it.groupValues[2] }.forEach { m ->
                 val url = m.groupValues[2]
                 val path = if (url.startsWith("file://")) Uri.parse(url).path else null
                 val fileName = (path ?: Uri.parse(url).path ?: url).substringAfterLast('/')
                 val name = m.groupValues[1].trim().ifBlank { fileName }
                 val ext = typeOf(fileName)
+                // The picture inside Orbit's words, so the chat lands on it rather than the words before.
+                val inWords = "md:$timestamp:$url"
                 when {
-                    ext in audioTypes -> add(OrbitFindKind.MUSIC) { OrbitFound(it, chatId, timestamp, name) }
-                    ext in videoTypes -> add(OrbitFindKind.MEDIA) { OrbitFound(it, chatId, timestamp, name, video = true) }
+                    ext in audioTypes -> add(OrbitFindKind.MUSIC) { OrbitFound(it, chatId, timestamp, name, pieceKey = inWords) }
+                    ext in videoTypes -> add(OrbitFindKind.MEDIA) { OrbitFound(it, chatId, timestamp, name, video = true, pieceKey = inWords) }
                     ext in OrbitChatCards.imageTypes ->
-                        add(OrbitFindKind.MEDIA) { OrbitFound(it, chatId, timestamp, name, file = path?.let(::File)) }
+                        add(OrbitFindKind.MEDIA) { OrbitFound(it, chatId, timestamp, name, file = path?.let(::File), pieceKey = inWords) }
                     path != null -> add(OrbitFindKind.FILE) { OrbitFound(it, chatId, timestamp, name) }
                 }
             }
         }
-        cards.forEach { card ->
-            val o = runCatching { JSONObject(card) }.getOrNull() ?: return@forEach
+        cards.forEachIndexed { index, card ->
+            val piece = OrbitReactions.pieceKey("card", timestamp, index)
+            val o = runCatching { JSONObject(card) }.getOrNull() ?: return@forEachIndexed
             when (o.optString("kind")) {
                 OrbitChatCards.IMAGE, OrbitChatCards.FILE -> {
                     val path = o.optString("path")
@@ -309,22 +319,25 @@ internal object OrbitChatFind {
                         ?.let { android.text.format.Formatter.formatShortFileSize(context, it) }.orEmpty()
                     val isImage = o.optString("kind") == OrbitChatCards.IMAGE
                     when {
-                        isImage -> add(OrbitFindKind.MEDIA) { OrbitFound(it, chatId, timestamp, name, file = files.chatFile(path)) }
-                        ext in videoTypes -> add(OrbitFindKind.MEDIA) { OrbitFound(it, chatId, timestamp, name, video = true) }
-                        ext in audioTypes -> add(OrbitFindKind.MUSIC) { OrbitFound(it, chatId, timestamp, name, size) }
-                        else -> add(OrbitFindKind.FILE) { OrbitFound(it, chatId, timestamp, name, size) }
+                        isImage -> add(OrbitFindKind.MEDIA) { OrbitFound(it, chatId, timestamp, name, file = files.chatFile(path), pieceKey = piece) }
+                        ext in videoTypes -> add(OrbitFindKind.MEDIA) { OrbitFound(it, chatId, timestamp, name, video = true, pieceKey = piece) }
+                        ext in audioTypes -> add(OrbitFindKind.MUSIC) { OrbitFound(it, chatId, timestamp, name, size, pieceKey = piece) }
+                        else -> add(OrbitFindKind.FILE) { OrbitFound(it, chatId, timestamp, name, size, pieceKey = piece) }
                     }
                 }
                 OrbitChatCards.APPROVAL -> add(OrbitFindKind.APPROVAL) {
                     OrbitFound(it, chatId, timestamp, o.optString("title").ifBlank { OrbitChatCards.summary(card, english) },
-                        approvalId = o.optString("approval_id"))
+                        approvalId = o.optString("approval_id"), pieceKey = piece)
                 }
-                else -> add(OrbitFindKind.CARD) { OrbitFound(it, chatId, timestamp, OrbitChatCards.summary(card, english)) }
+                else -> add(OrbitFindKind.CARD) { OrbitFound(it, chatId, timestamp, OrbitChatCards.summary(card, english), pieceKey = piece) }
             }
         }
         if (kind == OrbitFindKind.CARD) {
             val ui = context.getString(R.string.orbit_find_ui_card)
-            repeat(uiFence.findAll(speech).count()) { add(OrbitFindKind.CARD) { key -> OrbitFound(key, chatId, timestamp, ui) } }
+            // The same Dynamic UI bubbles, numbered the same way, as the chat shows.
+            OrbitSpeech.pieceList(shown, timestamp, english).filter { it.uiIndex != null }.forEach { piece ->
+                add(OrbitFindKind.CARD) { key -> OrbitFound(key, chatId, timestamp, ui, pieceKey = piece.key) }
+            }
         }
         if (kind == OrbitFindKind.LINK) {
             links(OrbitSpeech.words(content, "")).forEach { url -> add(OrbitFindKind.LINK) { OrbitFound(it, chatId, timestamp, url) } }
@@ -348,9 +361,11 @@ internal fun OrbitChatSearchPage(
     orbit: OrbitProfile,
     chatId: String,
     active: Boolean,
-    onOpen: (chatId: String, timestamp: Long) -> Unit,
+    /** [piece] is the bubble to land on (a card), or null for the message itself. */
+    onOpen: (chatId: String, timestamp: Long, piece: String?) -> Unit,
     onClose: () -> Unit,
 ) {
+    val openMessage: (String, Long) -> Unit = { id, time -> onOpen(id, time, null) }
     var query by remember(chatId) { mutableStateOf("") }
     var kind by remember(chatId) { mutableStateOf<OrbitFindKind?>(null) }
     BackHandler(enabled = active && kind != null) { kind = null }
@@ -389,11 +404,11 @@ internal fun OrbitChatSearchPage(
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 val current = kind
                 when {
-                    current == OrbitFindKind.DATE -> DayPicker(chatId) { onOpen(chatId, it) }
+                    current == OrbitFindKind.DATE -> DayPicker(chatId) { openMessage(chatId, it) }
                     current == OrbitFindKind.FAVORITE -> FavoriteList(orbit, onOpen)
                     current != null -> FoundList(orbit, chatId, current, onOpen)
                     query.isBlank() -> KindGrid { kind = it }
-                    else -> WordResults(orbit, chatId, query.trim(), onOpen)
+                    else -> WordResults(orbit, chatId, query.trim(), openMessage)
                 }
             }
         }
@@ -568,7 +583,7 @@ private fun Loading(modifier: Modifier = Modifier) {
 
 /** Pictures and videos as a grid, everything else as rows; read a page at a time as it scrolls. */
 @Composable
-private fun FoundList(orbit: OrbitProfile, chatId: String, kind: OrbitFindKind, onOpen: (String, Long) -> Unit) {
+private fun FoundList(orbit: OrbitProfile, chatId: String, kind: OrbitFindKind, onOpen: (String, Long, String?) -> Unit) {
     val context = LocalContext.current
     var found by remember(kind) { mutableStateOf<List<OrbitFound>>(emptyList()) }
     var ids by remember(kind) { mutableStateOf<List<Long>>(emptyList()) }
@@ -627,7 +642,7 @@ private fun FoundList(orbit: OrbitProfile, chatId: String, kind: OrbitFindKind, 
             GridCells.Fixed(4), Modifier.fillMaxSize().padding(horizontal = 2.dp), state = gridState,
             horizontalArrangement = Arrangement.spacedBy(2.dp), verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            items(found, key = { it.key }) { item -> MediaTile(item) { onOpen(item.chatId, item.timestamp) } }
+            items(found, key = { it.key }) { item -> MediaTile(item) { onOpen(item.chatId, item.timestamp, item.pieceKey) } }
         }
         return
     }
@@ -645,7 +660,7 @@ private fun FoundList(orbit: OrbitProfile, chatId: String, kind: OrbitFindKind, 
             val day = remember(item.timestamp) { searchDayLabel(context, item.timestamp) }
             val answer = item.approvalId?.let { approvals[it] }?.let { approvalState(it) }
             val detail = listOfNotNull(day, item.detail.takeIf { it.isNotEmpty() }, answer?.let { stringResource(it) }).joinToString(" · ")
-            FoundRow(kind.icon, item.title, detail, divider = i > 0, onClick = { onOpen(item.chatId, item.timestamp) })
+            FoundRow(kind.icon, item.title, detail, divider = i > 0, onClick = { onOpen(item.chatId, item.timestamp, item.pieceKey) })
         }
         if (loadingMore) item(key = "more") { Loading(Modifier.padding(16.dp)) }
     }
@@ -730,7 +745,7 @@ private fun FoundRow(
 
 /** Everything kept from this Orbit's chats, newest first; each can be taken off again. */
 @Composable
-private fun FavoriteList(orbit: OrbitProfile, onOpen: (String, Long) -> Unit) {
+private fun FavoriteList(orbit: OrbitProfile, onOpen: (String, Long, String?) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val version by OrbitFavorites.version.collectAsState()
@@ -783,7 +798,7 @@ private fun FavoriteList(orbit: OrbitProfile, onOpen: (String, Long) -> Unit) {
             text = { androidx.compose.foundation.text.selection.SelectionContainer { Text(fav.text) } },
             confirmButton = if (chatTitle != null) {
                 {
-                    OrbitDialogAction(onClick = { open = null; onOpen(fav.chatId, fav.timestamp) }) {
+                    OrbitDialogAction(onClick = { open = null; onOpen(fav.chatId, fav.timestamp, fav.id.removePrefix(fav.chatId + "/").takeIf { it.contains(':') }) }) {
                         Text(stringResource(R.string.orbit_find_open_message))
                     }
                 }

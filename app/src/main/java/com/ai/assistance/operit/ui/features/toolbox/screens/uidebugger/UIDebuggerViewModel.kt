@@ -95,19 +95,16 @@ class UIDebuggerViewModel : ViewModel() {
                     UIElementAction.CLICK -> {
                         val clickTool = AITool(
                             name = "click_element",
-                            parameters = listOf(
-                                ToolParameter(
-                                    name = "selector_type",
-                                    value = if (element.resourceId != null) "ByResourceId" else "ByText"
-                                ),
-                                ToolParameter(
-                                    name = "selector_value",
-                                    value = element.resourceId ?: element.text
-                                )
-                            )
+                            // The element's own place on screen (its drawn bounds leave out the status
+                            // bar, so it is added back), else its id: what the screen tools read.
+                            parameters = element.bounds?.let { b ->
+                                listOf(ToolParameter(name = "bounds", value =
+                                    "[${b.left},${b.top + statusBarHeight}][${b.right},${b.bottom + statusBarHeight}]"))
+                            } ?: listOfNotNull(element.resourceId?.let { ToolParameter(name = "resourceId", value = it) })
                         )
                         val result = withContext(Dispatchers.IO) {
-                            toolHandler.executeTool(clickTool)
+                            // The user's own debugging, so it skips the model's retired phone tools.
+                            com.ai.assistance.operit.core.tools.UserScreenCapture.uiTools(context).clickElement(clickTool)
                         }
                         showActionFeedback(
                             if (result.success) context.getString(R.string.uidebugger_action_click_success)
@@ -153,7 +150,7 @@ class UIDebuggerViewModel : ViewModel() {
 
                 val (elements, activityInfo) = withContext(Dispatchers.IO) {
                     val pageInfoTool = AITool(name = "get_page_info", parameters = listOf())
-                    val result = toolHandler.executeTool(pageInfoTool)
+                    val result = com.ai.assistance.operit.core.tools.UserScreenCapture.uiTools(context).getPageInfo(pageInfoTool)
                     if (result.success) {
                         val resultData = result.result
                         if (resultData is UIPageResultData) {
