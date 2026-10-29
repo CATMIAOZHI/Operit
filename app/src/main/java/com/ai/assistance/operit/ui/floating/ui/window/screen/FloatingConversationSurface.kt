@@ -143,16 +143,19 @@ internal fun FloatingConversationSurface(floatContext: FloatContext, fullscreen:
                                     onClick = { menu = false; core?.createNewChat() },
                                 )
                             }
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.floating_voice_mode)) },
-                                leadingIcon = { Icon(Icons.Rounded.GraphicEq, null) },
-                                onClick = {
-                                    menu = false
-                                    floatContext.voiceAutoTimeout = false
-                                    floatContext.voiceMode = true
-                                    changeMode(FloatingMode.FULLSCREEN)
-                                },
-                            )
+                            // Orbit has no voice conversation, as on its page; its microphone fills the message box.
+                            if (orbit == null) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.floating_voice_mode)) },
+                                    leadingIcon = { Icon(Icons.Rounded.GraphicEq, null) },
+                                    onClick = {
+                                        menu = false
+                                        floatContext.voiceAutoTimeout = false
+                                        floatContext.voiceMode = true
+                                        changeMode(FloatingMode.FULLSCREEN)
+                                    },
+                                )
+                            }
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.floating_back_to_main)) },
                                 leadingIcon = { Icon(Icons.Default.Home, null) },

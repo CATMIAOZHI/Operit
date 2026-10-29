@@ -817,8 +817,19 @@ internal fun ChatMessagesView(
                 it.chatId == currentChatId && (it.savedAt == null || it.savedAt !in times) &&
                     (it.sentSince == null || newestUser < it.sentSince)
             }
-                .map { FloatingSendingItem(it.id, ChatMessage(sender = "user", content = it.content, timestamp = -2L - it.id)) }
+                .map { FloatingSendingItem(it.id, it.at, ChatMessage(sender = "user", content = it.content, timestamp = -2L - it.id)) }
         }
+    }
+    // Orbit's chat has no per-message totals; like a messenger, a time line shows above a message
+    // that comes five minutes or more after the one before, the same as on its page.
+    val orbitTimeRows = remember(messages, sendingShown, orbitLook) {
+        if (!orbitLook) emptyMap()
+        else com.ai.assistance.operit.ui.features.chat.components.orbitChatTimeRows(
+            messages
+                .filter { it.sender != "think" && !com.ai.assistance.operit.ui.features.chat.components.OrbitSpeech.hidden(it) }
+                .map { "${it.sender}:${it.timestamp}" to it.timestamp.takeIf { time -> time > 0L } } +
+                sendingShown.map { "floating_sending:${it.id}" to it.at },
+        )
     }
     // A bubble or the typing dots added at the bottom (no new chat row yet) come into view too.
     // A message the user just sent brings the window back to the newest messages, as in a messenger.
@@ -930,6 +941,8 @@ internal fun ChatMessagesView(
                             responseProcessState, actualIndex, appearance.aiTextColor,
                         ) { messageIndex ->
                         val floatingMessage = messages[messageIndex]
+                        // The time goes above the message's first part only.
+                        val timeLine = if (messageIndex == actualIndex) orbitTimeRows["${item.sender}:${item.timestamp}"] else null
                         FloatingMessageItem(
                             index = messageIndex,
                             message = floatingMessage,
@@ -950,9 +963,11 @@ internal fun ChatMessagesView(
                                 ),
                             appearance = appearance,
                             heightMemory = messageHeightMemory,
+                            showFooter = !orbitLook,
                             showTokenStats = showTokenStats,
                             showTimingStats = showTimingStats,
                             showTimestamp = showTimestamp,
+                            timeLine = timeLine,
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         }
@@ -961,6 +976,9 @@ internal fun ChatMessagesView(
                     is FloatingSendingItem -> {
                         // Drawn like the sent row that replaces it (the window's Orbit chat is in bubbles).
                         Column(Modifier.fillMaxWidth()) {
+                            orbitTimeRows["floating_sending:${item.id}"]?.let {
+                                com.ai.assistance.operit.ui.features.chat.components.OrbitChatTimeLine(it)
+                            }
                             with(appearance) {
                                 BubbleStyleChatMessage(
                                     message = item.message,
@@ -1048,7 +1066,7 @@ private data object FloatingLoadNewerItem
 private data object FloatingLoadingItem
 
 /** A message sent from the window that is not a chat row yet. */
-private data class FloatingSendingItem(val id: Long, val message: ChatMessage)
+private data class FloatingSendingItem(val id: Long, val at: Long, val message: ChatMessage)
 
 @Composable
 private fun FloatingMessageItem(
@@ -1057,13 +1075,16 @@ private fun FloatingMessageItem(
     closesTurn: Boolean,
     appearance: ChatAppearance,
     heightMemory: ChatMessageHeightMemory,
+    showFooter: Boolean,
     showTokenStats: Boolean,
     showTimingStats: Boolean,
     showTimestamp: Boolean,
     showAssistantHeader: Boolean,
+    timeLine: Long?,
 ) {
     // A reverse LazyColumn reverses separate roots within an item as well.
     Column(Modifier.fillMaxWidth()) {
+        timeLine?.let { com.ai.assistance.operit.ui.features.chat.components.OrbitChatTimeLine(it) }
         with(appearance) {
             when (chatStyle) {
                 ChatStyle.CURSOR -> CursorStyleChatMessage(
@@ -1110,7 +1131,7 @@ private fun FloatingMessageItem(
                 )
             }
         }
-        if (message.sender == "ai" && closesTurn) {
+        if (showFooter && message.sender == "ai" && closesTurn) {
             MessageFooterBar(
                 message = message,
                 showMessageTokenStats = showTokenStats,
