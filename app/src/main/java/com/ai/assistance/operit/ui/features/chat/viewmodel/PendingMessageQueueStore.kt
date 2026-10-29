@@ -61,6 +61,21 @@ internal class PendingMessageQueueStore(
         message
     }
 
+    /** A message handed to the running turn became the chat row at [rowTimestamp]. */
+    fun markSaved(chatId: String, messageId: Long, rowTimestamp: Long) = synchronized(lock) {
+        if (_states.value[chatId]?.messages?.none { it.id == messageId } != false) return@synchronized
+        updateState(chatId) { state ->
+            state.copy(messages = state.messages.map { if (it.id == messageId) it.copy(savedAt = rowTimestamp) else it })
+        }
+    }
+
+    /** The queued [message] (same id) changes, e.g. how it shows once handed to the running turn. */
+    fun replace(chatId: String, message: PendingQueueMessageItem) = synchronized(lock) {
+        updateState(chatId) { state ->
+            state.copy(messages = state.messages.map { if (it.id == message.id) message else it })
+        }
+    }
+
     fun restore(chatId: String, message: PendingQueueMessageItem) {
         onBackInQueue(chatId, message.id)
         synchronized(lock) {

@@ -105,6 +105,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
@@ -947,6 +949,7 @@ private fun OrbitChatPage(
                     onOpenImport = { showImport = true },
                     onOpenUsage = { push(OrbitSubPage.USAGE) },
                     onOpenAppearance = { push(OrbitSubPage.APPEARANCE) },
+                    onOpenPet = { push(OrbitSubPage.PET) },
                     onOpenModels = { push(OrbitSubPage.MODELS) },
                     onOpenContext = { push(OrbitSubPage.CONTEXT) },
                     onOpenPhonePermissions = { push(OrbitSubPage.PHONE_PERMISSIONS) },
@@ -967,6 +970,7 @@ private fun OrbitChatPage(
                     stackNames = ""
                 })
                 OrbitSubPage.APPEARANCE -> OrbitAppearancePage(orbit, onBack = back)
+                OrbitSubPage.PET -> OrbitPetSettingsPage(onBack = back)
                 OrbitSubPage.MODELS -> OrbitModelsPage(orbit, onBack = back,
                     onOpenModelConfig = { push(OrbitSubPage.MODEL_CONFIG) })
                 OrbitSubPage.CONTEXT -> OrbitContextPage(orbit, onBack = back)
@@ -1102,7 +1106,7 @@ private fun OrbitChatPage(
     vaultRequest?.takeIf { it.orbitId == orbit.id }?.let { OrbitVaultEntrySheet(orbit = orbit, request = it) }
 }
 
-private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, ALIGNMENT, FILES, PACKAGES, TOOL_PERMISSIONS, TOOL_ACCESS, VAULT, VAULT_ENTRY, USAGE, USAGE_TRENDS, APPEARANCE, MODELS, CONTEXT, MODEL_CONFIG, PHONE_PERMISSIONS, DEVICE_ACCESS, NOTIFICATION_SETTINGS, SPEECH_SETTINGS, CHANNELS, WEIXIN, TEXT_SETTINGS, AUTOMATION_SETTINGS, BACKUP }
+private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, ALIGNMENT, FILES, PACKAGES, TOOL_PERMISSIONS, TOOL_ACCESS, VAULT, VAULT_ENTRY, USAGE, USAGE_TRENDS, APPEARANCE, PET, MODELS, CONTEXT, MODEL_CONFIG, PHONE_PERMISSIONS, DEVICE_ACCESS, NOTIFICATION_SETTINGS, SPEECH_SETTINGS, CHANNELS, WEIXIN, TEXT_SETTINGS, AUTOMATION_SETTINGS, BACKUP }
 
 /** iOS-like timing: a quick start that settles softly (UIKit's default presentation curve). */
 internal object OrbitMotion {
@@ -1498,6 +1502,7 @@ private fun OrbitSettingsPage(
     onOpenImport: () -> Unit,
     onOpenUsage: () -> Unit,
     onOpenAppearance: () -> Unit,
+    onOpenPet: () -> Unit,
     onOpenModels: () -> Unit,
     onOpenContext: () -> Unit,
     onOpenPhonePermissions: () -> Unit,
@@ -1517,15 +1522,59 @@ private fun OrbitSettingsPage(
     val cardColor = settingsCardColor(hasBackgroundImage)
     val toolPermissions = remember { com.ai.assistance.operit.ui.permissions.ToolPermissionSystem.getInstance(context) }
     val fullAccess by toolPermissions.orbitFullAccessFlow.collectAsState(initial = null)
+    // A search over this page's rows, as in the app's settings; Back first clears it.
+    var query by rememberSaveable { mutableStateOf("") }
+    val searching = query.isNotBlank()
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    BackHandler(enabled = searching) {
+        query = ""
+        focusManager.clearFocus()
+    }
+    // A switch found by the search is shown in place: the search clears and the page scrolls to it.
+    val anchors = remember { mutableMapOf<String, Float>() }
+    var pageTop by remember { mutableStateOf(0f) }
+    var jumpTo by remember { mutableStateOf<String?>(null) }
+    fun anchor(key: String) = Modifier.onGloballyPositioned { anchors[key] = it.positionInRoot().y }
+    val searchEntries = orbitSettingsEntries(
+        developerMode = settings.developerMode,
+        onShowSwitch = { key -> jumpTo = key; query = "" },
+        onOpenModels = onOpenModels, onOpenContext = onOpenContext,
+        onOpenNotificationSettings = onOpenNotificationSettings, onOpenAppearance = onOpenAppearance,
+        onOpenPet = onOpenPet, onOpenText = onOpenText, onOpenSpeech = onOpenSpeech,
+        onOpenPhonePermissions = onOpenPhonePermissions, onOpenChannels = onOpenChannels,
+        onOpenAutomation = onOpenAutomation, onOpenBackup = onOpenBackup,
+        onOpenPrompts = onOpenPrompts, onOpenPackages = onOpenPackages,
+        onOpenToolAccess = onOpenToolAccess, onOpenVault = onOpenVault, onOpenImport = onOpenImport,
+        onOpenToolPermissions = onOpenToolPermissions,
+    )
+    // Kept while searching, so clearing the search returns to the same place on the page.
+    val pageScroll = rememberScrollState()
+    val jumpMargin = with(androidx.compose.ui.platform.LocalDensity.current) { 24.dp.toPx() }
+    LaunchedEffect(jumpTo, searching) {
+        val key = jumpTo ?: return@LaunchedEffect
+        if (searching) return@LaunchedEffect
+        androidx.compose.runtime.withFrameNanos { }
+        anchors[key]?.let { y ->
+            pageScroll.animateScrollTo((pageScroll.value + y - pageTop - jumpMargin).toInt().coerceAtLeast(0))
+        }
+        jumpTo = null
+    }
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+        if (searching) {
+            OrbitSettingsSearchResults(searchOrbitSettings(query, searchEntries), cardColor) { entry ->
+                focusManager.clearFocus()
+                entry.onClick()
+            }
+        } else {
         Column(
             modifier =
                 Modifier.fillMaxSize()
+                    .onGloballyPositioned { pageTop = it.positionInRoot().y }
                     .statusBarsPadding()
-                    .verticalScroll(rememberScrollState())
+                    .verticalScroll(pageScroll)
                     .padding(start = 16.dp, end = 16.dp, top = 8.dp)
                     .navigationBarsPadding()
-                    .padding(bottom = 24.dp),
+                    .padding(bottom = OrbitSearchBarClearance),
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
             OrbitPageHeader(stringResource(R.string.orbit_settings), onBack, Modifier.padding(start = 4.dp))
@@ -1552,7 +1601,9 @@ private fun OrbitSettingsPage(
             }
 
             SettingsCard(backgroundColor = cardColor) {
-                com.ai.assistance.operit.ui.features.settings.components.LaunchModeSettingsRow(searchable = false)
+                Box(anchor(SWITCH_LAUNCH_MODE)) {
+                    com.ai.assistance.operit.ui.features.settings.components.LaunchModeSettingsRow(searchable = false)
+                }
                 SettingsRowDivider(inset = false)
                 SettingsNavRow(
                     title = stringResource(R.string.orbit_notification_settings),
@@ -1568,6 +1619,14 @@ private fun OrbitSettingsPage(
                     icon = lucide("paintbrush"),
                     searchable = false,
                     onClick = onOpenAppearance,
+                )
+                SettingsRowDivider(inset = false)
+                SettingsNavRow(
+                    title = stringResource(R.string.pet_title),
+                    subtitle = stringResource(R.string.orbit_pet_row),
+                    icon = lucide("paw-print"),
+                    searchable = false,
+                    onClick = onOpenPet,
                 )
                 SettingsRowDivider(inset = false)
                 SettingsNavRow(
@@ -1696,6 +1755,7 @@ private fun OrbitSettingsPage(
                     // Switching logins either way asks first: it changes which accounts Orbit acts as.
                     var pendingShare by remember { mutableStateOf<Boolean?>(null) }
                     SettingsSwitchRow(
+                        modifier = anchor(SWITCH_SHARED_LOGIN),
                         title = stringResource(R.string.orbit_browser_share_login),
                         subtitle =
                             when {
@@ -1745,6 +1805,7 @@ private fun OrbitSettingsPage(
                 )
                 SettingsCard(backgroundColor = cardColor) {
                     SettingsSwitchRow(
+                        modifier = anchor(SWITCH_DEVELOPER),
                         title = stringResource(R.string.orbit_developer_switch),
                         subtitle = stringResource(R.string.orbit_developer_switch_desc),
                         checked = settings.developerMode,
@@ -1779,6 +1840,80 @@ private fun OrbitSettingsPage(
                     },
                 )
             }
+        }
+        }
+
+        OrbitSettingsSearchBar(
+            query = query,
+            onQueryChange = { query = it },
+            onClear = {
+                query = ""
+                focusManager.clearFocus()
+            },
+            onDone = { focusManager.clearFocus() },
+            modifier = Modifier.align(Alignment.BottomCenter),
+        )
+    }
+}
+
+private const val SWITCH_LAUNCH_MODE = "launch_mode"
+private const val SWITCH_SHARED_LOGIN = "shared_login"
+private const val SWITCH_DEVELOPER = "developer"
+
+/** The rows of Orbit's settings page for its search (same names and notes as shown): pages, and switches on it. */
+@Composable
+private fun orbitSettingsEntries(
+    developerMode: Boolean,
+    onShowSwitch: (String) -> Unit,
+    onOpenModels: () -> Unit,
+    onOpenContext: () -> Unit,
+    onOpenNotificationSettings: () -> Unit,
+    onOpenAppearance: () -> Unit,
+    onOpenPet: () -> Unit,
+    onOpenText: () -> Unit,
+    onOpenSpeech: () -> Unit,
+    onOpenPhonePermissions: () -> Unit,
+    onOpenChannels: () -> Unit,
+    onOpenAutomation: () -> Unit,
+    onOpenBackup: () -> Unit,
+    onOpenPrompts: () -> Unit,
+    onOpenPackages: () -> Unit,
+    onOpenToolAccess: () -> Unit,
+    onOpenVault: () -> Unit,
+    onOpenImport: () -> Unit,
+    onOpenToolPermissions: () -> Unit,
+): List<OrbitSettingsEntry> {
+    val settingsTitle = stringResource(R.string.orbit_settings)
+    val device = stringResource(R.string.orbit_section_device)
+    val prompts = stringResource(R.string.orbit_section_prompts)
+    val privacy = stringResource(R.string.orbit_section_privacy)
+    val developer = stringResource(R.string.orbit_section_developer)
+    @Composable
+    fun entry(title: Int, subtitle: Int, icon: String, section: String, onClick: () -> Unit) =
+        OrbitSettingsEntry(stringResource(title), stringResource(subtitle), lucide(icon), section, onClick)
+    return buildList {
+        add(entry(R.string.orbit_models_title, R.string.orbit_models_entry_note, "brain", settingsTitle, onOpenModels))
+        add(entry(R.string.orbit_context_title, R.string.orbit_context_row, "archive", settingsTitle, onOpenContext))
+        add(entry(R.string.orbit_notification_settings, R.string.orbit_phone_notify_note, "bell", settingsTitle, onOpenNotificationSettings))
+        add(entry(R.string.orbit_appearance_title, R.string.orbit_appearance_note, "paintbrush", settingsTitle, onOpenAppearance))
+        add(entry(R.string.pet_title, R.string.orbit_pet_row, "paw-print", settingsTitle, onOpenPet))
+        add(entry(R.string.orbit_text_settings_title, R.string.orbit_text_settings_row, "type", settingsTitle, onOpenText))
+        add(entry(R.string.orbit_speech_card_title, R.string.orbit_speech_row, "audio-lines", settingsTitle, onOpenSpeech))
+        add(entry(R.string.orbit_phone_permissions, R.string.orbit_phone_permissions_row, "hand", settingsTitle, onOpenPhonePermissions))
+        add(entry(R.string.orbit_channels_title, R.string.orbit_channels_row, "message-circle", settingsTitle, onOpenChannels))
+        add(entry(R.string.orbit_automation_settings_title, R.string.orbit_automation_settings_row, "scan-line", device, onOpenAutomation))
+        add(entry(R.string.orbit_backup_title, R.string.orbit_backup_row, "database-backup", device, onOpenBackup))
+        add(entry(R.string.orbit_prompt_layers, R.string.orbit_prompt_layers_desc, "layers", prompts, onOpenPrompts))
+        add(entry(R.string.orbit_packages_title, R.string.orbit_packages_row_desc, "package", prompts, onOpenPackages))
+        add(entry(R.string.orbit_access_title, R.string.orbit_access_row_desc, "shield", privacy, onOpenToolAccess))
+        add(entry(R.string.orbit_vault_row, R.string.orbit_vault_row_desc, "key-round", privacy, onOpenVault))
+        add(entry(R.string.orbit_import_row, R.string.orbit_import_row_desc, "download", privacy, onOpenImport))
+        // Switches on the page itself: found, they are shown where they are.
+        add(entry(R.string.launch_mode_setting_title, R.string.launch_mode_setting_orbit, "rocket", settingsTitle) { onShowSwitch(SWITCH_LAUNCH_MODE) })
+        add(entry(R.string.orbit_browser_share_login, R.string.orbit_browser_share_login_off, "link", privacy) { onShowSwitch(SWITCH_SHARED_LOGIN) })
+        add(entry(R.string.orbit_developer_switch, R.string.orbit_developer_switch_desc, "code-xml", developer) { onShowSwitch(SWITCH_DEVELOPER) })
+        if (developerMode) {
+            add(entry(R.string.orbit_tools_row, R.string.orbit_tools_row_desc, "shield-check", developer, onOpenToolPermissions))
         }
     }
 }

@@ -41,6 +41,11 @@ data class PendingQueueMessageItem(
     val attachments: List<com.ai.assistance.operit.data.model.AttachmentInfo> = emptyList(),
     /** The message the user quoted when this was written; it goes along whenever this is sent. */
     val replyToMessage: com.ai.assistance.operit.data.model.ChatMessage? = null,
+    /** Time of the chat row this became once the running turn took it (it leaves the queue just after). */
+    val savedAt: Long? = null,
+    /** While handed to the running turn: the text its chat row will have (attachments, quote) and when it was handed over. */
+    val steeringText: String? = null,
+    val steeringAt: Long = 0L,
 )
 
 @Composable

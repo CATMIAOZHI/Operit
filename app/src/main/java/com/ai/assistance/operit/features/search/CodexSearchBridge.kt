@@ -33,7 +33,7 @@ import org.json.JSONObject
  */
 object CodexSearchBridge {
     private const val ENDPOINT = "https://chatgpt.com/backend-api/codex/responses"
-    private const val DEFAULT_MODEL = "gpt-5.4-mini"
+    private const val DEFAULT_MODEL = "gpt-6-luna"
     private val MODEL_PATTERN = Regex("""gpt-[a-zA-Z0-9.\-]+""")
     private val CONTEXT_SIZES = setOf("low", "medium", "high")
     private const val MAX_QUERIES = 5

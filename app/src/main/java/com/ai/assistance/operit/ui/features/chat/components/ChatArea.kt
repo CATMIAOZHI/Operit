@@ -196,6 +196,11 @@ fun ChatArea(
     orbitUserWaiting: Boolean = false,
     /** A message the user sent that waits for this chat's history summary; shown as sent meanwhile. */
     summaryHeldSend: com.ai.assistance.operit.services.core.MessageCoordinationDelegate.SummaryHeldSend? = null,
+    /**
+     * Messages the user sent into Orbit's running turn. The turn saves them only at its next step
+     * (after a running tool), so they show as sent meanwhile and step aside once their rows are in.
+     */
+    steeringSends: List<com.ai.assistance.operit.ui.features.chat.components.style.input.common.PendingQueueMessageItem> = emptyList(),
     enableDialogs: Boolean = true,
     allowTranscriptMutation: Boolean = true,
     enableToolDetailDialogs: Boolean? = null,  // 工具详情弹窗开关，null 时跟随 enableDialogs
@@ -487,42 +492,76 @@ fun ChatArea(
             val heldTimeLine = heldShown?.heldAt?.takeIf { at ->
                 orbitLook && orbitShown.lastOrNull()?.let { at - chatHistory[it].timestamp >= ORBIT_CHAT_TIME_GAP_MS } != false
             }
+            val sentBubble: @Composable (ChatMessage) -> Unit = { held ->
+                when (chatStyle) {
+                    ChatStyle.CURSOR -> CursorStyleChatMessage(
+                        message = held,
+                        userMessageColor = userMessageColor,
+                        userMessageLiquidGlassEnabled = cursorUserBubbleLiquidGlass,
+                        userMessageWaterGlassEnabled = cursorUserBubbleWaterGlass,
+                        aiMessageColor = aiMessageColor,
+                        userTextColor = userTextColor,
+                        aiTextColor = aiTextColor,
+                        systemMessageColor = systemMessageColor,
+                        systemTextColor = systemTextColor,
+                        thinkingBackgroundColor = thinkingBackgroundColor,
+                        thinkingTextColor = thinkingTextColor,
+                        enableDialogs = false,
+                    )
+                    ChatStyle.BUBBLE -> BubbleStyleChatMessage(
+                        message = held,
+                        userMessageColor = userMessageColor,
+                        aiMessageColor = aiMessageColor,
+                        userTextColor = userTextColor,
+                        aiTextColor = aiTextColor,
+                        systemMessageColor = systemMessageColor,
+                        systemTextColor = systemTextColor,
+                        userMessageLiquidGlassEnabled = bubbleUserBubbleLiquidGlass,
+                        userMessageWaterGlassEnabled = bubbleUserBubbleWaterGlass,
+                        userBubbleImageStyle = bubbleUserImageStyle,
+                        bubbleUserRoundedCornersEnabled = bubbleUserRoundedCornersEnabled,
+                        bubbleUserContentPaddingLeft = bubbleUserContentPaddingLeft,
+                        bubbleUserContentPaddingRight = bubbleUserContentPaddingRight,
+                        enableDialogs = false,
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+            }
             val heldBubble: @Composable () -> Unit = {
                 heldMessage?.let { held ->
                     heldTimeLine?.let { OrbitChatTimeLine(it) }
-                    when (chatStyle) {
-                        ChatStyle.CURSOR -> CursorStyleChatMessage(
-                            message = held,
-                            userMessageColor = userMessageColor,
-                            userMessageLiquidGlassEnabled = cursorUserBubbleLiquidGlass,
-                            userMessageWaterGlassEnabled = cursorUserBubbleWaterGlass,
-                            aiMessageColor = aiMessageColor,
-                            userTextColor = userTextColor,
-                            aiTextColor = aiTextColor,
-                            systemMessageColor = systemMessageColor,
-                            systemTextColor = systemTextColor,
-                            thinkingBackgroundColor = thinkingBackgroundColor,
-                            thinkingTextColor = thinkingTextColor,
-                            enableDialogs = false,
-                        )
-                        ChatStyle.BUBBLE -> BubbleStyleChatMessage(
-                            message = held,
-                            userMessageColor = userMessageColor,
-                            aiMessageColor = aiMessageColor,
-                            userTextColor = userTextColor,
-                            aiTextColor = aiTextColor,
-                            systemMessageColor = systemMessageColor,
-                            systemTextColor = systemTextColor,
-                            userMessageLiquidGlassEnabled = bubbleUserBubbleLiquidGlass,
-                            userMessageWaterGlassEnabled = bubbleUserBubbleWaterGlass,
-                            userBubbleImageStyle = bubbleUserImageStyle,
-                            bubbleUserRoundedCornersEnabled = bubbleUserRoundedCornersEnabled,
-                            bubbleUserContentPaddingLeft = bubbleUserContentPaddingLeft,
-                            bubbleUserContentPaddingRight = bubbleUserContentPaddingRight,
-                            enableDialogs = false,
-                        )
+                    sentBubble(held)
+                }
+            }
+            // Handed to the running turn but not saved yet (keyed by queue id, so two equal texts stay two).
+            // Each shows the text its row will have and the same time line rule, so nothing moves when
+            // the row takes its place. The row gets its time when the turn saves it (after a running
+            // tool), so the stand-in counts from now, kept fresh while it waits and refreshed right at
+            // the moment a pause becomes long enough for a time line.
+            val steeringWaiting = orbitLook && steeringSends.any { it.savedAt == null }
+            val steeringPrevious = heldShown?.heldAt ?: orbitShown.lastOrNull()?.let { chatHistory[it].timestamp }
+            val steeringNow by androidx.compose.runtime.produceState(System.currentTimeMillis(), steeringWaiting, steeringPrevious) {
+                while (steeringWaiting) {
+                    val now = System.currentTimeMillis()
+                    value = now
+                    val boundary = steeringPrevious?.plus(ORBIT_CHAT_TIME_GAP_MS)?.takeIf { it > now }
+                    kotlinx.coroutines.delay(if (boundary != null) minOf(15_000L, boundary - now) else 15_000L)
+                }
+            }
+            val steeringShown = remember(steeringSends, chatHistory, hasNewerDisplayHistory, orbitLook, heldShown, steeringNow) {
+                if (!orbitLook || hasNewerDisplayHistory || steeringSends.isEmpty()) emptyList()
+                else {
+                    val times = chatHistory.mapTo(hashSetOf()) { it.timestamp }
+                    var previous: Long? = steeringPrevious
+                    steeringSends.filter { it.savedAt == null || it.savedAt !in times }.mapNotNull { item ->
+                        val content = (item.steeringText ?: item.text.ifBlank { item.attachments.joinToString("、") { it.fileName } })
+                            .takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                        // Once saved, the row's own time is known; stop moving it so the row lands in place.
+                        val at = item.savedAt ?: maxOf(item.steeringAt, steeringNow)
+                        val timeLine = at.takeIf { previous.let { p -> p == null || at - p >= ORBIT_CHAT_TIME_GAP_MS } }
+                        previous = at
+                        Triple(item.id, ChatMessage(sender = "user", content = content, timestamp = -2L - item.id), timeLine)
                     }
-                    Spacer(Modifier.height(8.dp))
                 }
             }
             if (orbitLook) {
@@ -533,6 +572,12 @@ fun ChatArea(
                     }
                 }
                 heldBubble()
+                steeringShown.forEach { (id, message, timeLine) ->
+                    androidx.compose.runtime.key(id) {
+                        timeLine?.let { OrbitChatTimeLine(it) }
+                        sentBubble(message)
+                    }
+                }
                 // Orbit is typing for as long as it works on a reply to the user, like a person would be.
                 // A reply started by a reaction, an approval, a background task or a subagent result
                 // shows no dots; the status under Orbit's name still says what it is doing. A message

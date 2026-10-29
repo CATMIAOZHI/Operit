@@ -34,7 +34,7 @@ import org.json.JSONObject
  */
 object GrokSearchBridge {
     private val ENDPOINTS = listOf("https://api.x.ai/v1", "https://cli-chat-proxy.grok.com/v1")
-    private const val DEFAULT_MODEL = "grok-4.3"
+    private const val DEFAULT_MODEL = "grok-4.7"
     private val MODEL_PATTERN = Regex("""grok-[a-z0-9.\-]+""")
     private const val MAX_QUERIES = 5
     private const val MAX_QUERY_CHARS = 2_000

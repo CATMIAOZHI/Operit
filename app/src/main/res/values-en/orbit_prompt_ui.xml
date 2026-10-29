@@ -121,6 +121,10 @@
     <string name="orbit_profile_browser_gone">This page is closed</string>
     <string name="orbit_profile_browser_empty_desc">When %1$s uses the browser, its pages show here; tap one to watch or take over.</string>
     <string name="orbit_options_send_failed">Not sent. Tap again to retry</string>
+    <string name="orbit_floating_card_title">Open this card in the app</string>
+    <string name="orbit_floating_card_sub">Passwords, approvals and sign-ins don\'t work in the floating window</string>
+    <string name="orbit_floating_card_open">Open in app</string>
+    <string name="orbit_pet_row">Keeps you company in the app or over other apps</string>
     <string name="orbit_options_chosen">Chosen</string>
     <string name="orbit_copy_block_copy">Copy</string>
     <string name="orbit_copy_block_copied">Copied</string>
@@ -135,4 +139,6 @@
     <string name="orbit_link_confirm_title">Open this link?</string>
     <string name="orbit_link_confirm_message">This leaves Orbit and opens in your browser:\n%1$s</string>
     <string name="orbit_link_confirm_open">Open</string>
+    <string name="orbit_send_lost_restored">Message not sent; it\'s back in the input box</string>
+    <string name="orbit_send_lost">Message not sent: %1$s</string>
 </resources>

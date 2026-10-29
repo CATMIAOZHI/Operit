@@ -236,6 +236,17 @@ internal fun OrbitSpeechSettingsCard() {
     }
 }
 
+/** In the floating window, a card that needs the app's screen: one button opens Orbit there. */
+@Composable
+internal fun OrbitInAppCard(open: () -> Unit) {
+    CardColumn {
+        CardHeading("external-link", stringResource(R.string.orbit_floating_card_title),
+            stringResource(R.string.orbit_floating_card_sub))
+        Spacer(Modifier.height(14.dp))
+        CardButton(stringResource(R.string.orbit_floating_card_open), enabled = true, onClick = open)
+    }
+}
+
 /** Opens one settings page from the chat: the WeChat link, the role cards, or the model settings. */
 @Composable
 internal fun OrbitOpenPageCard(card: JSONObject) {
@@ -350,6 +361,24 @@ internal fun OrbitSpeechSettingsPage(orbitId: String, onBack: () -> Unit) {
                 onBackPressed = onBack,
                 dialogStyle = com.ai.assistance.operit.ui.features.settings.components.SettingsDialogStyle.ORBIT,
             )
+        }
+    }
+}
+
+/** The desktop pet, the same settings as in the app's assistant page, opened inside Orbit. */
+@Composable
+internal fun OrbitPetSettingsPage(onBack: () -> Unit) {
+    OrbitPageBack(onBack = onBack)
+    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
+        .statusBarsPadding().navigationBarsPadding()) {
+        OrbitPageHeader(stringResource(R.string.pet_title), onBack,
+            Modifier.padding(horizontal = 20.dp).padding(top = 8.dp))
+        Box(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState())) {
+            com.ai.assistance.operit.ui.features.settings.components.SettingsDialogs(
+                com.ai.assistance.operit.ui.features.settings.components.SettingsDialogStyle.ORBIT,
+            ) {
+                com.ai.assistance.operit.pet.PetSettingsSection()
+            }
         }
     }
 }

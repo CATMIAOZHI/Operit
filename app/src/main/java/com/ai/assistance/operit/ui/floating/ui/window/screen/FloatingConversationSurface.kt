@@ -41,8 +41,13 @@ internal fun FloatingConversationSurface(floatContext: FloatContext, fullscreen:
     val core = floatContext.chatService?.getChatCore()
     val chatId = core?.currentChatId?.collectAsState()?.value
     val histories = core?.chatHistories?.collectAsState()?.value.orEmpty()
-    val title = histories.firstOrNull { it.id == chatId }?.title
-        ?.takeIf(String::isNotBlank) ?: stringResource(R.string.floating_empty_title)
+    // The window showing Orbit's chat is Orbit's: its look, its name, and only its own chats.
+    val orbit = rememberFloatingOrbit(chatId)
+    val chatTitle = histories.firstOrNull { it.id == chatId }?.title?.takeIf(String::isNotBlank)
+    val title = when {
+        orbit != null && chatId == orbit.chatId -> com.ai.assistance.operit.ui.features.orbit.orbitName(orbit)
+        else -> chatTitle ?: stringResource(R.string.floating_empty_title)
+    }
     var menu by remember { mutableStateOf(false) }
     var history by remember { mutableStateOf(false) }
     val focus = LocalFocusManager.current
@@ -73,13 +78,17 @@ internal fun FloatingConversationSurface(floatContext: FloatContext, fullscreen:
     ) {
         // Reuse the main background and glass backdrop without touching an Activity window.
         com.ai.assistance.operit.ui.theme.OperitTheme(updateSystemBars = false) {
-        Box(Modifier.fillMaxSize()) {
+        OrbitOrPlain(floatContext, orbit, chatId) {
+        // Orbit's chat has its own plain page color instead of the app's background picture.
+        Box(Modifier.fillMaxSize().then(
+            if (orbit != null) Modifier.background(MaterialTheme.colorScheme.background) else Modifier
+        )) {
             Column(Modifier.fillMaxSize()) {
                 Row(
                     Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(start = 16.dp, end = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Column(
+                    Row(
                         Modifier.weight(1f).heightIn(min = 48.dp)
                             .then(if (fullscreen) Modifier else Modifier
                                 .semantics { contentDescription = dragHint }
@@ -92,16 +101,29 @@ internal fun FloatingConversationSurface(floatContext: FloatContext, fullscreen:
                                         floatContext.onMove(amount.x, amount.y, 1f)
                                     }
                                 }),
-                        verticalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        if (!fullscreen) {
-                            Box(Modifier.width(24.dp).height(3.dp).background(
-                                MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(2.dp)
-                            ))
-                            Spacer(Modifier.height(5.dp))
+                        if (orbit != null) {
+                            com.ai.assistance.operit.ui.features.orbit.OrbitAvatar(orbit, size = 32)
+                            Spacer(Modifier.width(10.dp))
                         }
-                        Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 1,
-                            overflow = TextOverflow.Ellipsis)
+                        Column(verticalArrangement = Arrangement.Center) {
+                            if (!fullscreen && orbit == null) {
+                                Box(Modifier.width(24.dp).height(3.dp).background(
+                                    MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(2.dp)
+                                ))
+                                Spacer(Modifier.height(5.dp))
+                            }
+                            Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 1,
+                                overflow = TextOverflow.Ellipsis)
+                            // What Orbit is doing right now, as under its name on its page.
+                            val activity = if (orbit != null) com.ai.assistance.operit.ui.features.orbit.orbitActivity() else null
+                            if (activity != null) {
+                                Text(activity, style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis)
+                            }
+                        }
                     }
                     Box {
                         IconButton(onClick = { menu = true }, modifier = Modifier.size(48.dp)) {
@@ -113,11 +135,14 @@ internal fun FloatingConversationSurface(floatContext: FloatContext, fullscreen:
                                 leadingIcon = { Icon(Icons.Default.History, null) },
                                 onClick = { menu = false; releaseFocus(); history = true },
                             )
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.new_chat)) },
-                                leadingIcon = { Icon(Icons.Default.Add, null) },
-                                onClick = { menu = false; core?.createNewChat() },
-                            )
+                            // Orbit keeps one conversation; its side chats are made from its page.
+                            if (orbit == null) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.new_chat)) },
+                                    leadingIcon = { Icon(Icons.Default.Add, null) },
+                                    onClick = { menu = false; core?.createNewChat() },
+                                )
+                            }
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.floating_voice_mode)) },
                                 leadingIcon = { Icon(Icons.Rounded.GraphicEq, null) },
@@ -133,11 +158,17 @@ internal fun FloatingConversationSurface(floatContext: FloatContext, fullscreen:
                                 leadingIcon = { Icon(Icons.Default.Home, null) },
                                 onClick = {
                                     menu = false
-                                    core?.syncCurrentChatIdToGlobal()
-                                    floatContext.chatService?.let { service ->
-                                        service.startActivity(Intent(service, MainActivity::class.java).apply {
-                                            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
-                                        })
+                                    val service = floatContext.chatService
+                                    if (orbit != null && chatId != null) {
+                                        // Orbit's chat opens on Orbit's page, never in the normal chat screen.
+                                        service?.let { com.ai.assistance.operit.services.floating.FloatingOrbit.openInApp(it, chatId) }
+                                    } else {
+                                        core?.syncCurrentChatIdToGlobal()
+                                        service?.let {
+                                            it.startActivity(Intent(it, MainActivity::class.java).apply {
+                                                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                                            })
+                                        }
                                     }
                                     floatContext.onClose()
                                 },
@@ -289,7 +320,30 @@ internal fun FloatingConversationSurface(floatContext: FloatContext, fullscreen:
             }
         }
         }
+        }
     }
+}
+
+/**
+ * Wraps [content] in Orbit's look when the window shows one of its chats. The window's surface
+ * sits outside Orbit's theme, so text takes its color from Orbit's page here (Orbit may be dark
+ * while the app is light).
+ */
+@Composable
+private fun OrbitOrPlain(
+    floatContext: FloatContext,
+    orbit: com.ai.assistance.operit.data.preferences.OrbitProfile?,
+    chatId: String?,
+    content: @Composable () -> Unit,
+) {
+    if (orbit != null && chatId != null) {
+        FloatingOrbitScope(floatContext, orbit, chatId) {
+            androidx.compose.runtime.CompositionLocalProvider(
+                androidx.compose.material3.LocalContentColor provides MaterialTheme.colorScheme.onBackground,
+                content = content,
+            )
+        }
+    } else content()
 }
 
 /** Keep paragraph/table measurement stable during a drag; reflow once at the final size. */

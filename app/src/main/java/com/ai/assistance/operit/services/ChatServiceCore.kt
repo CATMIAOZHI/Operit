@@ -495,6 +495,18 @@ class ChatServiceCore(
     val isSendTriggeredSummarizing: StateFlow<Boolean>
         get() = messageCoordinationDelegate.isSendTriggeredSummarizing
 
+    /** [chatId] cannot take a new message yet: it is replying, preparing its model, or summarizing. */
+    fun isChatBusy(chatId: String): Boolean =
+        messageProcessingDelegate.isChatLoading(chatId) ||
+            messageCoordinationDelegate.isPreparingModel(chatId) ||
+            (messageCoordinationDelegate.isSummarizing.value &&
+                messageCoordinationDelegate.summarizingChatId.value == chatId) ||
+            (messageCoordinationDelegate.isSendTriggeredSummarizing.value &&
+                messageCoordinationDelegate.sendTriggeredSummarizingChatId.value == chatId)
+
+    /** A send to [chatId] is still choosing and loading its model; its user row is not in yet. */
+    fun isPreparingModel(chatId: String): Boolean = messageCoordinationDelegate.isPreparingModel(chatId)
+
     /**
      * Sends a message to an existing chat and says whether it was taken. A refused send (the chat
      * is busy or summarizing) returns false and touches nothing else.
@@ -504,6 +516,7 @@ class ChatServiceCore(
         messageText: String,
         turnOptions: ChatTurnOptions,
         attachments: List<AttachmentInfo> = emptyList(),
+        replyToMessage: ChatMessage? = null,
     ): Boolean =
         messageCoordinationDelegate.trySendUserMessageToExistingChat(
             promptFunctionType = PromptFunctionType.CHAT,
@@ -511,6 +524,7 @@ class ChatServiceCore(
             messageText = messageText,
             attachments = attachments,
             turnOptions = turnOptions,
+            replyToMessage = replyToMessage,
         )
 
     // 聊天历史相关

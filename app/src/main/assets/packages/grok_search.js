@@ -21,7 +21,7 @@
         {"name": "allowed_domains", "type": "array", "required": false, "description": {"zh": "只搜这些域名，最多 5 个，比如 [\"github.com\"]；不能和 excluded_domains 同时用", "en": "Only search these domains, up to 5, e.g. [\"github.com\"]; not together with excluded_domains"}},
         {"name": "excluded_domains", "type": "array", "required": false, "description": {"zh": "不搜这些域名，最多 5 个", "en": "Leave out these domains, up to 5"}},
         {"name": "enable_image_search", "type": "boolean", "required": false, "description": {"zh": "同时搜索相关图片，默认不搜", "en": "Also search related images; off by default"}},
-        {"name": "model", "type": "string", "required": false, "description": {"zh": "可选，默认 grok-4.3", "en": "Optional, default grok-4.3"}}
+        {"name": "model", "type": "string", "required": false, "description": {"zh": "可选，默认 grok-4.7", "en": "Optional, default grok-4.7"}}
       ]
     },
     {
@@ -38,7 +38,7 @@
         {"name": "from_date", "type": "string", "required": false, "description": {"zh": "开始日期，YYYY-MM-DD", "en": "Start date, YYYY-MM-DD"}},
         {"name": "to_date", "type": "string", "required": false, "description": {"zh": "结束日期，YYYY-MM-DD", "en": "End date, YYYY-MM-DD"}},
         {"name": "enable_image_understanding", "type": "boolean", "required": false, "description": {"zh": "让 Grok 也看帖子里的图片，默认不看", "en": "Let Grok also look at images in posts; off by default"}},
-        {"name": "model", "type": "string", "required": false, "description": {"zh": "可选，默认 grok-4.3", "en": "Optional, default grok-4.3"}}
+        {"name": "model", "type": "string", "required": false, "description": {"zh": "可选，默认 grok-4.7", "en": "Optional, default grok-4.7"}}
       ]
     }
   ]

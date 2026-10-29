@@ -567,4 +567,7 @@ interface ToolExecutor {
  * from an MCP tool that shares the same "server:tool" namespace without querying the package
  * catalog.
  */
-interface JsPackageToolExecutorMarker
+interface JsPackageToolExecutorMarker {
+    /** Whether the script this executor runs came from a built-in package when it was registered. */
+    val registeredFromBuiltIn: Boolean get() = false
+}
