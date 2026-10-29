@@ -141,4 +141,11 @@
     <string name="orbit_link_confirm_open">打开</string>
     <string name="orbit_send_lost_restored">消息没发出去，已放回输入框</string>
     <string name="orbit_send_lost">消息没发出去：%1$s</string>
+    <string name="orbit_pet_section_look">外观</string>
+    <string name="orbit_pet_section_show">显示位置</string>
+    <string name="orbit_pet_section_reset">恢复默认</string>
+    <string name="orbit_backup_section_overview">概览</string>
+    <string name="orbit_backup_section_data">备份与恢复</string>
+    <string name="orbit_backup_section_advanced">高级</string>
+    <string name="orbit_backup_section_help">常见问题</string>
 </resources>

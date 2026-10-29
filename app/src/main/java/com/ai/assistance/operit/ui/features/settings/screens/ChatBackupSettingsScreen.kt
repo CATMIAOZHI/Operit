@@ -617,12 +617,21 @@ private fun ChatBackupSettingsContent() {
         allProfiles.find { it.id == activeProfileId }?.name
             ?: stringResource(R.string.default_profile_name)
 
+    // Inside Orbit: Orbit's page margins, the cards grouped under titles, the questions last.
+    val orbit = com.ai.assistance.operit.ui.features.settings.components.LocalSettingsDialogStyle.current ==
+        SettingsDialogStyle.ORBIT
+    val orbitSection: androidx.compose.foundation.lazy.LazyListScope.(Int) -> Unit = { title ->
+        if (orbit) item(key = "orbit-section-$title") {
+            com.ai.assistance.operit.ui.features.orbit.SectionTitle(stringResource(title))
+        }
+    }
     LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 16.dp, vertical = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = if (orbit) PaddingValues(start = 20.dp, end = 20.dp, top = 0.dp, bottom = 32.dp)
+            else PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(if (orbit) 12.dp else 16.dp)
     ) {
+        orbitSection(R.string.orbit_backup_section_overview)
         item {
             OverviewCard(
                 totalChatCount = totalChatCount,
@@ -691,6 +700,7 @@ private fun ChatBackupSettingsContent() {
                 }
             )
         }
+        orbitSection(R.string.orbit_backup_section_data)
         item {
             DataManagementCard(
                 totalChatCount = totalChatCount,
@@ -806,10 +816,11 @@ private fun ChatBackupSettingsContent() {
                 }
             )
         }
-        item {
+        if (!orbit) item {
             FaqCard()
         }
 
+        orbitSection(R.string.orbit_backup_section_advanced)
         item {
             SettingsCard(backgroundColor = rememberSettingsCardColor(), contentPadding = PaddingValues(0.dp)) {
                 Column(
@@ -1432,6 +1443,10 @@ private fun ChatBackupSettingsContent() {
                     }
                 }
             }
+        }
+        orbitSection(R.string.orbit_backup_section_help)
+        if (orbit) item {
+            FaqCard()
         }
     }
 

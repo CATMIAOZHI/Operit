@@ -115,7 +115,8 @@ fun Modifier.settingsSearchTarget(title: String): Modifier = composed {
 /** Card color for settings pages: opaque over a background image so text stays readable. */
 @Composable
 fun settingsCardColor(hasBackgroundImage: Boolean): Color =
-    if (hasBackgroundImage) {
+    // Inside Orbit the cards are Orbit's plain white groups.
+    if (hasBackgroundImage || LocalSettingsDialogStyle.current == SettingsDialogStyle.ORBIT) {
         MaterialTheme.colorScheme.surface
     } else {
         MaterialTheme.colorScheme.surface.copy(alpha = 0.5f)
@@ -160,6 +161,9 @@ fun SettingsSectionTitle(text: String, icon: ImageVector, modifier: Modifier = M
 /** Corner shape shared by every settings card. */
 val SettingsCardShape = RoundedCornerShape(20.dp)
 
+/** The same card on a page shown inside Orbit, rounded like Orbit's own groups. */
+private val OrbitSettingsCardShape = RoundedCornerShape(28.dp)
+
 /** One rounded block of related settings. */
 @Composable
 fun SettingsCard(
@@ -170,7 +174,7 @@ fun SettingsCard(
 ) {
     Surface(
         modifier = modifier.fillMaxWidth(),
-        shape = SettingsCardShape,
+        shape = if (LocalSettingsDialogStyle.current == SettingsDialogStyle.ORBIT) OrbitSettingsCardShape else SettingsCardShape,
         color = backgroundColor
     ) {
         Column(modifier = Modifier.padding(contentPadding), content = content)

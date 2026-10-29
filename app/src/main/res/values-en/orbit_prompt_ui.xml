@@ -141,4 +141,11 @@
     <string name="orbit_link_confirm_open">Open</string>
     <string name="orbit_send_lost_restored">Message not sent; it\'s back in the input box</string>
     <string name="orbit_send_lost">Message not sent: %1$s</string>
+    <string name="orbit_pet_section_look">Appearance</string>
+    <string name="orbit_pet_section_show">Where it shows</string>
+    <string name="orbit_pet_section_reset">Reset</string>
+    <string name="orbit_backup_section_overview">Overview</string>
+    <string name="orbit_backup_section_data">Back up and restore</string>
+    <string name="orbit_backup_section_advanced">Advanced</string>
+    <string name="orbit_backup_section_help">FAQ</string>
 </resources>

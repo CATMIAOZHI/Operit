@@ -365,24 +365,6 @@ internal fun OrbitSpeechSettingsPage(orbitId: String, onBack: () -> Unit) {
     }
 }
 
-/** The desktop pet, the same settings as in the app's assistant page, opened inside Orbit. */
-@Composable
-internal fun OrbitPetSettingsPage(onBack: () -> Unit) {
-    OrbitPageBack(onBack = onBack)
-    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
-        .statusBarsPadding().navigationBarsPadding()) {
-        OrbitPageHeader(stringResource(R.string.pet_title), onBack,
-            Modifier.padding(horizontal = 20.dp).padding(top = 8.dp))
-        Box(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState())) {
-            com.ai.assistance.operit.ui.features.settings.components.SettingsDialogs(
-                com.ai.assistance.operit.ui.features.settings.components.SettingsDialogStyle.ORBIT,
-            ) {
-                com.ai.assistance.operit.pet.PetSettingsSection()
-            }
-        }
-    }
-}
-
 /** The app's own access page (ADB debugging through Shizuku, device admin, Root), opened inside Orbit. */
 @Composable
 internal fun OrbitDeviceAccessPage(name: String, onBack: () -> Unit, onDraft: (String) -> Unit) {
