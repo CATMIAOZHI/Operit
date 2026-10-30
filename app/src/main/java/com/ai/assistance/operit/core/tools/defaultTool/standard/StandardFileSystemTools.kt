@@ -3413,21 +3413,37 @@ open class StandardFileSystemTools(protected val context: Context) {
         return wrapApplyFileResult(tool.name, applyResult)
     }
 
-    /** Edit a file by delegating to apply_file with type=replace */
+    /** Edit a file by delegating to apply_file: type=replace, or type=delete when `new` is empty. */
     open suspend fun editFile(tool: AITool): ToolResult {
         val path = tool.parameters.find { it.name == "path" }?.value ?: ""
         val environment = tool.parameters.find { it.name == "environment" }?.value
         val oldContent = tool.parameters.find { it.name == "old" }?.value ?: ""
-        val newContent = tool.parameters.find { it.name == "new" }?.value ?: ""
+        val newContent = tool.parameters.find { it.name == "new" }?.value
+        if (newContent == null) {
+            val message = "Parameter 'new' is required. Pass the replacement text, or an empty string to delete `old`. Nothing was changed."
+            return ToolResult(
+                toolName = tool.name,
+                success = false,
+                result = FileOperationData(
+                    operation = "apply",
+                    env = environment.orEmpty().trim().ifBlank { "android" },
+                    path = path,
+                    successful = false,
+                    details = message
+                ),
+                error = message
+            )
+        }
+        val isDelete = newContent.isEmpty()
 
         val applyResult = applyFile(
             AITool(
                 name = "apply_file",
                 parameters = listOfNotNull(
                     ToolParameter("path", path),
-                    ToolParameter("type", "replace"),
+                    ToolParameter("type", if (isDelete) "delete" else "replace"),
                     ToolParameter("old", oldContent),
-                    ToolParameter("new", newContent),
+                    if (isDelete) null else ToolParameter("new", newContent),
                     environment?.takeIf { it.isNotBlank() }?.let { ToolParameter("environment", it) }
                 )
             )
@@ -3663,7 +3679,12 @@ open class StandardFileSystemTools(protected val context: Context) {
                     "replace" -> {
                         val oldContent = oldParam ?: ""
                         val newContent = newParam ?: ""
-                        if (oldContent.isBlank() || newContent.isBlank()) {
+                        if (oldContent.isBlank() || newContent.isEmpty()) {
+                            val message = if (oldContent.isBlank()) {
+                                "Parameter 'old' is required and must not be empty. Nothing was changed."
+                            } else {
+                                "Parameter 'new' is empty. To remove text, use type=delete (or edit_file with an empty 'new'). Nothing was changed."
+                            }
                             emit(
                                 ToolResult(
                                     toolName = tool.name,
@@ -3674,9 +3695,9 @@ open class StandardFileSystemTools(protected val context: Context) {
                                             env = environment.orEmpty().trim().ifBlank { "android" },
                                             path = path,
                                             successful = false,
-                                            details = "Both 'old' and 'new' are required for type=replace"
+                                            details = message
                                         ),
-                                    error = "Both 'old' and 'new' are required for type=replace"
+                                    error = message
                                 )
                             )
                             return@flow
@@ -3737,22 +3758,13 @@ open class StandardFileSystemTools(protected val context: Context) {
                 }
 
             ToolProgressBus.update(tool.name, 0.2f, "Applying patch...")
-            val lastEmitMs = java.util.concurrent.atomic.AtomicLong(0L)
-            val bindingResult =
-                EnhancedAIService.applyFileBindingOperations(context, originalContent, editOperations) { p, msg ->
-                    val now = System.currentTimeMillis()
-                    val last = lastEmitMs.get()
-                    if (now - last < 200L) return@applyFileBindingOperations
-                    if (!lastEmitMs.compareAndSet(last, now)) return@applyFileBindingOperations
+            val editResult =
+                FileBindingService(context).applyStructuredEdits(originalContent, editOperations)
+            val mergedContent = editResult.content
+            val aiInstructions = editResult.summary
 
-                    val mapped = (0.2f + 0.6f * p).coerceIn(0f, 0.99f)
-                    ToolProgressBus.update(tool.name, mapped, msg)
-                }
-            val mergedContent = bindingResult.first
-            val aiInstructions = bindingResult.second
-
-            if (aiInstructions.startsWith("Error", ignoreCase = true)) {
-                AppLogger.e(TAG, "File binding failed: $aiInstructions")
+            if (editResult.error != null) {
+                AppLogger.w(TAG, "Exact edit failed: ${editResult.error}")
                 emit(
                     ToolResult(
                         toolName = tool.name,
@@ -3763,9 +3775,9 @@ open class StandardFileSystemTools(protected val context: Context) {
                             env = environment.orEmpty().trim().ifBlank { "android" },
                             path = path,
                             successful = false,
-                            details = "File binding failed: $aiInstructions"
+                            details = "Edit failed: ${editResult.error}"
                         ),
-                        error = aiInstructions
+                        error = editResult.error
                     )
                 )
                 return@flow
@@ -3812,12 +3824,11 @@ open class StandardFileSystemTools(protected val context: Context) {
                     env = environment.orEmpty().trim().ifBlank { "android" },
                     path = path,
                     successful = true,
-                    details = "Successfully applied AI code to file: $path"
+                    details = "Edited $path: ${aiInstructions.replace('\n', ' ')}"
                 )
 
             ToolProgressBus.update(tool.name, 0.92f, "Generating diff...")
-            val diffContent =
-                FileBindingService(context).generateUnifiedDiff(originalContent, mergedContent)
+            val diffContent = editResult.diff
             ToolProgressBus.update(tool.name, 1f, "Completed")
 
             emit(
@@ -3827,7 +3838,7 @@ open class StandardFileSystemTools(protected val context: Context) {
                     result =
                     FileApplyResultData(
                         operation = operationData,
-                        aiDiffInstructions = aiInstructions,
+                        aiDiffInstructions = "",
                         diffContent = diffContent
                     ),
                     error = ""
