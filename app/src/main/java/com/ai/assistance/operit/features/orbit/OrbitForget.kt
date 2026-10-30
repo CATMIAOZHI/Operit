@@ -16,16 +16,14 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
-import java.security.MessageDigest
-import java.security.SecureRandom
 import java.util.UUID
 
 /**
  * Forget plan / confirm for one Orbit. A plan is a read-only scan of every place the information
  * lives (memory, profile, files, skills, goals, scheduled work, task outputs, boards, approvals,
  * undelivered reports, the change record); it is kept encrypted until the user answers. Confirming rescans,
- * refuses a plan that no longer covers what is there, cleans each place through its own store,
- * verifies, and records only locators and salted hashes so the information is not learned again.
+ * refuses a plan that no longer covers what is there, cleans each place through its own store and
+ * verifies. Nothing about the forgotten information is kept, so mentioning it again later is new.
  */
 internal object OrbitForget {
     const val PLAN_TTL_MS = 2 * 60 * 60_000L
@@ -50,7 +48,6 @@ internal object OrbitForget {
     fun normalize(text: String) = text.lowercase().replace(Regex("\\s+"), " ").trim()
 
     private fun planStore(context: Context, orbitId: String) = OrbitSecretFile.forOrbit(context, orbitId, "forgetplan")
-    private fun forgottenStore(context: Context, orbitId: String) = OrbitSecretFile.forOrbit(context, orbitId, "forgotten")
 
     private suspend fun space(context: Context, orbit: OrbitProfile) = OrbitMemoryScope.ensureInitialized(context, orbit)
 
@@ -349,71 +346,7 @@ internal object OrbitForget {
             val after = scan(context, orbit, matcher)
             val remaining = after.hits
             val unread = after.unscanned + if (after.tooMany) listOf("more matches than could be listed") else emptyList()
-            // Only a clean run joins the forgotten list; otherwise the user could not fix what is left
-            // because every write mentioning it would be refused. Cleanup has already happened either way.
-            if (failed.isEmpty() && unread.isEmpty() && remaining.none { it.category != USER_REVIEW }) {
-                // Without the list, later writes are not checked against it; that is not "all clear".
-                step("forgotten_list") { remember(context, orbit.id, planId, terms, current.map { it.locator }); 0 }
-            }
             withContext(Dispatchers.IO) { planStore(context, orbit.id).delete() }
             Outcome(cleaned, remaining, failed, unread)
         }
-
-    /** The forgotten list: plan ids, locators and salted hashes of the search terms, never the text. */
-    private suspend fun remember(context: Context, orbitId: String, planId: String, terms: List<String>, locators: List<String>) =
-        withContext(Dispatchers.IO) {
-            val store = forgottenStore(context, orbitId)
-            val data = store.read()?.let(::JSONObject) ?: JSONObject().put("salt", ByteArray(16).also { SecureRandom().nextBytes(it) }
-                .joinToString("") { "%02x".format(it) }).put("terms", JSONArray()).put("records", JSONArray())
-            val salt = data.getString("salt")
-            val known = data.getJSONArray("terms")
-            val have = (0 until known.length()).map { known.getJSONObject(it).getString("hash") }.toMutableSet()
-            terms.map(::normalize).filter { it.length >= 2 }.forEach { term ->
-                val hash = sha(salt + term)
-                if (have.add(hash)) known.put(JSONObject().put("length", term.length).put("hash", hash))
-            }
-            data.getJSONArray("records").put(JSONObject().put("plan", planId).put("at", System.currentTimeMillis())
-                .put("locators", JSONArray(locators.take(500))))
-            store.write(data.toString())
-        }
-
-    private fun sha(value: String) = hex(MessageDigest.getInstance("SHA-256").digest(value.toByteArray()))
-
-    private val HEX = "0123456789abcdef".toCharArray()
-    private fun hex(bytes: ByteArray): String {
-        val out = CharArray(bytes.size * 2)
-        bytes.forEachIndexed { i, b ->
-            val v = b.toInt() and 0xff
-            out[i * 2] = HEX[v ushr 4]
-            out[i * 2 + 1] = HEX[v and 0x0f]
-        }
-        return String(out)
-    }
-
-    /** True when [text] contains something the user had this Orbit forget. */
-    suspend fun containsForgotten(context: Context, orbitId: String, text: String): Boolean = withContext(Dispatchers.IO) {
-        if (text.isBlank()) return@withContext false
-        val data = runCatching { forgottenStore(context, orbitId).read() }.getOrNull()?.let(::JSONObject) ?: return@withContext false
-        val salt = data.getString("salt")
-        val terms = data.getJSONArray("terms")
-        val byLength = (0 until terms.length()).map { terms.getJSONObject(it) }
-            .groupBy({ it.getInt("length") }, { it.getString("hash") }).mapValues { it.value.toSet() }
-        val t = normalize(text)
-        // One digest for the whole scan (a long file has many windows); the salt goes in first as
-        // in [sha], so the hashes match the stored ones.
-        val digest = MessageDigest.getInstance("SHA-256")
-        val saltBytes = salt.toByteArray()
-        byLength.any { (length, hashes) ->
-            (0..t.length - length).any { start ->
-                if (start and 0x3ff == 0) kotlinx.coroutines.currentCoroutineContext().ensureActive()
-                digest.update(saltBytes)
-                digest.update(t.substring(start, start + length).toByteArray())
-                hex(digest.digest()) in hashes
-            }
-        }
-    }
-
-    /** The Orbit that owns memory space [spaceId], if any. */
-    suspend fun orbitForSpace(context: Context, spaceId: String): String? =
-        OrbitPreferences.getInstance(context).current().orbits.firstOrNull { it.memorySpaceId == spaceId }?.id
 }

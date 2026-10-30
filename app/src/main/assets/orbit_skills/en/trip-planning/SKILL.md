@@ -45,6 +45,6 @@ Use `orbit_browser_handoff` for passwords, verification challenges and payment, 
 
 ## Save and deliver
 
-Keep a trip file under `files/` with `orbit_file`; read it before revising. Keep trips separate and temporary travel facts out of lasting personal preferences. Use `orbit_tracking` for concrete commitments; it does not monitor automatically.
+Keep a trip file under `files/` (`write_file` to create, `edit_file` to revise); read it before revising. Keep trips separate and temporary travel facts out of lasting personal preferences. Use `orbit_tracking` for concrete commitments; it does not monitor automatically.
 
 For requested reminders or checks, read `docs/scheduling-and-watching.md`, create an `orbit_task`, and verify its timezone and next run. Use photos or maps only when useful and verified. Deliver files with `orbit_file action=send`; state any important work still open.

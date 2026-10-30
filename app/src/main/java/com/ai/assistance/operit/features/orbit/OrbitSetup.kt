@@ -532,7 +532,7 @@ internal object OrbitSetup {
             "$MARKER Welcome\n" +
                 "The user just set you up and opened your chat for the first time. " +
                 "This is not a message from the user; they cannot see this note.\n" +
-                "This is your first meeting. Read docs/first-meeting.md with orbit_file first, then follow it.\n" +
+                "This is your first meeting. Read docs/first-meeting.md in your Orbit folder with read_file first (full path), then follow it.\n" +
                 "If the user has not spoken yet, say hello first, in two or three short sentences: who you are, and that they can just " +
                 "tell you what they want, including setting up the app (models, tool packages, components like the terminal, permissions). " +
                 "If they already said something, answer that first and come back to the first meeting when it fits. " +
@@ -540,7 +540,7 @@ internal object OrbitSetup {
         } else {
             "$MARKER 欢迎\n" +
                 "用户刚把你设置好，第一次打开和你的聊天。这不是用户发的消息，用户也看不到这段话。\n" +
-                "这是你们的初次见面。先用 orbit_file 读 docs/first-meeting.md，然后照着它来。\n" +
+                "这是你们的初次见面。先用 read_file 读你 Orbit 文件夹里的 docs/first-meeting.md（填完整路径），然后照着它来。\n" +
                 "用户还没开口的话，先主动打个招呼，两三句短话就好：你是谁；有什么事直接跟你说就行，包括把 App 配置好（模型、工具包、终端这类组件、权限）。" +
                 "他已经先说了话，就先回应他，再找合适的时机回到初次见面。不要提“隐藏消息”这些内部说法。"
         }

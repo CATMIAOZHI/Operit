@@ -105,8 +105,6 @@ class MemoryReviewRepository internal constructor(
     private val evidence: String = "",
     /** Set for an Orbit, whose record lives in its own memory folder: where older versions kept it. */
     private val legacyRoot: File? = null,
-    /** True when a text holds something the user had this Orbit forget; such changes are refused. */
-    private val forgotten: suspend (String) -> Boolean = { false },
 ) {
     constructor(context: Context, profileId: String, staged: MutableList<MemoryReviewChange>? = null,
         learningGeneration: Long? = null, evidence: String = "") :
@@ -115,12 +113,7 @@ class MemoryReviewRepository internal constructor(
         { MemorySearchSettingsPreferences(context, profileId).shouldAutoApproveChanges() }, staged,
         { com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.forSpace(context, profileId) },
         learningGeneration, evidence,
-        File(context.filesDir, "memory_reviews").takeIf { MemorySearchSettingsPreferences.isOrbitSpace(profileId) },
-        { text ->
-            MemorySearchSettingsPreferences.isOrbitSpace(profileId) &&
-                com.ai.assistance.operit.features.orbit.OrbitForget.orbitForSpace(context, profileId)
-                    ?.let { com.ai.assistance.operit.features.orbit.OrbitForget.containsForgotten(context, it, text) } == true
-        })
+        File(context.filesDir, "memory_reviews").takeIf { MemorySearchSettingsPreferences.isOrbitSpace(profileId) })
     companion object {
         private val locks = ConcurrentHashMap<String, Mutex>()
         private val skillInstallMutex = Mutex()
@@ -266,18 +259,7 @@ class MemoryReviewRepository internal constructor(
         return decide(context, change.id, true, "automatic", "Auto-approval enabled for this memory space")
     }
 
-    /** What a change would add (its addition, or the new text's lines that were not there) touches the forgotten list. */
-    private suspend fun mentionsForgotten(change: MemoryReviewChange): Boolean {
-        val added = change.addition.ifBlank {
-            val old = change.before.lines().toSet()
-            (change.body.lines().filterNot { it in old } + change.files.values).joinToString("\n")
-        }
-        return forgotten(added) || forgotten(change.title) || forgotten(change.description)
-    }
     suspend fun propose(candidate: MemoryReviewChange, onCreated: () -> Unit = {}): MemoryReviewChange = withContext(Dispatchers.IO) {
-        require(!mentionsForgotten(candidate)) {
-            "This change contains information the user asked Orbit to forget; leave that information out"
-        }
         val change = candidate.copy(origin = if (learningGeneration != null) "learning" else "foreground",
             learningGeneration = learningGeneration ?: boundary()?.snapshot()?.generation ?: 0,
             evidence = evidence)
@@ -526,15 +508,6 @@ class MemoryReviewRepository internal constructor(
                 "A restored file version requires the user's approval"
             }
             if (change.status == "superseded") return@withLock change
-            // The user may have had Orbit forget something after this was proposed (a staged batch,
-            // an import replay): it is checked again right before it would be written.
-            if (approve && change.status in setOf("pending", "applying") && mentionsForgotten(change)) {
-                val dropped = change.copy(status = "superseded", reviewedAt = System.currentTimeMillis(),
-                    reason = "Removed because the user asked Orbit to forget it")
-                items[index] = dropped
-                write(items)
-                return@withLock dropped
-            }
             val governance = boundary()
             if (approve && change.status in setOf("pending", "applying") &&
                 governance != null && !governance.accepts(change.learningGeneration,

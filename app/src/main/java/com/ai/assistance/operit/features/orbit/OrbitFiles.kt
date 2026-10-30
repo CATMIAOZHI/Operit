@@ -414,6 +414,29 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         entry(p, target)
     }
 
+    /**
+     * Writes the template of each notebook and review file that does not exist yet, so the app's own
+     * file tools (read_file, edit_file) find a file with its sections in place.
+     */
+    suspend fun ensureTemplates() = io {
+        (SINGLE + ALIGNMENT_DATA).forEach { p ->
+            runCatching {
+                val f = File(root, p)
+                // CREATE_NEW: if write_file made the file meanwhile, it stays; the template is only for a missing one.
+                if (!Files.exists(f.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)) template(p)?.let { text ->
+                    inside(f)
+                    f.parentFile?.mkdirs()
+                    Files.write(f.toPath(), text.toByteArray(), java.nio.file.StandardOpenOption.CREATE_NEW)
+                }
+            }
+        }
+    }
+
+    /** After the app's own file tools changed [path] (a short path): updates what the app keeps from it. */
+    suspend fun changedOutside(path: String) = io {
+        runCatching { normalize(path) }.getOrNull()?.takeIf(::isPeopleNote)?.let(::afterChange)
+    }
+
     private fun writable(path: String): String {
         val p = normalize(path)
         require(allowed(p)) { notOrbitFile(path, p) }
@@ -437,7 +460,8 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         val heading = if (dir.endsWith("people")) (if (english) "People" else "人物")
             else (if (english) "Circles & relationships" else "圈子与关系")
         val lines = files.map { f ->
-            val text = f.readText()
+            // Only the head: the title and first line are near the top, and a note can grow without limit.
+            val text = readHead(f, INDEX_HEAD_CHARS)
             val summary = text.lineSequence().map { it.trim() }
                 .firstOrNull { it.isNotEmpty() && !it.startsWith("#") }.orEmpty().take(100)
             "- [${titleOf(text, f.nameWithoutExtension)}](${f.name})" + if (summary.isNotEmpty()) " — $summary" else ""
@@ -521,7 +545,7 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         private val FILES = Regex("files/(?:[^/]{1,80}/){0,3}[^/]{1,120}")
         /** The built-in product docs: readable, never written through these tools (see OrbitDocs). */
         private val DOCS = Regex("docs/[^/]{1,80}\\.md")
-        /** Read-only through orbit_file; written only by the memory tools. Keys are lower case. */
+        /** Readable here; written only by the memory tools. Keys are lower case. */
         private val CORE_READABLE = mapOf(
             "user.md" to "user.md",
             "memory.md" to "memory/memory.md",
@@ -531,15 +555,28 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         /** Why a path is refused, pointing at the tool that owns it when it is one of the core files. */
         private fun notOrbitFile(path: String, p: String): String = when (p.lowercase()) {
             "soul.md", "identity.md" ->
-                "$path is not handled by orbit_file; it is already in your context in full. Use orbit_soul to read or change it."
+                "$path is already in your context in full. Use orbit_soul to read or change it."
             "user.md" ->
-                "orbit_file can only read user.md. Change it with memory_review manage action=memory_change, target=user."
+                "user.md is changed only with memory_review manage action=memory_change, target=user."
             "memory.md", "memory/memory.md" ->
-                "orbit_file can only read memory.md. Change it with memory_review notes."
+                "memory.md is changed only with memory_review notes."
             else -> "Not one of Orbit's files: $path"
         }
         private val TEXT_EXTENSIONS = setOf("md", "txt", "yaml", "yml", "json", "csv", "html", "htm", "xml", "sh")
         private val locks = ConcurrentHashMap<String, Mutex>()
+
+        // Orbit ids whose templates were written in this app run.
+        private val templated = ConcurrentHashMap.newKeySet<String>()
+
+        /** [ensureTemplates] for an Orbit, once per app run; also removes stores older versions left behind. */
+        suspend fun ensureTemplatesOnce(context: Context, orbitId: String) {
+            if (orbitId in templated) return
+            withContext(Dispatchers.IO) { runCatching { OrbitSecretFile.deleteRetired(context, orbitId) } }
+            runCatching { of(context, orbitId).ensureTemplates() }.onSuccess { templated += orbitId }
+        }
+
+        /** Whether [p] is a person or circle note the app indexes. */
+        fun isPeopleNote(p: String) = PEOPLE.matches(p) && !isIndex(p)
 
         fun of(context: Context, orbitId: String) =
             OrbitFiles(OrbitPreferences.getInstance(context).orbitDir(orbitId)) {
@@ -587,6 +624,7 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         )
         /** Longest synthesis put into the prompt; the review keeps it far shorter. */
         const val MAX_ALIGNMENT_PROMPT = 8000
+        private const val INDEX_HEAD_CHARS = 4000
 
         /** The first [max] characters of [file], without reading the rest; empty when it is missing. */
         fun readHead(file: File, max: Int): String {

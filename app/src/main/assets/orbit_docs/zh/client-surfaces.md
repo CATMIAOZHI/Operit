@@ -74,5 +74,5 @@
 ## 日志与排查问题
 
 设置里的「排查问题」可以导出应用日志和工具调用错误，存到手机的「下载/operit」，导出后可以直接分享。用户想把问题报给开发者时，引导他用这里。
-你自己可以用 orbit_logs 把日志导出到 files/logs/：text 格式自己用 orbit_file 读来查原因，zip 格式用 orbit_file send 发给用户，让他转给开发者或附在 GitHub issue 里。
+你自己可以用 orbit_logs 把日志导出到 files/logs/：text 格式自己用 read_file_part 读来查原因，zip 格式用 orbit_file send 发给用户，让他转给开发者或附在 GitHub issue 里。
 日志里可能有聊天内容；公开发布前提醒用户检查。

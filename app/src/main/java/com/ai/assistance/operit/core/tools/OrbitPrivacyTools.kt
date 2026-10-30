@@ -45,7 +45,7 @@ internal object OrbitPrivacyTools {
   - confirm 会重新检查，情况变了会要求重新 plan。完成后按结果汇报清掉了哪些类别、停了哪些任务、还剩什么。
   - 聊天记录不会被清理：这次和以前的聊天里还留着原话，用户可以在聊天列表里自己删掉那些聊天。汇报时要说明这一点。
   - 只有 all_clear 为 true 时，才能说「我存的内容里已经清干净了」；不要说成「完全忘掉了」。all_clear 为 false 时，照 remaining、failed 和 unscanned 如实说还剩哪里、哪里没能检查。
-  - 清理之后，这条信息不能再写回记忆。别人的邮件、日历、已经发出去的东西要另外问用户。
+  - 清理之后不留这条信息的任何记录；以后用户自己又提起，就当新信息正常处理。别人的邮件、日历、已经发出去的东西要另外问用户。
 """,
     )
 
@@ -233,8 +233,6 @@ internal object OrbitPrivacyTools {
             val hasVaultSecret = OrbitVault.containsSecret(context, orbit.id, text)
             check("no secrets", !hasVaultSecret && !secretLike.containsMatchIn(text),
                 if (hasVaultSecret) "The text contains a value saved in the vault" else if (secretLike.containsMatchIn(text)) "The text contains what looks like a key or token" else "OK")
-            val forgotten = OrbitForget.containsForgotten(context, orbit.id, text + "\n" + recipient)
-            check("nothing forgotten", !forgotten, if (forgotten) "The text contains information the user asked you to forget" else "OK")
             check("clear recipient", recipient.isNotEmpty() && recipient.lowercase() !in vague,
                 if (recipient.isEmpty()) "No recipient" else if (recipient.lowercase() in vague) "Say exactly who receives it" else "OK")
             privacyPatterns.forEach { (label, regex) ->

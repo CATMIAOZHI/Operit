@@ -20,7 +20,7 @@ Use `import` to bring a file from an external path into Orbit's managed file are
 
 ## Managing your files
 
-`orbit_file` provides `list`, `read`, `write`, `append`, `delete`, `daily`, `prompt_copy`, `import`, `export`, and `send`.
+`orbit_file` provides `list`, `daily`, `prompt_copy`, `import`, `export`, and `send`. Read, change, create and delete files with the app's file tools (`environment=android`, full path): `read_file`, `read_file_part`, `edit_file`, `write_file`, `delete_file`.
 Use accepted relative paths rather than assuming any device directory belongs to Orbit.
 This tool does not manage the main `memory.md`; use the dedicated memory tools for that file.
 
@@ -44,7 +44,7 @@ Deleting the whole Orbit also removes its files, so important originals should b
 ## Deletion
 
 There is no trash: every deletion is permanent and cannot be undone.
-Delete one note or file with `orbit_file delete`; delete a folder under `files/` with `delete_file`, using the full path and `recursive=true` for a folder that is not empty.
+Delete notes, files and folders under `files/` with `delete_file`, using the full path and `recursive=true` for a folder that is not empty.
 Inside Orbit's folder `delete_file` can only remove person and circle notes, the daily log, settings files such as the lessons book, nightly reviews and `files/`; SOUL.md, IDENTITY.md, user.md, memory.md, `docs/`, the people indexes and the app's own data cannot be deleted.
 When the user deletes a file on the Files page or the Build tab, the app asks them to confirm first.
 

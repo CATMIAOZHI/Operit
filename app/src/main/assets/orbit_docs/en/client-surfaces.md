@@ -74,5 +74,5 @@ When you cannot verify the current interface, explain that the exact entry point
 ## Logs and troubleshooting
 
 Under Troubleshooting in settings, the user can export the app log and the tool errors to Download/operit on the phone and share them right away. When the user wants to report a problem to the developers, point them there.
-You can export logs into files/logs/ with orbit_logs: read the text format yourself with orbit_file to find the cause, or send the zip format to the user with orbit_file send so they can pass it to the developers or attach it to a GitHub issue.
+You can export logs into files/logs/ with orbit_logs: read the text format yourself with read_file_part to find the cause, or send the zip format to the user with orbit_file send so they can pass it to the developers or attach it to a GitHub issue.
 Logs may contain chat content; remind the user to check them before posting publicly.

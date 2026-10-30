@@ -94,6 +94,29 @@ object OrbitFolderGuard {
         }
     }
 
+    /**
+     * After write_file, edit_file, create_file or apply_file ran on [tool]'s path: when that is a person
+     * or circle note of an Orbit, its INDEX.md is rebuilt. Rebuilding is harmless when the write failed.
+     */
+    suspend fun afterWrite(context: Context, tool: AITool) {
+        val environment = tool.parameters.find { it.name == "environment" }?.value
+        if (environment?.lowercase() == "linux" || environment?.startsWith("repo:", ignoreCase = true) == true) return
+        val path = tool.parameters.find { it.name == "path" }?.value ?: return
+        // Where the write really landed ("..", and links resolved), so any way of naming a note counts.
+        val raw = path.trim().removePrefix("file://")
+        if (raw.isEmpty() || !File(raw).isAbsolute) return
+        val rel = runCatching {
+            File(raw).canonicalFile.relativeToOrNull(File(context.applicationContext.filesDir, "orbit").canonicalFile)
+        }.getOrNull()?.invariantSeparatorsPath ?: return
+        if (rel.isEmpty() || rel == ".." || rel.startsWith("../")) return
+        val orbitId = rel.substringBefore('/')
+        val shortPath = rel.substringAfter('/', "")
+        if (!OrbitFiles.isPeopleNote(shortPath)) return
+        val orbits = com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context).current().orbits
+        if (orbits.none { it.id == orbitId }) return
+        runCatching { OrbitFiles.of(context, orbitId).changedOutside(shortPath) }
+    }
+
     /** Why delete_file may not remove [short]; null when it may. */
     private fun refusal(short: String): String? {
         val p = runCatching { OrbitFiles.normalize(short) }.getOrNull()

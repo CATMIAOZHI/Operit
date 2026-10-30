@@ -127,7 +127,7 @@ object OrbitCompanion {
         core(appContext).deleteChatHistory(orbit.chatId)
         orbit.sideChats.forEach { core(appContext).deleteChatHistory(it.chatId) }
         OrbitReactions.drop(orbitId)
-        // Its vault, forget plan and forgotten list are encrypted outside the Orbit's folder.
+        // Its vault and forget plan are encrypted outside the Orbit's folder.
         runCatching { OrbitSecretFile.deleteAllForOrbit(appContext, orbitId) }
         OrbitVault.forgetCached(orbitId)
         runCatching { OrbitWeixin.forget(appContext, orbitId) }
