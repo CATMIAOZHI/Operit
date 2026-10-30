@@ -138,6 +138,8 @@ fun UserMessageComposable(
         }
     }
     val parseResult = parsedState.value
+    // A chat picture waits for these pictures too.
+    com.ai.assistance.operit.ui.common.markdown.MarkdownSnapshotWork(parseResult.imageLinks.any { it.loading })
     val textContent = parseResult.processedText
     val trailingAttachments = parseResult.trailingAttachments
     val replyInfo = parseResult.replyInfo

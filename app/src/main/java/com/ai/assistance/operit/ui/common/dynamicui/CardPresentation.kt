@@ -154,7 +154,12 @@ internal val LocalCardRowFill = compositionLocalOf<CardRowFill?> { null }
 internal fun Modifier.cardRowStretch(rowFill: CardRowFill?): Modifier =
     if (rowFill == null) this else layout { measurable, constraints ->
         val tallest = rowFill.tallest.coerceIn(constraints.minHeight, constraints.maxHeight)
-        val placeable = measurable.measure(constraints.copy(minHeight = tallest))
+        // A row taller than one layout can be asked for (a long card fully shown in a shared
+        // picture) is not evened out; its tiles keep their own heights.
+        val placeable = measurable.measure(
+            if (tallest > com.ai.assistance.operit.ui.common.markdown.SNAPSHOT_CODE_MAX_HEIGHT_PX) constraints
+            else constraints.copy(minHeight = tallest)
+        )
         layout(placeable.width, placeable.height) { placeable.place(0, 0) }
     }
 

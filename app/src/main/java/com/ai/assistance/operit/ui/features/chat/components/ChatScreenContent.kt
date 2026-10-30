@@ -212,6 +212,8 @@ fun ChatScreenContent(
             }
         }
     }
+    // Where "select to here" starts: the message picked last, else the picked one nearest.
+    var selectionAnchor by remember(currentChatId) { mutableStateOf<Long?>(null) }
     val selectableMessageIndices = remember(chatHistory, orbitMessageHost != null) {
         chatHistory.mapIndexedNotNull { index, message ->
             if ((message.sender == "user" || message.sender == "ai") &&
@@ -221,6 +223,17 @@ fun ChatScreenContent(
     // Another Orbit chat on screen starts with nothing selected.
     LaunchedEffect(currentChatId) {
         if (orbitMessageHost != null) isMultiSelectMode = false
+    }
+    val selectRangeTo: (Int) -> Unit = { target ->
+        val picked = selectedMessageIndices
+        val from = selectionAnchor?.let { stamp -> chatHistory.indexOfFirst { it.timestamp == stamp } }?.takeIf { it in picked }
+            ?: picked.minByOrNull { kotlin.math.abs(it - target) }
+        if (from != null) {
+            val low = minOf(from, target)
+            val high = maxOf(from, target)
+            selectedMessageIndices = picked + selectableMessageIndices.filter { it in low..high }
+            selectionAnchor = chatHistory.getOrNull(target)?.timestamp
+        }
     }
     androidx.activity.compose.BackHandler(enabled = orbitMessageHost != null && isMultiSelectMode) {
         isMultiSelectMode = false
@@ -441,15 +454,18 @@ fun ChatScreenContent(
                             } else if (initialIndex != null) {
                                 // 进入多选模式时，自动选中触发的消息
                                 selectedMessageIndices = setOf(initialIndex)
+                                selectionAnchor = chatHistory.getOrNull(initialIndex)?.timestamp
                             }
                         },
                         onToggleMessageSelection = { index ->
                             selectedMessageIndices = if (selectedMessageIndices.contains(index)) {
                                 selectedMessageIndices - index
                             } else {
+                                selectionAnchor = chatHistory.getOrNull(index)?.timestamp
                                 selectedMessageIndices + index
                             }
                         },
+                        onSelectMessageRangeTo = if (orbitMessageHost != null) selectRangeTo else null,
                         horizontalPadding = chatAreaHorizontalPadding.dp,
                         bubbleUserImageStyle = bubbleUserImageStyle,
                         bubbleAiImageStyle = bubbleAiImageStyle,
@@ -581,15 +597,18 @@ fun ChatScreenContent(
                             } else if (initialIndex != null) {
                                 // 进入多选模式时，自动选中触发的消息
                                 selectedMessageIndices = setOf(initialIndex)
+                                selectionAnchor = chatHistory.getOrNull(initialIndex)?.timestamp
                             }
                         },
                         onToggleMessageSelection = { index ->
                             selectedMessageIndices = if (selectedMessageIndices.contains(index)) {
                                 selectedMessageIndices - index
                             } else {
+                                selectionAnchor = chatHistory.getOrNull(index)?.timestamp
                                 selectedMessageIndices + index
                             }
                         },
+                        onSelectMessageRangeTo = if (orbitMessageHost != null) selectRangeTo else null,
                         showChatFloatingDotsAnimation = showChatFloatingDotsAnimation,
                         bubbleUserImageStyle = bubbleUserImageStyle,
                         bubbleAiImageStyle = bubbleAiImageStyle,

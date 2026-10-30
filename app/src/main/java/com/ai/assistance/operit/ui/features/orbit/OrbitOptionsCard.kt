@@ -21,6 +21,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -51,7 +52,12 @@ val LocalOrbitOptionSend = compositionLocalOf<((String, String, () -> Boolean, (
 @Composable
 internal fun OrbitOptionsCard(id: String) {
     val context = LocalContext.current
-    LaunchedEffect(Unit) { withContext(Dispatchers.IO) { OrbitOptions.load(context) } }
+    // A shared picture waits for the saved options, so it shows them and which one was sent.
+    var loaded by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        try { withContext(Dispatchers.IO) { OrbitOptions.load(context) } } finally { loaded = true }
+    }
+    com.ai.assistance.operit.ui.common.markdown.MarkdownSnapshotWork(!loaded)
     val sets by OrbitOptions.sets.collectAsState()
     val chatId = com.ai.assistance.operit.ui.common.dynamicui.LocalDynamicUiOwner.current?.chatId
     val set = sets[id]?.takeIf { chatId == null || it.chatId == chatId } ?: return

@@ -696,18 +696,19 @@ private fun renderNodeContent(
                 val ownerContent = com.ai.assistance.operit.ui.common.dynamicui.LocalDynamicUiOwner.current?.content
                 val pieceIndex = com.ai.assistance.operit.ui.common.dynamicui.LocalDynamicUiBlockIndex.current
                 val canvasNodes = LocalMarkdownCanvasNodes.current
+                val partOffset = com.ai.assistance.operit.ui.common.dynamicui.LocalDynamicUiPartOffset.current
                 val orbitIndex = if (pieceIndex == null && orbitChat && ownerContent != null) {
                     // A card with the same content earlier in the message: this one is the next of them.
                     // Counted once per card (nodes before it do not change as Orbit writes on), so a
                     // growing reply does not redraw it.
-                    androidx.compose.runtime.remember(canvasNodes, index, ownerContent, uiSource) {
+                    androidx.compose.runtime.remember(canvasNodes, index, ownerContent, uiSource, partOffset) {
                         val wanted = uiSource.trim()
                         // Read without watching the list, so later nodes Orbit writes never redraw this card.
                         val earlier = androidx.compose.runtime.snapshots.Snapshot.withoutReadObservation {
                             canvasNodes?.let { list ->
                                 (0 until index.coerceAtMost(list.size)).count { list[it].content.contains(wanted) && a2uiSourceOf(list[it]) == wanted }
                             } ?: 0
-                        }
+                        } + (partOffset?.same?.get(wanted) ?: 0)
                         com.ai.assistance.operit.ui.features.chat.components.OrbitSpeech.uiIndexOf(ownerContent, uiSource, earlier)
                     }
                 } else null
@@ -857,6 +858,52 @@ private fun renderNodeContent(
                 ) {
                     // 提取LaTeX内容，移除各种分隔符
                     val latexContent = extractLatexContent(content.trimAll())
+                    // A shared picture cannot be scrolled sideways: a long formula is drawn smaller to fit.
+                    if (LocalMarkdownSnapshot.current != null) {
+                        val formula = remember(latexContent, formulaTextSizePx, textColor) {
+                            runCatching {
+                                LatexCache.getDrawable(
+                                    latexContent.trim(),
+                                    JLatexMathDrawable.builder(latexContent)
+                                        .textSize(formulaTextSizePx)
+                                        .padding(2)
+                                        .background(0x00000000)
+                                        .align(JLatexMathDrawable.ALIGN_CENTER)
+                                        .color(textColor.toArgb())
+                                )
+                            }.getOrNull()?.takeIf { it.intrinsicWidth > 0 && it.intrinsicHeight > 0 }
+                        }
+                        if (formula == null) {
+                            SingleTextCanvas(
+                                text = content.trimAll(),
+                                textColor = textColor,
+                                fontSize = fontSizes.bodyMedium,
+                                fontWeight = FontWeight.Normal,
+                                density = density,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        } else {
+                            androidx.compose.foundation.layout.BoxWithConstraints(
+                                Modifier.fillMaxWidth(), contentAlignment = Alignment.Center,
+                            ) {
+                                val room = with(density) { maxWidth.toPx() }
+                                val scale = if (room > 0f) minOf(1f, room / formula.intrinsicWidth) else 1f
+                                Canvas(Modifier.size(
+                                    with(density) { (formula.intrinsicWidth * scale).toDp() },
+                                    with(density) { (formula.intrinsicHeight * scale).toDp() },
+                                )) {
+                                    formula.setBounds(0, 0, formula.intrinsicWidth, formula.intrinsicHeight)
+                                    drawContext.canvas.nativeCanvas.let { canvas ->
+                                        canvas.save()
+                                        canvas.scale(scale, scale)
+                                        formula.draw(canvas)
+                                        canvas.restore()
+                                    }
+                                }
+                            }
+                        }
+                        return@Box
+                    }
                     val horizontalScrollState = rememberScrollState()
                     
                     Box(

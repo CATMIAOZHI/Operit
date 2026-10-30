@@ -49,6 +49,14 @@ val LocalDynamicUiBackdrop = staticCompositionLocalOf { Color.Unspecified }
  */
 val LocalDynamicUiBlockIndex = staticCompositionLocalOf<Int?> { null }
 
+/**
+ * A part of a long message drawn on its own (in a shared picture): [cards] is how many Dynamic UI
+ * cards come before it in the whole message, and [same] how many of those have each content, so
+ * every card in the part keeps the number, and so the state, it has in the whole message.
+ */
+class DynamicUiPartOffset(val cards: Int, val same: Map<String, Int>)
+val LocalDynamicUiPartOffset = staticCompositionLocalOf<DynamicUiPartOffset?> { null }
+
 @Composable
 fun DynamicUiCard(source: String, closed: Boolean, streaming: Boolean, blockIndex: Int, ink: Color = Color.Unspecified) {
     val owner = LocalDynamicUiOwner.current
@@ -393,6 +401,8 @@ private fun DynamicUiCardContent(source: String, closed: Boolean, streaming: Boo
         val restored = validated &&
             expectedSurfaces.all { id -> ready[id] == true && surfaces.any { it.id == id } }
         val waiting = closed && error == null && surfaceErrors.isEmpty() && !restored
+        // A chat picture waits until the card is ready.
+        com.ai.assistance.operit.ui.common.markdown.MarkdownSnapshotWork(waiting)
         val compatibleHeight = measuredWidth == constraints.maxWidth &&
             measuredDensity == density.density && measuredFontScale == density.fontScale
         if (waiting) {

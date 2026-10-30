@@ -182,7 +182,7 @@ fun MarkdownImageRenderer(
                     model =
                             ImageRequest.Builder(LocalContext.current)
                                     .data(imageUrl)
-                                    .crossfade(true)
+                                    .crossfade(LocalMarkdownSnapshot.current == null) // a chat picture waits for the full picture
                                     .build(),
                     contentDescription = null,
                     modifier =
