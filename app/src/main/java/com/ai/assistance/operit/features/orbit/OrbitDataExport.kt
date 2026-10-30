@@ -26,7 +26,7 @@ import java.util.zip.ZipOutputStream
 /**
  * One zip with everything an Orbit keeps: its own folder (Soul, identity, memory, notes, skills,
  * files, boards), its tasks, goals and run history, and its chat as Markdown. Like Muse's data
- * export, the user gets it to keep or move elsewhere. The trash and the app's temporary files stay out.
+ * export, the user gets it to keep or move elsewhere. The app's temporary files stay out.
  */
 internal object OrbitDataExport {
     private const val FOLDER = "orbit_export"

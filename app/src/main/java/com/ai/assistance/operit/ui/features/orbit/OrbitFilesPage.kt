@@ -47,9 +47,19 @@ import java.util.Date
 private fun toast(context: android.content.Context, id: Int) =
     android.widget.Toast.makeText(context, context.getString(id), android.widget.Toast.LENGTH_SHORT).show()
 
-private fun movedToTrashToast(context: android.content.Context) =
-    android.widget.Toast.makeText(context, context.getString(R.string.orbit_file_moved_to_trash, OrbitFiles.TRASH_DAYS),
-        android.widget.Toast.LENGTH_SHORT).show()
+/** Deleting is permanent, so the menu item asks first, naming the file. */
+@Composable
+private fun deleteAction(path: String, run: suspend () -> Unit): OrbitFileAction {
+    val context = LocalContext.current
+    return OrbitFileAction(
+        stringResource(R.string.orbit_file_delete), "trash-2",
+        confirm = stringResource(R.string.orbit_file_delete_title) to
+            (friendlyName(path) + "\n" + stringResource(R.string.orbit_file_delete_text)),
+    ) {
+        run()
+        toast(context, R.string.orbit_file_deleted)
+    }
+}
 
 /** A page frame like the profile's: round back button, title, then a list. */
 @Composable
@@ -114,7 +124,7 @@ private fun friendlyName(path: String): String {
     }
 }
 
-/** Orbit's own files: notebooks, people, groups, the daily log, files it made, and the trash. */
+/** Orbit's own files: notebooks, people, groups, the daily log and files it made. */
 @Composable
 internal fun OrbitFilesPage(orbitId: String, onBack: () -> Unit, onDraft: (String) -> Unit) {
     val context = LocalContext.current
@@ -128,14 +138,13 @@ internal fun OrbitFilesPage(orbitId: String, onBack: () -> Unit, onDraft: (Strin
     var openPath by rememberSaveable(orbitId) { mutableStateOf<String?>(null) }
     // The one file to open straight in the editor: a person or group just created.
     var editPath by rememberSaveable(orbitId) { mutableStateOf<String?>(null) }
-    var showTrash by rememberSaveable(orbitId) { mutableStateOf(false) }
     var showAllDays by rememberSaveable(orbitId) { mutableStateOf(false) }
     var fileActions by remember { mutableStateOf<OrbitFiles.Entry?>(null) }
     var previewFile by remember { mutableStateOf<java.io.File?>(null) }
     val list = result?.getOrNull()
     val days = remember(list) { list.orEmpty().filter { DAILY.matches(it.path) }.sortedByDescending { it.path } }
 
-    val closeFile: () -> Unit = { openPath = null; editPath = null; showTrash = false; reload++ }
+    val closeFile: () -> Unit = { openPath = null; editPath = null; reload++ }
     val detail: @Composable (String) -> Unit = { path ->
         if (path == "daily") {
             OrbitListPage(stringResource(R.string.orbit_files_daily), onBack = { showAllDays = false }) {
@@ -151,8 +160,6 @@ internal fun OrbitFilesPage(orbitId: String, onBack: () -> Unit, onDraft: (Strin
                     }
                 }
             }
-        } else if (path == "trash") {
-            OrbitTrashPage(files, onBack = closeFile)
         } else if (path.startsWith("files/")) {
             OrbitMadeFilePage(files, path, who, onBack = closeFile)
         } else {
@@ -173,9 +180,8 @@ internal fun OrbitFilesPage(orbitId: String, onBack: () -> Unit, onDraft: (Strin
             save = editor.save,
             onEditStart = editor.onEditStart,
             onBack = closeFile,
-            actions = if (!exists) emptyList() else listOf(OrbitFileAction(stringResource(R.string.orbit_file_delete), "trash-2") {
+            actions = if (!exists) emptyList() else listOf(deleteAction(path) {
                 files.delete(path)
-                movedToTrashToast(context)
                 openPath = null
                 editPath = null
                 reload++
@@ -186,8 +192,8 @@ internal fun OrbitFilesPage(orbitId: String, onBack: () -> Unit, onDraft: (Strin
         }
     }
     OrbitPushHost(
-        entries = listOfNotNull(if (showAllDays) "daily" else null, if (showTrash) "trash" else openPath),
-        onPop = { if (openPath != null || showTrash) closeFile() else showAllDays = false },
+        entries = listOfNotNull(if (showAllDays) "daily" else null, openPath),
+        onPop = { if (openPath != null) closeFile() else showAllDays = false },
         base = {
     OrbitListPage(stringResource(R.string.orbit_files_title), onBack) {
         item(key = "help") {
@@ -247,12 +253,6 @@ internal fun OrbitFilesPage(orbitId: String, onBack: () -> Unit, onDraft: (Strin
                 if (OrbitFiles.isText(entry.path)) openPath = entry.path else fileActions = entry
             }
         }
-        item(key = "trash") {
-            Spacer(Modifier.height(18.dp))
-            OrbitListRow(orbitIcon("trash-2"), stringResource(R.string.orbit_files_trash),
-                stringResource(R.string.orbit_files_trash_desc, OrbitFiles.TRASH_DAYS), null,
-                onClick = { showTrash = true }, showChevron = true)
-        }
     }
 
     fileActions?.let { entry ->
@@ -311,7 +311,7 @@ internal fun rememberOrbitFileEditor(files: OrbitFiles, path: String): OrbitFile
     }
 }
 
-/** A text file Orbit made for the user: read, edit, share or move to the trash. */
+/** A text file Orbit made for the user: read, edit, share or delete. */
 @Composable
 internal fun OrbitMadeFilePage(files: OrbitFiles, path: String, who: String, onBack: () -> Unit, interceptBack: Boolean = false) {
     val context = LocalContext.current
@@ -335,9 +335,8 @@ internal fun OrbitMadeFilePage(files: OrbitFiles, path: String, who: String, onB
             OrbitFileAction(stringResource(R.string.orbit_file_share), "share-2", endsEditing = false) {
                 shareOrbitFile(context) { files.fileFor(path) }
             },
-            OrbitFileAction(stringResource(R.string.orbit_file_delete), "trash-2") {
+            deleteAction(path) {
                 files.delete(path)
-                movedToTrashToast(context)
                 onBack()
             },
         ),
@@ -345,7 +344,7 @@ internal fun OrbitMadeFilePage(files: OrbitFiles, path: String, who: String, onB
     )
 }
 
-/** Open, share or trash a file Orbit made that is not text, such as a picture or a voice message. */
+/** Open, share or delete a file Orbit made that is not text, such as a picture or a voice message. */
 @Composable
 internal fun OrbitMadeFileActions(
     files: OrbitFiles,
@@ -359,6 +358,36 @@ internal fun OrbitMadeFileActions(
     val context = LocalContext.current
     val resources = LocalResources.current
     val scope = rememberCoroutineScope()
+    // Deleting is permanent, so the menu turns into a question first.
+    var confirmDelete by remember { mutableStateOf(false) }
+    var deleting by remember { mutableStateOf(false) }
+    if (confirmDelete) {
+        OrbitDialog(
+            onDismissRequest = { if (!deleting) onDismiss() },
+            dismissEnabled = !deleting,
+            title = stringResource(R.string.orbit_file_delete_title),
+            text = { Text(entry.path.substringAfterLast('/') + "\n" + stringResource(R.string.orbit_file_delete_text)) },
+            confirmButton = {
+                OrbitDialogAction(enabled = !deleting, destructive = true, onClick = {
+                    deleting = true
+                    scope.launch {
+                        try {
+                            files.delete(entry.path)
+                            toast(context, R.string.orbit_file_deleted)
+                        } catch (e: CancellationException) { throw e } catch (e: Exception) {
+                            toast(context, R.string.orbit_file_action_failed)
+                        }
+                        onDismiss()
+                        onDeleted()
+                    }
+                }) { Text(stringResource(R.string.orbit_file_delete)) }
+            },
+            dismissButton = {
+                OrbitDialogAction(enabled = !deleting, onClick = onDismiss, secondary = true) { Text(stringResource(android.R.string.cancel)) }
+            },
+        )
+        return
+    }
     OrbitDialog(
         onDismissRequest = onDismiss,
         title = entry.path.substringAfterLast('/'),
@@ -380,93 +409,13 @@ internal fun OrbitMadeFileActions(
                 OrbitDialogAction(onClick = { onDismiss(); shareOrbitFile(context) { files.fileFor(entry.path) } }, secondary = true) {
                     Text(stringResource(R.string.orbit_file_share), Modifier.fillMaxWidth())
                 }
-                OrbitDialogAction(onClick = {
-                    onDismiss()
-                    scope.launch {
-                        try {
-                            files.delete(entry.path)
-                            movedToTrashToast(context)
-                        } catch (e: CancellationException) { throw e } catch (e: Exception) {
-                            toast(context, R.string.orbit_trash_failed)
-                        }
-                        onDeleted()
-                    }
-                }, destructive = true) {
+                OrbitDialogAction(onClick = { confirmDelete = true }, destructive = true) {
                     Text(stringResource(R.string.orbit_file_delete), Modifier.fillMaxWidth())
                 }
             }
         },
         dismissButton = { OrbitDialogAction(onClick = onDismiss, secondary = true) { Text(stringResource(android.R.string.cancel)) } },
     )
-}
-
-@Composable
-private fun OrbitTrashPage(files: OrbitFiles, onBack: () -> Unit) {
-    val context = LocalContext.current
-    val resources = LocalResources.current
-    val scope = rememberCoroutineScope()
-    var reload by remember { mutableIntStateOf(0) }
-    val result by produceState<Result<List<OrbitFiles.TrashItem>>?>(null, reload) {
-        value = try { Result.success(files.trash()) } catch (e: CancellationException) { throw e } catch (e: Exception) { Result.failure(e) }
-    }
-    var chosen by remember { mutableStateOf<OrbitFiles.TrashItem?>(null) }
-    var confirmPurge by remember { mutableStateOf<OrbitFiles.TrashItem?>(null) }
-    fun act(block: suspend () -> Unit) = scope.launch {
-        try { block() } catch (e: CancellationException) { throw e } catch (e: Exception) {
-            toast(context, R.string.orbit_trash_failed)
-        }
-        reload++
-    }
-    OrbitListPage(stringResource(R.string.orbit_files_trash), onBack) {
-        item(key = "help") {
-            Text(stringResource(R.string.orbit_files_trash_desc, OrbitFiles.TRASH_DAYS), style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
-        }
-        val r = result
-        val list = r?.getOrNull()
-        when {
-            r == null -> item(key = "loading") { LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 24.dp)) }
-            list == null -> item(key = "failed") { LoadFailed { reload++ } }
-            list.isEmpty() -> item(key = "empty") { EmptyHint(stringResource(R.string.orbit_files_trash_empty)) }
-            else -> items(list, key = { it.id }) { item ->
-                OrbitListRow(orbitIcon(if (item.path.startsWith("files/")) orbitFileIcon(item.path) else "file-text"),
-                    friendlyName(item.path), null,
-                    stringResource(R.string.orbit_trash_deleted_at, shortTime(item.deletedAt)),
-                    onClick = { chosen = item }, showChevron = true)
-            }
-        }
-    }
-    chosen?.let { item ->
-        OrbitDialog(
-            onDismissRequest = { chosen = null },
-            title = friendlyName(item.path),
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OrbitDialogAction(onClick = {
-                        chosen = null
-                        act { files.restore(item.id); toast(context, R.string.orbit_trash_restored) }
-                    }) { Text(stringResource(R.string.orbit_trash_restore), Modifier.fillMaxWidth()) }
-                    OrbitDialogAction(onClick = { chosen = null; confirmPurge = item }, destructive = true) {
-                        Text(stringResource(R.string.orbit_trash_delete_forever), Modifier.fillMaxWidth())
-                    }
-                }
-            },
-            dismissButton = { OrbitDialogAction(onClick = { chosen = null }, secondary = true) { Text(stringResource(android.R.string.cancel)) } },
-        )
-    }
-    confirmPurge?.let { item ->
-        OrbitDialog(
-            onDismissRequest = { confirmPurge = null },
-            title = stringResource(R.string.orbit_trash_delete_forever_title),
-            text = { Text(stringResource(R.string.orbit_trash_delete_forever_text)) },
-            confirmButton = {
-                OrbitDialogAction(onClick = { confirmPurge = null; act { files.purge(item.id) } }, destructive = true) {
-                    Text(stringResource(R.string.orbit_trash_delete_forever))
-                }
-            },
-            dismissButton = { OrbitDialogAction(onClick = { confirmPurge = null }, secondary = true) { Text(stringResource(android.R.string.cancel)) } },
-        )
-    }
 }
 
 internal fun orbitFileIcon(name: String) = when (name.substringAfterLast('.', "").lowercase()) {

@@ -21,12 +21,11 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * Orbit's own files besides SOUL.md, IDENTITY.md, user.md and memory.md, all inside its folder:
  * notes on people and groups (with an INDEX.md the app keeps), the daily log, the lessons book,
- * a few small settings files, and files/ for things made for the user. Deleting moves a file to
- * a trash that keeps it for [TRASH_DAYS] days.
+ * a few small settings files, and files/ for things made for the user. Deleting removes a file for
+ * good: there is no trash.
  */
 class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { false }) {
     data class Entry(val path: String, val size: Long, val modifiedAt: Long, val title: String)
-    data class TrashItem(val id: String, val path: String, val deletedAt: Long, val size: Long)
     /** The Library's kinds of file. */
     enum class Kind { IMAGE, AUDIO, DOCUMENT, OTHER }
 
@@ -66,23 +65,39 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         return f
     }
 
-    /** Deletes a folder without following links inside it. */
-    private fun deleteTree(dir: File) {
+    /**
+     * Where [f] really is, as a short path: its folder with links resolved, then its own name (a link
+     * there is deleted itself, not what it points to). Deleting checks this, so a linked folder under
+     * files/ cannot reach Orbit's own data.
+     */
+    private fun realShortPath(f: File): String {
+        val base = root.toPath().toRealPath()
+        val parent = checkNotNull(f.parentFile) { "Not one of Orbit's files" }.toPath().toRealPath()
+        require(parent.startsWith(base)) { "Not one of Orbit's files" }
+        return base.relativize(parent.resolve(f.name)).toString().replace('\\', '/')
+    }
+
+    /** Deletes a folder without following links inside it. Returns how many files (and links) went. */
+    private fun deleteTree(dir: File): Int {
         val start = dir.toPath()
-        if (!Files.exists(start, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return
-        if (Files.isSymbolicLink(start)) { Files.delete(start); return }
+        if (!Files.exists(start, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return 0
+        if (Files.isSymbolicLink(start)) { Files.delete(start); return 1 }
+        var count = 0
         Files.walkFileTree(start, object : java.nio.file.SimpleFileVisitor<java.nio.file.Path>() {
             override fun visitFile(file: java.nio.file.Path, attrs: java.nio.file.attribute.BasicFileAttributes) =
-                java.nio.file.FileVisitResult.CONTINUE.also { Files.delete(file) }
+                java.nio.file.FileVisitResult.CONTINUE.also { Files.delete(file); count++ }
             override fun postVisitDirectory(d: java.nio.file.Path, e: java.io.IOException?) =
                 java.nio.file.FileVisitResult.CONTINUE.also { Files.delete(d) }
         })
+        return count
     }
 
-    private fun trashDir(id: String): File = inside(File(root, "$TRASH/$id"))
-
-    /** The trash folder, or null when it is a link out of Orbit's folder. */
-    private fun safeTrashRoot(): File? = File(root, TRASH).takeIf { runCatching { inside(it) }.isSuccess }
+    /** Removes the trash folder older versions kept, so nothing deleted lingers in it. */
+    suspend fun dropOldTrash() = io {
+        val old = File(root, OLD_TRASH)
+        if (Files.exists(old.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)) deleteTree(old)
+        Unit
+    }
 
     /**
      * Every file, including the fixed files that are still empty templates (size -1). With
@@ -272,64 +287,38 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         return Written(p, if (existed) old else null, after, added)
     }
 
-    /** Moves a file to the trash. It can be restored for [TRASH_DAYS] days. */
-    suspend fun delete(path: String): TrashItem = io {
+    /** Deletes a file for good. Returns its short path. */
+    suspend fun delete(path: String): String = io {
         val p = normalize(path)
         require(allowed(p) && !isIndex(p)) { "This file cannot be deleted: $path" }
         val f = inside(File(root, p))
         require(f.isFile) { "No such file: $p" }
-        val now = System.currentTimeMillis()
-        val id = "$now-${UUID.randomUUID().toString().take(8)}"
-        val dir = trashDir(id)
-        check(dir.mkdirs()) { "Could not make the trash folder" }
-        val size = f.length()
-        // Write the note first, so a trashed file is never left without a way back.
+        val real = realShortPath(f)
+        require(allowed(real) && !isIndex(real)) { "This file cannot be deleted: $path" }
+        Files.delete(f.toPath())
+        afterChange(real)
+        p
+    }
+
+    /**
+     * Deletes a folder under files/ for good, without following links inside it. A folder that is
+     * not empty is deleted only with [recursive]. Returns how many files were in it.
+     */
+    suspend fun deleteFolder(path: String, recursive: Boolean): Int = io {
+        val p = normalize(path).trimEnd('/')
+        require(p.startsWith("files/")) { "Only folders under files/ can be deleted: $path" }
+        val dir = inside(File(root, p))
+        require(!Files.isSymbolicLink(dir.toPath()) && dir.isDirectory) { "No such folder: $p" }
+        require(realShortPath(dir).startsWith("files/")) { "Only folders under files/ can be deleted: $path" }
+        if (recursive) return@io deleteTree(dir)
+        // The file system refuses a folder that is not empty, even one that just got a file.
         try {
-            File(dir, META).writeText(JSONObject().put("path", p).put("deletedAt", now).put("size", size).toString())
-            Files.move(f.toPath(), File(dir, PAYLOAD).toPath(), StandardCopyOption.ATOMIC_MOVE)
-        } catch (e: Exception) {
-            deleteTree(dir)
-            throw e
+            Files.delete(dir.toPath())
+        } catch (e: java.nio.file.DirectoryNotEmptyException) {
+            throw IllegalArgumentException(
+                "$p is not empty. Nothing was deleted. Pass recursive=true to delete the folder and everything in it.")
         }
-        afterChange(p)
-        purgeOld()
-        TrashItem(id, p, now, size)
-    }
-
-    suspend fun trash(): List<TrashItem> = io {
-        purgeOld()
-        safeTrashRoot()?.listFiles()?.mapNotNull(::trashItem)?.sortedByDescending { it.deletedAt }.orEmpty()
-    }
-
-    suspend fun restore(id: String): String = io {
-        require(TRASH_ID.matches(id)) { "Bad trash id" }
-        val dir = trashDir(id)
-        val item = trashItem(dir) ?: error("Nothing in the trash with id $id")
-        require(allowed(item.path)) { "Cannot restore this file" }
-        val target = inside(File(root, item.path))
-        require(!target.exists()) { "A file already exists at ${item.path}; rename or delete it first" }
-        target.parentFile?.mkdirs()
-        Files.move(File(dir, PAYLOAD).toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE)
-        deleteTree(dir)
-        afterChange(item.path)
-        item.path
-    }
-
-    /** Deletes a trashed file for good; only the user does this, from the Files page. */
-    suspend fun purge(id: String) = io {
-        require(TRASH_ID.matches(id)) { "Bad trash id" }
-        deleteTree(trashDir(id))
-        Unit
-    }
-
-    /** The text of a trashed file, for the forget scan; null for binary or large files. */
-    suspend fun trashText(id: String): String? = io {
-        require(TRASH_ID.matches(id)) { "Bad trash id" }
-        val dir = trashDir(id)
-        val item = trashItem(dir) ?: return@io null
-        val payload = inside(File(dir, PAYLOAD))
-        if (!isText(item.path) || !payload.isFile || payload.length() > MAX_TEXT * 4L) null
-        else runCatching { payload.readText() }.getOrNull()
+        0
     }
 
     /**
@@ -463,20 +452,6 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
             if (read) runCatching { f.useLines { titleOf(it, f.nameWithoutExtension) } }.getOrDefault(f.name) else f.name)
     }
 
-    private fun trashItem(dir: File): TrashItem? = runCatching {
-        val meta = JSONObject(File(dir, META).readText())
-        TrashItem(dir.name, meta.getString("path"), meta.getLong("deletedAt"), meta.optLong("size"))
-    }.getOrNull()
-
-    private fun purgeOld() {
-        val limit = System.currentTimeMillis() - TRASH_DAYS * 24L * 60 * 60 * 1000
-        safeTrashRoot()?.listFiles()?.forEach { dir ->
-            // A folder whose note cannot be read is judged by its own age.
-            val deletedAt = trashItem(dir)?.deletedAt ?: dir.lastModified()
-            if (deletedAt < limit) deleteTree(dir)
-        }
-    }
-
     private fun atomic(target: File, text: String) {
         inside(target)
         target.parentFile?.mkdirs()
@@ -513,7 +488,6 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         /** Longest line the daily log takes; the rest is cut. */
         const val MAX_DAILY_LINE = 600
         const val MAX_FILE_BYTES = 50L * 1024 * 1024
-        const val TRASH_DAYS = 30
         const val LESSONS = "LESSONS.md"
         const val PROACTIVE = "PROACTIVE_PREFERENCES.md"
         const val TIMEZONES = "timezones.yaml"
@@ -530,7 +504,8 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         private const val PINS = "library_pins.json"
         val SINGLE = listOf(LESSONS, PROACTIVE, TIMEZONES, ALIGNMENT, DEVICES)
         private const val INDEX = "INDEX.md"
-        private const val TRASH = ".trash"
+        /** Where older versions kept deleted files; removed on the next listing. */
+        private const val OLD_TRASH = ".trash"
         /** Copies of files sent in the chat; see [snapshotForChat]. */
         private const val SENT = "sent"
         private val SENT_FOLDER = Regex("\\d{8}-\\d{6}-[0-9a-f]{8}")
@@ -539,8 +514,6 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         const val SENT_LIMIT_BYTES = 2L * 1024 * 1024 * 1024
         /** One file sent in the chat: 1 GB, so a single copy never fills the sent copies' room alone. */
         const val MAX_SEND_BYTES = 1L * 1024 * 1024 * 1024
-        private const val PAYLOAD = "payload"
-        private const val META = "meta.json"
         private val PEOPLE = Regex("memory/(people|groups)/[^/]{1,80}\\.md")
         private val DAILY = Regex("memory/\\d{4}-\\d{2}-\\d{2}\\.md")
         /** One alignment review a night: dreams/YYYY-MM-DD.md. */
@@ -548,7 +521,6 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         private val FILES = Regex("files/(?:[^/]{1,80}/){0,3}[^/]{1,120}")
         /** The built-in product docs: readable, never written through these tools (see OrbitDocs). */
         private val DOCS = Regex("docs/[^/]{1,80}\\.md")
-        private val TRASH_ID = Regex("\\d{1,15}-[0-9a-f]{8}")
         /** Read-only through orbit_file; written only by the memory tools. Keys are lower case. */
         private val CORE_READABLE = mapOf(
             "user.md" to "user.md",
@@ -573,6 +545,19 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
             OrbitFiles(OrbitPreferences.getInstance(context).orbitDir(orbitId)) {
                 LocaleUtils.usesEnglishPrompt(context.applicationContext)
             }
+
+        /** At app start: every Orbit's trash from before deleting became permanent goes for good. */
+        suspend fun dropOldTrash(context: Context) {
+            val base = File(context.applicationContext.filesDir, "orbit")
+            if (Files.isSymbolicLink(base.toPath())) return
+            val realBase = runCatching { base.toPath().toRealPath() }.getOrNull() ?: return
+            base.listFiles()
+                // A linked folder could lead outside the app's Orbit folders; those are left alone.
+                ?.filter { !Files.isSymbolicLink(it.toPath()) && it.isDirectory &&
+                    runCatching { it.toPath().toRealPath().startsWith(realBase) }.getOrDefault(false) }
+                ?.filter { Files.exists(File(it, OLD_TRASH).toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS) }
+                ?.forEach { dir -> runCatching { OrbitFiles(dir).dropOldTrash() } }
+        }
 
         fun normalize(path: String): String {
             val p = path.trim().replace('\\', '/').trimStart('/')

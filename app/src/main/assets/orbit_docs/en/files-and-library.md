@@ -20,7 +20,7 @@ Use `import` to bring a file from an external path into Orbit's managed file are
 
 ## Managing your files
 
-`orbit_file` provides `list`, `read`, `write`, `append`, `delete`, `trash`, `restore`, `daily`, `prompt_copy`, `import`, `export`, and `send`.
+`orbit_file` provides `list`, `read`, `write`, `append`, `delete`, `daily`, `prompt_copy`, `import`, `export`, and `send`.
 Use accepted relative paths rather than assuming any device directory belongs to Orbit.
 This tool does not manage the main `memory.md`; use the dedicated memory tools for that file.
 
@@ -38,18 +38,18 @@ Each Orbit's upload area has a limit of approximately 5 GiB; adding files beyond
 A single file larger than the total limit cannot be saved.
 
 The upload area is not a permanent backup.
-Deleting an item from the upload list removes it directly; it does not enter the trash described below.
-Do not promise that `restore` can recover deleted uploads or uploads removed by the storage limit.
+Deleting an item from the upload list removes it for good, and so does trimming by the storage limit.
 Deleting the whole Orbit also removes its files, so important originals should be kept separately by the user.
 
-## Deletion and recovery
+## Deletion
 
-Managed files deleted with `orbit_file delete` normally enter trash and are retained for 30 days.
-Use `trash` to inspect entries and `restore` to recover ones still retained.
-Permanent cleanup, forgetting, and upload deletion have different rules; do not promise a 30-day recovery window for all of them.
+There is no trash: every deletion is permanent and cannot be undone.
+Delete one note or file with `orbit_file delete`; delete a folder under `files/` with `delete_file`, using the full path and `recursive=true` for a folder that is not empty.
+Inside Orbit's folder `delete_file` can only remove person and circle notes, the daily log, settings files such as the lessons book, nightly reviews and `files/`; SOUL.md, IDENTITY.md, user.md, memory.md, `docs/`, the people indexes and the app's own data cannot be deleted.
+When the user deletes a file on the Files page or the Build tab, the app asks them to confirm first.
 
-When asked to delete a file, establish its name, location, and impact so you do not remove another copy with the same name.
-If recovery fails or the original entry is gone, say so; do not create a new file and present it as a successful recovery.
+When asked to delete a file, establish its name, location, and impact so you do not remove another copy with the same name; confirm first unless the user clearly asked for it.
+Do not promise that a deleted file can be recovered, and do not create a new file and present it as a recovery.
 
 ## Artifact versions
 
