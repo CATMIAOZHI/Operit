@@ -132,6 +132,7 @@ private fun PhoneScreenCard(
     val title = label.ifBlank { stringResource(R.string.orbit_phone_card_title) }
     val status = when {
         screen == null -> stringResource(R.string.orbit_phone_card_closed)
+        screen.doneAt != null -> stringResource(R.string.orbit_phone_card_done, name)
         screen.control == PhoneBackgroundControl.Control.USER -> stringResource(R.string.orbit_browser_watch_yours)
         screen.control == PhoneBackgroundControl.Control.WAITING -> stringResource(R.string.orbit_browser_watch_waiting, name)
         else -> stringResource(R.string.orbit_phone_card_working, name)
@@ -250,7 +251,8 @@ internal fun OrbitPhoneWatchHost() {
                             when (screen.control) {
                                 PhoneBackgroundControl.Control.USER -> stringResource(R.string.orbit_browser_watch_yours)
                                 PhoneBackgroundControl.Control.WAITING -> stringResource(R.string.orbit_browser_watch_waiting, name)
-                                PhoneBackgroundControl.Control.AI -> stringResource(R.string.orbit_phone_watch_hint)
+                                PhoneBackgroundControl.Control.AI -> if (screen.doneAt != null) stringResource(R.string.orbit_phone_card_done, name)
+                                    else stringResource(R.string.orbit_phone_watch_hint)
                             },
                             style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant,
                             maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center,
@@ -294,7 +296,7 @@ internal fun OrbitPhoneWatchHost() {
                             }
                         }
                         PhoneBackgroundControl.Control.WAITING -> Unit
-                        PhoneBackgroundControl.Control.AI ->
+                        PhoneBackgroundControl.Control.AI -> if (screen.doneAt == null)
                             WatchButton(stringResource(R.string.orbit_browser_handoff_take), primary = true, modifier = Modifier.fillMaxWidth()) {
                                 PhoneBackgroundControl.takeOver(screen.id)
                             }

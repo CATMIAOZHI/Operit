@@ -189,6 +189,7 @@
     <string name="orbit_phone_card_summary">[Background screen: %1$s]</string>
     <string name="orbit_phone_card_working">%1$s is working in the background, not on your screen</string>
     <string name="orbit_phone_card_closed">Background screen closed</string>
+    <string name="orbit_phone_card_done">%1$s is done; it stays up to 5 more minutes</string>
     <string name="orbit_phone_card_watch">Watch</string>
     <string name="orbit_phone_watch_back">Back</string>
     <string name="orbit_phone_watch_hint">Watching only. Tap Take over to use it yourself</string>

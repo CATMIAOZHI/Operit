@@ -189,6 +189,7 @@
     <string name="orbit_phone_card_summary">[后台屏：%1$s]</string>
     <string name="orbit_phone_card_working">%1$s 正在后台操作，不占你的屏幕</string>
     <string name="orbit_phone_card_closed">后台屏已关闭</string>
+    <string name="orbit_phone_card_done">%1$s 已经做完，最多再留 5 分钟</string>
     <string name="orbit_phone_card_watch">查看</string>
     <string name="orbit_phone_watch_back">返回</string>
     <string name="orbit_phone_watch_hint">只能观看。点「接手」后可以自己操作</string>
