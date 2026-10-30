@@ -602,6 +602,14 @@ class ConversationService(
                     } else {
                         null
                     }
+                // A subagent of an Orbit gets none of its private prompt, only where its folder is.
+                val orbitFolderNote =
+                    if (orbitParts == null && isSubTask) {
+                        com.ai.assistance.operit.core.tools.OrbitTools.subagentFolderNote(
+                            context, chatId, LocaleUtils.usesEnglishPrompt(context))
+                    } else {
+                        null
+                    }
                 val introPrompt = if (orbitParts != null) "" else activeCard?.let {
                     characterCardManager.combinePrompts(
                         it.id,
@@ -724,6 +732,10 @@ class ConversationService(
                         append("\n\n<subagent_profile source=\"agent_profile\">\n")
                         append(additionalSystemPrompt)
                         append("\n</subagent_profile>")
+                    }
+                    if (orbitFolderNote != null) {
+                        append("\n\n")
+                        append(orbitFolderNote)
                     }
                     // A main-app role card never speaks for an Orbit.
                     if (orbitParts == null && allowPersonalContext && proxyRolePrompt.isNotEmpty()) {

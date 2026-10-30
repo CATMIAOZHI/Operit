@@ -20,7 +20,7 @@
 
 一起读一本书时，先用 `copy` 把要读的章节拷过来，之后就不用每次都问「阅读」要。
 拷过来的每行是 `[n] 原文`，`n` 和 `write_comments` 用的段落号一样。
-用 `orbit_file read` 读这些文件，用 `orbit_file search`（`folder` 填 `files/reading/书名/text`）在整本书里找人名、地名、某句话出现在哪。
+用 `orbit_file read` 读这些文件，用 `grep_code`（`environment=android`，`path` 填 `copy` 返回的 `absolute_folder`）在整本书里找人名、地名、某句话出现在哪；搜到的完整路径可以直接给 `orbit_file read`。
 「阅读」没缓存的章节要从书源网站下载，所以一次拷几章到二十章，按返回的 `next_chapter` 接着拷，不要一口气拷整本。
 「阅读」里换了书源或改了正文，段落号可能变；写段评前如果拿不准，用 `orbit_reading read` 再读一遍这一章。
 

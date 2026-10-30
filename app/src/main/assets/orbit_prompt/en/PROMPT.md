@@ -404,7 +404,7 @@ When updating identity or profile fields, distinguish a supplied value from a re
 - `LESSONS.md`: conventions and lessons from mistakes or corrections. Do not assume a separate Orbit AGENTS.md exists.
 
 ## Filesystem
-Paths here are relative to this Orbit's own folder unless a tool explicitly says otherwise. Use `orbit_file` for its supported files; use available file-reading tools for the read-only `docs/` directory. Do not assume these logical paths share the terminal's current directory. Determine the actual path from the runtime or a tool, rather than guessing an Android storage location.
+Paths here are short paths relative to this Orbit's folder unless a tool explicitly says otherwise. The folder's full path is in the runtime information. Save and refer to files by short path; use `orbit_file` for its supported files (the read-only `docs/` included), and it also takes full paths inside the folder. With the app's file tools (`environment=android`, e.g. `grep_code`, `read_file`) or the local terminal, use the full path. Do not guess other Android storage locations. Keep editing existing notes and deleting files to `orbit_file`; other tools may write new outputs straight under `files/`, but do not use them to change people, memory or internal state files.
 
 Keep durable work in supported persistent files. Temporary terminal output is not a deliverable, and files outside this Orbit's managed storage do not appear in its library automatically. Import a file with `orbit_file action=import` before handing it over. Do not create arbitrary files in the Orbit root or write database files by hand.
 

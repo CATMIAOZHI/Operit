@@ -124,20 +124,20 @@ class OrbitReadingTest {
     }
 
     @Test
-    fun searchFindsLinesInCopiedText(): Unit = runBlocking {
-        val root = Files.createTempDirectory("orbit-files").toFile()
-        val files = OrbitFiles(root)
-        files.write("files/reading/Book/text/0001 One.md", "# One\n\n[1] Ye Wenjie looks up.\n[2] Nothing here.\n")
-        files.write("files/reading/Book/text/0002 Two.md", "# Two\n\n[1] ye wenjie again, " + "x".repeat(400) + "\n")
-        files.write("files/other.md", "Ye Wenjie elsewhere\n")
-        val (hits, total) = files.search("Ye Wenjie", "files/reading/Book/text", 50)
-        assertEquals(2, total)
-        assertEquals(listOf("files/reading/Book/text/0001 One.md" to 3, "files/reading/Book/text/0002 Two.md" to 3),
-            hits.map { it.path to it.line })
-        assertTrue(hits[1].text.length < 260)
-        assertEquals(3, files.search("ye wenjie", null, 1).second)
-        assertEquals(1, files.search("ye wenjie", null, 1).first.size)
-        root.deleteRecursively()
+    fun fullPathsInsideTheOrbitFolderBecomeShortPaths() {
+        val parent = Files.createTempDirectory("orbit-path").toFile()
+        val root = File(parent, "o1").apply { mkdirs() }
+        val tools = com.ai.assistance.operit.core.tools.OrbitFileTools
+        assertEquals("files/reading/Book/text/0001 One.md",
+            tools.shortPath(root, File(root, "files/reading/Book/text/0001 One.md").absolutePath))
+        assertEquals("files/a.md", tools.shortPath(root, "file://" + File(root, "files/a.md").absolutePath))
+        assertEquals("files/a.md", tools.shortPath(root, "files/a.md"))
+        // Another Orbit's folder, or anywhere else that exists on the device, is refused.
+        val other = File(parent, "o2/files/a.md").apply { parentFile.mkdirs(); writeText("x") }
+        assertTrue(runCatching { tools.shortPath(root, other.absolutePath) }.isFailure)
+        // ".." could fold through a link to a different file than the path reaches; it is refused.
+        assertTrue(runCatching { tools.shortPath(root, File(root, "files").absolutePath + "/x/../a.md") }.isFailure)
+        parent.deleteRecursively()
     }
 
     @Test

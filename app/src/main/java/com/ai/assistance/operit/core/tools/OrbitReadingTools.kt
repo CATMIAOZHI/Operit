@@ -49,7 +49,7 @@ internal object OrbitReadingTools {
         details = """
   - where: the open book and chapter, which paragraphs the user's page shows (page_paragraphs; exact=false means guessed), and how many chapters ahead already have your comments.
   - read: paragraphs come as "[n] text"; n is the paragraph number to comment on. "*" after [n] means you already commented there. You may read any chapter, also ones the user has not reached.
-  - copy: saves chapters' text into your folder, one file a chapter under files/reading/<book>/text/, lines "[n] text" with the same numbers as read. Then read them with orbit_file read and look things up with orbit_file search (folder = that text folder). Chapters Legado has not saved are fetched from the book's website, so copy a few at a time and go on with next_chapter.
+  - copy: saves chapters' text into your folder, one file a chapter under files/reading/<book>/text/, lines "[n] text" with the same numbers as read. Then read them with orbit_file read and look things up with grep_code (environment=android, path = absolute_folder from the result). Chapters Legado has not saved are fetched from the book's website, so copy a few at a time and go on with next_chapter.
   - write_comments: comments go on the chapter as Legado lays it out now; read the chapter first so the numbers match. The result says what was saved and where.
   - Comments are kept per Orbit and shown in Legado right away. Notes, summaries and where you stopped are yours to keep with orbit_file under files/reading/.
 """,
@@ -249,11 +249,12 @@ internal object OrbitReadingTools {
         }
         firstError?.takeIf { copied.length() == 0 }?.let { throw it }
         return JSONObject().put("book_id", bookId).put("book", state.book.name).put("folder", folder)
+            .put("absolute_folder", files.fileFor(folder).absolutePath)
             .put("copied", copied)
             .apply { if (failed.length() > 0) put("failed", failed) }
             .apply { if (last < catalog.size) put("next_chapter", last + 1) }
             .put("note", "Copied ${copied.length()} chapter(s) into $folder. Read one with orbit_file read path=<path>; " +
-                "find words across the copied text with orbit_file search folder=$folder query=<words>. [n] is the " +
+                "find words across the copied text with grep_code environment=android path=<absolute_folder>. [n] is the " +
                 "paragraph number write_comments takes, as long as the chapter has not changed in Legado since." +
                 (if (failed.length() > 0) " ${failed.length()} chapter(s) failed; see failed, and try them again later." else ""))
     }
