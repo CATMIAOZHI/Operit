@@ -65,7 +65,14 @@ import kotlinx.coroutines.launch
 
 /** An extra item in a file page's "more" menu. */
 /** [endsEditing] false for actions that only hand the file elsewhere (share, open), so a draft is kept. */
-internal class OrbitFileAction(val label: String, val icon: String, val endsEditing: Boolean = true, val run: suspend () -> Unit)
+/** With [confirm] (title, text) the action asks first, as deleting does: there is no way back. */
+internal class OrbitFileAction(
+    val label: String,
+    val icon: String,
+    val endsEditing: Boolean = true,
+    val confirm: Pair<String, String>? = null,
+    val run: suspend () -> Unit,
+)
 
 /**
  * Muse-style page for one of Orbit's own Markdown files: a short note on what the file is, the
@@ -103,6 +110,7 @@ internal fun OrbitFilePage(
     var busy by remember { mutableStateOf(false) }
     var showMenu by remember { mutableStateOf(false) }
     var confirmDiscard by remember { mutableStateOf(false) }
+    var confirming by remember { mutableStateOf<OrbitFileAction?>(null) }
     var autoEdited by rememberSaveable { mutableStateOf(false) }
     var warnedTooLong by remember { mutableStateOf(false) }
     // True while the file is read again: the old text stays on screen, but cannot be edited.
@@ -139,6 +147,13 @@ internal fun OrbitFilePage(
             }
             catch (e: Exception) { toast(failedMessage) }
             finally { busy = false }
+        }
+    }
+    fun perform(action: OrbitFileAction) = run(R.string.orbit_file_action_failed) {
+        action.run()
+        if (action.endsEditing) {
+            leaveEditor()
+            reload++
         }
     }
     OrbitPageBack { back() }
@@ -214,13 +229,7 @@ internal fun OrbitFilePage(
                                         leadingIcon = { Icon(orbitIcon(action.icon), null) },
                                         onClick = {
                                             showMenu = false
-                                            run(R.string.orbit_trash_failed) {
-                                                action.run()
-                                                if (action.endsEditing) {
-                                                    leaveEditor()
-                                                    reload++
-                                                }
-                                            }
+                                            if (action.confirm != null) confirming = action else perform(action)
                                         },
                                     )
                                 }
@@ -291,6 +300,19 @@ internal fun OrbitFilePage(
             title = stringResource(R.string.orbit_file_discard_title),
             confirmButton = { OrbitDialogAction(enabled = !busy, onClick = { confirmDiscard = false; leaveEditor() }, destructive = true) { Text(stringResource(R.string.orbit_file_discard)) } },
             dismissButton = { OrbitDialogAction(onClick = { confirmDiscard = false }, secondary = true) { Text(stringResource(R.string.orbit_file_keep_editing)) } },
+        )
+    }
+    confirming?.let { action ->
+        val (confirmTitle, confirmText) = action.confirm ?: return@let
+        OrbitDialog(
+            onDismissRequest = { confirming = null },
+            dismissEnabled = !busy,
+            title = confirmTitle,
+            text = { Text(confirmText) },
+            confirmButton = {
+                OrbitDialogAction(enabled = !busy, onClick = { confirming = null; perform(action) }, destructive = true) { Text(action.label) }
+            },
+            dismissButton = { OrbitDialogAction(onClick = { confirming = null }, secondary = true) { Text(stringResource(android.R.string.cancel)) } },
         )
     }
 }

@@ -27,20 +27,49 @@ class OrbitFilesTest {
         assertTrue(runCatching { files.write("memory/people/INDEX.md", "x") }.isFailure)
     }
 
-    @Test fun deletedFilesCanBeRestoredButNeverOverwriteANewOne() = runBlocking {
-        val files = store()
+    @Test fun deletingIsPermanentAndKeepsThePeopleIndexCurrent() = runBlocking {
+        val root = folder.newFolder("gone")
+        val files = OrbitFiles(root)
         files.write("LESSONS.md", "old")
-        val item = files.delete("LESSONS.md")
-        assertEquals(listOf(item.id), files.trash().map { it.id })
-        files.write("LESSONS.md", "new")
-        assertTrue(runCatching { files.restore(item.id) }.isFailure)
-        files.delete("LESSONS.md")
-        files.restore(item.id)
-        assertEquals("old", files.read("LESSONS.md"))
-        files.purge(files.trash().single().id)
-        assertTrue(files.trash().isEmpty())
+        assertEquals("LESSONS.md", files.delete("LESSONS.md"))
+        assertFalse(java.io.File(root, "LESSONS.md").exists())
+        assertFalse(java.io.File(root, ".trash").exists())
+        files.write("memory/people/Alex.md", "# Alex")
+        files.write("memory/people/Sam.md", "# Sam")
+        files.delete("memory/people/Alex.md")
+        val index = files.read("memory/people/INDEX.md")
+        assertFalse(index.contains("Alex"))
+        assertTrue(index.contains("Sam"))
+        assertTrue(runCatching { files.delete("memory/people/INDEX.md") }.isFailure)
+        assertTrue(runCatching { files.delete("memory/people/Nobody.md") }.isFailure)
     }
 
+    @Test fun aFolderThatIsNotEmptyNeedsRecursive() = runBlocking {
+        val root = folder.newFolder("folders")
+        val files = OrbitFiles(root)
+        files.write("files/book/a.md", "a")
+        files.write("files/book/text/b.md", "b")
+        val refused = runCatching { files.deleteFolder("files/book", recursive = false) }
+        assertTrue(refused.isFailure)
+        assertTrue(refused.exceptionOrNull()!!.message!!.contains("recursive=true"))
+        assertTrue(java.io.File(root, "files/book/a.md").exists())
+        assertEquals(2, files.deleteFolder("files/book", recursive = true))
+        assertFalse(java.io.File(root, "files/book").exists())
+        java.io.File(root, "files/empty").mkdirs()
+        assertEquals(0, files.deleteFolder("files/empty", recursive = false))
+        assertTrue(runCatching { files.deleteFolder("memory/people", recursive = true) }.isFailure)
+        assertTrue(runCatching { files.deleteFolder("files", recursive = true) }.isFailure)
+    }
+
+    @Test fun theOldTrashIsRemovedAtStart() = runBlocking {
+        val root = folder.newFolder("oldtrash")
+        java.io.File(root, ".trash/1-abcdef12").apply { mkdirs() }.resolve("payload").writeText("x")
+        val files = OrbitFiles(root)
+        files.list()
+        assertTrue(java.io.File(root, ".trash").exists())
+        files.dropOldTrash()
+        assertFalse(java.io.File(root, ".trash").exists())
+    }
     @Test fun savingUnderADottedFolderKeepsTheFolderAndExtension() = runBlocking {
         val files = store()
         files.saveBytes("files/notes.v1/x.md", "a".byteInputStream())
@@ -76,25 +105,6 @@ class OrbitFilesTest {
         java.nio.file.Files.createSymbolicLink(java.io.File(root, "files/gone").toPath(), java.io.File(outside, "missing").toPath())
         assertTrue(runCatching { files.write("files/gone/x.md", "x") }.isFailure)
         assertFalse(java.io.File(outside, "missing").exists())
-    }
-
-    @Test fun trashKeepsFilesForThirtyDays() = runBlocking {
-        val root = folder.newFolder("trashy")
-        val files = OrbitFiles(root)
-        files.write("LESSONS.md", "a")
-        val item = files.delete("LESSONS.md")
-        val meta = java.io.File(root, ".trash/${item.id}/meta.json")
-        val old = System.currentTimeMillis() - 31L * 24 * 60 * 60 * 1000
-        meta.writeText(meta.readText().replace(item.deletedAt.toString(), old.toString()))
-        // A folder whose note cannot be read goes by its own age: a fresh one stays.
-        val broken = java.io.File(root, ".trash/1-abcdef12").apply { mkdirs() }
-        java.io.File(broken, "meta.json").writeText("not json")
-        assertTrue(files.trash().isEmpty())
-        assertFalse(meta.parentFile.exists())
-        assertTrue(broken.exists())
-        broken.setLastModified(old)
-        files.trash()
-        assertFalse(broken.exists())
     }
 
     @Test fun libraryPinsKeepTheNewestFirstAndOnlyMadeFiles() = runBlocking {

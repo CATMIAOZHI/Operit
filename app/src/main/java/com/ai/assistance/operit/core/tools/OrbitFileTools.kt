@@ -24,17 +24,16 @@ internal object OrbitFileTools {
     val prompt = ToolPrompt(
         name = NAME,
         description = "读写你自己文件夹里的文件：人物、圈子与关系笔记、每日流水、经验本、主动消息偏好、时区、对齐总结、设备，以及 files/ 里给用户做的文件。" +
-            "删除的文件进回收站，30 天内可以恢复。还能把应用里别处的文件（比如画好的图）收进 files/，把 Markdown 导出成网页、Word 或 PDF。",
+            "删除是永久删除，没有回收站。还能把应用里别处的文件（比如画好的图）收进 files/，把 Markdown 导出成网页、Word 或 PDF。",
         parametersStructured = listOf(
-            ToolParameterSchema("action", description = "list/read/write/append/delete/trash/restore/daily/prompt_copy/import/export/send", required = true),
-            ToolParameterSchema("path", description = "相对路径，如 memory/people/张三.md、LESSONS.md、files/报告.md；read/write/append/delete/export/send 必填；import 时是存到 files/ 下的目标路径（可省略）", required = false),
+            ToolParameterSchema("action", description = "list/read/write/append/delete/daily/prompt_copy/import/export/send", required = true),
+            ToolParameterSchema("path", description = "短路径，如 memory/people/张三.md、LESSONS.md、files/报告.md；也可以填你文件夹里的完整路径。read/write/append/delete/export/send 必填；import 时是存到 files/ 下的目标路径（可省略）", required = false),
             ToolParameterSchema("text", description = "write：完整新内容；append/daily：要追加的一段或一行", required = false),
-            ToolParameterSchema("folder", description = "list 可选：只列这个文件夹下的，如 memory/people、files、dreams、alignment", required = false),
+            ToolParameterSchema("folder", description = "list 可选：只看这个文件夹下的，如 memory/people、files、files/reading/三体/text", required = false),
             ToolParameterSchema("offset", "integer", "list 可选：从第几个开始列（从 0 开始），用上次返回的 next_offset 继续", false),
             ToolParameterSchema("start_line", "integer", "read 可选：从第几行开始读（从 1 开始），默认 1", false),
             ToolParameterSchema("line_count", "integer", "read 可选：最多读几行，默认读到 20000 字为止", false),
             ToolParameterSchema("start_char", "integer", "read 可选：只在接着读一行特别长的行时用，表示从 start_line 这一行的第几个字开始（从 1 开始）", false),
-            ToolParameterSchema("trash_id", description = "restore：trash 返回的编号", required = false),
             ToolParameterSchema("source", description = "import：应用里已有文件的绝对路径，比如终端或其他工具生成的文件", required = false),
             ToolParameterSchema("format", description = "export：html、docx 或 pdf", required = false),
         ),
@@ -49,7 +48,9 @@ internal object OrbitFileTools {
   - DEVICES.md：你能连上的设备，比如 Tailscale 组网里的电脑、NAS。不写密码。
   - files/：给用户做的文件，会出现在「构建」页的文件里。
   - read 一次最多返回 20000 字；没读完时末尾会写明读到第几行、下次怎么接着读（照着提示填 start_line，长行还要填 start_char）。list 一次最多 200 个，有 next_offset 时用 offset 接着列。
-  - write 会覆盖整个文件，已有内容的文件必须先 read 再改；读完之后如果文件被用户或后台任务改过，write 会被拒绝、什么都不写，这时重新 read 再改。返回会说明新建还是覆盖、现在几行，以及改了哪些行。delete 后告诉用户可以在回收站恢复。
+  - 路径：保存和引用都用短路径。path、folder 也接受你文件夹里的完整路径（比如 grep_code 搜出来的），会自动换成短路径；文件夹外的完整路径不行。要搜文字，用 grep_code（environment=android），path 填完整路径，尽量指到具体文件夹，比如一本书的 files/reading/书名/text。
+  - write 会覆盖整个文件，已有内容的文件必须先 read 再改；读完之后如果文件被用户或后台任务改过，write 会被拒绝、什么都不写，这时重新 read 再改。返回会说明新建还是覆盖、现在几行，以及改了哪些行。
+  - delete：永久删除一个文件，删了就找不回来。除非用户明确要删，删之前先跟用户确认。删 files/ 下的整个文件夹用 delete_file（path 填完整路径，非空文件夹要 recursive=true）。
   - prompt_copy：用户要你的系统提示词时用，把 Orbit 部分（Orbit 段落和 SOUL.md，不含应用通用规则）存成 files/ 里的一份文件，告诉用户这是 Orbit 部分，在构建页的文件里找。
   - send：把 files/ 里的一个文件直接发到聊天里，像真人发消息一样。图片显示成图片，用户点开全屏看，底部有「保存」按钮；文本文件（txt、md、json、csv 等）点开在应用里直接显示；其他文件显示成附件卡，用户点一下用别的应用打开。只能在和用户的聊天里用。发完不要再贴路径。
   - import：把应用里别处的文件收进 files/（比如终端或其他工具生成的文件），用户就能在构建页的文件里看到。要给用户看，接着用 send 发到聊天里；音频会返回 markdown，可以放进回复里播放。
@@ -57,12 +58,19 @@ internal object OrbitFileTools {
 """,
     )
 
-    fun execute(context: Context, tool: AITool): ToolResult = runBlockingIoPreservingToolRuntimeContext {
+    fun execute(context: Context, tool: AITool): ToolResult = runBlockingIoPreservingToolRuntimeContext { run(context, tool) }
+
+    /** Runs in the tool call's coroutine, so stopping the chat also stops a long file operation. */
+    suspend fun run(context: Context, tool: AITool): ToolResult = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
         try {
             val runtime = ToolExecutionManager.currentToolRuntimeContext()
             val orbit = checkNotNull(OrbitMemoryScope.owner(context, runtime?.callerChatId)) { "This is not an Orbit chat" }
             val files = OrbitFiles.of(context, orbit.id)
-            val args = tool.parameters.associate { it.name to it.value }
+            val root = OrbitPreferences.getInstance(context).orbitDir(orbit.id)
+            // A full path inside this Orbit's folder (from grep_code, the terminal...) becomes the short one.
+            val args = tool.parameters.associate { p ->
+                p.name to if (p.name == "path" || p.name == "folder") p.value?.let { shortPath(root, it) } else p.value
+            }
             fun arg(name: String) = args[name]?.takeIf { it.isNotBlank() } ?: error("Missing $name")
             val result: String = when (args["action"]) {
                 "list" -> {
@@ -121,13 +129,8 @@ internal object OrbitFileTools {
                         if (cut) " The line was longer than ${OrbitFiles.MAX_DAILY_LINE} characters and was cut; write the rest as another line." else ""
                 }
                 "delete" -> {
-                    val item = files.delete(arg("path"))
-                    "Moved to the trash (id ${item.id}); it can be restored for ${OrbitFiles.TRASH_DAYS} days"
+                    "Deleted ${files.delete(arg("path"))} for good (there is no recycle bin)."
                 }
-                "trash" -> JSONArray(files.trash().map {
-                    JSONObject().put("trash_id", it.id).put("path", it.path).put("deleted_at", it.deletedAt)
-                }).toString()
-                "restore" -> "Restored to " + files.restore(arg("trash_id"))
                 "send" -> {
                     check(OrbitPreferences.getInstance(context).current().orbitForChat(runtime?.callerChatId) != null) {
                         "send only works in a chat with the user"
@@ -155,7 +158,7 @@ internal object OrbitFileTools {
                     val source = importable(context, arg("source"))
                     val target = args["path"]?.takeIf { it.isNotBlank() } ?: "files/${source.name}"
                     val entry = source.inputStream().use { files.saveBytes(target, it) }
-                    JSONObject().put("path", entry.path)
+                    JSONObject().put("path", entry.path).put("absolute_path", files.fileFor(entry.path).absolutePath)
                         .apply { mediaMarkdown(files.fileFor(entry.path))?.let { put("markdown", it) } }
                         .toString()
                 }
@@ -176,7 +179,7 @@ internal object OrbitFileTools {
                         }
                     }.toByteArray()
                     val entry = files.saveBytes(path.substringBeforeLast('.') + ".$format", bytes.inputStream())
-                    "Saved as ${entry.path}. The user finds it under Files in the Builds tab."
+                    "Saved as ${entry.path} (full path ${files.fileFor(entry.path).absolutePath}). The user finds it under Files in the Builds tab."
                 }
                 "prompt_copy" -> {
                     val english = LocaleUtils.usesEnglishPrompt(context)
@@ -189,9 +192,9 @@ internal object OrbitFileTools {
                         "# Orbit 部分的系统提示词\n\n包含 PROMPT.md、Orbit 段落、IDENTITY.md 和 SOUL.md，不含应用通用规则和工具列表。\n\n$block\n"
                     }
                     val entry = files.saveBytes(path, text.byteInputStream())
-                    "Saved as ${entry.path}. The user finds it under Files in the Builds tab."
+                    "Saved as ${entry.path} (full path ${files.fileFor(entry.path).absolutePath}). The user finds it under Files in the Builds tab."
                 }
-                else -> error("Unknown action \"${args["action"].orEmpty()}\"; use list, read, write, append, daily, delete, trash, restore, send, import, export or prompt_copy")
+                else -> error("Unknown action \"${args["action"].orEmpty()}\"; use list, read, write, append, daily, delete, send, import, export or prompt_copy")
             }
             ToolResult(tool.name, true, StringResultData(result))
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -199,6 +202,33 @@ internal object OrbitFileTools {
         } catch (e: Exception) {
             ToolResult(tool.name, false, StringResultData(""), error = e.message ?: e.toString())
         }
+    }
+
+    /**
+     * [path] as orbit_file takes it. A full path inside [root] (this Orbit's folder) becomes the short
+     * path; a full path anywhere else is refused; a short path, with or without a leading "/", is kept.
+     */
+    internal fun shortPath(root: java.io.File, path: String): String {
+        val raw = path.trim().removePrefix("file://")
+        val file = java.io.File(raw)
+        if (!file.isAbsolute) return raw
+        // "." and ".." would be folded away before a link inside the folder is followed, and could name
+        // a different file than the path really reaches; a full path must be written out plainly.
+        require(raw.split('/', '\\').none { it == "." || it == ".." }) { "Write the full path without . or .. parts: $raw" }
+        val inside = listOf(root.absoluteFile.normalize() to file.absoluteFile.normalize()) +
+            listOfNotNull(runCatching { root.canonicalFile to file.canonicalFile }.getOrNull())
+        for ((base, target) in inside) {
+            val rel = target.relativeToOrNull(base)?.invariantSeparatorsPath ?: continue
+            if (rel != ".." && !rel.startsWith("../")) return rel
+        }
+        // "/LESSONS.md" or "/files/a.md" is a short path with a leading slash: its top folder ("/files")
+        // does not exist on the phone. A real place (under /data, /storage...) does, and is refused.
+        val top = generateSequence(file.absoluteFile) { it.parentFile }.toList().dropLast(1).lastOrNull()
+        require(top == null || !top.exists()) {
+            "$raw is outside your Orbit folder (${root.absolutePath}); orbit_file only works inside it. " +
+                "Bring a file in with action=import source=<full path>."
+        }
+        return raw.trimStart('/')
     }
 
     /** Only files inside the app's own folders and its Download/Operit folder can be taken in. */

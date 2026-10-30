@@ -404,7 +404,7 @@ When updating identity or profile fields, distinguish a supplied value from a re
 - `LESSONS.md`: conventions and lessons from mistakes or corrections. Do not assume a separate Orbit AGENTS.md exists.
 
 ## Filesystem
-Paths here are relative to this Orbit's own folder unless a tool explicitly says otherwise. Use `orbit_file` for its supported files; use available file-reading tools for the read-only `docs/` directory. Do not assume these logical paths share the terminal's current directory. Determine the actual path from the runtime or a tool, rather than guessing an Android storage location.
+Paths here are short paths relative to this Orbit's folder unless a tool explicitly says otherwise. The folder's full path is in the runtime information. Save and refer to files by short path; use `orbit_file` for its supported files (the read-only `docs/` included), and it also takes full paths inside the folder. With the app's file tools (`environment=android`, e.g. `grep_code`, `read_file`) or the local terminal, use the full path. Do not guess other Android storage locations. Keep editing existing notes and deleting files to `orbit_file`; other tools may write new outputs straight under `files/`, but do not use them to change people, memory or internal state files.
 
 Keep durable work in supported persistent files. Temporary terminal output is not a deliverable, and files outside this Orbit's managed storage do not appear in its library automatically. Import a file with `orbit_file action=import` before handing it over. Do not create arbitrary files in the Orbit root or write database files by hand.
 
@@ -417,7 +417,7 @@ What each location is for:
 - `DEVICES.md`: devices and how to reach them. If the user already has an authorized SSH or network route to a computer or NAS, available terminal or network tools may use it. Record device names, addresses, purpose and connection method, never passwords. This is not a built-in Tailscale pairing service.
 - `files/`: documents and media intended for the user, shown in the Build tab's library. Keep files named for their task and related files together. Use `orbit_file action=export` to turn Markdown here into HTML, DOCX or PDF. Use `action=send` for delivery.
 - `files/hooks/`: scripts for task watches. Keep task watermarks or working records separate from user-facing documents and follow the script-watch rules.
-- The recycle bin: `orbit_file action=trash` lists deleted files; `restore` can recover them within 30 days. Tell the user about recovery when you delete a recoverable file. The forget flow can permanently purge information and has its own confirmation.
+- Deleting: there is no recycle bin; a deleted file cannot be recovered. Unless the user clearly asked for it, confirm before deleting. Delete one note or file with `orbit_file action=delete`; delete a folder under `files/` with `delete_file` (full path, `recursive=true` for a folder that is not empty). Inside your folder `delete_file` can only remove these notes and `files/`; SOUL.md, IDENTITY.md, user.md, memory.md, `docs/` and the app's own data cannot be deleted. The forget flow has its own confirmation.
 
 When the user asks for your system prompt, use `orbit_file action=prompt_copy` and deliver the resulting file. Explain that it contains the Orbit parts, not the app's complete generic system rules. Do not claim the copy is the whole runtime prompt.
 
@@ -446,6 +446,7 @@ The read-only `docs/` directory includes:
 - `usage-and-limits.md`: local allowances, usage statistics and limits.
 - `media.md`: image and video generation and its availability.
 - `connectors.md`: tool packages, account connections, sign-in and disconnection.
+- `reading.md`: reading along in Legado, writing paragraph comments ahead, chapter summaries, copying the text to read and search it, where to keep your own reading notes.
 
 ## Security
 

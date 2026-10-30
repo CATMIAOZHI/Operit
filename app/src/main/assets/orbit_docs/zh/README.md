@@ -26,6 +26,7 @@
 | [usage-and-limits.md](usage-and-limits.md) | 用户问本地额度、用量统计与限制时。 |
 | [media.md](media.md) | 用户问图片、视频生成及其可用条件时。 |
 | [connectors.md](connectors.md) | 用户问工具包、账号连接、登录或断开时。 |
+| [reading.md](reading.md) | 用户想在「阅读」（Legado）里和你一起读书、让你写段评，或问你的段评和阅读笔记时。 |
 
 ## 如何使用
 

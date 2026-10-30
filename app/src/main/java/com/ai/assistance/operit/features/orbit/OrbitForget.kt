@@ -62,7 +62,7 @@ internal object OrbitForget {
 
     /** The kinds of place a scan looks through, for the report. */
     val SCANNED = listOf("memory", "profile", "files (people, groups, daily log, settings files, nightly reviews, " +
-        "alignment state, files/)", "trash", "SOUL.md", "IDENTITY.md", "skills", "goals", "scheduled",
+        "alignment state, files/)", "SOUL.md", "IDENTITY.md", "skills", "goals", "scheduled",
         "task outputs (every saved version)", "feed (with its cards), ideas and tracking", "approvals",
         "undelivered reports", "change history")
 
@@ -98,20 +98,6 @@ internal object OrbitForget {
                 val text = if (entry.size <= OrbitFiles.MAX_TEXT) runCatching { files.read(entry.path) }.getOrNull() else null
                 if (text == null) unscanned += entry.path
                 else matcher.lines(text).forEach { hits += Hit("files", "${entry.path}#L$it", "edit") }
-            }
-        }
-        // Files deleted in the last 30 days can still be restored, so they count as copies too.
-        val trash = runCatching { files.trash() }.getOrNull()
-        if (trash == null) unscanned += "trash"
-        trash.orEmpty().forEach { item ->
-            val name = item.path.substringAfterLast('/').let { it.substringBeforeLast('.', it) }
-            if (matcher.hit(name)) {
-                hits += Hit("files", "trash:${item.id}", "purge")
-            } else if (OrbitFiles.isText(item.path)) {
-                // A text that could not be read (too large, damaged) may still hold the information.
-                val text = runCatching { files.trashText(item.id) }.getOrNull()
-                if (text == null) unscanned += "trash:${item.id}"
-                else if (matcher.hit(text)) hits += Hit("files", "trash:${item.id}", "purge")
             }
         }
         // Soul and identity are the Orbit's own voice; they are listed for the user, never auto-edited.
@@ -306,11 +292,8 @@ internal object OrbitForget {
             step("files") {
                 val files = OrbitFiles.of(context, orbit.id)
                 current.filter { it.category == "files" }.groupBy { it.locator.substringBefore("#L") }.entries.sumOf { (path, hits) ->
-                    if (path.startsWith("trash:")) {
-                        files.purge(path.removePrefix("trash:"))
-                    } else if (hits.any { it.action == "delete" }) {
-                        // Approved removals skip the recoverable trash.
-                        files.purge(files.delete(path).id)
+                    if (hits.any { it.action == "delete" }) {
+                        files.delete(path)
                     } else {
                         val text = files.read(path)
                         files.write(path, matcher.clean(text))

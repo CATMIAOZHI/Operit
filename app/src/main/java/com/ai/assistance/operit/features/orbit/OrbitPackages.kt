@@ -30,7 +30,8 @@ import org.json.JSONObject
  * Orbit's folder: the packages imported into it, and which of those are switched on. Turning a
  * package off on one side leaves the other side as it was.
  *
- * A new Orbit starts with only the [REQUIRED] packages, which stay on. The user picks more of the
+ * A new Orbit starts with the [REQUIRED] packages, which stay on, and the [DEFAULT] ones, which the
+ * user can switch off or take out. The user picks more of the
  * main app's packages to import, and an imported package is switched on; nothing follows the main
  * app's switches afterwards. Only these
  * lists are the Orbit's own: a package's runtime is still the app's one. Every package, plugin
@@ -44,6 +45,13 @@ object OrbitPackages {
      * search, memory tools, cards and browser, which Orbit's own prompt and routines rely on.
      */
     val REQUIRED: Set<String> = linkedSetOf("super_admin", "various_search", "memory_review", "dynamic_ui", "browser")
+
+    /**
+     * Built-in packages every Orbit starts with, imported and on, that the user can switch off or
+     * take out: more file tools, which alone can open a file in another app or share it. Each is
+     * given once (packages.json remembers it in "defaults_given"), so one the user took out stays out.
+     */
+    val DEFAULT: Set<String> = linkedSetOf("extended_file_tools")
 
     /**
      * Main-app packages Orbit never gets. extended_chat manages the app's ordinary chats (character
@@ -119,20 +127,23 @@ object OrbitPackages {
 
     /**
      * The stored lists, always with the [REQUIRED] packages in and on. A file from before imports
-     * existed counts every package it had on as imported.
+     * existed counts every package it had on as imported. A [DEFAULT] package it was never given is
+     * added, imported and on.
      */
     private fun read(file: File): State? =
         file.takeIf { it.isFile }?.let { stored ->
             runCatching {
                 val json = JSONObject(stored.readText())
-                val enabled = names(json, "enabled").orEmpty() - NOT_FOR_ORBIT
-                val imported = (names(json, "imported") ?: enabled) - NOT_FOR_ORBIT
+                val ungiven = DEFAULT - names(json, "defaults_given").orEmpty()
+                val enabled = names(json, "enabled").orEmpty() - NOT_FOR_ORBIT + ungiven
+                val imported = (names(json, "imported") ?: enabled) - NOT_FOR_ORBIT + ungiven
                 State(imported, enabled.filterTo(LinkedHashSet()) { it in imported }).withRequired()
             }.getOrNull()
         }
 
-    private fun readOrEmpty(file: File) = read(file) ?: State(emptySet(), emptySet()).withRequired()
+    private fun readOrEmpty(file: File) = read(file) ?: State(DEFAULT, DEFAULT).withRequired()
 
+    /** Every state written comes from [readOrEmpty], so by then each [DEFAULT] package was given. */
     private fun write(file: File, given: State) {
         val state = given.withRequired()
         val parent = checkNotNull(file.parentFile)
@@ -143,6 +154,7 @@ object OrbitPackages {
                 val json = JSONObject()
                     .put("imported", JSONArray(state.imported.sorted()))
                     .put("enabled", JSONArray(state.enabled.filter { name -> name in state.imported }.sorted()))
+                    .put("defaults_given", JSONArray(DEFAULT.sorted()))
                 it.write(json.toString().toByteArray(Charsets.UTF_8))
                 it.fd.sync()
             }

@@ -25,6 +25,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -1799,6 +1800,12 @@ private sealed interface BuildEntry {
         override val key get() = "file:" + file.path
         override val time get() = file.modifiedAt
     }
+
+    /** A book's chapters copied by the reading tools (files/reading/<book>/text/), shown as one row. */
+    data class BookText(val book: String, val chapters: List<com.ai.assistance.operit.features.orbit.OrbitFiles.Entry>) : BuildEntry {
+        override val key get() = "book:" + book
+        override val time get() = chapters.maxOf { it.modifiedAt }
+    }
 }
 
 /**
@@ -1845,6 +1852,8 @@ private fun OrbitBuildsPage(
             .also { data.uploads = it }
     }
     var deletingUpload by remember { mutableStateOf<com.ai.assistance.operit.features.orbit.OrbitUploads.Upload?>(null) }
+    // Deleting a made file is permanent, so it asks first.
+    var deletingMade by remember { mutableStateOf<String?>(null) }
     // Pictures, videos, sounds and plain text open in Orbit's own viewer; anything else goes to another app.
     var previewFile by remember { mutableStateOf<java.io.File?>(null) }
     fun viewFile(fileOf: () -> java.io.File) {
@@ -1853,14 +1862,28 @@ private fun OrbitBuildsPage(
         else openOrbitFile(context, fileOf)
     }
     val action = rememberAction()
+    // Books whose copied chapters are shown under their row.
+    // Saved, so a book stays open after switching to another tab and back.
+    val openBooks = rememberSaveable(orbit.id, saver = listSaver(save = { it.toList() }, restore = { it.toMutableStateList() })) {
+        mutableStateListOf<String>()
+    }
     // Pinned files first, in pin order; then works and files together, newest first.
-    val entries = remember(versions, madeFiles, pins) {
+    val entries = remember(versions, madeFiles, pins, openBooks.toList()) {
         val works = versions.orEmpty()
         val fileList = madeFiles?.getOrNull().orEmpty()
         val workRows = works.groupBy { it.artifactId }.values
             .map { group -> BuildEntry.Work(group.maxBy { it.createdAt }, group.size) }
         val (pinned, rest) = fileList.map { BuildEntry.Made(it) }.partition { it.file.path in pins }
-        pinned.sortedBy { pins.indexOf(it.file.path) } + (workRows + rest).sortedByDescending { it.time }
+        // A whole copied book would flood the list, so its chapters fold into one row per book.
+        fun bookOf(path: String) = path.split('/').takeIf { it.size == 5 && it[1] == "reading" && it[3] == "text" }?.get(2)
+        val (texts, others) = rest.partition { bookOf(it.file.path) != null }
+        val books = texts.groupBy { bookOf(it.file.path)!! }.map { (book, list) -> BuildEntry.BookText(book, list.map { it.file }) }
+        pinned.sortedBy { pins.indexOf(it.file.path) } + (workRows + others + books).sortedByDescending { it.time }
+            .flatMap { row ->
+                if (row is BuildEntry.BookText && row.book in openBooks)
+                    listOf(row) + row.chapters.sortedBy { it.path }.map { BuildEntry.Made(it) }
+                else listOf(row)
+            }
     }
 
     val history = openArtifact?.let { id -> versions.orEmpty().filter { it.artifactId == id }.sortedByDescending { it.createdAt } }
@@ -1887,6 +1910,22 @@ private fun OrbitBuildsPage(
                 if (entries.isEmpty() && files.isSuccess) item(key = "empty") { Hint(stringResource(R.string.orbit_builds_made_empty, who)) }
                 items(entries, key = { it.key }) { entry ->
                     when (entry) {
+                        is BuildEntry.BookText -> {
+                            val open = entry.book in openBooks
+                            val toggle = { if (open) openBooks.remove(entry.book) else openBooks.add(entry.book) }
+                            BuildRow(
+                                tile = { FileTile(entry.book + ".md") },
+                                title = entry.book,
+                                subtitle = stringResource(R.string.orbit_builds_book_text, entry.chapters.size) +
+                                    " · " + shortDate(entry.time),
+                                onClick = { toggle() },
+                            ) { close ->
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(if (open) R.string.orbit_builds_book_text_hide else R.string.orbit_builds_book_text_show)) },
+                                    onClick = { close(); toggle() },
+                                )
+                            }
+                        }
                         is BuildEntry.Work -> BuildRow(
                             tile = { FileTile(entry.latest.name, work = true, seed = entry.latest.artifactId) },
                             title = entry.latest.name,
@@ -1933,17 +1972,7 @@ private fun OrbitBuildsPage(
                                     onClick = { close(); shareOrbitFile(context) { orbitFiles.fileFor(file.path) } })
                                 DropdownMenuItem(
                                     text = { Text(stringResource(R.string.orbit_file_delete), color = MaterialTheme.colorScheme.error) },
-                                    onClick = {
-                                        close()
-                                        action {
-                                            try {
-                                                orbitFiles.delete(file.path)
-                                                showToast(context, resources.getString(R.string.orbit_builds_moved_to_trash))
-                                            } finally {
-                                                filesReload++
-                                            }
-                                        }
-                                    },
+                                    onClick = { close(); deletingMade = file.path },
                                 )
                             }
                         }
@@ -2008,6 +2037,27 @@ private fun OrbitBuildsPage(
                 }) { Text(stringResource(R.string.orbit_file_delete)) }
             },
             dismissButton = { OrbitDialogAction(onClick = { deletingUpload = null }, secondary = true) { Text(stringResource(R.string.cancel)) } },
+        )
+    }
+    deletingMade?.let { path ->
+        OrbitDialog(
+            onDismissRequest = { deletingMade = null },
+            title = stringResource(R.string.orbit_file_delete_title),
+            text = { Text(path.substringAfterLast('/') + "\n" + stringResource(R.string.orbit_file_delete_text)) },
+            confirmButton = {
+                OrbitDialogAction(destructive = true, onClick = {
+                    deletingMade = null
+                    action {
+                        try {
+                            orbitFiles.delete(path)
+                            showToast(context, resources.getString(R.string.orbit_file_deleted))
+                        } finally {
+                            filesReload++
+                        }
+                    }
+                }) { Text(stringResource(R.string.orbit_file_delete)) }
+            },
+            dismissButton = { OrbitDialogAction(onClick = { deletingMade = null }, secondary = true) { Text(stringResource(R.string.cancel)) } },
         )
     }
     // A work's page slides in over the list; the back swipe slides it away under the finger.

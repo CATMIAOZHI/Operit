@@ -64,14 +64,14 @@ After placing the card, end the turn with one short line. The user taps and conf
 The tool does not give you the zip or its path. A card appearing does not mean an export has completed.
 
 The export includes this Orbit's ordinary folder contents, such as files, memory and skills, plus tasks, goals, run records, and Markdown for the main chat and side chats.
-Trash, temporary files and the vault are outside this export.
+Temporary files and the vault are outside this export.
 Do not describe it as one-click restoration, a complete backup of every account, or a copy of all internal instructions and thinking used by the chat model.
 After sharing to another app, that copy is managed by the user and recipient.
 
 ## Deleting and forgetting
 
 Correcting a memory, deleting a file, deleting a chat and forgetting something are separate operations.
-Ordinary file deletion usually keeps an item in trash for 30 days; upload-area deletion and permanent cleanup have different rules. See [files-and-library.md](files-and-library.md).
+There is no trash: deleting a file is permanent and cannot be undone. See [files-and-library.md](files-and-library.md).
 Editing a note does not automatically remove chats, artifacts or other copies.
 
 When the user wants to forget information, first use `orbit_forget action=plan` to find copies and the cleanup scope in this Orbit.

@@ -311,6 +311,21 @@ class ToolInvocationExtractionTest {
     }
 
     @Test
+    fun executableExtraction_keepsExplicitEmptyParameter() = runBlocking {
+        val content =
+            "<tool name=\"edit_file\">" +
+                "<param name=\"path\">a.txt</param><param name=\"old\">drop</param><param name=\"new\"></param>" +
+                "</tool>"
+
+        val invocations = withoutAndroidLogging {
+            ToolExecutionManager.extractExecutableToolInvocations(content)
+        }
+
+        val parameters = invocations.single().tool.parameters.associate { it.name to it.value }
+        assertEquals("", parameters["new"])
+    }
+
+    @Test
     fun executableExtraction_ignoresParametersInsideUnknownContainers() = runBlocking {
         val content =
             "<tool name=\"write_file\">" +

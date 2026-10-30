@@ -2097,7 +2097,13 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                         }
                 s(R.string.toolreg_delete_file_desc, operation, path, envInfo)
             },
-            executor = { tool -> runBlocking(Dispatchers.IO) { fileSystemTools.deleteFile(tool) } }
+            // Inside an Orbit's folder only its notes and files/ can go, and the people index stays current.
+            executor = { tool ->
+                runBlocking(Dispatchers.IO) {
+                    com.ai.assistance.operit.features.orbit.OrbitFolderGuard.deleteFile(context, tool)
+                        ?: fileSystemTools.deleteFile(tool)
+                }
+            }
     )
 
     // UI自动化工具

@@ -23,7 +23,7 @@ internal object OrbitExtraTools {
 
     val specs: List<Spec> by lazy {
         listOf(
-            Spec(OrbitFileTools.prompt, true, OrbitFileTools::execute),
+            Spec(OrbitFileTools.prompt, true, OrbitFileTools::execute, OrbitFileTools::run),
             Spec(OrbitLogTools.prompt, true, OrbitLogTools::execute),
             Spec(OrbitVoiceTools.prompt, true, OrbitVoiceTools::execute),
             Spec(OrbitGoalNoteTools.prompt, true, OrbitGoalNoteTools::execute),
@@ -43,6 +43,7 @@ internal object OrbitExtraTools {
             Spec(OrbitMcpTools.prompt, true, OrbitMcpTools::execute, OrbitMcpTools::run),
             Spec(OrbitSettingsTools.prompt, false, OrbitSettingsTools::execute),
             Spec(OrbitUsageTools.prompt, true, OrbitUsageTools::execute),
+            Spec(OrbitReadingTools.prompt, true, OrbitReadingTools::execute, OrbitReadingTools::run),
             Spec(OrbitPermissionTools.prompt, false, OrbitPermissionTools::execute),
             Spec(OrbitBrowserHandoffTools.prompt, false, OrbitBrowserHandoffTools::execute),
             Spec(OrbitBrowserShowTools.prompt, false, OrbitBrowserShowTools::execute),

@@ -295,11 +295,11 @@ object SystemToolPrompts {
             ),
             ToolPrompt(
                 name = "edit_file",
-                description = "Edit an existing file by delegating to apply_file with type=replace.",
+                description = "Replace one piece of text in an existing file. Copy `old` exactly from the current file (read it first); it must match exactly one place. Only whitespace at the ends of whole lines and typographic quotes/dashes are tolerated; there is no similarity matching. If `old` matches nothing or several places, nothing is changed: re-read the file, or add surrounding lines to `old`. The result reports the edited line numbers and a diff.",
                 parametersStructured = listOf(
                     ToolParameterSchema(name = "path", type = "string", description = "file path", required = true),
-                    ToolParameterSchema(name = "old", type = "string", description = "the exact content to be matched and replaced", required = true),
-                    ToolParameterSchema(name = "new", type = "string", description = "the new content to insert", required = true),
+                    ToolParameterSchema(name = "old", type = "string", description = "text copied exactly from the file; must appear exactly once", required = true),
+                    ToolParameterSchema(name = "new", type = "string", description = "replacement text, inserted exactly as given (including indentation); an empty string deletes `old`", required = true),
                     ToolParameterSchema(name = "environment", type = "string", description = "optional, same as read_file environment", required = false)
                 )
             ),
@@ -425,11 +425,11 @@ object SystemToolPrompts {
             ),
             ToolPrompt(
                 name = "edit_file",
-                description = "通过委托给 apply_file 且 type=replace 来编辑已存在文件。",
+                description = "替换已存在文件中的一段文字。`old` 必须从当前文件原样复制（先读文件），且在文件里只出现一次。只容忍整行首尾空白和中英文弯引号/破折号的差别，没有相似度匹配。`old` 找不到或出现多处时不会改动任何内容：请重新读文件，或在 `old` 里多带几行上下文。成功后返回改动的行号和差异。",
                 parametersStructured = listOf(
                     ToolParameterSchema(name = "path", type = "string", description = "文件路径", required = true),
-                    ToolParameterSchema(name = "old", type = "string", description = "用于匹配并替换的原始内容", required = true),
-                    ToolParameterSchema(name = "new", type = "string", description = "要插入的新内容", required = true),
+                    ToolParameterSchema(name = "old", type = "string", description = "从文件原样复制的原文，只能出现一次", required = true),
+                    ToolParameterSchema(name = "new", type = "string", description = "替换后的文字，按原样写入（包括缩进）；传空字符串表示删除 `old`", required = true),
                     ToolParameterSchema(name = "environment", type = "string", description = "可选，同 read_file 的 environment", required = false)
                 )
             ),
