@@ -279,6 +279,10 @@ object OrbitPackages {
                     val needed = dependents(packageManager, current.enabled, name)
                     if (needed.isNotEmpty()) throw StillNeededException(name, needed)
                     write(file, current.copy(enabled = current.enabled - name))
+                    // Switched off: this Orbit's background phone screens stop with it.
+                    if (name == "phone_control") {
+                        com.ai.assistance.operit.core.tools.phone.PhoneBackgroundControl.stopOrbit(orbitId)
+                    }
                     emptySet()
                 }
             }
@@ -332,6 +336,9 @@ object OrbitPackages {
                 val needed = dependents(packageManager, current.enabled, name)
                 if (needed.isNotEmpty()) throw StillNeededException(name, needed)
                 write(file, State(current.imported - name, current.enabled - name))
+            }
+            if (name == "phone_control") {
+                com.ai.assistance.operit.core.tools.phone.PhoneBackgroundControl.stopOrbit(orbitId)
             }
             pruneCopies(context, packageManager)
         }

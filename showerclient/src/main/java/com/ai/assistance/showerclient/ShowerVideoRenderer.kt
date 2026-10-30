@@ -110,6 +110,8 @@ class ShowerVideoRenderer {
                         csd1 = packet
                     }
                 } else {
+                    // Without SPS/PPS nothing decodes; keep only the latest frames meanwhile.
+                    if (pendingFrames.size >= 120) pendingFrames.removeAt(0)
                     pendingFrames.add(packet)
                 }
 

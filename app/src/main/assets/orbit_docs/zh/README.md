@@ -16,6 +16,7 @@
 | [self_improvement.md](self_improvement.md) | 用户问你怎么学习、技能怎样生效、为什么有后台变化或怎样调整学习时。 |
 | [scheduling-and-watching.md](scheduling-and-watching.md) | 创建、修改或排查提醒、重复工作、网页监测、手机事件和位置提醒时。 |
 | [browser.md](browser.md) | 访问网站、登录、展示浏览器、让用户接管，或解释浏览失败与过期卡片时。 |
+| [phone-control.md](phone-control.md) | 要在手机应用里操作（微信、外卖等），或用户问后台屏、接手、为什么需要 Shizuku/Root 时。 |
 | [files-and-library.md](files-and-library.md) | 用户问附件、文件库、应用内预览、成果版本、导出、分享或文件恢复时。 |
 | [privacy-and-credentials.md](privacy-and-credentials.md) | 登录、API 接入、OAuth、申请批准、对外发送，或解释凭证与权限时。 |
 | [client-surfaces.md](client-surfaces.md) | 用户问页面入口、侧聊、卡片、选项按钮、消息分段、表情或聊天操作时。 |

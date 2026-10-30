@@ -116,21 +116,36 @@ class InputController {
         return t * t * (3f - 2f * t);
     }
 
-    private void inject(InputEvent event) {
+    /** True once the event was injected (for a key on a virtual display: handled by the app). */
+    private boolean inject(InputEvent event) {
         try {
             int currentDisplayId = displayId;
-            if (setDisplayIdMethod != null && currentDisplayId != 0) {
+            if (currentDisplayId != 0) {
+                // Input meant for a virtual display must never fall through to the phone's own screen.
+                if (setDisplayIdMethod == null) {
+                    Main.logToFile("InputController: setDisplayId unavailable; input for display " + currentDisplayId + " dropped", null);
+                    return false;
+                }
                 try {
                     setDisplayIdMethod.invoke(event, currentDisplayId);
+                    Object set = InputEvent.class.getMethod("getDisplayId").invoke(event);
+                    if (!(set instanceof Integer) || (Integer) set != currentDisplayId) {
+                        Main.logToFile("InputController: event display is " + set + ", not " + currentDisplayId + "; dropped", null);
+                        return false;
+                    }
                 } catch (Exception e) {
                     Log.e(TAG, "setDisplayId failed", e);
                     Main.logToFile("InputController.setDisplayId failed: " + e.getMessage(), e);
+                    return false;
                 }
             }
 
             boolean ok;
             try {
-                ok = (Boolean) injectInputEventMethod.invoke(inputManager, event, 0);
+                // Keys on a virtual display wait until the app has handled them (mode 2,
+                // WAIT_FOR_FINISH): a paste must read the clipboard before anyone changes it.
+                int mode = (event instanceof KeyEvent && currentDisplayId != 0) ? 2 : 0;
+                ok = (Boolean) injectInputEventMethod.invoke(inputManager, event, mode);
             } catch (java.lang.reflect.InvocationTargetException e) {
                 Throwable cause = e.getCause();
                 if (cause instanceof SecurityException) {
@@ -141,16 +156,18 @@ class InputController {
                     Log.e(TAG, "inject InvocationTargetException", e);
                     Main.logToFile("InputController.inject InvocationTargetException: " + e.getMessage(), e);
                 }
-                return;
+                return false;
             }
 
             if (!ok) {
                 Log.e(TAG, "inject returned false");
                 Main.logToFile("InputController.inject returned false for event=" + event, null);
             }
+            return ok;
         } catch (Exception e) {
             Log.e(TAG, "inject failed", e);
             Main.logToFile("InputController.inject failed: " + e.getMessage(), e);
+            return false;
         }
     }
 
@@ -162,11 +179,15 @@ class InputController {
         long now = SystemClock.uptimeMillis();
         KeyEvent down = new KeyEvent(now, now, KeyEvent.ACTION_DOWN, keyCode, 0, metaState);
         down.setSource(InputDevice.SOURCE_KEYBOARD);
-        inject(down);
+        boolean handled = inject(down);
 
         KeyEvent up = new KeyEvent(now, now, KeyEvent.ACTION_UP, keyCode, 0, metaState);
         up.setSource(InputDevice.SOURCE_KEYBOARD);
-        inject(up);
+        handled = inject(up) && handled;
+        // On a virtual display the caller must know a key was not confirmed (a paste may still be pending).
+        if (!handled && displayId != 0) {
+            throw new IllegalStateException("Key " + keyCode + " was not confirmed on display " + displayId);
+        }
     }
 
     void injectTap(float x, float y) {

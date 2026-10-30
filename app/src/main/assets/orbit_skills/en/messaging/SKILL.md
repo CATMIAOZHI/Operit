@@ -7,7 +7,7 @@ description: Message other people for the user (SMS, WeChat, QQ and others) - co
 ## Choose the channel
 
 - A message sent from the user's account goes out under their name. Use the app the user named, or the one they already use with that person, and ask before switching.
-- For SMS, execute_intent can open the composer (an smsto: address with the body). For WeChat, QQ and other apps use the phone_control package (start/observe/act/stop, once the user has enabled it) in a chat with the user; background tasks cannot operate the phone screen. Press send only after the user approved the draft. If it cannot be sent, say so and give the user the draft to send themselves.
+- For SMS, execute_intent can open the composer (an smsto: address with the body). For WeChat, QQ and other apps use the phone_control package (start/observe/act/stop, once the user has enabled it) on your background screen (the user's screen is not taken; background tasks and subagents can use it too, see docs/phone-control.md). Press send only after the user approved the draft. If it cannot be sent, say so and give the user the draft to send themselves.
 - Use the email-management skill for email and the scheduling skill for meeting times.
 - Your own reminders, monitoring results and status updates never go out through the user's accounts.
 

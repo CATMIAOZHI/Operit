@@ -100,17 +100,40 @@ class ShowerController {
 
     private val binaryLock = Any()
     private val earlyBinaryFrames = ArrayDeque<ByteArray>()
+    /** The latest SPS and PPS: a viewer that attaches late needs them before any frame. */
+    private val configFrames = arrayOfNulls<ByteArray>(2)
 
     @Volatile
     private var binaryHandler: ((ByteArray) -> Unit)? = null
 
+    /** The type of the first H.264 NAL unit in an Annex-B packet; -1 when unknown. */
+    private fun nalType(packet: ByteArray): Int {
+        var i = 0
+        while (i + 3 < packet.size) {
+            if (packet[i] == 0.toByte() && packet[i + 1] == 0.toByte()) {
+                if (packet[i + 2] == 1.toByte()) return packet[i + 3].toInt() and 0x1F
+                if (i + 4 < packet.size && packet[i + 2] == 0.toByte() && packet[i + 3] == 1.toByte()) {
+                    return packet[i + 4].toInt() and 0x1F
+                }
+            }
+            i++
+            if (i > 8) break
+        }
+        return -1
+    }
+
+    /**
+     * Sets the receiver of the video stream. A new receiver first gets the latest SPS/PPS, then the
+     * frames since the latest keyframe, so it can start decoding however late it attaches.
+     * Call it off the main thread: the replay goes through the decoder.
+     */
     fun setBinaryHandler(handler: ((ByteArray) -> Unit)?) {
         val framesToReplay: List<ByteArray>
         synchronized(binaryLock) {
             binaryHandler = handler
             ShowerLog.d(TAG, "setBinaryHandler: id=${virtualDisplayId} handlerSet=${handler != null}, bufferedFrames=${earlyBinaryFrames.size}")
-            framesToReplay = if (handler != null && earlyBinaryFrames.isNotEmpty()) {
-                val list = earlyBinaryFrames.toList()
+            framesToReplay = if (handler != null) {
+                val list = configFrames.filterNotNull() + earlyBinaryFrames.toList()
                 earlyBinaryFrames.clear()
                 list
             } else {
@@ -128,16 +151,28 @@ class ShowerController {
         }
     }
 
+    /** Removes [handler], unless another one has replaced it meanwhile. */
+    fun clearBinaryHandler(handler: (ByteArray) -> Unit) {
+        synchronized(binaryLock) {
+            if (binaryHandler === handler) binaryHandler = null
+        }
+    }
+
     private val videoSink = object : IShowerVideoSink.Stub() {
         override fun onVideoFrame(data: ByteArray) {
             val handler: ((ByteArray) -> Unit)?
             synchronized(binaryLock) {
                 handler = binaryHandler
-                if (handler == null) {
-                    if (earlyBinaryFrames.size >= 120) {
-                        earlyBinaryFrames.removeFirst()
+                when (val type = nalType(data)) {
+                    7, 8 -> configFrames[type - 7] = data
+                    else -> if (handler == null) {
+                        // Frames before a keyframe cannot be decoded once it is here.
+                        if (type == 5) earlyBinaryFrames.clear()
+                        if (earlyBinaryFrames.size >= 120) {
+                            earlyBinaryFrames.removeFirst()
+                        }
+                        earlyBinaryFrames.addLast(data)
                     }
-                    earlyBinaryFrames.addLast(data)
                 }
             }
             handler?.invoke(data)

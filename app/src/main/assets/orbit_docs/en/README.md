@@ -16,6 +16,7 @@ Choose the document relevant to the question; you do not need to read the whole 
 | [self_improvement.md](self_improvement.md) | When the user asks how you learn, when skills take effect, why something changed in the background, or how to adjust learning. |
 | [scheduling-and-watching.md](scheduling-and-watching.md) | When creating, changing, or troubleshooting reminders, recurring work, web monitoring, phone events, or location reminders. |
 | [browser.md](browser.md) | When visiting websites, signing in, showing the browser, requesting user takeover, or explaining browser failures and expired cards. |
+| [phone-control.md](phone-control.md) | When working in phone apps (WeChat, delivery apps and the like), or when the user asks about the background screen, taking over, or why Shizuku/Root is needed. |
 | [files-and-library.md](files-and-library.md) | When the user asks about attachments, the library, in-app previews, artifact versions, exports, sharing, or file recovery. |
 | [privacy-and-credentials.md](privacy-and-credentials.md) | When signing in, connecting an API or OAuth account, requesting approval, sending externally, or explaining credentials and permissions. |
 | [client-surfaces.md](client-surfaces.md) | When the user asks about navigation, side chats, cards, option buttons, message splitting, reactions, or chat controls. |

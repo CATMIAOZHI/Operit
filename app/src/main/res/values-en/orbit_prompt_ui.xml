@@ -185,4 +185,11 @@
     <string name="orbit_attach_location">Location</string>
     <string name="orbit_attach_region">Region</string>
     <string name="orbit_floating_attach_note">To send photos or files, go back to Orbit\'s chat page</string>
+    <string name="orbit_phone_card_title">Background screen</string>
+    <string name="orbit_phone_card_summary">[Background screen: %1$s]</string>
+    <string name="orbit_phone_card_working">%1$s is working in the background, not on your screen</string>
+    <string name="orbit_phone_card_closed">Background screen closed</string>
+    <string name="orbit_phone_card_watch">Watch</string>
+    <string name="orbit_phone_watch_back">Back</string>
+    <string name="orbit_phone_watch_hint">Watching only. Tap Take over to use it yourself</string>
 </resources>

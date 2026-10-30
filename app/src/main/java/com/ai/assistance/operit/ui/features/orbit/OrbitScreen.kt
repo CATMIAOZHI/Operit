@@ -185,6 +185,8 @@ fun OrbitScreen(
     // With the app lock on, nothing of Orbit draws until the system check is passed.
     OrbitAppLockGate(enabled = loadedSettings.appLock, orbit = loadedSettings.active) {
         OrbitScreenContent(loadedSettings, hasBackgroundImage, onManageRoleCards, chatContent)
+        // Orbit's background phone screen in full, opened from its card in the chat.
+        OrbitPhoneWatchHost()
     }
 }
 
@@ -731,7 +733,10 @@ private fun OrbitChatPage(
                             val cardVisible = chatOnScreen && stack.isEmpty() && editingFile == null
                             remember(currentChatId, cardVisible) {
                                 { color: androidx.compose.ui.graphics.Color, slot: com.ai.assistance.operit.ui.features.chat.components.OrbitCardSlot ->
-                                    OrbitBrowserCard(currentChatId, color, cardVisible, slot)
+                                    androidx.compose.foundation.layout.Column {
+                                        OrbitBrowserCard(currentChatId, color, cardVisible, slot)
+                                        OrbitPhoneCard(currentChatId, color, cardVisible, slot)
+                                    }
                                 }
                             }
                         },
