@@ -1852,6 +1852,8 @@ private fun OrbitBuildsPage(
             .also { data.uploads = it }
     }
     var deletingUpload by remember { mutableStateOf<com.ai.assistance.operit.features.orbit.OrbitUploads.Upload?>(null) }
+    // Deleting a made file is permanent, so it asks first.
+    var deletingMade by remember { mutableStateOf<String?>(null) }
     // Pictures, videos, sounds and plain text open in Orbit's own viewer; anything else goes to another app.
     var previewFile by remember { mutableStateOf<java.io.File?>(null) }
     fun viewFile(fileOf: () -> java.io.File) {
@@ -1970,17 +1972,7 @@ private fun OrbitBuildsPage(
                                     onClick = { close(); shareOrbitFile(context) { orbitFiles.fileFor(file.path) } })
                                 DropdownMenuItem(
                                     text = { Text(stringResource(R.string.orbit_file_delete), color = MaterialTheme.colorScheme.error) },
-                                    onClick = {
-                                        close()
-                                        action {
-                                            try {
-                                                orbitFiles.delete(file.path)
-                                                showToast(context, resources.getString(R.string.orbit_builds_moved_to_trash))
-                                            } finally {
-                                                filesReload++
-                                            }
-                                        }
-                                    },
+                                    onClick = { close(); deletingMade = file.path },
                                 )
                             }
                         }
@@ -2045,6 +2037,27 @@ private fun OrbitBuildsPage(
                 }) { Text(stringResource(R.string.orbit_file_delete)) }
             },
             dismissButton = { OrbitDialogAction(onClick = { deletingUpload = null }, secondary = true) { Text(stringResource(R.string.cancel)) } },
+        )
+    }
+    deletingMade?.let { path ->
+        OrbitDialog(
+            onDismissRequest = { deletingMade = null },
+            title = stringResource(R.string.orbit_file_delete_title),
+            text = { Text(path.substringAfterLast('/') + "\n" + stringResource(R.string.orbit_file_delete_text)) },
+            confirmButton = {
+                OrbitDialogAction(destructive = true, onClick = {
+                    deletingMade = null
+                    action {
+                        try {
+                            orbitFiles.delete(path)
+                            showToast(context, resources.getString(R.string.orbit_file_deleted))
+                        } finally {
+                            filesReload++
+                        }
+                    }
+                }) { Text(stringResource(R.string.orbit_file_delete)) }
+            },
+            dismissButton = { OrbitDialogAction(onClick = { deletingMade = null }, secondary = true) { Text(stringResource(R.string.cancel)) } },
         )
     }
     // A work's page slides in over the list; the back swipe slides it away under the finger.

@@ -1215,7 +1215,7 @@ internal fun orbitPermissionLevel(
 /** Generic file tools that only read; in an Orbit's chat they run unreviewed inside its own folder. */
 private val ORBIT_FOLDER_READ_TOOLS = setOf(
     "read_file", "read_file_part", "read_file_full", "read_file_binary",
-    "list_files", "grep_code", "file_exists", "file_info",
+    "list_files", "find_files", "grep_code", "file_exists", "file_info",
 )
 
 /**
