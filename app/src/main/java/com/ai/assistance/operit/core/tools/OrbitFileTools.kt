@@ -23,34 +23,29 @@ internal object OrbitFileTools {
 
     val prompt = ToolPrompt(
         name = NAME,
-        description = "读写你自己文件夹里的文件：人物、圈子与关系笔记、每日流水、经验本、主动消息偏好、时区、对齐总结、设备，以及 files/ 里给用户做的文件。" +
-            "删除是永久删除，没有回收站。还能把应用里别处的文件（比如画好的图）收进 files/，把 Markdown 导出成网页、Word 或 PDF。",
+        description = "你文件夹里的 Orbit 专属操作：列出笔记和文件、写每日流水、把文件发进聊天、把应用别处的文件收进 files/、" +
+            "把 Markdown 导出成网页、Word 或 PDF、保存 Orbit 部分的系统提示词。读、改、新建、删除文件用应用的文件工具。",
         parametersStructured = listOf(
-            ToolParameterSchema("action", description = "list/read/write/append/delete/daily/prompt_copy/import/export/send", required = true),
-            ToolParameterSchema("path", description = "短路径，如 memory/people/张三.md、LESSONS.md、files/报告.md；也可以填你文件夹里的完整路径。read/write/append/delete/export/send 必填；import 时是存到 files/ 下的目标路径（可省略）", required = false),
-            ToolParameterSchema("text", description = "write：完整新内容；append/daily：要追加的一段或一行", required = false),
+            ToolParameterSchema("action", description = "list/daily/send/import/export/prompt_copy", required = true),
+            ToolParameterSchema("path", description = "短路径，如 files/报告.md；也可以填你文件夹里的完整路径。send/export 必填；import 时是存到 files/ 下的目标路径（可省略）", required = false),
+            ToolParameterSchema("text", description = "daily：要追加的一行", required = false),
             ToolParameterSchema("folder", description = "list 可选：只看这个文件夹下的，如 memory/people、files、files/reading/三体/text", required = false),
             ToolParameterSchema("offset", "integer", "list 可选：从第几个开始列（从 0 开始），用上次返回的 next_offset 继续", false),
-            ToolParameterSchema("start_line", "integer", "read 可选：从第几行开始读（从 1 开始），默认 1", false),
-            ToolParameterSchema("line_count", "integer", "read 可选：最多读几行，默认读到 20000 字为止", false),
-            ToolParameterSchema("start_char", "integer", "read 可选：只在接着读一行特别长的行时用，表示从 start_line 这一行的第几个字开始（从 1 开始）", false),
             ToolParameterSchema("source", description = "import：应用里已有文件的绝对路径，比如终端或其他工具生成的文件", required = false),
             ToolParameterSchema("format", description = "export：html、docx 或 pdf", required = false),
         ),
         details = """
+  - 读、改、新建、删除文件用应用的文件工具（environment=android），path 填完整路径：你的 Orbit 文件夹路径 + 短路径（文件夹路径写在运行信息里）。读用 read_file，按行读用 read_file_part；改一处用 edit_file（old 必须和文件原文一字不差，对不上就不会改，先读再改）；新建或整篇重写用 write_file；删除用 delete_file。删除是永久删除，没有回收站，除非用户明确要删，先确认。搜文字用 grep_code。
   - 人物：memory/people/<名字>.md，一人一份；圈子与关系：memory/groups/<圈子名>.md，一圈一份，记录家人、同事、朋友等圈子的成员、彼此关系、用户在其中的角色及共同经历，不是创建聊天群。只为用户明确提到的人和圈子建档，不靠推断新建；只记录已知事实，不猜测关系。第一行写「# 名字」，下面写关系、近况、要记住的事。INDEX.md 由应用自动维护，不用写。
   - 每日流水：daily 往今天的 memory/YYYY-MM-DD.md 追加一行观察，最多 600 字，换行会变成空格。后台任务的运行结果会自动记进去。流水不是长期记忆，长期要记的事用记忆工具写进 memory.md。
-  - user.md 和 memory.md 只能用 read 查看（它们本来就全文在你的上下文里）；要改用 memory_review。SOUL.md、IDENTITY.md 用 orbit_soul。
-  - LESSONS.md：做事的约定和教训。踩过坑、用户纠正过做法时，用 append 记一条。
+  - user.md 和 memory/memory.md 本来就全文在你的上下文里，要改用 memory_review。SOUL.md、IDENTITY.md 用 orbit_soul。
+  - LESSONS.md：做事的约定和教训。踩过坑、用户纠正过做法时，记一条。
   - PROACTIVE_PREFERENCES.md：用户对主动消息的偏好，四节：想听的、别跟我说、什么时候、怎么说。只改相关的那一节；一次拒绝不写成长期禁令。
   - timezones.yaml：用户的长期时区（home）和常联系的人的时区（others）。
   - ALIGNMENT_SYNTHESIS.md：对齐总结（和用户怎么相处），每晚对齐复盘重写。dreams/YYYY-MM-DD.md 是每晚复盘记录，alignment/ 下的 ALIGNMENT_STATE.yaml、PROGRESSION_HISTORY.yaml、REPAIR_THREADS.yaml 是复盘状态，只由复盘维护。
   - DEVICES.md：你能连上的设备，比如 Tailscale 组网里的电脑、NAS。不写密码。
   - files/：给用户做的文件，会出现在「构建」页的文件里。
-  - read 一次最多返回 20000 字；没读完时末尾会写明读到第几行、下次怎么接着读（照着提示填 start_line，长行还要填 start_char）。list 一次最多 200 个，有 next_offset 时用 offset 接着列。
-  - 路径：保存和引用都用短路径。path、folder 也接受你文件夹里的完整路径（比如 grep_code 搜出来的），会自动换成短路径；文件夹外的完整路径不行。要搜文字，用 grep_code（environment=android），path 填完整路径，尽量指到具体文件夹，比如一本书的 files/reading/书名/text。
-  - write 会覆盖整个文件，已有内容的文件必须先 read 再改；读完之后如果文件被用户或后台任务改过，write 会被拒绝、什么都不写，这时重新 read 再改。返回会说明新建还是覆盖、现在几行，以及改了哪些行。
-  - delete：永久删除一个文件，删了就找不回来。除非用户明确要删，删之前先跟用户确认。删 files/ 下的整个文件夹用 delete_file（path 填完整路径，非空文件夹要 recursive=true）。
+  - list 一次最多 200 个，有 next_offset 时用 offset 接着列。path、folder 也接受你文件夹里的完整路径，会自动换成短路径；文件夹外的完整路径不行。
   - prompt_copy：用户要你的系统提示词时用，把 Orbit 部分（Orbit 段落和 SOUL.md，不含应用通用规则）存成 files/ 里的一份文件，告诉用户这是 Orbit 部分，在构建页的文件里找。
   - send：把 files/ 里的一个文件直接发到聊天里，像真人发消息一样。图片显示成图片，用户点开全屏看，底部有「保存」按钮；文本文件（txt、md、json、csv 等）点开在应用里直接显示；其他文件显示成附件卡，用户点一下用别的应用打开。只能在和用户的聊天里用。发完不要再贴路径。
   - import：把应用里别处的文件收进 files/（比如终端或其他工具生成的文件），用户就能在构建页的文件里看到。要给用户看，接着用 send 发到聊天里；音频会返回 markdown，可以放进回复里播放。
@@ -86,50 +81,16 @@ internal object OrbitFileTools {
                     JSONObject().put("total", all.size).put("offset", offset).put("returned", page.size)
                         .put("next_offset", next ?: JSONObject.NULL)
                         .put("files", JSONArray(page.map {
-                            JSONObject().put("path", it.path).put("title", it.title)
-                                .put("size", if (it.size < 0) "empty template" else it.size)
+                            JSONObject().put("path", java.io.File(root, it.path).absolutePath).put("title", it.title)
+                                .put("size", if (it.size < 0) "not created yet; create it with write_file" else it.size)
                         }))
                         .toString()
-                }
-                "read" -> {
-                    val text = files.read(arg("path"))
-                    remember(orbit.id, runtime?.callerChatId, arg("path"), text)
-                    paged(arg("path"), text, args["start_line"], args["line_count"], args["start_char"])
-                }
-                "write" -> {
-                    val path = arg("path")
-                    val text = args["text"] ?: error("write needs text: the whole new content of the file")
-                    val stored = files.readStored(path)
-                    refuseForgotten(context, orbit.id, stored, text)
-                    val seen = seen(orbit.id, runtime?.callerChatId, path)
-                    // A file with real content is replaced only from what this chat last read of it,
-                    // so an edit the user or a background task made in between is never overwritten.
-                    val base = when {
-                        stored == null -> files.template(OrbitFiles.normalize(path)).orEmpty()
-                        seen == null -> error("Read $path first: write replaces the whole file, so start from what it holds now")
-                        else -> seen
-                    }
-                    val written = try {
-                        files.writeIfUnchanged(path, base, text)
-                    } catch (e: OrbitFiles.ChangedMeanwhile) {
-                        error("$path changed after you read it (the user or a background task edited it). Nothing was " +
-                            "written. Read it again and apply your change to what it holds now.")
-                    }
-                    remember(orbit.id, runtime?.callerChatId, path, text)
-                    wrote(context, written)
-                }
-                "append" -> {
-                    refuseForgotten(context, orbit.id, null, arg("text"))
-                    appended(files.append(arg("path"), arg("text")))
                 }
                 "daily" -> {
                     val line = arg("text")
                     val cut = line.replace(Regex("\\s+"), " ").trim().length > OrbitFiles.MAX_DAILY_LINE
                     appended(files.appendDaily(line)) +
                         if (cut) " The line was longer than ${OrbitFiles.MAX_DAILY_LINE} characters and was cut; write the rest as another line." else ""
-                }
-                "delete" -> {
-                    "Deleted ${files.delete(arg("path"))} for good (there is no recycle bin)."
                 }
                 "send" -> {
                     check(OrbitPreferences.getInstance(context).current().orbitForChat(runtime?.callerChatId) != null) {
@@ -194,7 +155,12 @@ internal object OrbitFileTools {
                     val entry = files.saveBytes(path, text.byteInputStream())
                     "Saved as ${entry.path} (full path ${files.fileFor(entry.path).absolutePath}). The user finds it under Files in the Builds tab."
                 }
-                else -> error("Unknown action \"${args["action"].orEmpty()}\"; use list, read, write, append, daily, delete, send, import, export or prompt_copy")
+                else -> error(when (args["action"]) {
+                    "read", "write", "append", "delete" -> "orbit_file no longer reads or changes files. Use the app's file tools " +
+                        "(environment=android) with the full path ${root.absolutePath}/<short path>: read_file or read_file_part to read, " +
+                        "edit_file to change part of a file, write_file to create or rewrite one, delete_file to delete."
+                    else -> "Unknown action \"${args["action"].orEmpty()}\"; use list, daily, send, import, export or prompt_copy"
+                })
             }
             ToolResult(tool.name, true, StringResultData(result))
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -250,33 +216,6 @@ internal object OrbitFileTools {
         return if (unix.isEmpty()) 0 else unix.removeSuffix("\n").lines().size
     }
 
-    /**
-     * What a write did, like the app's own file tools: the path, new or overwritten, its size now,
-     * and the changed lines as a diff, so Orbit knows exactly what it put in the file.
-     */
-    private fun wrote(context: Context, w: OrbitFiles.Written): String {
-        val size = "${lineCount(w.after)} lines, ${w.after.length} characters"
-        val before = w.before
-        return when {
-            !w.existed -> "Created ${w.path} ($size)."
-            before == null -> "Overwrote ${w.path} (now $size)."
-            before == w.after -> "No change: ${w.path} already had this content ($size)."
-            else -> {
-                val old = before.replace("\r\n", "\n")
-                val new = w.after.replace("\r\n", "\n")
-                // The diff search grows with the square of the lines; a big rewrite only gets counts.
-                if (old.length + new.length > MAX_DIFF_INPUT || lineCount(old) + lineCount(new) > MAX_DIFF_LINES) {
-                    return "Overwrote ${w.path} (now $size; was ${lineCount(before)} lines). " +
-                        "Too large to show the changes; read the file to check it."
-                }
-                val diff = com.ai.assistance.operit.api.chat.enhance.FileBindingService(context).generateUnifiedDiff(old, new)
-                val shown = if (diff.length <= MAX_DIFF) diff
-                else diff.take(MAX_DIFF).substringBeforeLast('\n') + "\n… (diff cut; read the file to see the rest)"
-                "Overwrote ${w.path} (now $size; was ${lineCount(before)} lines).\n$shown"
-            }
-        }
-    }
-
     /** What an append did: the file, the lines the new text landed on, and the file's size now. */
     private fun appended(w: OrbitFiles.Written): String {
         val total = lineCount(w.after)
@@ -286,77 +225,7 @@ internal object OrbitFileTools {
         return "$start $lines (the file now has $total lines, ${w.after.length} characters)."
     }
 
-    private const val MAX_DIFF = 2000
     private const val MAX_LIST = 200
-    private const val MAX_READ = 20_000
-    private const val MAX_READ_COPIES = 32
-
-    /** What each chat last read or wrote of a file: the base its next whole-file write must still match. */
-    private val readCopies = java.util.Collections.synchronizedMap(
-        object : LinkedHashMap<String, String>(MAX_READ_COPIES, 0.75f, true) {
-            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?) = size > MAX_READ_COPIES
-        })
-    private fun copyKey(orbitId: String, chatId: String?, path: String) =
-        "$orbitId\u0000${chatId.orEmpty()}\u0000${runCatching { OrbitFiles.normalize(path) }.getOrDefault(path)}"
-    private fun remember(orbitId: String, chatId: String?, path: String, text: String) {
-        readCopies[copyKey(orbitId, chatId, path)] = text
-    }
-    private fun seen(orbitId: String, chatId: String?, path: String): String? = readCopies[copyKey(orbitId, chatId, path)]
-
-    /** New text that brings back something the user had this Orbit forget is refused before it is written. */
-    private suspend fun refuseForgotten(context: Context, orbitId: String, before: String?, text: String) {
-        val old = before?.lines()?.toHashSet().orEmpty()
-        val added = text.lines().filterNot { it in old }.joinToString("\n")
-        require(!com.ai.assistance.operit.features.orbit.OrbitForget.containsForgotten(context, orbitId, added)) {
-            "This text contains something the user asked you to forget; leave it out. Nothing was written."
-        }
-    }
-
-    /**
-     * The lines asked for, up to [MAX_READ] characters. A whole file comes back as it is; a part
-     * ends with where it stopped and where to go on.
-     */
-    private fun paged(path: String, text: String, start: String?, count: String?, startChar: String?): String {
-        val lines = text.replace("\r\n", "\n").removeSuffix("\n").let { if (it.isEmpty()) emptyList() else it.lines() }
-        val from = start?.trim()?.takeIf { it.isNotEmpty() }?.let {
-            it.toIntOrNull()?.takeIf { n -> n >= 1 } ?: error("start_line must be a whole number from 1; got \"$it\"")
-        } ?: 1
-        val wanted = count?.trim()?.takeIf { it.isNotEmpty() }?.let {
-            it.toIntOrNull()?.takeIf { n -> n >= 1 } ?: error("line_count must be a whole number from 1; got \"$it\"")
-        } ?: Int.MAX_VALUE
-        val charFrom = startChar?.trim()?.takeIf { it.isNotEmpty() }?.let {
-            it.toIntOrNull()?.takeIf { n -> n >= 1 } ?: error("start_char must be a whole number from 1; got \"$it\"")
-        } ?: 1
-        if (text.isEmpty()) return "[$path exists and is empty: 0 characters, 0 bytes. This is the end of the file.]"
-        if (lines.isEmpty()) return text
-        require(from <= lines.size) { "start_line $from is past the end; $path has ${lines.size} lines" }
-        val first = lines[from - 1]
-        require(charFrom == 1 || charFrom <= first.length) { "start_char $charFrom is past the end of line $from, which has ${first.length} characters" }
-        // Inside one long line: the next slice of that line, then a pointer to the rest.
-        if (charFrom > 1 || first.length > MAX_READ) {
-            val end = minOf(first.length, charFrom - 1 + MAX_READ)
-            val more = if (end < first.length) "Read on with start_line=$from start_char=${end + 1}."
-                else if (from < lines.size) "Read on with start_line=${from + 1}." else "This is the end of the file."
-            return first.substring(charFrom - 1, end) +
-                "\n\n[Line $from of ${lines.size} in $path, characters ${charFrom}-$end of ${first.length}. $more]"
-        }
-        val out = StringBuilder()
-        var last = from - 1
-        while (last < lines.size && last - from + 1 < wanted) {
-            val line = lines[last]
-            val started = last > from - 1
-            // A line that does not fit is left whole for the next read, which pages through it if it is long.
-            if (started && (out.length + line.length + 1 > MAX_READ || line.length > MAX_READ)) break
-            if (started) out.append('\n')
-            out.append(line)
-            last++
-        }
-        if (from == 1 && last == lines.size && text.length <= MAX_READ + 1) return text
-        val more = if (last < lines.size) " Read on with start_line=${last + 1}." else ""
-        return "$out\n\n[Lines $from-$last of ${lines.size} in $path.$more]"
-    }
-    private const val MAX_DIFF_INPUT = 40_000
-    private const val MAX_DIFF_LINES = 1_500
 
     /**
      * Pictures and audio can be shown in the chat; other files are only listed in the Builds tab.

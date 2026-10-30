@@ -21,6 +21,7 @@ import com.ai.assistance.operit.util.LocaleUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.last
+import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
@@ -2063,7 +2064,9 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 s(R.string.toolreg_write_file_desc, operation, path, envInfo)
             },
             executor = { tool ->
-                runBlocking(Dispatchers.IO) { fileSystemTools.writeFile(tool) }
+                runBlocking(Dispatchers.IO) {
+                    fileSystemTools.writeFile(tool).also { com.ai.assistance.operit.features.orbit.OrbitFolderGuard.afterWrite(context, tool) }
+                }
             }
     )
 
@@ -2340,13 +2343,17 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
             executor =
                     object : ToolExecutor {
                         override fun invoke(tool: AITool): ToolResult {
-                            return runBlocking { fileSystemTools.applyFile(tool).last() }
+                            return runBlocking {
+                                fileSystemTools.applyFile(tool).last().also { com.ai.assistance.operit.features.orbit.OrbitFolderGuard.afterWrite(context, tool) }
+                            }
                         }
 
                         override fun invokeAndStream(
                                 tool: AITool
                         ): kotlinx.coroutines.flow.Flow<ToolResult> {
-                            return fileSystemTools.applyFile(tool)
+                            return fileSystemTools.applyFile(tool).onCompletion { cause ->
+                                if (cause == null) com.ai.assistance.operit.features.orbit.OrbitFolderGuard.afterWrite(context, tool)
+                            }
                         }
                     }
     )
@@ -2359,7 +2366,11 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val envInfo = formatEnvInfo(environment)
                 "Create file $path$envInfo"
             },
-            executor = { tool -> runBlocking(Dispatchers.IO) { fileSystemTools.createFile(tool) } }
+            executor = { tool ->
+                runBlocking(Dispatchers.IO) {
+                    fileSystemTools.createFile(tool).also { com.ai.assistance.operit.features.orbit.OrbitFolderGuard.afterWrite(context, tool) }
+                }
+            }
     )
 
     handler.registerTool(
@@ -2370,7 +2381,11 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val envInfo = formatEnvInfo(environment)
                 "Edit file $path$envInfo"
             },
-            executor = { tool -> runBlocking(Dispatchers.IO) { fileSystemTools.editFile(tool) } }
+            executor = { tool ->
+                runBlocking(Dispatchers.IO) {
+                    fileSystemTools.editFile(tool).also { com.ai.assistance.operit.features.orbit.OrbitFolderGuard.afterWrite(context, tool) }
+                }
+            }
     )
 
     // 压缩文件/目录

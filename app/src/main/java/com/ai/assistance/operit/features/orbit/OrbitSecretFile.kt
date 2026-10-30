@@ -61,7 +61,7 @@ internal class OrbitSecretFile(
                 maxPlainBytes = Int.MAX_VALUE - 29, key = ::androidKey)
 
         /**
-         * One of an Orbit's private stores (its forget plan, its forgotten list, its vault), kept
+         * One of an Orbit's private stores (its forget plan, its vault), kept
          * encrypted outside backups. [kind] names the store; one file per Orbit and kind.
          */
         fun forOrbit(context: Context, orbitId: String, kind: String): OrbitSecretFile {
@@ -75,5 +75,12 @@ internal class OrbitSecretFile(
                 ?.filter { it.isFile && it.name.startsWith("orbit-") && it.name.endsWith("-$orbitId.bin") }
                 ?.forEach { Files.deleteIfExists(it.toPath()) }
         }
+
+        /** Removes stores older versions kept and nothing reads any more (the old "forgotten" list). */
+        fun deleteRetired(context: Context, orbitId: String) {
+            RETIRED.forEach { kind -> Files.deleteIfExists(forOrbit(context, orbitId, kind).file.toPath()) }
+        }
+
+        private val RETIRED = listOf("forgotten")
     }
 }

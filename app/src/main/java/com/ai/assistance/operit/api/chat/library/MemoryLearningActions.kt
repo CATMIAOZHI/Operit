@@ -52,7 +52,7 @@ class MemoryLearningActions(
     private suspend fun orbitNotes(): com.ai.assistance.operit.features.orbit.OrbitFiles {
         check(notesEnabled) { "Note extraction is not scheduled for this run. Do not retry memory operations; continue skill work or finish." }
         check(background && notesFormat != null) {
-            "People, circles and lessons are maintained by the Orbit's memory review; in a chat use orbit_file"
+            "People, circles and lessons are maintained by the Orbit's memory review; in a chat edit the note with edit_file or write_file"
         }
         val owner = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.privateOwner(context, profileId)
             ?: error("This memory space has no Orbit files")

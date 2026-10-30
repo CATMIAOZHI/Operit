@@ -355,11 +355,14 @@ internal class OrbitReviewReader private constructor(private val context: Contex
             if (ids.isNotEmpty()) append("ruptures: ${ids.joinToString()}\n")
             append('\n')
         }
-        val notesSize = runCatching { OrbitFiles.of(context, orbitId).read(OrbitFiles.REVIEW_NOTES).length }
+        val notesFiles = OrbitFiles.of(context, orbitId)
+        val notesSize = runCatching { notesFiles.read(OrbitFiles.REVIEW_NOTES).length }
             .onFailure { if (it is CancellationException) throw it }.getOrDefault(0)
+        val notesPath = runCatching { notesFiles.fileFor(OrbitFiles.REVIEW_NOTES).absolutePath }
+            .getOrDefault(OrbitFiles.REVIEW_NOTES)
         require(notesSize + block.length <= NOTES_FULL) {
-            "${OrbitFiles.REVIEW_NOTES} is full ($notesSize characters). Rewrite it shorter with orbit_file write " +
-                "(keep message ids and ruptures), then commit again."
+            "${OrbitFiles.REVIEW_NOTES} is full ($notesSize characters). Rewrite it shorter with write_file " +
+                "(environment=android, path=$notesPath; keep message ids and ruptures), then commit again."
         }
         val all = session.getJSONArray("ruptures")
         val known = (0 until all.length()).map { all.getLong(it) }.toSet()
@@ -376,8 +379,8 @@ internal class OrbitReviewReader private constructor(private val context: Contex
             .put("written", "Pages ${if (from == to) "$from" else "$from-$to"}: ${text.length} characters of notes" +
                 if (ids.isEmpty()) "" else ", ruptures ${ids.joinToString()}")
             .apply { if (notesSize + block.length > NOTES_LONG) put("notes_file_size", notesSize + block.length).put("tidy",
-                "Your notes file is getting long. Before reading on, rewrite it shorter with orbit_file write, " +
-                    "keeping message ids, ruptures and open matters.") }
+                "Your notes file is getting long. Before reading on, rewrite it shorter with write_file " +
+                    "(environment=android, path=$notesPath), keeping message ids, ruptures and open matters.") }
             .put("next", if (p.getBoolean("done")) "The whole window is read and written down. Read your notes in " +
                 "${OrbitFiles.REVIEW_NOTES} and finish the review with the counts above."
             else "Call action=next to read on.")

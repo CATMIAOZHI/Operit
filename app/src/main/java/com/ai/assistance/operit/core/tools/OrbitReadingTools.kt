@@ -17,7 +17,7 @@ import org.json.JSONObject
 /**
  * Orbit's side of reading together in Legado: where the user is, the book's chapters and text,
  * and Orbit's own paragraph comments, which Legado shows in its comment bubbles. Notes and
- * summaries are not kept here; Orbit writes those itself with orbit_file (see docs/reading.md).
+ * summaries are not kept here; Orbit writes those itself with the app's file tools (see docs/reading.md).
  */
 internal object OrbitReadingTools {
     const val NAME = "orbit_reading"
@@ -49,9 +49,9 @@ internal object OrbitReadingTools {
         details = """
   - where: the open book and chapter, which paragraphs the user's page shows (page_paragraphs; exact=false means guessed), and how many chapters ahead already have your comments.
   - read: paragraphs come as "[n] text"; n is the paragraph number to comment on. "*" after [n] means you already commented there. You may read any chapter, also ones the user has not reached.
-  - copy: saves chapters' text into your folder, one file a chapter under files/reading/<book-name-and-id>/text/, lines "[n] text" with the same numbers as read. Use reading_folder from the result for this book's notes and summaries; do not guess it from the title. Then read them with orbit_file read and look things up with grep_code (environment=android, path = absolute_folder from the result). Chapters Legado has not saved are fetched from the book's website, so copy a few at a time and go on with next_chapter.
+  - copy: saves chapters' text into your folder, one file a chapter under files/reading/<book-name-and-id>/text/, lines "[n] text" with the same numbers as read. Use reading_folder from the result for this book's notes and summaries; do not guess it from the title. Then read them with read_file or read_file_part and look things up with grep_code (environment=android, paths under absolute_folder from the result). Chapters Legado has not saved are fetched from the book's website, so copy a few at a time and go on with next_chapter.
   - write_comments: comments go on the chapter as Legado lays it out now; read the chapter first so the numbers match. The result says what was saved and where.
-  - Comments are kept per Orbit and shown in Legado right away. Notes, summaries and where you stopped are yours to keep with orbit_file under files/reading/.
+  - Comments are kept per Orbit and shown in Legado right away. Notes, summaries and where you stopped are yours to keep under files/reading/ (write_file to create, edit_file to change).
 """,
     )
 
@@ -255,7 +255,7 @@ internal object OrbitReadingTools {
             .put("copied", copied)
             .apply { if (failed.length() > 0) put("failed", failed) }
             .apply { if (last < catalog.size) put("next_chapter", last + 1) }
-            .put("note", "Copied ${copied.length()} chapter(s) into $folder. Read one with orbit_file read path=<path>; " +
+            .put("note", "Copied ${copied.length()} chapter(s) into $folder. Read one with read_file_part environment=android path=<absolute_folder>/<file>; " +
                 "find words across the copied text with grep_code environment=android path=<absolute_folder>. [n] is the " +
                 "paragraph number write_comments takes, as long as the chapter has not changed in Legado since." +
                 (if (failed.length() > 0) " ${failed.length()} chapter(s) failed; see failed, and try them again later." else ""))

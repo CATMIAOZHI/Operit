@@ -10,9 +10,9 @@
 |---|---|
 | 用户本人、称呼、长期偏好 | `user.md`，用 `memory_review` 的 `manage` 修改相关分区。 |
 | 用户生活里的事实、场景偏好、一起定下的决定和承诺 | `memory.md`，固定分四类：事实、偏好、决定、承诺（标明待办、完成或取消）。用 `memory_review` 的 `notes` 读写，新增时用 `section` 指定类别；每条一行，末尾写上日期。只记用户说过或确认过的，没确认的推断不写进来。 |
-| 人物、圈子与关系 | `memory/people/` 一人一份；`memory/groups/` 一圈一份，记录家人、同事、朋友等圈子的已知成员和人际关系，不是聊天群。用 `orbit_file`，索引由应用维护。 |
+| 人物、圈子与关系 | `memory/people/` 一人一份；`memory/groups/` 一圈一份，记录家人、同事、朋友等圈子的已知成员和人际关系，不是聊天群。用 `edit_file` 修改、`write_file` 新建，索引由应用维护。 |
 | 某一天发生的工作 | `memory/YYYY-MM-DD.md`，用 `orbit_file` 的 `daily` 留记录。 |
-| 纠正、做事教训、工具用法和踩过的坑 | `LESSONS.md`，用 `orbit_file` 的 `append` 记一条。这些不写进 `memory.md`。 |
+| 纠正、做事教训、工具用法和踩过的坑 | `LESSONS.md`，用 `edit_file` 在对应一节末尾记一条。这些不写进 `memory.md`。 |
 | 主动消息的主题、时间和方式 | `PROACTIVE_PREFERENCES.md`。 |
 
 先用 `use_package` 加载 `memory_review`，再按当前工具说明操作。
