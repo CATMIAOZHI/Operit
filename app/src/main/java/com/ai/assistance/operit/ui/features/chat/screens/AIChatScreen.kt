@@ -1022,7 +1022,13 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                                 .matchParentSize()
                                 .graphicsLayer { translationY = -chatViewportTranslationYPx }
                     ) {
+                        // A long screenshot only scrolls the chat while nothing on this screen covers it.
+                        val longScreenshotEnabled =
+                            com.ai.assistance.operit.ui.features.chat.components.LocalLongScreenshotEnabled.current &&
+                                !isFloatingMode && isCurrentScreen && !showChatHistorySelector && !showCharacterSelector &&
+                                !showWebView && !showAiComputer && !isWorkspacePreparing && !showConfig
                         androidx.compose.runtime.CompositionLocalProvider(
+                            com.ai.assistance.operit.ui.features.chat.components.LocalLongScreenshotEnabled provides longScreenshotEnabled,
                             com.ai.assistance.operit.ui.features.chat.components.LocalOrbitTurnFloor provides orbitTurnFloor,
                             com.ai.assistance.operit.ui.features.chat.components.LocalOrbitBottomNoteLift provides
                                 with(density) { orbitNoteHeightPx.toDp() },

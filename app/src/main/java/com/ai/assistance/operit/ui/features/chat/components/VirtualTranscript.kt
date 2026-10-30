@@ -220,6 +220,8 @@ internal fun VirtualTranscript(
     }
     val dragging by listState.interactionSource.collectIsDraggedAsState()
     var direction by remember(chatId) { mutableStateOf(0) }
+    // A system long screenshot is scrolling the list (see LongScreenshotBridgeView).
+    var capturing by remember(chatId) { mutableStateOf(false) }
     var lastPageRequest by remember(chatId) { mutableStateOf<Pair<Int, Long>?>(null) }
     var pagesWithoutMovement by remember(chatId) { mutableStateOf(0) }
     // Each new drag may ask for a page again, even when the list already rests at the edge and
@@ -457,7 +459,8 @@ internal fun VirtualTranscript(
                 val sizes = layout.visibleItemsInfo.associate { it.key to it.size }
                 Triple(shape, sizes, listState.isScrollInProgress)
             }.distinctUntilChanged().collect { (shape, sizes, scrolling) ->
-                if (scrolling || currentRows.isEmpty()) return@collect
+                // A long screenshot pauses between its steps; the list must stay where it took it.
+                if (scrolling || capturing || currentRows.isEmpty()) return@collect
                 val changed = shape != lastShape || sizes.any { (key, size) ->
                     knownSizes[key].let { it != null && it != size }
                 }
@@ -651,7 +654,55 @@ internal fun VirtualTranscript(
     val timeRows = if (look) remember(rows, messages) {
         orbitChatTimeRows(rows.map { row -> row.key to messages.getOrNull(row.messageIndex)?.timestamp })
     } else emptyMap()
+    // Xiaomi's long screenshot cannot see Compose lists; an empty real view behind this one stands in.
+    var screenshotBridge by remember { mutableStateOf<LongScreenshotBridgeView?>(null) }
+    val screenshotEnabled = LocalLongScreenshotEnabled.current
+    val screenshotSteps = remember(chatId) {
+        kotlinx.coroutines.channels.Channel<Float>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+    }
+    LaunchedEffect(screenshotBridge, screenshotEnabled, listState) {
+        val view = screenshotBridge ?: return@LaunchedEffect
+        try {
+            snapshotFlow { (screenshotEnabled && listState.canScrollForward) to (screenshotEnabled && listState.canScrollBackward) }
+                .collect { (forward, backward) -> view.canForward = forward; view.canBackward = backward }
+        } finally {
+            view.canForward = false
+            view.canBackward = false
+        }
+    }
+    LaunchedEffect(chatId, listState) {
+        // One step at a time, each finished before the next, so the system reads what really moved.
+        for (step in screenshotSteps) {
+            var used = 0f
+            try {
+                listState.scroll(androidx.compose.foundation.MutatePriority.PreventUserInput) { used = scrollBy(step) }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            }
+            if (used != 0f) pagesWithoutMovement = 0
+            screenshotBridge?.moved(used)
+        }
+    }
     Box(modifier) {
+        androidx.compose.ui.viewinterop.AndroidView(
+            factory = { LongScreenshotBridgeView(it).also { view -> screenshotBridge = view } },
+            modifier = Modifier.fillMaxSize().padding(top = topPadding, bottom = bottomPadding),
+            update = { view ->
+                view.onStep = { screenshotSteps.trySend(it) }
+                view.onActive = { on ->
+                    capturing = on
+                    if (on) {
+                        // It scrolls toward later messages: load newer pages. Like a drag, it drops any
+                        // pending jump, including one still loading its page.
+                        direction = 1
+                        restoring = false
+                        pendingJump = null
+                        userDrags++
+                    }
+                }
+            },
+            onRelease = { view -> if (screenshotBridge === view) screenshotBridge = null },
+        )
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize().nestedScroll(connection).onPlaced { listPlacement[0] = it },
