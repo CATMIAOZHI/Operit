@@ -122,4 +122,39 @@ class OrbitReadingTest {
         assertFalse(guessed.visible)
         assertNull(OrbitReading.locate(paragraphs, null))
     }
+
+    @Test
+    fun searchFindsLinesInCopiedText(): Unit = runBlocking {
+        val root = Files.createTempDirectory("orbit-files").toFile()
+        val files = OrbitFiles(root)
+        files.write("files/reading/Book/text/0001 One.md", "# One\n\n[1] Ye Wenjie looks up.\n[2] Nothing here.\n")
+        files.write("files/reading/Book/text/0002 Two.md", "# Two\n\n[1] ye wenjie again, " + "x".repeat(400) + "\n")
+        files.write("files/other.md", "Ye Wenjie elsewhere\n")
+        val (hits, total) = files.search("Ye Wenjie", "files/reading/Book/text", 50)
+        assertEquals(2, total)
+        assertEquals(listOf("files/reading/Book/text/0001 One.md" to 3, "files/reading/Book/text/0002 Two.md" to 3),
+            hits.map { it.path to it.line })
+        assertTrue(hits[1].text.length < 260)
+        assertEquals(3, files.search("ye wenjie", null, 1).second)
+        assertEquals(1, files.search("ye wenjie", null, 1).first.size)
+        root.deleteRecursively()
+    }
+
+    @Test
+    fun safeNameKeepsAFileNameUsable() {
+        assertEquals("a b c", com.ai.assistance.operit.core.tools.OrbitReadingTools.safeName(" ..a/b\\c "))
+        assertEquals("", com.ai.assistance.operit.core.tools.OrbitReadingTools.safeName("..."))
+        assertEquals(60, com.ai.assistance.operit.core.tools.OrbitReadingTools.safeName("长".repeat(100)).length)
+        assertEquals("三体", com.ai.assistance.operit.core.tools.OrbitReadingTools.safeName(". .三体"))
+    }
+
+    @Test
+    fun chapterOfReadsTheNumberWhateverItsPadding() {
+        val tools = com.ai.assistance.operit.core.tools.OrbitReadingTools
+        assertEquals(12, tools.chapterOf("0012 Title.md"))
+        assertEquals(12, tools.chapterOf("00012 Title.md"))
+        assertEquals(12, tools.chapterOf("0012.md"))
+        assertEquals(null, tools.chapterOf("0012x.md"))
+        assertEquals(null, tools.chapterOf("notes.md"))
+    }
 }

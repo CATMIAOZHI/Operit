@@ -9519,6 +9519,9 @@
     <string name="orbit_builds_made">构件</string>
     <string name="orbit_builds_uploads">文件库</string>
     <string name="orbit_builds_work">构件</string>
+    <string name="orbit_builds_book_text">书的原文 · %1$d 章</string>
+    <string name="orbit_builds_book_text_show">展开章节</string>
+    <string name="orbit_builds_book_text_hide">收起章节</string>
     <string name="orbit_builds_made_empty">%1$s 给你做的东西和存下的文件会出现在这里。</string>
     <string name="orbit_builds_moved_to_trash">已移到回收站</string>
     <string name="orbit_uploads_used">已用 %1$s / %2$s</string>
