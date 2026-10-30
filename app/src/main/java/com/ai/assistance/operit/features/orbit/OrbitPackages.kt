@@ -48,10 +48,10 @@ object OrbitPackages {
 
     /**
      * Built-in packages every Orbit starts with, imported and on, that the user can switch off or
-     * take out: more file tools (move, copy, zip...) and direct HTTP requests. Each is given once
-     * (packages.json remembers it in "defaults_given"), so one the user took out stays out.
+     * take out: more file tools, which alone can open a file in another app or share it. Each is
+     * given once (packages.json remembers it in "defaults_given"), so one the user took out stays out.
      */
-    val DEFAULT: Set<String> = linkedSetOf("extended_file_tools", "extended_http_tools")
+    val DEFAULT: Set<String> = linkedSetOf("extended_file_tools")
 
     /**
      * Main-app packages Orbit never gets. extended_chat manages the app's ordinary chats (character

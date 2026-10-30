@@ -18,13 +18,13 @@
 
 始终开启不保证每个操作都有权限或所需环境已经安装。
 
-新 Orbit 还默认导入并打开下面两个包，用户可以关掉或移除，移除后不会自动加回：
+新 Orbit 还默认导入并打开下面这个包，用户可以关掉或移除，移除后不会自动加回：
 
 | 包名 | 用途 |
 |---|---|
 | `extended_file_tools` | 移动、复制、压缩解压、查看文件信息、打开和分享文件 |
-| `extended_http_tools` | 直接发 HTTP 请求（GET/POST 等）和上传文件 |
 
+发 HTTP 请求一般用终端里的 `curl`；带密钥的请求用 `orbit_vault`。确实需要 `extended_http_tools` 时再导入。
 其他包按需导入；Orbit 的包清单和开关独立于主程序，不跟随主程序之后的开关变化。
 `extended_chat` 和 `operit_editor` 不向 Orbit 开放：自己的聊天使用 `orbit_chat`，模型、语音、包和密钥用 Orbit 自己的工具。
 
