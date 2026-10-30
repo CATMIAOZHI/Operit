@@ -35,6 +35,8 @@ internal class OrbitReading(
     private val reader: ReaderProvider = LegadoReaderProvider(context),
     /** Only tests pass this; otherwise reading/ inside the Orbit's folder. */
     private val rootDir: File? = null,
+    /** Chats and background tasks must not replace one another's last-read layout. */
+    private val readScope: String = orbitId,
 ) {
     private val root: File get() = rootDir ?: File(OrbitPreferences.getInstance(context).orbitDir(orbitId), DIR)
 
@@ -96,7 +98,7 @@ internal class OrbitReading(
      * written later is checked against what Orbit actually saw.
      */
     fun markSeen(chapter: Chapter) {
-        val key = "${chapter.bookId}\u0000${chapter.index}"
+        val key = seenKey(chapter.bookId, chapter.index)
         synchronized(seenHashes) {
             seenHashes.remove(key)
             seenHashes[key] = chapter.contractHash
@@ -105,7 +107,9 @@ internal class OrbitReading(
     }
 
     /** The layout version of the chapter as Orbit last read or copied it in this run, or null; never asks Legado. */
-    fun seen(bookId: String, index: Int): String? = synchronized(seenHashes) { seenHashes["$bookId\u0000$index"] }
+    fun seen(bookId: String, index: Int): String? = synchronized(seenHashes) { seenHashes[seenKey(bookId, index)] }
+
+    private fun seenKey(bookId: String, index: Int) = "$orbitId\u0000$readScope\u0000$bookId\u0000$index"
 
     // ---- Comments ----
 

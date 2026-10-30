@@ -157,4 +157,35 @@ class OrbitReadingTest {
         assertEquals(null, tools.chapterOf("0012x.md"))
         assertEquals(null, tools.chapterOf("notes.md"))
     }
+
+    @Test
+    fun copiesOfDifferentBooksCannotShareTheSameFolder() {
+        val tools = com.ai.assistance.operit.core.tools.OrbitReadingTools
+        val first = tools.readingFolder("同名书", "https://books.example/one")
+        val second = tools.readingFolder("同名书", "https://books.example/two")
+        assertFalse(first == second)
+        assertFalse(tools.readingFolder("a/b", "one") == tools.readingFolder("a\\b", "two"))
+        assertFalse(tools.readingFolder("长".repeat(100) + "甲", "one") ==
+            tools.readingFolder("长".repeat(100) + "乙", "two"))
+        assertTrue(tools.readingFolder("长".repeat(100), "one").substringAfterLast('/').length <= 80)
+        assertEquals(first, tools.readingFolder("同名书", "https://books.example/one"))
+    }
+
+    @Test
+    fun anotherChatCannotReplaceTheChapterVersionSeenByThisChat() {
+        val root = Files.createTempDirectory("orbit-reading-scopes").toFile()
+        try {
+            val a = OrbitReading(mock<Context>(), "o1", mock<ReaderProvider>(), root, readScope = "chat-a")
+            val b = OrbitReading(mock<Context>(), "o1", mock<ReaderProvider>(), root, readScope = "chat-b")
+            val otherOrbit = OrbitReading(mock<Context>(), "o2", mock<ReaderProvider>(), root, readScope = "chat-a")
+            a.markSeen(chapter(listOf("original"), "h1"))
+            b.markSeen(chapter(listOf("changed"), "h2"))
+            otherOrbit.markSeen(chapter(listOf("different orbit"), "h3"))
+            assertEquals("h1", a.seen("book", 4))
+            assertEquals("h2", b.seen("book", 4))
+            assertEquals("h3", otherOrbit.seen("book", 4))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
 }

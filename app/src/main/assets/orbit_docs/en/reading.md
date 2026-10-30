@@ -10,7 +10,7 @@ They show up in Legado's paragraph-comment bubbles, under your name.
 - `where`: which book and chapter the user has open, roughly which paragraphs the page shows, and how many chapters ahead already have your comments.
 - `books`, `catalog`: the bookshelf and the chapter list; `has_comments` marks chapters you have commented on.
 - `read`: the text of a chapter. Each paragraph starts with `[n]`, the number you comment on; `[n]*` means you already commented there.
-- `copy`: copies chapters' text into your own folder, one file a chapter under `files/reading/<book>/text/`, named by chapter number first.
+- `copy`: copies chapters' text into your own folder, one file a chapter under `files/reading/<book-name-and-id>/text/`, named by chapter number first. The returned `reading_folder` is this book's reading directory; books with the same title stay separate.
 - `write_comments`: comments on a chapter, `[{"paragraph":3,"text":"..."}]`. Read the chapter first so the numbers match.
 - `list_comments`, `delete_comments`: see and delete the comments you wrote.
 
@@ -47,7 +47,7 @@ For background top-ups, make an ordinary task with `orbit_task` (read `docs/sche
 
 ## A summary for every chapter
 
-When you finish a chapter (after writing its comments), write a short summary of it and append it to the summary file for that chapter. Use one file per 100 chapters: chapters 1-100 go in `files/reading/<book>/summaries-0001-0100.md`, chapters 101-200 in `summaries-0101-0200.md`, and so on; a file that holds only 100 chapters never fills up.
+When you finish a chapter (after writing its comments), write a short summary of it and append it to the summary file under the `reading_folder` returned by `copy`; do not guess the directory from the book's title. Use one file per 100 chapters: chapters 1-100 go in `summaries-0001-0100.md`, chapters 101-200 in `summaries-0101-0200.md`, and so on; a file that holds only 100 chapters never fills up.
 
 - Start with `## Chapter N  Title`, then a paragraph or two.
 - Cover what happened, who appeared and how their relations changed, the clues and foreshadowing laid, and what the user said about the chapter.
@@ -59,6 +59,6 @@ For a detail the summaries do not have, search the copied text.
 ## Your own reading notes
 
 `orbit_reading` does not keep notes or summaries for you; keep them yourself with `orbit_file`.
-A good place is `files/reading/<book>/`: `summaries-*.md` for the chapter summaries, `notes.md` for where you got to, the characters, what the user thinks of the book and the comment style you agreed on.
+A good place is the `reading_folder` returned by `copy`: `summaries-*.md` for the chapter summaries, `notes.md` for where you got to, the characters, what the user thinks of the book and the comment style you agreed on.
 How you split and what you write is up to you; when you pick the book up again, read your notes and summaries first.
 These files show in the Library, so the user can see them too.

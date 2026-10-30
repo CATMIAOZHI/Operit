@@ -49,7 +49,7 @@ internal object OrbitReadingTools {
         details = """
   - where: the open book and chapter, which paragraphs the user's page shows (page_paragraphs; exact=false means guessed), and how many chapters ahead already have your comments.
   - read: paragraphs come as "[n] text"; n is the paragraph number to comment on. "*" after [n] means you already commented there. You may read any chapter, also ones the user has not reached.
-  - copy: saves chapters' text into your folder, one file a chapter under files/reading/<book>/text/, lines "[n] text" with the same numbers as read. Then read them with orbit_file read and look things up with grep_code (environment=android, path = absolute_folder from the result). Chapters Legado has not saved are fetched from the book's website, so copy a few at a time and go on with next_chapter.
+  - copy: saves chapters' text into your folder, one file a chapter under files/reading/<book-name-and-id>/text/, lines "[n] text" with the same numbers as read. Use reading_folder from the result for this book's notes and summaries; do not guess it from the title. Then read them with orbit_file read and look things up with grep_code (environment=android, path = absolute_folder from the result). Chapters Legado has not saved are fetched from the book's website, so copy a few at a time and go on with next_chapter.
   - write_comments: comments go on the chapter as Legado lays it out now; read the chapter first so the numbers match. The result says what was saved and where.
   - Comments are kept per Orbit and shown in Legado right away. Notes, summaries and where you stopped are yours to keep with orbit_file under files/reading/.
 """,
@@ -61,7 +61,7 @@ internal object OrbitReadingTools {
         val caller = ToolExecutionManager.currentToolRuntimeContext()?.callerChatId
         val orbit = checkNotNull(OrbitMemoryScope.owner(context, caller)) { "This is not an Orbit chat" }
         val args = tool.parameters.associate { it.name to it.value?.trim().orEmpty() }
-        val reading = OrbitReading(context, orbit.id)
+        val reading = OrbitReading(context, orbit.id, readScope = caller ?: orbit.id)
         val result = when (val action = args["action"].orEmpty()) {
             "where" -> where(reading, args)
             "books" -> books(reading)
@@ -213,7 +213,8 @@ internal object OrbitReadingTools {
         require(count in 1..MAX_COPY) { "count must be 1 to $MAX_COPY per call; got $count" }
         val last = minOf(catalog.size, first + count - 1)
         val files = OrbitFiles.of(context, orbitId)
-        val folder = "files/reading/${safeName(state.book.name).ifEmpty { "book" }}/text"
+        val readingFolder = readingFolder(state.book.name, bookId)
+        val folder = "$readingFolder/text"
         val width = maxOf(4, catalog.size.toString().length)
         val copied = JSONArray()
         val failed = JSONArray()
@@ -249,6 +250,7 @@ internal object OrbitReadingTools {
         }
         firstError?.takeIf { copied.length() == 0 }?.let { throw it }
         return JSONObject().put("book_id", bookId).put("book", state.book.name).put("folder", folder)
+            .put("reading_folder", readingFolder)
             .put("absolute_folder", files.fileFor(folder).absolutePath)
             .put("copied", copied)
             .apply { if (failed.length() > 0) put("failed", failed) }
@@ -258,6 +260,10 @@ internal object OrbitReadingTools {
                 "paragraph number write_comments takes, as long as the chapter has not changed in Legado since." +
                 (if (failed.length() > 0) " ${failed.length()} chapter(s) failed; see failed, and try them again later." else ""))
     }
+
+    /** Book URLs, rather than cleaned or truncated titles, distinguish books with the same name. */
+    internal fun readingFolder(name: String, bookId: String): String =
+        "files/reading/${safeName(name).ifEmpty { "book" }}-${OrbitReading.bookKey(bookId)}"
 
     /** A name usable as one folder or file name part: no path or reserved characters, no leading dot, at most 60 characters. */
     internal fun safeName(name: String): String = name
