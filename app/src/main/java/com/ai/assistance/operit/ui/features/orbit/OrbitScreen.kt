@@ -718,6 +718,9 @@ private fun OrbitChatPage(
                         if (!devView && currentChatId == orbit.chatId && !forkingMessage && orbit.canAddSideChat)
                             ::forkMessage else null,
                     com.ai.assistance.operit.ui.features.chat.components.LocalShowHiddenChatRows provides devView,
+                    // A long screenshot only scrolls the chat while nothing covers it.
+                    com.ai.assistance.operit.ui.features.chat.components.LocalLongScreenshotEnabled provides
+                        (chatOnScreen && stack.isEmpty() && editingFile == null),
                     com.ai.assistance.operit.ui.features.chat.components.LocalOrbitReactions provides reactions,
                     com.ai.assistance.operit.ui.features.chat.components.LocalOrbitUserReactions provides userReactions,
                     // Orbit's browser cards, each where it first showed in the chat.
