@@ -4,6 +4,8 @@ import android.content.Context
 import com.ai.assistance.operit.data.preferences.OrbitPreferences
 import com.ai.assistance.operit.util.LocaleUtils
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -88,35 +90,84 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
      * Every file, including the fixed files that are still empty templates (size -1). With
      * [includeReview], also the nightly reviews (dreams/) and the alignment state the review keeps.
      */
-    suspend fun list(includeReview: Boolean = false): List<Entry> = io {
+    suspend fun list(includeReview: Boolean = false): List<Entry> = io { listLocked(includeReview, titles = true) }
+
+    /** [list]'s work, called with the lock held; without [titles] no file is opened, only sizes and paths read. */
+    private fun listLocked(includeReview: Boolean, titles: Boolean): List<Entry> {
+        val make = { p: String, f: File -> entry(p, f, titles) }
         val found = mutableListOf<Entry>()
         SINGLE.forEach { p ->
             val f = File(root, p)
-            found += if (f.isFile) entry(p, f) else Entry(p, -1, 0, p)
+            found += if (f.isFile) make(p, f) else Entry(p, -1, 0, p)
         }
         if (includeReview) {
             ALIGNMENT_DATA.forEach { p ->
                 val f = File(root, p)
-                found += if (f.isFile) entry(p, f) else Entry(p, -1, 0, p)
+                found += if (f.isFile) make(p, f) else Entry(p, -1, 0, p)
             }
             File(root, "dreams").listFiles()?.filter { it.isFile && DREAM.matches("dreams/${it.name}") }
-                ?.forEach { found += entry("dreams/${it.name}", it) }
+                ?.forEach { found += make("dreams/${it.name}", it) }
         }
         found += peopleLocked()
         File(root, "memory").listFiles()?.filter { it.isFile && DAILY.matches("memory/${it.name}") }
-            ?.forEach { found += entry("memory/${it.name}", it) }
+            ?.forEach { found += make("memory/${it.name}", it) }
         val filesRoot = File(root, "files")
         if (filesRoot.isDirectory) filesRoot.walkTopDown().maxDepth(4).filter { it.isFile }.forEach { f ->
             val p = "files/" + f.relativeTo(filesRoot).invariantSeparatorsPath
-            if (FILES.matches(p) && p.split('/').none { it.startsWith(".") }) found += entry(p, f)
+            if (FILES.matches(p) && p.split('/').none { it.startsWith(".") }) found += make(p, f)
         }
         // Leave out anything a link takes outside Orbit's folder; it could not be opened anyway.
-        found.filter { it.size < 0 || runCatching { inside(File(root, it.path)) }.isSuccess }
+        return found.filter { it.size < 0 || runCatching { inside(File(root, it.path)) }.isSuccess }
     }
 
     /** Only the person and circle notes (and their indexes), without walking the rest of the folder. */
     suspend fun listPeople(): List<Entry> = io {
         peopleLocked().filter { runCatching { inside(File(root, it.path)) }.isSuccess }
+    }
+
+    /** One line that holds the searched words: its file, line number from 1, and the line (cut around the words when long). */
+    data class Hit(val path: String, val line: Int, val text: String)
+
+    /**
+     * Lines holding [query] (case ignored) in Orbit's text files, under [folder] when given, in path
+     * order. Returns at most [max] hits and how many lines matched in all (counting stops at [COUNT_LIMIT]).
+     */
+    suspend fun search(query: String, folder: String?, max: Int): Pair<List<Hit>, Int> {
+        require(query.isNotBlank()) { "query is empty" }
+        // Paths only (no file opened), then one file at a time under the lock, so a long search never
+        // holds up Orbit's other file work for more than one file and can be cancelled between files.
+        val paths = io { listLocked(includeReview = true, titles = false) }.map { it.path }
+            .filter { p -> isText(p) && File(root, p).isFile && (folder == null || p.startsWith("$folder/")) }.sorted()
+        val hits = mutableListOf<Hit>()
+        var total = 0
+        for (path in paths) {
+            currentCoroutineContext().ensureActive()
+            total = io {
+                var count = total
+                val f = runCatching { inside(File(root, path)) }.getOrNull()
+                if (f != null && f.isFile && f.length() <= MAX_TEXT * 4L) f.useLines { lines ->
+                    for ((i, line) in lines.withIndex()) {
+                        val at = line.indexOf(query, ignoreCase = true)
+                        if (at < 0) continue
+                        count++
+                        if (hits.size < max) hits += Hit(path, i + 1, snippet(line, at))
+                        if (count >= COUNT_LIMIT) break
+                    }
+                }
+                count
+            }
+            if (total >= COUNT_LIMIT) break
+        }
+        return hits to total
+    }
+
+    private fun snippet(line: String, at: Int): String {
+        val text = line.trim()
+        if (text.length <= SNIPPET) return text
+        val shift = line.length - line.trimStart().length
+        val start = (at - shift - SNIPPET / 3).coerceIn(0, text.length - SNIPPET)
+        return (if (start > 0) "…" else "") + text.substring(start, start + SNIPPET) +
+            (if (start + SNIPPET < text.length) "…" else "")
     }
 
     private fun peopleLocked(): List<Entry> = listOf("memory/people", "memory/groups").flatMap { dir ->
@@ -456,10 +507,11 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         atomic(index, "# $heading\n\n" + lines.joinToString("\n") + "\n")
     }
 
-    private fun entry(p: String, f: File): Entry {
-        val safe = runCatching { inside(f) }.isSuccess
+    private fun entry(p: String, f: File, title: Boolean = true): Entry {
+        val read = title && isText(p) && f.length() < 64_000 && runCatching { inside(f) }.isSuccess
+        // Reads only up to the first heading, so a long file whose first line is its title costs one line.
         return Entry(p, f.length(), f.lastModified(),
-            if (safe && isText(p) && f.length() < 64_000) titleOf(f.readText(), f.nameWithoutExtension) else f.name)
+            if (read) runCatching { f.useLines { titleOf(it, f.nameWithoutExtension) } }.getOrDefault(f.name) else f.name)
     }
 
     private fun trashItem(dir: File): TrashItem? = runCatching {
@@ -509,6 +561,10 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
 
     companion object {
         const val MAX_TEXT = 200_000
+        /** How much of a long line a search hit shows. */
+        private const val SNIPPET = 240
+        /** Search stops counting matches here; the hits shown are fewer anyway. */
+        const val COUNT_LIMIT = 1_000
         /** Longest line the daily log takes; the rest is cut. */
         const val MAX_DAILY_LINE = 600
         const val MAX_FILE_BYTES = 50L * 1024 * 1024
@@ -633,8 +689,9 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
             "yaml", "yml", "xml", "rtf", "odt" -> Kind.DOCUMENT
             else -> Kind.OTHER
         }
-        fun titleOf(text: String, fallback: String) =
-            text.lineSequence().map { it.trim() }.firstOrNull { it.startsWith("#") && !it.startsWith("#!") }
+        fun titleOf(text: String, fallback: String) = titleOf(text.lineSequence(), fallback)
+        fun titleOf(lines: Sequence<String>, fallback: String) =
+            lines.map { it.trim() }.firstOrNull { it.startsWith("#") && !it.startsWith("#!") }
                 ?.trimStart('#')?.trim()?.takeIf { it.isNotEmpty() }?.take(80) ?: fallback
     }
 }

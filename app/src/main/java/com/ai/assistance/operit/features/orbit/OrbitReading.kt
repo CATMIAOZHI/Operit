@@ -65,13 +65,21 @@ internal class OrbitReading(
      * A whole chapter split into Legado's comment paragraphs. Reading one chapter page by page asks
      * Legado once: the layout is kept a few minutes.
      */
-    suspend fun chapter(bookId: String, index: Int, fresh: Boolean = false): Chapter {
+    suspend fun chapter(bookId: String, index: Int, fresh: Boolean = false, keep: Boolean = true): Chapter {
         val key = "$bookId\u0000$index"
         val now = System.currentTimeMillis()
         if (!fresh) cached(key, now)?.let { return it }
         val content: AnnotationChapterContent = reader.getAnnotationChapterContent(bookId, index)
         val chapter = Chapter(bookId, index, content.sourceId, content.chapterTitle,
             content.content.split('\n'), content.contractHash)
+        // A bulk copy passes keep=false, so it does not push out the chapters being read; a kept
+        // copy of an older layout goes, so the next read gets what Legado has now.
+        if (!keep) {
+            synchronized(chapterCache) {
+                if (chapterCache[key]?.second?.contractHash.let { it != null && it != chapter.contractHash }) chapterCache.remove(key)
+            }
+            return chapter
+        }
         synchronized(chapterCache) {
             chapterCache[key] = now to chapter
             while (chapterCache.size > CHAPTER_CACHE_SIZE) chapterCache.remove(chapterCache.keys.first())
@@ -83,8 +91,21 @@ internal class OrbitReading(
         chapterCache[key]?.takeIf { now - it.first < CHAPTER_CACHE_MS }?.second
     }
 
-    /** The chapter as last read, if it is still kept; never asks Legado. */
-    fun peek(bookId: String, index: Int): Chapter? = cached("$bookId\u0000$index", System.currentTimeMillis())
+    /**
+     * Notes the layout of a chapter whose text was just given to Orbit (read or copied), so a comment
+     * written later is checked against what Orbit actually saw.
+     */
+    fun markSeen(chapter: Chapter) {
+        val key = "${chapter.bookId}\u0000${chapter.index}"
+        synchronized(seenHashes) {
+            seenHashes.remove(key)
+            seenHashes[key] = chapter.contractHash
+            while (seenHashes.size > SEEN_SIZE) seenHashes.remove(seenHashes.keys.first())
+        }
+    }
+
+    /** The layout version of the chapter as Orbit last read or copied it in this run, or null; never asks Legado. */
+    fun seen(bookId: String, index: Int): String? = synchronized(seenHashes) { seenHashes["$bookId\u0000$index"] }
 
     // ---- Comments ----
 
@@ -185,6 +206,9 @@ internal class OrbitReading(
 
         private val locks = ConcurrentHashMap<String, Mutex>()
         private val chapterCache = LinkedHashMap<String, Pair<Long, Chapter>>()
+        /** Last seen layout version per chapter; small strings, so many are kept. */
+        private val seenHashes = LinkedHashMap<String, String>()
+        private const val SEEN_SIZE = 5_000
 
         private fun lock(bookId: String) = locks.computeIfAbsent(bookId) { Mutex() }
 

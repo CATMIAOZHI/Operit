@@ -6,6 +6,7 @@ import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.model.ToolParameterSchema
 import com.ai.assistance.operit.data.model.ToolPrompt
 import com.ai.assistance.operit.data.model.ToolResult
+import com.ai.assistance.operit.features.orbit.OrbitFiles
 import com.ai.assistance.operit.features.orbit.OrbitMemoryScope
 import com.ai.assistance.operit.features.orbit.OrbitReading
 import com.ai.assistance.operit.features.orbit.forModel
@@ -24,19 +25,22 @@ internal object OrbitReadingTools {
     private const val MAX_READ_CHARS = 12_000
     private const val DEFAULT_CATALOG = 40
     private const val MAX_CATALOG = 200
+    private const val DEFAULT_COPY = 10
+    /** Chapters Legado has not saved are fetched from the book's website, so a copy goes a few at a time. */
+    private const val MAX_COPY = 20
 
     val prompt = ToolPrompt(
         name = NAME,
         description = "Read along with the user in Legado (阅读) and leave paragraph comments that Legado shows under your name. " +
-            "和用户一起在「阅读」App 里读书：看用户读到哪、读章节原文、写/删段评。先读 docs/reading.md。",
+            "和用户一起在「阅读」App 里读书：看用户读到哪、读章节原文、把原文拷进自己的文件夹、写/删段评。先读 docs/reading.md。",
         parametersStructured = listOf(
-            ToolParameterSchema("action", description = "where / books / catalog / read / write_comments / list_comments / delete_comments", required = true),
+            ToolParameterSchema("action", description = "where / books / catalog / read / copy / write_comments / list_comments / delete_comments", required = true),
             ToolParameterSchema("book_id", description = "Book id from books or where. Default: the book the user has open", required = false),
-            ToolParameterSchema("chapter", "integer", "Chapter number, from 1 (read, write_comments, list_comments, delete_comments; catalog: first chapter to list)", false),
+            ToolParameterSchema("chapter", "integer", "Chapter number, from 1 (read, write_comments, list_comments, delete_comments; catalog and copy: the first chapter, default the user's)", false),
             ToolParameterSchema("from", "integer", "read: first paragraph, from 1. Default 1", false),
             ToolParameterSchema("to", "integer", "read: last paragraph. Default the end, cut at about $MAX_READ_CHARS characters", required = false),
             ToolParameterSchema("offset", "integer", "read: start this many characters into paragraph from; only to go on with a paragraph cut short (next_offset)", false),
-            ToolParameterSchema("count", "integer", "catalog: how many chapters. Default $DEFAULT_CATALOG, at most $MAX_CATALOG", false),
+            ToolParameterSchema("count", "integer", "catalog: how many chapters, default $DEFAULT_CATALOG, at most $MAX_CATALOG. copy: default $DEFAULT_COPY, at most $MAX_COPY", false),
             ToolParameterSchema("comments", description = "write_comments: JSON array [{\"paragraph\":3,\"text\":\"...\"}], at most ${OrbitReading.MAX_COMMENTS_PER_CALL}, each at most ${OrbitReading.MAX_COMMENT_CHARS} characters", required = false),
             ToolParameterSchema("mode", description = "write_comments: add (default, keeps the chapter's other comments) or replace (the chapter keeps only these)", required = false),
             ToolParameterSchema("ids", description = "delete_comments: comment ids from list_comments, comma separated", required = false),
@@ -45,6 +49,7 @@ internal object OrbitReadingTools {
         details = """
   - where: the open book and chapter, which paragraphs the user's page shows (page_paragraphs; exact=false means guessed), and how many chapters ahead already have your comments.
   - read: paragraphs come as "[n] text"; n is the paragraph number to comment on. "*" after [n] means you already commented there. You may read any chapter, also ones the user has not reached.
+  - copy: saves chapters' text into your folder, one file a chapter under files/reading/<book>/text/, lines "[n] text" with the same numbers as read. Then read them with orbit_file read and look things up with orbit_file search (folder = that text folder). Chapters Legado has not saved are fetched from the book's website, so copy a few at a time and go on with next_chapter.
   - write_comments: comments go on the chapter as Legado lays it out now; read the chapter first so the numbers match. The result says what was saved and where.
   - Comments are kept per Orbit and shown in Legado right away. Notes, summaries and where you stopped are yours to keep with orbit_file under files/reading/.
 """,
@@ -62,11 +67,12 @@ internal object OrbitReadingTools {
             "books" -> books(reading)
             "catalog" -> catalog(reading, args)
             "read" -> read(reading, args)
+            "copy" -> copy(context, orbit.id, reading, args)
             "write_comments" -> write(reading, args)
             "list_comments" -> list(reading, args)
             "delete_comments" -> delete(reading, args)
             else -> throw IllegalArgumentException(
-                "action must be where, books, catalog, read, write_comments, list_comments or delete_comments; got \"$action\"")
+                "action must be where, books, catalog, read, copy, write_comments, list_comments or delete_comments; got \"$action\"")
         }
         ToolResult(NAME, true, StringResultData(result.toString()))
     } catch (e: kotlinx.coroutines.CancellationException) {
@@ -178,6 +184,8 @@ internal object OrbitReadingTools {
             text.append(line)
             last = n
         }
+        // Noted only once the text is ready to hand over, so a rejected read changes nothing.
+        reading.markSeen(chapter)
         return JSONObject().put("book_id", bookId).put("chapter", index + 1).put("title", chapter.title)
             .put("paragraphs_total", total).put("from", from).put("to", last)
             .put("text", text.toString())
@@ -187,6 +195,80 @@ internal object OrbitReadingTools {
                     put("note", "Paragraph $last is longer than one read; go on with from=$last, offset=$nextOffset.")
                 } else if (last < to) put("next_from", last + 1)
             }
+    }
+
+    /**
+     * Copies chapters' text into files/reading/<book>/text/, one Markdown file a chapter named by
+     * its number, so Orbit can read and search the book with its file tools. A chapter that fails
+     * is listed and the rest still copied.
+     */
+    private suspend fun copy(context: Context, orbitId: String, reading: OrbitReading, args: Map<String, String>): JSONObject {
+        val bookId = bookId(reading, args)
+        val state = reading.readingState(bookId)
+        val catalog = reading.catalog(bookId)
+        require(catalog.isNotEmpty()) { "This book has no chapters in Legado" }
+        val first = int(args, "chapter") ?: (state.chapterIndex + 1)
+        require(first in 1..catalog.size) { "chapter must be 1 to ${catalog.size}; got $first" }
+        val count = int(args, "count") ?: DEFAULT_COPY
+        require(count in 1..MAX_COPY) { "count must be 1 to $MAX_COPY per call; got $count" }
+        val last = minOf(catalog.size, first + count - 1)
+        val files = OrbitFiles.of(context, orbitId)
+        val folder = "files/reading/${safeName(state.book.name).ifEmpty { "book" }}/text"
+        val width = maxOf(4, catalog.size.toString().length)
+        val copied = JSONArray()
+        val failed = JSONArray()
+        var firstError: Exception? = null
+        for (number in first..last) {
+            try {
+                val chapter = reading.chapter(bookId, number - 1, fresh = true, keep = false)
+                val title = chapter.title.ifBlank { catalog[number - 1].title }
+                val body = buildString {
+                    append("# ").append(title).append("\n\n")
+                    chapter.paragraphs.forEachIndexed { i, p -> if (p.isNotBlank()) append('[').append(i + 1).append("] ").append(p).append('\n') }
+                }
+                require(body.length <= OrbitFiles.MAX_TEXT) { "Chapter $number has ${body.length} characters, too long for one file" }
+                val prefix = number.toString().padStart(width, '0')
+                val path = "$folder/" + "$prefix ${safeName(title)}".trim() + ".md"
+                // A copy saved under an older title goes, so each chapter has one file.
+                // Matched by the number's value, so a copy padded to another width (the book grew) goes too.
+                files.fileFor(folder).list().orEmpty()
+                    .filter { chapterOf(it) == number && "$folder/$it" != path }
+                    .forEach { runCatching { files.delete("$folder/$it") } }
+                files.write(path, body)
+                // Only a copy that was saved counts as seen.
+                reading.markSeen(chapter)
+                copied.put(JSONObject().put("chapter", number).put("title", title).put("path", path)
+                    .put("paragraphs", chapter.paragraphs.size))
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (firstError == null) firstError = e
+                failed.put(JSONObject().put("chapter", number)
+                    .put("error", (e as? ReaderProviderException)?.forModel() ?: e.message ?: e.toString()))
+            }
+        }
+        firstError?.takeIf { copied.length() == 0 }?.let { throw it }
+        return JSONObject().put("book_id", bookId).put("book", state.book.name).put("folder", folder)
+            .put("copied", copied)
+            .apply { if (failed.length() > 0) put("failed", failed) }
+            .apply { if (last < catalog.size) put("next_chapter", last + 1) }
+            .put("note", "Copied ${copied.length()} chapter(s) into $folder. Read one with orbit_file read path=<path>; " +
+                "find words across the copied text with orbit_file search folder=$folder query=<words>. [n] is the " +
+                "paragraph number write_comments takes, as long as the chapter has not changed in Legado since." +
+                (if (failed.length() > 0) " ${failed.length()} chapter(s) failed; see failed, and try them again later." else ""))
+    }
+
+    /** A name usable as one folder or file name part: no path or reserved characters, no leading dot, at most 60 characters. */
+    internal fun safeName(name: String): String = name
+        .map { if (it < ' ' || it in "/\\:*?\"<>|") ' ' else it }.joinToString("")
+        .replace(Regex("\\s+"), " ").trimStart { it == '.' || it.isWhitespace() }.take(60).trim()
+
+    /** The chapter number a copied file's name starts with ("0012 Title.md" or "0012.md"), or null. */
+    internal fun chapterOf(fileName: String): Int? {
+        val digits = fileName.takeWhile { it.isDigit() }
+        if (digits.isEmpty()) return null
+        val rest = fileName.substring(digits.length)
+        return if (rest.startsWith(" ") || rest == ".md") digits.toIntOrNull() else null
     }
 
     private suspend fun write(reading: OrbitReading, args: Map<String, String>): JSONObject {
@@ -202,10 +284,12 @@ internal object OrbitReadingTools {
         require(list.length() in 1..OrbitReading.MAX_COMMENTS_PER_CALL) {
             "Give 1 to ${OrbitReading.MAX_COMMENTS_PER_CALL} comments per call; got ${list.length()}"
         }
-        val cached = reading.peek(bookId, index)
+        // Taken before the fetch below, which records the version it gets.
+        val seen = reading.seen(bookId, index)
         val chapter = reading.chapter(bookId, index, fresh = true)
-        require(cached == null || cached.contractHash == chapter.contractHash) {
-            "Chapter ${index + 1} changed in Legado since you read it, so the paragraph numbers may have moved. Read it again, then write."
+        require(seen == null || seen == chapter.contractHash) {
+            "Chapter ${index + 1} changed in Legado since you read or copied it, so the paragraph numbers may have moved. " +
+                "Read it again (or copy it again), then write."
         }
         val total = chapter.paragraphs.size
         val entries = (0 until list.length()).map { i ->

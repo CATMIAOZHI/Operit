@@ -26,10 +26,11 @@ internal object OrbitFileTools {
         description = "读写你自己文件夹里的文件：人物、圈子与关系笔记、每日流水、经验本、主动消息偏好、时区、对齐总结、设备，以及 files/ 里给用户做的文件。" +
             "删除的文件进回收站，30 天内可以恢复。还能把应用里别处的文件（比如画好的图）收进 files/，把 Markdown 导出成网页、Word 或 PDF。",
         parametersStructured = listOf(
-            ToolParameterSchema("action", description = "list/read/write/append/delete/trash/restore/daily/prompt_copy/import/export/send", required = true),
+            ToolParameterSchema("action", description = "list/read/search/write/append/delete/trash/restore/daily/prompt_copy/import/export/send", required = true),
             ToolParameterSchema("path", description = "相对路径，如 memory/people/张三.md、LESSONS.md、files/报告.md；read/write/append/delete/export/send 必填；import 时是存到 files/ 下的目标路径（可省略）", required = false),
             ToolParameterSchema("text", description = "write：完整新内容；append/daily：要追加的一段或一行", required = false),
-            ToolParameterSchema("folder", description = "list 可选：只列这个文件夹下的，如 memory/people、files、dreams、alignment", required = false),
+            ToolParameterSchema("folder", description = "list/search 可选：只看这个文件夹下的，如 memory/people、files、files/reading/三体/text", required = false),
+            ToolParameterSchema("query", description = "search：要找的字词（不分大小写，按原样整段匹配）", required = false),
             ToolParameterSchema("offset", "integer", "list 可选：从第几个开始列（从 0 开始），用上次返回的 next_offset 继续", false),
             ToolParameterSchema("start_line", "integer", "read 可选：从第几行开始读（从 1 开始），默认 1", false),
             ToolParameterSchema("line_count", "integer", "read 可选：最多读几行，默认读到 20000 字为止", false),
@@ -49,6 +50,7 @@ internal object OrbitFileTools {
   - DEVICES.md：你能连上的设备，比如 Tailscale 组网里的电脑、NAS。不写密码。
   - files/：给用户做的文件，会出现在「构建」页的文件里。
   - read 一次最多返回 20000 字；没读完时末尾会写明读到第几行、下次怎么接着读（照着提示填 start_line，长行还要填 start_char）。list 一次最多 200 个，有 next_offset 时用 offset 接着列。
+  - search：在你的文本文件里找含有 query 的行，返回文件、行号和那一行（长行只截取字词附近），最多 $MAX_SEARCH 条；要看上下文，用 read 的 start_line 从那一行附近读。
   - write 会覆盖整个文件，已有内容的文件必须先 read 再改；读完之后如果文件被用户或后台任务改过，write 会被拒绝、什么都不写，这时重新 read 再改。返回会说明新建还是覆盖、现在几行，以及改了哪些行。delete 后告诉用户可以在回收站恢复。
   - prompt_copy：用户要你的系统提示词时用，把 Orbit 部分（Orbit 段落和 SOUL.md，不含应用通用规则）存成 files/ 里的一份文件，告诉用户这是 Orbit 部分，在构建页的文件里找。
   - send：把 files/ 里的一个文件直接发到聊天里，像真人发消息一样。图片显示成图片，用户点开全屏看，底部有「保存」按钮；文本文件（txt、md、json、csv 等）点开在应用里直接显示；其他文件显示成附件卡，用户点一下用别的应用打开。只能在和用户的聊天里用。发完不要再贴路径。
@@ -57,7 +59,10 @@ internal object OrbitFileTools {
 """,
     )
 
-    fun execute(context: Context, tool: AITool): ToolResult = runBlockingIoPreservingToolRuntimeContext {
+    fun execute(context: Context, tool: AITool): ToolResult = runBlockingIoPreservingToolRuntimeContext { run(context, tool) }
+
+    /** Runs in the tool call's coroutine, so stopping the chat also stops a long search. */
+    suspend fun run(context: Context, tool: AITool): ToolResult = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
         try {
             val runtime = ToolExecutionManager.currentToolRuntimeContext()
             val orbit = checkNotNull(OrbitMemoryScope.owner(context, runtime?.callerChatId)) { "This is not an Orbit chat" }
@@ -87,6 +92,21 @@ internal object OrbitFileTools {
                     val text = files.read(arg("path"))
                     remember(orbit.id, runtime?.callerChatId, arg("path"), text)
                     paged(arg("path"), text, args["start_line"], args["line_count"], args["start_char"])
+                }
+                "search" -> {
+                    val query = arg("query").trim()
+                    val folder = args["folder"]?.trim()?.trim('/')?.takeIf { it.isNotEmpty() }
+                    val (hits, total) = files.search(query, folder, MAX_SEARCH)
+                    JSONObject().put("query", query).apply { if (folder != null) put("folder", folder) }
+                        .put("matched_lines", if (total >= OrbitFiles.COUNT_LIMIT) "${OrbitFiles.COUNT_LIMIT}+" else total)
+                        .put("hits", JSONArray(hits.map { JSONObject().put("path", it.path).put("line", it.line).put("text", it.text) }))
+                        .put("note", when {
+                            hits.isEmpty() -> "No line holds \"$query\"" + (folder?.let { " under $it" } ?: "") +
+                                ". Try fewer or other words."
+                            hits.size < total -> "Showing the first ${hits.size}; narrow it with more exact words or a folder."
+                            else -> "All matches shown. Read around one with read path=…, start_line=…."
+                        })
+                        .toString()
                 }
                 "write" -> {
                     val path = arg("path")
@@ -191,7 +211,7 @@ internal object OrbitFileTools {
                     val entry = files.saveBytes(path, text.byteInputStream())
                     "Saved as ${entry.path}. The user finds it under Files in the Builds tab."
                 }
-                else -> error("Unknown action \"${args["action"].orEmpty()}\"; use list, read, write, append, daily, delete, trash, restore, send, import, export or prompt_copy")
+                else -> error("Unknown action \"${args["action"].orEmpty()}\"; use list, read, search, write, append, daily, delete, trash, restore, send, import, export or prompt_copy")
             }
             ToolResult(tool.name, true, StringResultData(result))
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -258,6 +278,7 @@ internal object OrbitFileTools {
 
     private const val MAX_DIFF = 2000
     private const val MAX_LIST = 200
+    private const val MAX_SEARCH = 50
     private const val MAX_READ = 20_000
     private const val MAX_READ_COPIES = 32
 

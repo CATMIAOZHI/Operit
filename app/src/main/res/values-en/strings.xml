@@ -9542,6 +9542,9 @@
     <string name="orbit_builds_made">Builds</string>
     <string name="orbit_builds_uploads">Library</string>
     <string name="orbit_builds_work">Build</string>
+    <string name="orbit_builds_book_text">Book text · %1$d chapters</string>
+    <string name="orbit_builds_book_text_show">Show chapters</string>
+    <string name="orbit_builds_book_text_hide">Hide chapters</string>
     <string name="orbit_builds_made_empty">Things %1$s makes for you and files it saves show up here.</string>
     <string name="orbit_builds_moved_to_trash">Moved to trash</string>
     <string name="orbit_uploads_used">%1$s of %2$s used</string>
