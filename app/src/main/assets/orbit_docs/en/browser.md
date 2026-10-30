@@ -6,6 +6,8 @@ Visiting a page does not mean the user has seen it.
 
 ## Opening, reading, and interacting
 
+**Prefer handing browser work to a subagent of its own.** Tell it what to do, where to stop, and which steps need the user's OK first. The main chat is then not held up and the user can keep talking to you. Do it yourself only for a quick one- or two-step look. When you already are a subagent, do it yourself; do not hand it further down.
+
 Create or select a browser task according to the current tool instructions, then inspect the page state.
 Act on elements you actually observe; inspect again after page changes rather than reusing stale positions.
 Explain website errors, network failures, and login restrictions from the actual result.

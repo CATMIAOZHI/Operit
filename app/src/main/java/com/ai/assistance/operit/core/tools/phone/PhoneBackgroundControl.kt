@@ -67,6 +67,8 @@ internal object PhoneBackgroundControl {
     private const val IDLE_MS = 10 * 60_000L
     /** A screen the user controls stays this long without a hand-back. */
     private const val USER_IDLE_MS = 30 * 60_000L
+    /** A screen the AI is done with stays this long, so the user can still look, then closes. */
+    private const val DONE_MS = 5 * 60_000L
     private const val MAX_CARDS = 100
     private const val CARDS_FILE = "orbit_phone_cards.json"
 
@@ -102,6 +104,8 @@ internal object PhoneBackgroundControl {
         val note: String? = null,
         /** Which hand-back [note] is about. */
         val noteId: Long = 0,
+        /** When the AI called stop; the screen stays [DONE_MS] for the user to look at, then closes. */
+        val doneAt: Long? = null,
     ) {
         val key: String get() = "orbit-phone-$id"
     }
@@ -136,6 +140,8 @@ internal object PhoneBackgroundControl {
     private val inputs = ConcurrentHashMap<String, Mutex>()
     private val jobs = ConcurrentHashMap<String, Job>()
     private val handBacks = java.util.concurrent.atomic.AtomicLong()
+    /** Agents that got the guide in this app run; the first start of any other one gets it first. */
+    private val guided = ConcurrentHashMap.newKeySet<String>()
     /** Closed screens and why, the latest few. */
     private val ended = object : LinkedHashMap<String, End>() {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, End>?) = size > 50
@@ -175,9 +181,18 @@ internal object PhoneBackgroundControl {
         when (tool.name) {
             "phone_control:start" -> start(context, tool, caller, args)
             "phone_control:stop" -> {
-                val screen = owned(caller, args.required("session_id"))
-                close(screen.id, End.AGENT)
-                ok(tool, "Background screen closed. Its apps were closed with it; the user's phone screen was not touched.")
+                val screen = owned(caller, args.required("session_id"), done = true)
+                observations.remove(screen.id)
+                change(screen.id) { if (it.doneAt == null) it.copy(doneAt = System.currentTimeMillis(), lastUsedAt = System.currentTimeMillis()) else it }
+                // A call still running on it is ended, so no input goes out after stop returns.
+                if (busy[screen.id]?.isLocked == true) {
+                    jobs[screen.id]?.cancel()
+                    busy[screen.id]?.withLock { }
+                }
+                observations.remove(screen.id)
+                ok(tool, "Done with background screen session_id=${screen.id}. No more actions go to it. It stays up to ${DONE_MS / 60_000} minutes " +
+                    "so the user can still look at it, then closes with its apps (sooner if another task needs a screen). " +
+                    "Calling start again before then reuses it. The user's phone screen was not touched.")
             }
             "phone_control:observe", "phone_control:act" -> {
                 val screen = owned(caller, args.required("session_id"))
@@ -195,7 +210,7 @@ internal object PhoneBackgroundControl {
             error = e.message ?: "Background phone control failed.")
     }
 
-    private fun owned(caller: OrbitBrowserWatch.Caller, id: String): Screen {
+    private fun owned(caller: OrbitBrowserWatch.Caller, id: String, done: Boolean = false): Screen {
         val screen = _screens.value[id] ?: run {
             val why = synchronized(ended) { ended[id] }
             error("Background screen $id is closed. ${why?.text ?: End.AGENT.text}")
@@ -203,6 +218,7 @@ internal object PhoneBackgroundControl {
         check(!screen.stopping) {
             "Background screen $id is closing. ${synchronized(ended) { ended[id] }?.text ?: End.AGENT.text}"
         }
+        check(done || screen.doneAt == null) { "You stopped background screen $id. Call start again to use it (it reuses this screen)." }
         if (screen.ownerChat == caller.executorChatId) return screen
         // A screen left by a finished background task, or by Orbit's own reply, may be taken up by
         // the same Orbit (after the user hands it back). A subagent's screen stays its own.
@@ -210,8 +226,13 @@ internal object PhoneBackgroundControl {
             !CollaborationCoordinator.getInstance(app).isAgent(screen.ownerChat)
         }.getOrDefault(false) && !running(screen.ownerChat)
         check(free) { "Background screen $id belongs to another agent that is still working. Use your own screen." }
-        _screens.value.values.firstOrNull { it.ownerChat == caller.executorChatId }?.let {
-            error("You already have background screen session_id=${it.id}. Stop it before taking over $id.")
+        // A screen of the caller's that it already stopped gives way, unless the user is on it.
+        _screens.value.values.filter { it.ownerChat == caller.executorChatId && it.doneAt != null && !it.stopping && it.control == Control.AI }
+            .forEach { close(it.id, End.AGENT) }
+        _screens.value.values.firstOrNull { it.ownerChat == caller.executorChatId && !it.stopping }?.let {
+            if (it.doneAt != null) error("The user is controlling your finished background screen session_id=${it.id}. " +
+                "Retry with $id after they hand it back, or tell the user.")
+            error("You already have background screen session_id=${it.id}. Call stop on it first, then retry with $id.")
         }
         change(id) { if (it.ownerChat == screen.ownerChat) it.copy(ownerChat = caller.executorChatId) else it }
         return checkNotNull(_screens.value[id]?.takeIf { it.ownerChat == caller.executorChatId }) {
@@ -228,6 +249,14 @@ internal object PhoneBackgroundControl {
         check(lock.tryLock()) { "Another call on this background screen is running. Retry after it returns." }
         jobs[screen.id] = currentCoroutineContext().job
         try {
+            // Checked again under the lock: a stop or takeover may have landed since [screen] was read.
+            val now = _screens.value[screen.id]
+            check(now != null && !now.stopping && now.doneAt == null) {
+                "Background screen ${screen.id} was stopped. Call start again to use it (it reuses this screen)."
+            }
+            check(now.control == Control.AI) {
+                "The user is controlling this background screen right now. Do not act; wait until they hand it back (you will be told), then observe again."
+            }
             touch(screen.id)
             // The hand-back note goes with this call's result, success or not; it stays if the call is cancelled.
             val noted = _screens.value[screen.id]
@@ -279,10 +308,34 @@ internal object PhoneBackgroundControl {
         }
         val packageName = args["package_name"]?.trim()?.takeIf { it.isNotEmpty() }?.also { checkPackage(context, it) }
         val mode = args["mode"] ?: "both"
+        // The first start of each agent comes with the guide instead, so it is read before any phone work.
+        if (guided.add(caller.executorChatId)) {
+            val english = LocaleUtils.usesEnglishPrompt(app)
+            val guide = runCatching {
+                context.assets.open("orbit_docs/${if (english) "en" else "zh"}/phone-control.md").bufferedReader().use { it.readText() }
+            }.getOrNull()
+            if (guide != null) return ToolResult(toolName = tool.name, success = false, result = StringResultData(guide),
+                error = "Nothing was started yet. This is the first phone_control use here: read the guide below " +
+                    "(docs/phone-control.md), decide as it says whether a subagent should do this, then call start again.")
+        }
         val screen = starting.withLock {
-            _screens.value.values.firstOrNull { it.ownerChat == caller.executorChatId }?.let {
-                if (it.stopping) error("Your previous background screen is still closing. Retry in a few seconds.")
-                error("You already have background screen session_id=${it.id}. Keep using it, or stop it before starting another.")
+            _screens.value.values.firstOrNull { it.ownerChat == caller.executorChatId }?.let { own ->
+                if (own.stopping) error("Your previous background screen is still closing. Retry in a few seconds.")
+                if (own.doneAt == null) error("You already have background screen session_id=${own.id}. Keep using it: one screen per agent.")
+                // Stopped a moment ago: the same screen, with its apps as they were, is used again.
+                check(allowed(context, caller.orbitId)) { End.PACKAGE.text }
+                change(own.id) { it.copy(doneAt = null, lastUsedAt = System.currentTimeMillis()) }
+                return@withLock checkNotNull(_screens.value[own.id]?.takeIf { !it.stopping && it.doneAt == null }) {
+                    "Your previous background screen just closed. Retry start."
+                }
+            }
+            // A finished screen kept for the user gives way to new work.
+            if (_screens.value.size >= MAX_SCREENS) {
+                _screens.value.values.filter { it.doneAt != null && !it.stopping && it.control == Control.AI }.minByOrNull { it.doneAt!! }?.let { done ->
+                    close(done.id, End.AGENT)
+                    val until = System.currentTimeMillis() + 10_000
+                    while (done.id in _screens.value && System.currentTimeMillis() < until) delay(100)
+                }
             }
             // A closing screen still counts until it is gone.
             check(_screens.value.size < MAX_SCREENS) {
@@ -570,8 +623,8 @@ internal object PhoneBackgroundControl {
         var page = prior.page
         val progress = runPhoneBatch(steps.size, before = { index ->
             if (index > 0) delay(stepDelay)
-            check(_screens.value[id]?.let { !it.stopping && it.control == Control.AI } == true) {
-                "The user took over or stopped the background screen. Remaining actions were not sent."
+            check(_screens.value[id]?.let { !it.stopping && it.doneAt == null && it.control == Control.AI } == true) {
+                "The user took over the background screen, or it was stopped. Remaining actions were not sent."
             }
             check(allowed(context, screen.orbitId)) { End.PACKAGE.text }
             val step = steps[index]
@@ -613,7 +666,7 @@ internal object PhoneBackgroundControl {
         })
         val summary = "completed_actions=${progress.completed}; attempted_actions=${progress.attempted}; total_actions=${progress.total}"
         val failure = progress.error?.let { "$summary\n$it\nDo not replay attempted actions; use the fresh observation below if present. Call stop when done." }
-        if (postMode != "none" && _screens.value[id]?.let { !it.stopping && it.control == Control.AI } == true) {
+        if (postMode != "none" && _screens.value[id]?.let { !it.stopping && it.doneAt == null && it.control == Control.AI } == true) {
             try {
                 delay(if (steps.last().action == "open_app") 700L else stepDelay)
                 val vision = ToolExecutionManager.currentToolRuntimeContext()?.parentModelSupportsVision == true
@@ -678,8 +731,10 @@ internal object PhoneBackgroundControl {
     /** The user takes control; input opens once the AI's call in flight is over. Earlier observations no longer count. */
     fun takeOver(id: String) {
         val screen = _screens.value[id] ?: return
-        if (screen.stopping || screen.control != Control.AI) return
-        change(id) { it.copy(control = Control.WAITING) }
+        // A finished screen is only kept to look at.
+        if (screen.stopping || screen.control != Control.AI || screen.doneAt != null) return
+        change(id) { if (it.control == Control.AI && it.doneAt == null && !it.stopping) it.copy(control = Control.WAITING) else it }
+        if (_screens.value[id]?.control != Control.WAITING) return
         observations.remove(id)
         scope.launch {
             while (busy[id]?.isLocked == true && _screens.value[id]?.control == Control.WAITING) delay(150)
@@ -715,10 +770,14 @@ internal object PhoneBackgroundControl {
                 observations.remove(id)
                 change(id) {
                     back = !it.stopping && it.control != Control.AI
-                    if (back) it.copy(control = Control.AI, lastUsedAt = System.currentTimeMillis(), note = notice, noteId = gen) else it
+                    // A screen the AI already finished with needs no notice.
+                    // Its 5 minutes start again once the user is done looking.
+                    if (back) it.copy(control = Control.AI, lastUsedAt = System.currentTimeMillis(),
+                        note = notice.takeIf { _ -> it.doneAt == null }, noteId = gen,
+                        doneAt = it.doneAt?.let { _ -> System.currentTimeMillis() }) else it
                 }
             }
-            if (!back) return@launch
+            if (!back || _screens.value[id]?.note == null) return@launch
             // An agent still at work hears it on its next call; one that stopped gets a turn.
             val until = System.currentTimeMillis() + 10 * 60_000L
             fun pending(): Screen? = _screens.value[id]?.takeIf { !it.stopping && it.note != null && it.noteId == gen && it.control == Control.AI }
@@ -813,8 +872,15 @@ internal object PhoneBackgroundControl {
             while (_screens.value.isNotEmpty()) {
                 delay(30_000)
                 val now = System.currentTimeMillis()
+                // Under the start lock, so a screen start is reusing right now is not closed under it.
+                starting.withLock {
+                    _screens.value.values.filter { screen ->
+                        !screen.stopping && screen.doneAt != null && screen.control == Control.AI && now - screen.doneAt > DONE_MS
+                    }.forEach { close(it.id, End.AGENT) }
+                }
+                // The user's turn on a finished screen keeps the usual user idle limit.
                 _screens.value.values.filter { screen ->
-                    !screen.stopping && busy[screen.id]?.isLocked != true &&
+                    !screen.stopping && (screen.doneAt == null || screen.control != Control.AI) && busy[screen.id]?.isLocked != true &&
                         now - screen.lastUsedAt > if (screen.control == Control.AI) IDLE_MS else USER_IDLE_MS
                 }.forEach { close(it.id, End.IDLE) }
                 // The Shower service may have gone (killed, restarted): its screens are gone too.
