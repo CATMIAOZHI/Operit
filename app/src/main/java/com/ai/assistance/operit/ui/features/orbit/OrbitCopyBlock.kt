@@ -96,14 +96,21 @@ internal fun OrbitCopyBlock(text: String, textColor: Color) {
             .border(1.dp, colors.outline.copy(alpha = 0.35f), shape),
     ) {
         Column(Modifier.padding(start = 14.dp, end = 6.dp, top = 12.dp, bottom = 2.dp)) {
-            LazyColumn(
-                Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = ORBIT_COPY_BLOCK_MAX_HEIGHT)
-                    .padding(end = 8.dp),
-            ) {
-                itemsIndexed(lines) { _, line ->
-                    Text(line, style = MaterialTheme.typography.bodyMedium, color = textColor)
+            if (com.ai.assistance.operit.ui.common.markdown.LocalMarkdownSnapshot.current != null) {
+                // A chat picture shows the whole block.
+                Column(Modifier.fillMaxWidth().padding(end = 8.dp)) {
+                    lines.forEach { line -> Text(line, style = MaterialTheme.typography.bodyMedium, color = textColor) }
+                }
+            } else {
+                LazyColumn(
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = ORBIT_COPY_BLOCK_MAX_HEIGHT)
+                        .padding(end = 8.dp),
+                ) {
+                    itemsIndexed(lines) { _, line ->
+                        Text(line, style = MaterialTheme.typography.bodyMedium, color = textColor)
+                    }
                 }
             }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {

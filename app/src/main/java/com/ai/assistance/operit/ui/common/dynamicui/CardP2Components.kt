@@ -90,10 +90,30 @@ internal object CardFormula : A2uiComponent {
             }
             finished = true
         }
+        // A shared picture waits for the formula, so it never holds the spinner.
+        com.ai.assistance.operit.ui.common.markdown.MarkdownSnapshotWork(!finished)
         Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(title, style = MaterialTheme.typography.labelLarge)
             val image = drawable
             when {
+                // A shared picture cannot be scrolled sideways, so a long formula is drawn smaller to fit.
+                image != null && com.ai.assistance.operit.ui.common.markdown.LocalMarkdownSnapshot.current != null ->
+                    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth()) {
+                        val density = LocalDensity.current
+                        val room = with(density) { maxWidth.toPx() }
+                        val scale = if (room > 0f) minOf(1f, room / image.intrinsicWidth) else 1f
+                        Canvas(Modifier.size(with(density) { (image.intrinsicWidth * scale).toDp() },
+                            with(density) { (image.intrinsicHeight * scale).toDp() })
+                            .semantics { contentDescription = title.ifBlank { source } }) {
+                            image.setBounds(0, 0, image.intrinsicWidth, image.intrinsicHeight)
+                            drawContext.canvas.nativeCanvas.let { canvas ->
+                                canvas.save()
+                                canvas.scale(scale, scale)
+                                image.draw(canvas)
+                                canvas.restore()
+                            }
+                        }
+                    }
                 image != null -> Box(Modifier.horizontalScroll(rememberScrollState())) {
                     val density = LocalDensity.current
                     Canvas(Modifier.size(with(density) { image.intrinsicWidth.toDp() },

@@ -185,9 +185,11 @@ internal class CardLayoutComponent(override val name: String) : A2uiComponent {
                 }
             }
             // The height constraint MUST precede scrolling inside a vertically unbounded chat.
-            "Scroll" -> Box(modifier.fillMaxWidth()
-                .heightIn(max = (properties.bind(maxHeight)?.toInt() ?: 240).coerceIn(80, 480).dp)
-                .verticalScroll(rememberScrollState())) {
+            // In a shared picture it shows in full, since a picture cannot be scrolled.
+            "Scroll" -> Box(modifier.fillMaxWidth().then(
+                if (com.ai.assistance.operit.ui.common.markdown.LocalMarkdownSnapshot.current != null) Modifier
+                else Modifier.heightIn(max = (properties.bind(maxHeight)?.toInt() ?: 240).coerceIn(80, 480).dp)
+                    .verticalScroll(rememberScrollState()))) {
                 CompositionLocalProvider(LocalCardRowItem provides false) { render(false) }
             }
         }

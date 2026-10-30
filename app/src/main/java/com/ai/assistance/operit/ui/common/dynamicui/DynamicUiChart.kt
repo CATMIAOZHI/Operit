@@ -372,7 +372,10 @@ internal fun CardChart(type: String, title: String, data: List<CardChartSeries>,
                 }
             }
             Text(stringResource(R.string.dynamic_ui_chart_gesture), style = MaterialTheme.typography.labelSmall, color = ink)
-            if (type == "pie") Column(Modifier.heightIn(max = 240.dp).verticalScroll(androidx.compose.foundation.rememberScrollState()),
+            // In a shared picture the legend shows in full, since a picture cannot be scrolled.
+            if (type == "pie") Column(
+                if (com.ai.assistance.operit.ui.common.markdown.LocalMarkdownSnapshot.current != null) Modifier
+                else Modifier.heightIn(max = 240.dp).verticalScroll(androidx.compose.foundation.rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 val total = points.sumOf { it.y }
                 // Values that already sum to 100 are percentages; repeating them would be noise.

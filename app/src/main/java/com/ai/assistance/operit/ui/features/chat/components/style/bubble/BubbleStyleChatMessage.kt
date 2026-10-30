@@ -84,9 +84,10 @@ fun BubbleStyleChatMessage(
             // its own; the words answer for the message.
             val orbitLook = com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current
             val english = !androidx.compose.ui.platform.LocalConfiguration.current.locales[0].language.startsWith("zh")
-            val pieces = remember(orbitLook, message.content, message.contentStream, message.displayMode, message.timestamp, english) {
+            val uiOffset = com.ai.assistance.operit.ui.common.dynamicui.LocalDynamicUiPartOffset.current?.cards ?: 0
+            val pieces = remember(orbitLook, message.content, message.contentStream, message.displayMode, message.timestamp, english, uiOffset) {
                 if (orbitLook && message.contentStream == null && !message.displayMode.isCollaborationEvent)
-                    com.ai.assistance.operit.ui.features.chat.components.OrbitSpeech.pieceList(message.content, message.timestamp, english)
+                    com.ai.assistance.operit.ui.features.chat.components.OrbitSpeech.pieceList(message.content, message.timestamp, english, uiOffset)
                 else null
             }
             val bubble: @Composable (ChatMessage, ChatMessageHeightMemory?) -> Unit = { shown, memory ->

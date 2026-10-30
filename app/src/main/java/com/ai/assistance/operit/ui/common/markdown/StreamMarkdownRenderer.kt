@@ -980,6 +980,7 @@ fun StreamMarkdownRenderer(
     }
 
     var pendingStaticParse by remember(content, rendererState) { mutableStateOf(!staticNodesReady) }
+    MarkdownSnapshotWork(pendingStaticParse)
     LaunchedEffect(content, rendererState) {
         if (!staticNodesReady) {
             try {

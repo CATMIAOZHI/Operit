@@ -9913,9 +9913,9 @@
     <string name="orbit_selection_copy_failed">内容太多，复制失败</string>
     <string name="orbit_selection_cut">内容太长，只保留了前面一部分</string>
     <string name="orbit_selection_share">分享</string>
-    <string name="orbit_share_image_making">正在生成聊天图片…</string>
+    <string name="orbit_share_image_making">正在生成聊天图片 %1$d%%</string>
+    <string name="orbit_selection_range_here">选到这里</string>
     <string name="orbit_share_image_failed">聊天图片没能生成，请再试一次</string>
-    <string name="orbit_share_image_cut">聊天太长，图片只截到前面一部分</string>
     <string name="orbit_share_image_title">聊天图片</string>
     <string name="orbit_export_card_title">导出 %1$s 的数据</string>
     <string name="orbit_export_card_sub">文件、记忆、任务和聊天打成一个压缩包</string>

@@ -470,17 +470,23 @@ object OrbitSpeech {
         return null
     }
 
+    /** The content of each Dynamic UI card of an Orbit message, in the order [pieceList] counts them. */
+    fun uiSources(content: String): List<String> = uiFence.findAll(of(content)).map { m ->
+        m.value.lines().drop(1).let { if (it.lastOrNull()?.trim() == "```") it.dropLast(1) else it }.joinToString("\n").trim()
+    }.toList()
+
     /**
      * [pieces] with what each bubble is: the words (split at message breaks and around Dynamic UI
-     * cards), each Dynamic UI card, then each tool card. [timestamp] is the message's.
+     * cards), each Dynamic UI card, then each tool card. [timestamp] is the message's. [uiOffset]
+     * is how many Dynamic UI cards come before [shown] when it is only a part of its message.
      */
-    fun pieceList(shown: String, timestamp: Long, english: Boolean): List<OrbitPiece> {
+    fun pieceList(shown: String, timestamp: Long, english: Boolean, uiOffset: Int = 0): List<OrbitPiece> {
         val whole = timestamp.toString()
         if (!shown.contains("message_break", ignoreCase = true) && !shown.contains("```$ORBIT_CARD_FENCE\n") &&
             !shown.contains("```a2ui")) return listOf(OrbitPiece(shown, whole, null, true))
         val (parts, cards) = bubbles(shown)
         val out = mutableListOf<OrbitPiece>()
-        var ui = 0
+        var ui = uiOffset
         parts.forEach { part ->
             var at = 0
             fun words(text: String) { text.trim().takeIf { it.isNotEmpty() }?.let { out += OrbitPiece(it, whole, null, false) } }
