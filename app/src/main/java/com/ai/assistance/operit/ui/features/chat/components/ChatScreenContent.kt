@@ -45,6 +45,8 @@ import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import com.ai.assistance.operit.ui.features.chat.viewmodel.ChatViewModel
 import com.ai.assistance.operit.ui.features.chat.viewmodel.ChatHistoryDisplayMode
 import com.ai.assistance.operit.ui.features.chat.components.style.bubble.BubbleImageStyleConfig
+import com.ai.assistance.operit.ui.features.chat.components.style.bubble.BubbleStyleChatMessage
+import com.ai.assistance.operit.ui.features.chat.components.style.cursor.CursorStyleChatMessage
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -166,6 +168,50 @@ fun ChatScreenContent(
     val orbitMessageHost = if (LocalOrbitChatLook.current) {
         com.ai.assistance.operit.ui.features.orbit.LocalOrbitMessageHost.current
     } else null
+    // Sharing picked Orbit messages draws them as one picture, with the bubbles this chat shows.
+    val shareOrbitPicture = orbitMessageHost?.let { host ->
+        com.ai.assistance.operit.ui.features.orbit.rememberOrbitPictureShare(host, chatAreaHorizontalPadding.dp) { message ->
+            when (chatStyle) {
+                ChatStyle.CURSOR -> CursorStyleChatMessage(
+                    message = message,
+                    userMessageColor = userMessageColor,
+                    userMessageLiquidGlassEnabled = cursorUserBubbleLiquidGlass,
+                    userMessageWaterGlassEnabled = cursorUserBubbleWaterGlass,
+                    aiMessageColor = aiMessageColor,
+                    userTextColor = userTextColor,
+                    aiTextColor = aiTextColor,
+                    systemMessageColor = systemMessageColor,
+                    systemTextColor = systemTextColor,
+                    thinkingBackgroundColor = thinkingBackgroundColor,
+                    thinkingTextColor = thinkingTextColor,
+                    supportToolMarkup = true,
+                    enableDialogs = false,
+                )
+                ChatStyle.BUBBLE -> BubbleStyleChatMessage(
+                    message = message,
+                    userMessageColor = userMessageColor,
+                    aiMessageColor = aiMessageColor,
+                    userTextColor = userTextColor,
+                    aiTextColor = aiTextColor,
+                    systemMessageColor = systemMessageColor,
+                    systemTextColor = systemTextColor,
+                    userMessageLiquidGlassEnabled = bubbleUserBubbleLiquidGlass,
+                    userMessageWaterGlassEnabled = bubbleUserBubbleWaterGlass,
+                    aiMessageLiquidGlassEnabled = bubbleAiBubbleLiquidGlass,
+                    aiMessageWaterGlassEnabled = bubbleAiBubbleWaterGlass,
+                    userBubbleImageStyle = bubbleUserImageStyle,
+                    aiBubbleImageStyle = bubbleAiImageStyle,
+                    bubbleUserRoundedCornersEnabled = bubbleUserRoundedCornersEnabled,
+                    bubbleAiRoundedCornersEnabled = bubbleAiRoundedCornersEnabled,
+                    bubbleUserContentPaddingLeft = bubbleUserContentPaddingLeft,
+                    bubbleUserContentPaddingRight = bubbleUserContentPaddingRight,
+                    bubbleAiContentPaddingLeft = bubbleAiContentPaddingLeft,
+                    bubbleAiContentPaddingRight = bubbleAiContentPaddingRight,
+                    enableDialogs = false,
+                )
+            }
+        }
+    }
     val selectableMessageIndices = remember(chatHistory, orbitMessageHost != null) {
         chatHistory.mapIndexedNotNull { index, message ->
             if ((message.sender == "user" || message.sender == "ai") &&
@@ -589,13 +635,8 @@ fun ChatScreenContent(
                         done()
                     },
                     onShare = {
-                        val messages = picked()
-                        orbitMessageHost.scope.launch {
-                            com.ai.assistance.operit.ui.features.orbit.OrbitMessageActions.share(
-                                context,
-                                com.ai.assistance.operit.ui.features.orbit.OrbitMessageActions.transcript(context, orbitMessageHost, messages),
-                            )
-                        }
+                        val messages = picked().sortedBy { it.timestamp }
+                        if (messages.isNotEmpty()) shareOrbitPicture?.invoke(messages)
                         done()
                     },
                     onKeep = {
