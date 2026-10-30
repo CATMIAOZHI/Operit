@@ -20,7 +20,7 @@ When Legado is not installed, never opened, or cannot be reached, the tool says 
 
 When you read a book together, first `copy` the chapters you will read, so you do not ask Legado every time.
 Each copied line is `[n] text`, with the same `n` that `write_comments` takes.
-Read the files with `orbit_file read`, and use `orbit_file search` (`folder` = `files/reading/<book>/text`) to find where a name, a place or a line appears in the whole book.
+Read the files with `orbit_file read`, and use `grep_code` (`environment=android`, `path` = the `absolute_folder` that `copy` returned) to find where a name, a place or a line appears in the whole book; the full paths it finds can go straight to `orbit_file read`.
 Chapters Legado has not saved are downloaded from the book's website, so copy a few to twenty at a time and go on with the returned `next_chapter`; do not copy the whole book at once.
 If the user switched source or the text changed in Legado, paragraph numbers can move; when unsure, `orbit_reading read` the chapter again before commenting.
 

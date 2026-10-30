@@ -164,8 +164,34 @@ internal object OrbitTools {
         val forkReference = side?.forkOrigin?.takeIf { it.chatId in orbit.talkChatIds }?.let {
             com.ai.assistance.operit.features.orbit.OrbitChatFork.prompt(context, it, useEnglish)
         }.orEmpty()
-        val runtime = "<orbit>\n$body$sideNote\n$controlPrompt\n</orbit>$forkReference"
+        val runtime = "<orbit>\n$body$sideNote\n${folderLine(context, orbit.id, useEnglish)}\n$controlPrompt\n</orbit>$forkReference"
         return PromptParts(handbook, runtime, identity, soul, alignment)
+    }
+
+    /**
+     * Where this Orbit's folder is on the phone, so the app's file tools and the local terminal reach
+     * its files. The same for every chat of the Orbit, so it never breaks the prompt cache.
+     */
+    private fun folderLine(context: Context, orbitId: String, useEnglish: Boolean): String {
+        val root = OrbitPreferences.getInstance(context).orbitDir(orbitId).absolutePath
+        return if (useEnglish) {
+            "Your Orbit folder is at $root. A short path such as files/a.md is $root/files/a.md. Save and refer to " +
+                "files by short path; use the full path with the app's file tools (environment=android, e.g. grep_code, " +
+                "read_file) and the local terminal. orbit_file takes either."
+        } else {
+            "你的 Orbit 文件夹在 $root。短路径 files/a.md 就是 $root/files/a.md。保存和引用文件用短路径；" +
+                "用应用的文件工具（environment=android，比如 grep_code、read_file）或本地终端时用完整路径。orbit_file 两种都接受。"
+        }
+    }
+
+    /**
+     * For a subagent working for an Orbit: only the folder line, wrapped in its own tag. Subagents do
+     * not get the Orbit's private prompt, but they work on its files too. Null outside an Orbit.
+     */
+    suspend fun subagentFolderNote(context: Context, chatId: String?, useEnglish: Boolean): String? {
+        val orbit = runCatching { com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context, chatId) }
+            .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }.getOrNull() ?: return null
+        return "<orbit_folder>\n${folderLine(context, orbit.id, useEnglish)}\n</orbit_folder>"
     }
 
     fun executeSetName(context: Context, tool: AITool): ToolResult {
