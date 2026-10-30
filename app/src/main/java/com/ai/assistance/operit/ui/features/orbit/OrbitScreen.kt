@@ -710,8 +710,9 @@ private fun OrbitChatPage(
                     LocalOrbitMessageHost provides
                         if (devView) null else {
                             val name = orbitName(orbit)
+                            val orbitNow = rememberUpdatedState(orbit)
                             remember(orbit.id, name, currentChatId, messageScope) {
-                                OrbitMessageHost(orbit.id, name, currentChatId, messageScope)
+                                OrbitMessageHost(orbit.id, name, currentChatId, messageScope) { orbitNow.value }
                             }
                         },
                     LocalOrbitForkMessage provides

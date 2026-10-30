@@ -62,7 +62,7 @@ internal object OrbitMediaPreview {
                     autoPlay = true,
                 )
                 OrbitViewerButton(Icons.Default.Close, stringResource(R.string.common_close),
-                    Modifier.align(Alignment.TopStart).statusBarsPadding().padding(16.dp), onDismiss)
+                    Modifier.align(Alignment.TopStart).statusBarsPadding().padding(16.dp), onClick = onDismiss)
                 Row(Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(16.dp)) {
                     OrbitViewerButton(orbitIcon("share-2"), stringResource(R.string.orbit_file_share)) {
                         shareOrbitFile(context) { file }
@@ -79,10 +79,17 @@ internal object OrbitMediaPreview {
 
 /** A round see-through button on a dark full-screen viewer. */
 @Composable
-internal fun OrbitViewerButton(icon: ImageVector, label: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Surface(onClick = onClick, shape = CircleShape, color = Color.Black.copy(alpha = 0.5f), modifier = modifier.size(44.dp)) {
+internal fun OrbitViewerButton(
+    icon: ImageVector,
+    label: String,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    Surface(onClick = onClick, enabled = enabled, shape = CircleShape, color = Color.Black.copy(alpha = 0.5f),
+        modifier = modifier.size(44.dp)) {
         Box(contentAlignment = Alignment.Center) {
-            Icon(icon, label, Modifier.size(22.dp), tint = Color.White)
+            Icon(icon, label, Modifier.size(22.dp), tint = if (enabled) Color.White else Color.White.copy(alpha = 0.38f))
         }
     }
 }

@@ -9936,6 +9936,10 @@
     <string name="orbit_selection_copy_failed">Too much to copy</string>
     <string name="orbit_selection_cut">Too long, only the first part was kept</string>
     <string name="orbit_selection_share">Share</string>
+    <string name="orbit_share_image_making">Making the chat picture…</string>
+    <string name="orbit_share_image_failed">Couldn\'t make the chat picture. Try again.</string>
+    <string name="orbit_share_image_cut">The chat is too long, so the picture shows only the first part</string>
+    <string name="orbit_share_image_title">Chat picture</string>
     <string name="orbit_export_card_title">Export %1$s\'s data</string>
     <string name="orbit_export_card_sub">Files, memory, tasks and chats in one zip</string>
     <string name="orbit_export_card_button">Export and share</string>
