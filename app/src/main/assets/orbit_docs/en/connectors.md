@@ -18,13 +18,13 @@ Every Orbit keeps these core packages imported and enabled. They cannot be switc
 
 Always enabled does not guarantee permission for every operation or that required components are installed.
 
-A new Orbit also starts with these two packages imported and on. The user can switch them off or remove them; a removed one is not added back:
+A new Orbit also starts with this package imported and on. The user can switch it off or remove it; once removed it is not added back:
 
 | Package | Purpose |
 |---|---|
 | `extended_file_tools` | Move, copy, zip and unzip, file info, open and share files |
-| `extended_http_tools` | Direct HTTP requests (GET/POST and so on) and file uploads |
 
+For HTTP requests, `curl` in the terminal is usually enough; use `orbit_vault` for requests that need a key. Import `extended_http_tools` only when it is really needed.
 Import other packages as needed. Orbit's package list and switches are independent of the main app and do not follow later changes to its switches.
 `extended_chat` and `operit_editor` are unavailable to Orbit: use `orbit_chat` for your own chats, and Orbit's own tools for models, voice, packages and keys.
 
