@@ -1,5 +1,6 @@
 package com.ai.assistance.operit.ui.features.settings.screens
 
+import com.ai.assistance.operit.ui.features.orbit.OrbitAwareDropdownMenu
 import android.annotation.SuppressLint
 import androidx.compose.animation.*
 import androidx.compose.animation.ExperimentalAnimationApi
@@ -1183,7 +1184,7 @@ private fun CustomHeadersSettingsSection(
                             }
                         }
 
-                        DropdownMenu(
+                        OrbitAwareDropdownMenu(
                             expanded = showHeaderPresetsMenu,
                             onDismissRequest = { showHeaderPresetsMenu = false }
                         ) {

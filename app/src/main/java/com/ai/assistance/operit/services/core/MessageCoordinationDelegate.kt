@@ -432,13 +432,18 @@ class MessageCoordinationDelegate(
         attachments: List<com.ai.assistance.operit.data.model.AttachmentInfo> = emptyList(),
         turnOptions: ChatTurnOptions = ChatTurnOptions(),
         replyToMessage: ChatMessage? = null,
+        /** Sent with exactly this content (a message sent again) instead of building it from [messageText]. */
+        prebuiltUserMessage: ChatMessage? = null,
+        skipSummaryCheck: Boolean = false,
     ): Boolean {
         if (chatId.isBlank()) return false
         return sendMessageInternal(
             promptFunctionType = promptFunctionType,
+            skipSummaryCheck = skipSummaryCheck,
             chatIdOverride = chatId,
             messageTextOverride = messageText,
             attachmentsOverride = attachments,
+            prebuiltUserMessage = prebuiltUserMessage,
             // A message that carries its own quote leaves whatever the composer quotes now alone.
             turnOptions = if (replyToMessage != null) turnOptions.copy(useComposerReply = false) else turnOptions,
             replyToMessageOverride = replyToMessage,

@@ -1,5 +1,6 @@
 package com.ai.assistance.operit.ui.features.chat.components
 
+import com.ai.assistance.operit.ui.features.orbit.OrbitAwareAlertDialog
 import android.content.Context
 import android.widget.Toast
 import androidx.compose.animation.core.RepeatMode
@@ -1003,7 +1004,8 @@ private fun MessageItem(
         }
 
         val messageMenu: @Composable (@Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) -> Unit = { content ->
-            if (orbitLook) {
+            // Orbit's developer view is still in the Orbit: its menu follows the back swipe too.
+            if (orbitLook || showHiddenRows) {
                 com.ai.assistance.operit.ui.features.orbit.OrbitDropdownMenu(
                     expanded = showContextMenu,
                     onDismissRequest = { showContextMenu = false },
@@ -1046,6 +1048,50 @@ private fun MessageItem(
                     modifier = Modifier.padding(vertical = 4.dp),
                     color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
                 )
+            }
+            // A message that did not go out can be sent again from here too (or deleted below).
+            val unsent = LocalOrbitUnsentMessages.current
+            if (orbitLook && message.sender == "user" && unsent != null && message.timestamp in unsent.timestamps) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.orbit_resend), style = MaterialTheme.typography.bodyMedium) },
+                    onClick = {
+                        showContextMenu = false
+                        unsent.resend(message)
+                    },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    },
+                    modifier = Modifier.heightIn(min = 44.dp),
+                )
+                if (onDeleteMessage != null) {
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                stringResource(R.string.delete),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        },
+                        onClick = {
+                            showContextMenu = false
+                            showDeleteMessageConfirmDialog = true
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        },
+                        modifier = Modifier.heightIn(min = 44.dp),
+                    )
+                }
             }
             // A card has no words to copy or read out.
             if (!isHiddenUserMessage && menuPiece == null) {
@@ -1523,7 +1569,7 @@ private fun MessageItem(
         }
 
         if (enableDialogs && isHiddenUserMessage && showHiddenUserMessageDialog) {
-            AlertDialog(
+            OrbitAwareAlertDialog(
                 onDismissRequest = { showHiddenUserMessageDialog = false },
                 title = { Text(text = stringResource(R.string.chat_hidden_user_message_badge)) },
                 text = {
@@ -1555,7 +1601,7 @@ private fun MessageItem(
         }
 
         if (showDeleteMessageConfirmDialog) {
-            AlertDialog(
+            OrbitAwareAlertDialog(
                 onDismissRequest = { showDeleteMessageConfirmDialog = false },
                 title = { Text(text = stringResource(R.string.confirm_delete)) },
                 text = { Text(text = stringResource(R.string.chat_delete_message_confirm_message)) },

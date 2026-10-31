@@ -1,5 +1,6 @@
 package com.ai.assistance.operit.ui.features.chat.components.style.input.classic
 
+import com.ai.assistance.operit.ui.features.orbit.orbitDismissLayer
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.chatComposerShape
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.chatComposerColor
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.chatComposerTextStyle
@@ -267,7 +268,15 @@ fun ClassicChatInputSection(
             false
         }
     }
-    BackHandler(enabled = dictation.isActive) { dictation.cancel() }
+    // In an Orbit the box follows the back swipe before voice input closes.
+    val voiceBack = com.ai.assistance.operit.ui.features.orbit.rememberOrbitBackMotion()
+    if (com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current) {
+        com.ai.assistance.operit.ui.features.orbit.OrbitBackHandler(voiceBack, enabled = dictation.isActive) {
+            dictation.cancel()
+        }
+    } else {
+        BackHandler(enabled = dictation.isActive) { dictation.cancel() }
+    }
     val holdArea = remember { HoldToTalkArea() }
     val keyboardDown = rememberKeyboardDown()
 
@@ -612,6 +621,7 @@ fun ClassicChatInputSection(
                     modifier =
                     Modifier
                         .fillMaxWidth()
+                        .orbitDismissLayer(voiceBack)
                         .onGloballyPositioned { holdArea.container = it }
                         .holdToTalk(
                             enabled = classicInputEnabled && keyboardDown && !dictation.isActive,

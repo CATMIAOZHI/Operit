@@ -1,5 +1,6 @@
 package com.ai.assistance.operit.ui.features.chat.screens
 
+import com.ai.assistance.operit.ui.features.orbit.OrbitAwareAlertDialog
 import com.ai.assistance.operit.ui.features.chat.components.rememberChatAppearance
 
 import android.os.Build
@@ -432,7 +433,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
 
     // 模型建议对话框
     if (showModelSuggestionDialog) {
-        AlertDialog(
+        OrbitAwareAlertDialog(
             onDismissRequest = { showModelSuggestionDialog = false },
             title = { Text(stringResource(R.string.model_suggestion_title)) },
             text = { Text(stringResource(R.string.model_suggestion_message)) },
@@ -1643,7 +1644,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
 
     // Show popup message dialog when needed
     popupMessage?.let { message ->
-        AlertDialog(
+        OrbitAwareAlertDialog(
                 onDismissRequest = { actualViewModel.clearPopupMessage() },
                 title = { Text(stringResource(R.string.dialog_title_prompt)) },
                 text = { Text(message ?: "") },

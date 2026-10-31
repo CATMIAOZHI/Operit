@@ -1,5 +1,7 @@
 package com.ai.assistance.operit.ui.features.settings.screens
 
+import com.ai.assistance.operit.ui.features.orbit.OrbitAwareDropdownMenu
+import com.ai.assistance.operit.ui.features.orbit.OrbitAwareExposedDropdownMenu
 import android.annotation.SuppressLint
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
@@ -528,7 +530,7 @@ private fun SpeechServicesSettingsContent(
                                 },
                                 modifier = Modifier.menuAnchor(androidx.compose.material3.ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth()
                             )
-                            ExposedDropdownMenu(
+                            OrbitAwareExposedDropdownMenu(
                                 expanded = ttsDropdownExpanded,
                                 onDismissRequest = { ttsDropdownExpanded = false }
                             ) {
@@ -644,7 +646,7 @@ private fun SpeechServicesSettingsContent(
                                         },
                                         modifier = Modifier.menuAnchor(androidx.compose.material3.ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth()
                                     )
-                                    ExposedDropdownMenu(
+                                    OrbitAwareExposedDropdownMenu(
                                         expanded = simpleTtsLocaleExpanded,
                                         onDismissRequest = { simpleTtsLocaleExpanded = false }
                                     ) {
@@ -804,7 +806,7 @@ private fun SpeechServicesSettingsContent(
                                         Icon(Icons.Default.ArrowDropDown, contentDescription = null)
                                     }
 
-                                    DropdownMenu(
+                                    OrbitAwareDropdownMenu(
                                         expanded = showTemplateMenu,
                                         onDismissRequest = { showTemplateMenu = false },
                                     ) {
@@ -1065,7 +1067,7 @@ private fun SpeechServicesSettingsContent(
                                         },
                                         modifier = Modifier.menuAnchor(androidx.compose.material3.ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth()
                                     )
-                                    ExposedDropdownMenu(
+                                    OrbitAwareExposedDropdownMenu(
                                         expanded = voiceDropdownExpanded,
                                         onDismissRequest = { voiceDropdownExpanded = false }
                                     ) {
@@ -1255,7 +1257,7 @@ private fun SpeechServicesSettingsContent(
                                         },
                                         modifier = Modifier.menuAnchor(androidx.compose.material3.ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth()
                                     )
-                                    ExposedDropdownMenu(
+                                    OrbitAwareExposedDropdownMenu(
                                         expanded = mimoVoiceDropdownExpanded,
                                         onDismissRequest = { mimoVoiceDropdownExpanded = false }
                                     ) {
@@ -1363,7 +1365,7 @@ private fun SpeechServicesSettingsContent(
                                         },
                                         modifier = Modifier.menuAnchor(androidx.compose.material3.ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth()
                                     )
-                                    ExposedDropdownMenu(
+                                    OrbitAwareExposedDropdownMenu(
                                         expanded = doubaoVoiceDropdownExpanded,
                                         onDismissRequest = { doubaoVoiceDropdownExpanded = false }
                                     ) {
@@ -2031,7 +2033,7 @@ private fun SpeechServicesSettingsContent(
                                 },
                                 modifier = Modifier.menuAnchor(androidx.compose.material3.ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth()
                             )
-                            ExposedDropdownMenu(
+                            OrbitAwareExposedDropdownMenu(
                                 expanded = sttDropdownExpanded,
                                 onDismissRequest = { sttDropdownExpanded = false }
                             ) {
@@ -2566,7 +2568,7 @@ private fun SpeechProfileSelector(
                 )
             }
         }
-        DropdownMenu(
+        OrbitAwareDropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
         ) {

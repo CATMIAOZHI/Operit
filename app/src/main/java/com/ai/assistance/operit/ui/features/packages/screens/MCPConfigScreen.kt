@@ -1,5 +1,6 @@
 package com.ai.assistance.operit.ui.features.packages.screens
 
+import com.ai.assistance.operit.ui.features.orbit.OrbitAwareExposedDropdownMenu
 import android.annotation.SuppressLint
 import android.content.Context
 import androidx.compose.foundation.background
@@ -761,7 +762,7 @@ fun MCPConfigScreen(
                                     label = { Text(stringResource(R.string.connection_type)) },
                                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = remoteConnectionTypeExpanded) },
                                 )
-                                ExposedDropdownMenu(
+                                OrbitAwareExposedDropdownMenu(
                                     expanded = remoteConnectionTypeExpanded,
                                     onDismissRequest = { remoteConnectionTypeExpanded = false },
                                 ) {
@@ -1916,7 +1917,7 @@ fun RemoteServerEditDialog(
                             label = { Text(stringResource(R.string.connection_type)) },
                             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
                         )
-                        ExposedDropdownMenu(
+                        OrbitAwareExposedDropdownMenu(
                             expanded = expanded,
                             onDismissRequest = { expanded = false },
                         ) {

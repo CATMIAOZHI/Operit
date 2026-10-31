@@ -1589,7 +1589,9 @@ private fun OrbitSettingsPage(
     var query by rememberSaveable { mutableStateOf("") }
     val searching = query.isNotBlank()
     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
-    BackHandler(enabled = searching) {
+    // The results follow the back swipe before the full settings page returns.
+    val searchBack = rememberOrbitBackMotion()
+    OrbitBackHandler(searchBack, enabled = searching) {
         query = ""
         focusManager.clearFocus()
     }
@@ -1626,9 +1628,11 @@ private fun OrbitSettingsPage(
     }
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         if (searching) {
-            OrbitSettingsSearchResults(searchOrbitSettings(query, searchEntries), cardColor) { entry ->
-                focusManager.clearFocus()
-                entry.onClick()
+            Box(Modifier.fillMaxSize().orbitDismissLayer(searchBack)) {
+                OrbitSettingsSearchResults(searchOrbitSettings(query, searchEntries), cardColor) { entry ->
+                    focusManager.clearFocus()
+                    entry.onClick()
+                }
             }
         } else {
         Column(

@@ -1755,7 +1755,9 @@ class EnhancedAIService private constructor(
                                         R.string.enhanced_error_with_message,
                                         e.message?.let { permissionDenialDisplayText(context, it) }
                                             .orEmpty(),
-                                    )
+                                    ),
+                                unreachable =
+                                    com.ai.assistance.operit.core.chat.ChatSendFailures.isUnreachable(e),
                             )
                     }
                 }

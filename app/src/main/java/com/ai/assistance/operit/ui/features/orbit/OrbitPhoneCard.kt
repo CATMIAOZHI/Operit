@@ -54,7 +54,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -234,7 +233,8 @@ internal fun OrbitPhoneWatchHost() {
             }
         }
     }
-    Dialog(
+    // Orbit's window: the back swipe shrinks it under the finger before it closes.
+    OrbitModalWindow(
         onDismissRequest = { PhoneBackgroundControl.watch(null) },
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
     ) {

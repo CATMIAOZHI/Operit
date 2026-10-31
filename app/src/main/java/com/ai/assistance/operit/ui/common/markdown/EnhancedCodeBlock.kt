@@ -33,7 +33,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.platform.rememberNestedScrollInteropConnection
-import androidx.compose.ui.window.Dialog
+import com.ai.assistance.operit.ui.features.orbit.OrbitAwareDialog
 import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -315,7 +315,7 @@ fun EnhancedCodeBlock(
     }
 
     if (showFullscreenPreview && enableDialogs) {
-        Dialog(
+        OrbitAwareDialog(
             onDismissRequest = {
                 showFullscreenPreview = false
             },

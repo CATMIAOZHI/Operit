@@ -308,15 +308,19 @@ internal object PhoneBackgroundControl {
         }
         val packageName = args["package_name"]?.trim()?.takeIf { it.isNotEmpty() }?.also { checkPackage(context, it) }
         val mode = args["mode"] ?: "both"
-        // The first start of each agent comes with the guide instead, so it is read before any phone work.
-        if (guided.add(caller.executorChatId)) {
+        // The first start of each agent also brings the guide, after the screen it opened. It is
+        // counted only once the guide is actually handed over, so a start that fails gets it next time.
+        fun withGuide(result: ToolResult): ToolResult {
+            if (!result.success || caller.executorChatId in guided) return result
             val english = LocaleUtils.usesEnglishPrompt(app)
             val guide = runCatching {
                 context.assets.open("orbit_docs/${if (english) "en" else "zh"}/phone-control.md").bufferedReader().use { it.readText() }
-            }.getOrNull()
-            if (guide != null) return ToolResult(toolName = tool.name, success = false, result = StringResultData(guide),
-                error = "Nothing was started yet. This is the first phone_control use here: read the guide below " +
-                    "(docs/phone-control.md), decide as it says whether a subagent should do this, then call start again.")
+            }.getOrNull() ?: return result
+            if (!guided.add(caller.executorChatId)) return result
+            return result.copy(result = StringResultData(result.result.toString() + "\n\n" +
+                "First phone_control use for you: read the guide below (docs/phone-control.md) now, before acting. " +
+                "If it says this work belongs to a subagent and you are the main chat, stop this screen and hand the task over.\n\n" +
+                guide))
         }
         val screen = starting.withLock {
             _screens.value.values.firstOrNull { it.ownerChat == caller.executorChatId }?.let { own ->
@@ -379,11 +383,11 @@ internal object PhoneBackgroundControl {
             }
             // Switched off while it opened: it does not stay.
             if (!allowed(context, caller.orbitId)) close(screen.id, End.PACKAGE)
-            if (result.success) result
+            withGuide(if (result.success) result
             else if (_screens.value[screen.id]?.stopping != false) result
             // The screen stays: the AI may observe again or stop it.
             else result.copy(result = StringResultData("session_id=${screen.id}"),
-                error = "${result.error}\nThe background screen session_id=${screen.id} is open. Observe it again, or stop it.")
+                error = "${result.error}\nThe background screen session_id=${screen.id} is open. Observe it again, or stop it."))
         } catch (e: CancellationException) {
             close(screen.id, End.AGENT)
             throw e

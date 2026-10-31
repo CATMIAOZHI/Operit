@@ -1354,6 +1354,48 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
     }
 
+    /**
+     * Sends again an Orbit message that never reached the model, with exactly the same content.
+     * It is saved again under its own time, so it is never deleted: if the send cannot start, it
+     * simply stays, still marked. A marked message is always the newest the user sent (a later
+     * turn that reached the model clears the marks), so its reply lands right after it.
+     * False when the chat is replying now and nothing was started.
+     */
+    fun resendUnsentMessage(message: ChatMessage): Boolean {
+        invalidateCurrentComposerPrediction()
+        if (isCurrentTranscriptReadOnly() || message.sender != "user") return false
+        val chatId = chatHistoryDelegate.currentChatId.value ?: return false
+        if (isChatBusy(chatId)) {
+            showToast(context.getString(R.string.orbit_resend_busy))
+            return false
+        }
+        viewModelScope.launch {
+            // A failed turn may have left an empty reply row behind.
+            val emptyReplies = chatHistoryDelegate.chatHistory.value
+                .filter { it.timestamp > message.timestamp && it.sender == "ai" && it.content.isBlank() }
+                .map { it.timestamp }
+            // Kept off the destructive delete: that one also clears the chat's todos.
+            chatHistoryDelegate.removeResentLeftovers(chatId, emptyReplies)
+            // Sent as the latest message, as a messenger does; the turn drops the old copy once the
+            // new one is saved, so the model gets it once and the reply comes right after it.
+            val sent = messageCoordinationDelegate.trySendUserMessageToExistingChat(
+                promptFunctionType = PromptFunctionType.CHAT,
+                chatId = chatId,
+                messageText = message.content,
+                turnOptions = com.ai.assistance.operit.data.model.ChatTurnOptions(
+                    useComposerReply = false,
+                    resendsMessageTimestamp = message.timestamp,
+                ),
+                prebuiltUserMessage = ChatMessage(sender = "user", content = message.content),
+                // The message is already in the chat; a summary held for it would save a copy and
+                // could hand it to the input box. The next ordinary send summarizes if needed.
+                skipSummaryCheck = true,
+            )
+            if (!sent) showToast(context.getString(R.string.orbit_resend_busy))
+        }
+        return true
+    }
+
     fun deleteMessages(indices: Set<Int>) {
         invalidateCurrentComposerPrediction()
         if (isCurrentTranscriptReadOnly()) return

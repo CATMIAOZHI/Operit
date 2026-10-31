@@ -35,6 +35,8 @@ sealed class InputProcessingState {
     /** 处理完成 */
     object Completed : InputProcessingState()
 
-    /** 发生错误 */
-    data class Error(val message: String) : InputProcessingState()
+    /**
+     * 发生错误。[unreachable]：请求没到服务器或没收到回应（断网之类），Orbit 用它把消息标成未发出。
+     */
+    data class Error(val message: String, val unreachable: Boolean = false) : InputProcessingState()
 } 

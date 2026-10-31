@@ -43,7 +43,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
+import com.ai.assistance.operit.ui.features.orbit.OrbitAwareDialog
 import coil.compose.rememberAsyncImagePainter
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.model.ChatMessage
@@ -447,6 +447,13 @@ fun BubbleUserMessageComposable(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End,
                 ) {
+                    val unsent = com.ai.assistance.operit.ui.features.chat.components.LocalOrbitUnsentMessages.current
+                    if (orbitLook && unsent != null && message.timestamp in unsent.timestamps) {
+                        com.ai.assistance.operit.ui.features.orbit.OrbitUnsentMark(
+                            onResend = { unsent.resend(message) },
+                            modifier = Modifier.align(Alignment.CenterVertically),
+                        )
+                    }
                     if (effectiveBubbleImageStyle != null) {
                         BubbleImageBackgroundSurface(
                             imageStyle = effectiveBubbleImageStyle,
@@ -722,7 +729,7 @@ fun BubbleUserMessageComposable(
 
     // 图片预览对话框
     if (enableDialogs && showImagePreview.value && selectedImageBitmap.value != null) {
-        Dialog(onDismissRequest = { showImagePreview.value = false }) {
+        OrbitAwareDialog(onDismissRequest = { showImagePreview.value = false }) {
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
