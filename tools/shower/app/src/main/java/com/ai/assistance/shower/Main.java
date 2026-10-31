@@ -573,6 +573,44 @@ public class Main {
                 }
 
                 @Override
+                public android.os.ParcelFileDescriptor requestScreenshotFd(int displayId, int jpegQuality) {
+                    markClientActive();
+                    final byte[] bytes = DisplayCapture.captureDisplay(displayId, jpegQuality, 0);
+                    if (bytes == null) {
+                        return null;
+                    }
+                    final android.os.ParcelFileDescriptor[] pipe;
+                    try {
+                        pipe = android.os.ParcelFileDescriptor.createPipe();
+                    } catch (IOException e) {
+                        logToFile("requestScreenshotFd: createPipe failed: " + e.getMessage(), e);
+                        return null;
+                    }
+                    // The pipe holds only a little, so the picture is written while the app reads it.
+                    // If the app closes its end early, the write fails and this thread ends.
+                    Thread writer = new Thread(new Runnable() {
+                        @Override
+                        public void run() {
+                            java.io.OutputStream out = new android.os.ParcelFileDescriptor.AutoCloseOutputStream(pipe[1]);
+                            try {
+                                out.write(bytes);
+                            } catch (IOException e) {
+                                logToFile("requestScreenshotFd: write ended early: " + e.getMessage(), null);
+                            } finally {
+                                try {
+                                    out.close();
+                                } catch (IOException ignored) {
+                                }
+                            }
+                        }
+                    }, "shower-screenshot");
+                    writer.setDaemon(true);
+                    writer.start();
+                    logToFile("requestScreenshotFd: " + bytes.length + " bytes for display " + displayId, null);
+                    return pipe[0];
+                }
+
+                @Override
                 public void setVideoSink(int displayId, IBinder sink) {
                     markClientActive();
                     DisplaySession session = displays.get(displayId);

@@ -487,7 +487,8 @@ internal object PhoneBackgroundControl {
     }
 
     private suspend fun screenshot(screen: Screen, file: File) {
-        val bytes = runCatching { ShowerController.requestScreenshot(screen.key, 4000) }.getOrNull()
+        // Near-lossless and much faster to make than a PNG; the model gets a JPEG of it anyway.
+        val bytes = runCatching { ShowerController.requestScreenshot(screen.key, 4000, jpegQuality = 95) }.getOrNull()
         if (bytes != null && bytes.isNotEmpty()) {
             file.writeBytes(bytes)
             return
@@ -838,7 +839,8 @@ internal object PhoneBackgroundControl {
     /** A small picture of [id]'s screen for its card; null when there is none. */
     suspend fun preview(id: String): ByteArray? {
         val screen = _screens.value[id] ?: return null
-        return runCatching { ShowerController.requestScreenshot(screen.key, 2500) }.getOrNull()
+        // The card shows it at a third of its size.
+        return runCatching { ShowerController.requestScreenshot(screen.key, 2500, jpegQuality = 80) }.getOrNull()
     }
 
     /** [cancelCall] false: the call in flight closed it itself and returns its own failure. */

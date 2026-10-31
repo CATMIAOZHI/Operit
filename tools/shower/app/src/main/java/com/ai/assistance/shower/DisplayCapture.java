@@ -34,7 +34,16 @@ final class DisplayCapture {
     private DisplayCapture() {
     }
 
+    /** For the binder reply: PNG, or JPEG small enough for one reply. */
     static byte[] captureDisplay(int displayId) {
+        return captureDisplay(displayId, 0, MAX_REPLY_BYTES);
+    }
+
+    /**
+     * [jpegQuality] 1..100 encodes JPEG at that quality, otherwise PNG. [maxBytes] above 0 shrinks
+     * the quality to fit (the binder reply); 0 sends it whole (the pipe).
+     */
+    static byte[] captureDisplay(int displayId, int jpegQuality, int maxBytes) {
         ImageReader imageReader = null;
         Surface surface = null;
         VirtualDisplay virtualDisplay = null;
@@ -74,7 +83,7 @@ final class DisplayCapture {
                 return null;
             }
 
-            return encodeImageToPng(image);
+            return encodeImage(image, jpegQuality, maxBytes);
         } catch (Throwable t) {
             Main.logToFile("DisplayCapture failed for display " + displayId + ": " + t.getMessage(), t);
             return null;
@@ -136,7 +145,7 @@ final class DisplayCapture {
         return null;
     }
 
-    private static byte[] encodeImageToPng(Image image) throws IOException {
+    private static byte[] encodeImage(Image image, int jpegQuality, int maxBytes) throws IOException {
         Bitmap bitmap = null;
         Bitmap croppedBitmap = null;
         ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
@@ -160,18 +169,22 @@ final class DisplayCapture {
             bitmap.copyPixelsFromBuffer(buffer);
 
             croppedBitmap = rowPadding == 0 ? bitmap : Bitmap.createBitmap(bitmap, 0, 0, width, height);
-            croppedBitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream);
-            if (outputStream.size() <= MAX_REPLY_BYTES) {
+            if (jpegQuality >= 1 && jpegQuality <= 100) {
+                croppedBitmap.compress(Bitmap.CompressFormat.JPEG, jpegQuality, outputStream);
+            } else {
+                croppedBitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream);
+            }
+            if (maxBytes <= 0 || outputStream.size() <= maxBytes) {
                 return outputStream.toByteArray();
             }
             for (int quality : JPEG_QUALITIES) {
                 outputStream.reset();
                 croppedBitmap.compress(Bitmap.CompressFormat.JPEG, quality, outputStream);
-                if (outputStream.size() <= MAX_REPLY_BYTES) {
+                if (outputStream.size() <= maxBytes) {
                     break;
                 }
             }
-            if (outputStream.size() > MAX_REPLY_BYTES) {
+            if (outputStream.size() > maxBytes) {
                 // Too big for one reply even at low quality: fail plainly instead of breaking the binder.
                 Main.logToFile("DisplayCapture: picture too large to send, " + outputStream.size() + " bytes", null);
                 return null;
