@@ -1146,6 +1146,7 @@ class MessageProcessingDelegate(
             var cancellationToPropagate: kotlinx.coroutines.CancellationException? = null
             var terminalFailureMessage: String? = null
             var assistantMessageTimestampForTurn: Long? = null
+            var compactionGenerationForTurn: Long? = null
             var turnInPlaceCompactionChatId: String? = null
             val toolBoundaryContentSnapshot =
                 AtomicReference<EnhancedAIService.ToolExecutionBoundarySnapshot?>(null)
@@ -1342,6 +1343,11 @@ class MessageProcessingDelegate(
                 val prepareResponseStreamStartTime = messageTimingNow()
                 val aiMessageTimestamp = ChatMessageTimestampAllocator.next()
                 assistantMessageTimestampForTurn = aiMessageTimestamp
+                // The previous turn's request no longer ends this chat, even if this turn fails.
+                if (chatId != null) {
+                    compactionGenerationForTurn =
+                        com.ai.assistance.operit.api.chat.compaction.CompactionSnapshots.begin(chatId)
+                }
                 val toolBoundaryMessageReady = CompletableDeferred<ChatMessage?>()
                 coroutineContext[Job]?.invokeOnCompletion {
                     toolBoundaryMessageReady.complete(null)
@@ -2003,7 +2009,8 @@ class MessageProcessingDelegate(
                                             replayContent,
                                         )
                                 },
-                                turnOptions = turnOptions
+                                turnOptions = turnOptions,
+                                dropWhenEmpty = returnedForSummary,
                             )
                         } finally {
                             // The finalizer rethrows a cancellation raised while it was finishing, and
@@ -2044,6 +2051,28 @@ class MessageProcessingDelegate(
                 if (shouldNotifyTurnComplete && !deferTurnCompleteToAsyncJob) {
                     val service = serviceForTurnComplete
                     if (service != null) {
+                        // Kept before the turn-complete callback, which may start a background
+                        // summary that resends this request to read it from the cache.
+                        try {
+                            val compactionSnapshot = assistantMessageTimestampForTurn?.toString()
+                                ?.let(service::takeCompactionSnapshot)
+                            val compactionGeneration = compactionGenerationForTurn
+                            if (compactionSnapshot != null && chatId != null && compactionGeneration != null &&
+                                finalInputStateAfterSend is com.ai.assistance.operit.data.model.InputProcessingState.Completed &&
+                                turnOptions.persistTurn && !turnOptions.isSubTask &&
+                                !turnOptions.isCollaborationAgent && !isGroupOrchestrationTurn
+                            ) {
+                                com.ai.assistance.operit.api.chat.compaction.CompactionSnapshots.put(
+                                    chatId, compactionSnapshot, assistantMessageTimestampForTurn ?: Long.MAX_VALUE,
+                                    // A newer turn started after loading was released, or an edit, bumps it.
+                                    compactionGeneration,
+                                )
+                            }
+                        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                            throw cancelled
+                        } catch (error: Exception) {
+                            AppLogger.w(TAG, "Unable to keep the turn's request for compaction", error)
+                        }
                         notifyTurnComplete(
                             chatId,
                             activeChatId,
@@ -2437,12 +2466,22 @@ class MessageProcessingDelegate(
         syncWaifuMessageMetrics: suspend (ChatMessage) -> Unit,
         calculateNextWindowSize: (suspend () -> Int?)? = null,
         finalContentTransform: (String) -> String = { it },
-        turnOptions: ChatTurnOptions = ChatTurnOptions()
+        turnOptions: ChatTurnOptions = ChatTurnOptions(),
+        /** The turn was handed to compaction; a reply that never started is not kept. */
+        dropWhenEmpty: Boolean = false,
     ): Boolean {
         try {
             val aiMessage = aiMessageProvider()
             // 优先使用共享流的全量重放缓存重建最终文本，避免完成信号早于收集协程处理尾部字符时丢字。
             val finalContent = finalContentTransform(resolveFinalContent(aiMessage))
+            if (dropWhenEmpty && finalContent.isBlank() && !isWaifuModeEnabled) {
+                // The provider rejected the request as too long before writing anything; the
+                // compaction sends it again, so an empty reply row would stay behind as a blank bubble.
+                if (turnOptions.persistTurn && chatId != null) {
+                    withContext(Dispatchers.Main) { removeResentOriginal(chatId, aiMessage.timestamp) }
+                }
+                return false
+            }
             aiMessage.content = finalContent
             val completedAt = System.currentTimeMillis()
 

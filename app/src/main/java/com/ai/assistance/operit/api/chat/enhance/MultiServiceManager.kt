@@ -470,6 +470,31 @@ class MultiServiceManager(private val context: Context, private val chatId: Stri
      * @param functionType 功能类型
      * @return 模型配置数据
      */
+    /**
+     * A fresh provider for [functionType]'s model, outside the shared cache, so a background request
+     * can be stopped by closing it without touching the shared one. Null for a plugin provider, which
+     * cannot be built twice; the caller then uses [getServiceForFunction].
+     */
+    suspend fun acquireIsolatedServiceForFunction(functionType: FunctionType): ServiceLease? {
+        ensureInitialized()
+        val mapping = mappingFor(functionType)
+        val config = modelConfigManager.getModelConfigFlow(mapping.configId).first()
+        if (com.ai.assistance.operit.plugins.toolpkg.ToolPkgAiProviderRegistry.get(config.apiProviderTypeId) != null) return null
+        val index = mapping.resolveModelIndex(config.modelName).modelIndex
+        requireAvailableSelection(config, index)
+        val selected = config.forSelectedModel(index)
+        val base = createServiceFromConfig(config, index, allowPluginProviders = false)
+        val service = if (functionType == FunctionType.CHAT) base else
+            base.withFunctionalReasoning(config = selected, thinkingQualityLevel = mapping.thinkingQualityLevel)
+        return ServiceLease(
+            closeAction = { service.release() },
+            service = service,
+            modelConfig = selected,
+            modelIndex = index,
+            modelParameters = modelConfigManager.getModelParametersForConfigSnapshot(selected),
+        )
+    }
+
     suspend fun getModelConfigForFunction(functionType: FunctionType): ModelConfigData {
         ensureInitialized()
         val mapping = mappingFor(functionType)

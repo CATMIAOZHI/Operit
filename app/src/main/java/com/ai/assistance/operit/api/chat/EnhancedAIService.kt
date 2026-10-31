@@ -547,6 +547,33 @@ class EnhancedAIService private constructor(
         return snapshot
     }
 
+    /** The request the latest successful turn sent, for a summary that reuses its cache. */
+    @Volatile
+    private var completedCompactionSnapshot: com.ai.assistance.operit.api.chat.prediction.ComposerPredictionSnapshot? = null
+
+    /** Consumed at the persisted turn boundary, like [takeComposerPredictionSnapshot]. */
+    fun takeCompactionSnapshot(sourceTurnId: String): com.ai.assistance.operit.api.chat.prediction.ComposerPredictionSnapshot? {
+        val snapshot = completedCompactionSnapshot ?: return null
+        if (snapshot.sourceTurnId != sourceTurnId) return null
+        completedCompactionSnapshot = null
+        return snapshot
+    }
+
+    /** The model this chat's summaries are written with. */
+    suspend fun summaryModelConfig(): ModelConfigData =
+        multiServiceManager.getModelConfigForFunction(FunctionType.SUMMARY)
+
+    /**
+     * A summary written by sending [snapshot]'s request again with [instruction] after it, so the
+     * provider reads the conversation from its cache. Counted like any other summary of this chat.
+     */
+    suspend fun generateCachedSummary(
+        snapshot: com.ai.assistance.operit.api.chat.prediction.ComposerPredictionSnapshot,
+        instruction: String,
+    ): String = withContext(orbitTagOutsideTurn(com.ai.assistance.operit.features.orbit.OrbitQuota.Purpose.SUMMARY)) {
+        com.ai.assistance.operit.api.chat.compaction.CachedSummaryService(context).summarize(snapshot, instruction)
+    }
+
     private val activeExecutionContexts = ConcurrentHashMap<Int, MessageExecutionContext>()
     internal fun collaborationHistorySnapshot(): List<PromptTurn> {
         val active = activeExecutionContexts.values.maxByOrNull { it.executionId } ?: return emptyList()
@@ -1018,6 +1045,34 @@ class EnhancedAIService private constructor(
 
     private fun bypassPromptHooks(context: PromptHookContext): PromptHookContext = context
 
+    /**
+     * The provider rejected the request as too long. Where this turn would run the normal summary,
+     * the turn is handed to it, the way an over-threshold turn is: it compacts and sends again. Only
+     * once per user message, so a retry that is rejected too ends in the usual error.
+     */
+    private suspend fun handOverflowToCompaction(
+        error: Exception,
+        context: MessageExecutionContext,
+        chatId: String?,
+        isSubTask: Boolean,
+        onTokenLimitExceeded: (suspend () -> Unit)?,
+        tokenUsageThreshold: Double,
+    ): Boolean {
+        if (onTokenLimitExceeded == null || isSubTask || chatId.isNullOrBlank()) return false
+        // A turn with compaction off runs with no threshold at all.
+        if (tokenUsageThreshold >= Double.MAX_VALUE) return false
+        if (!com.ai.assistance.operit.api.chat.compaction.ContextCompaction.isContextOverflow(error)) return false
+        if (com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(this.context).isAgent(chatId) ||
+            com.ai.assistance.operit.api.chat.enhance.InPlaceCompaction.contains(chatId)
+        ) return false
+        if (!com.ai.assistance.operit.api.chat.compaction.ContextOverflowRecovery.begin(chatId)) return false
+        AppLogger.w(TAG, "The provider rejected the request as too long; compacting and sending it again", error)
+        context.turnInputInbox?.sealForSummary()
+        onTokenLimitExceeded.invoke()
+        context.isConversationActive.set(false)
+        return true
+    }
+
     private suspend fun buildPromptFinalizeMetadata(
         chatId: String?,
         roleCardId: String?,
@@ -1298,6 +1353,7 @@ class EnhancedAIService private constructor(
                 ?: providerSessionId
 
         completedComposerPrediction = null
+        completedCompactionSnapshot = null
         val eventChannel = MutableSharedStream<TextStreamEvent>(replay = Int.MAX_VALUE)
         val wrappedStream = stream {
             val responseCollector = this
@@ -1731,8 +1787,13 @@ class EnhancedAIService private constructor(
                 throw e
             } catch (e: Exception) {
                 execContext.composerPredictionAllowed = false
+                val handedToCompaction =
+                    handOverflowToCompaction(e, execContext, chatId, isSubTask, onTokenLimitExceeded, tokenUsageThreshold)
                 // 用户取消导致的 Socket closed 是预期行为，不应作为错误处理
-                if (e.message?.contains("Socket closed", ignoreCase = true) == true) {
+                if (handedToCompaction) {
+                    // Compaction sends the turn again; nothing more of this request is processed.
+                    hadFatalError = true
+                } else if (e.message?.contains("Socket closed", ignoreCase = true) == true) {
                     if (isExecutionContextActive(execContext)) {
                         AppLogger.d(TAG, "Stream was cancelled by the user (Socket closed).")
                     } else {
@@ -2306,6 +2367,37 @@ class EnhancedAIService private constructor(
         } catch (_: Exception) {
             // Auxiliary capture must not turn a successfully completed main request into a failure.
             completedComposerPrediction = null
+        }
+        // The same request, kept for compaction: a summary that resends it reads it from the cache.
+        // Not tied to the composer setting or to Orbit, and never kept for an agent's own chat.
+        try {
+            val modelSnapshot = context.modelExecutionSnapshot
+            val finalTurn = context.conversationHistory.lastOrNull()
+            completedCompactionSnapshot = null
+            if (context.composerPredictionAllowed && !isSubTask && !chatId.isNullOrBlank() &&
+                !context.toolTimingScopeId.isNullOrBlank() && modelSnapshot != null &&
+                finalTurn?.kind == PromptTurnKind.ASSISTANT &&
+                finalTurn.metadata[com.ai.assistance.operit.core.agent.collaboration.CollaborationPromptHistory.INTERMEDIATE_METADATA] != true &&
+                !com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(this@EnhancedAIService.context).isAgent(chatId)
+            ) {
+                completedCompactionSnapshot = com.ai.assistance.operit.api.chat.prediction.ComposerPredictionSnapshot(
+                    chatId = chatId,
+                    sourceTurnId = context.toolTimingScopeId,
+                    history = com.ai.assistance.operit.api.chat.prediction.freezePredictionHistory(context.conversationHistory),
+                    modelConfig = com.ai.assistance.operit.api.chat.prediction.freezePredictionConfig(modelSnapshot.config),
+                    modelParameters = com.ai.assistance.operit.api.chat.prediction.freezePredictionParameters(
+                        context.composerPredictionParameters ?: modelSnapshot.modelParameters
+                    ),
+                    availableTools = com.ai.assistance.operit.api.chat.prediction.freezePredictionTools(context.composerPredictionTools),
+                    providerSessionId = context.providerSessionId,
+                    workspacePath = context.workspacePath,
+                    enableThinking = context.composerPredictionEnableThinking,
+                )
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            completedCompactionSnapshot = null
         }
 
         // Mark conversation as complete
@@ -3060,6 +3152,10 @@ class EnhancedAIService private constructor(
                     AppLogger.d(TAG, "处理工具执行结果被取消")
                     throw e
                 } catch (e: Exception) {
+                    if (handOverflowToCompaction(e, context, chatId, isSubTask, onTokenLimitExceeded, tokenUsageThreshold)) {
+                        if (!isSubTask) stopAiService(characterName, avatarUri)
+                        return@withContext
+                    }
                     AppLogger.e(TAG, "处理工具执行结果时出错", e)
                     throw e
                 } finally {
