@@ -3,11 +3,19 @@ package com.ai.assistance.showerclient
 import android.content.Context
 import android.os.DeadObjectException
 import android.os.IBinder
+import android.os.ParcelFileDescriptor
 import android.os.RemoteException
+import android.system.ErrnoException
+import android.system.Os
+import android.system.OsConstants
+import android.system.StructPollfd
 import com.ai.assistance.shower.IShowerService
 import com.ai.assistance.shower.IShowerVideoSink
+import java.io.ByteArrayOutputStream
+import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 
@@ -24,6 +32,7 @@ class ShowerController {
     companion object {
         private const val TAG = "ShowerController"
         private const val CODEC_SIZE_ALIGNMENT = 16
+        private const val MAX_SCREENSHOT_BYTES = 32 * 1024 * 1024
 
         @Volatile
         private var binderService: IShowerService? = null
@@ -179,18 +188,80 @@ class ShowerController {
         }
     }
 
-    suspend fun requestScreenshot(timeoutMs: Long = 3000L): ByteArray? =
+    /**
+     * The server connection that turned out to be from before the pipe call; only the binder
+     * reply is used with it. A restarted server is a new connection and is asked again.
+     */
+    @Volatile
+    private var pipeUnsupportedBinder: IBinder? = null
+
+    /**
+     * The display's picture. Through a pipe first, so a full-size picture is not cut down to fit
+     * the binder buffer; [jpegQuality] 1..100 asks for JPEG, else PNG. An older server answers
+     * through the binder reply instead, which is PNG or JPEG small enough for it.
+     */
+    suspend fun requestScreenshot(timeoutMs: Long = 3000L, jpegQuality: Int = 0): ByteArray? =
         withContext(Dispatchers.IO) {
             val service = getBinder() ?: return@withContext null
             val id = virtualDisplayId ?: return@withContext null
             try {
                 withTimeout(timeoutMs) {
+                    val binder = service.asBinder()
+                    if (pipeUnsupportedBinder !== binder) {
+                        try {
+                            val pipe = service.requestScreenshotFd(id, jpegQuality)
+                            return@withTimeout pipe?.let { readScreenshot(it) }
+                        } catch (e: UnsupportedOperationException) {
+                            ShowerLog.w(TAG, "Shower server has no screenshot pipe; using the binder reply")
+                            pipeUnsupportedBinder = binder
+                        }
+                    }
                     service.requestScreenshot(id)
                 }
             } catch (e: Exception) {
                 ShowerLog.e(TAG, "requestScreenshot failed for $id", e)
                 null
             }
+        }
+
+    /**
+     * Reads the whole picture from [pipe]. It waits for data in short polls, so a timeout or a
+     * cancel stops it within a moment even when the server stops writing; the pipe is closed
+     * on every way out, which also ends the server's writer.
+     */
+    private suspend fun readScreenshot(pipe: ParcelFileDescriptor): ByteArray? =
+        pipe.use { pfd ->
+            val fd = pfd.fileDescriptor
+            val out = ByteArrayOutputStream(512 * 1024)
+            val buffer = ByteArray(64 * 1024)
+            val pollFd = StructPollfd().apply {
+                this.fd = fd
+                events = OsConstants.POLLIN.toShort()
+            }
+            val pollFds = arrayOf(pollFd)
+            while (true) {
+                coroutineContext.ensureActive()
+                pollFd.revents = 0
+                val ready = try {
+                    Os.poll(pollFds, 50)
+                } catch (e: ErrnoException) {
+                    if (e.errno == OsConstants.EINTR) continue else throw e
+                }
+                if (ready == 0) continue
+                // Readable, or the server closed its end: then read gives 0.
+                val read = try {
+                    Os.read(fd, buffer, 0, buffer.size)
+                } catch (e: ErrnoException) {
+                    if (e.errno == OsConstants.EINTR || e.errno == OsConstants.EAGAIN) continue else throw e
+                }
+                if (read <= 0) break
+                // A screen picture is a few MB at most; anything far bigger is not one.
+                check(out.size() + read <= MAX_SCREENSHOT_BYTES) {
+                    "Screenshot larger than ${MAX_SCREENSHOT_BYTES / (1024 * 1024)} MB"
+                }
+                out.write(buffer, 0, read)
+            }
+            out.toByteArray().takeIf { it.isNotEmpty() }
         }
 
     /**
