@@ -22,6 +22,14 @@ final class DisplayCapture {
 
     private static final int IMAGE_WAIT_TIMEOUT_MS = 1000;
     private static final int IMAGE_WAIT_INTERVAL_MS = 20;
+    /**
+     * The picture goes back in one binder reply, and the client's binder buffer is about 1 MB shared
+     * by every call in flight (the chat card's live preview and the AI's look can overlap). A full
+     * screen PNG is often 2 MB or more, so a larger one is sent as JPEG at the same size instead,
+     * keeping coordinates in screen pixels.
+     */
+    private static final int MAX_REPLY_BYTES = 450 * 1024;
+    private static final int[] JPEG_QUALITIES = {90, 80, 70, 60, 50, 40, 30, 20};
 
     private DisplayCapture() {
     }
@@ -153,6 +161,22 @@ final class DisplayCapture {
 
             croppedBitmap = rowPadding == 0 ? bitmap : Bitmap.createBitmap(bitmap, 0, 0, width, height);
             croppedBitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream);
+            if (outputStream.size() <= MAX_REPLY_BYTES) {
+                return outputStream.toByteArray();
+            }
+            for (int quality : JPEG_QUALITIES) {
+                outputStream.reset();
+                croppedBitmap.compress(Bitmap.CompressFormat.JPEG, quality, outputStream);
+                if (outputStream.size() <= MAX_REPLY_BYTES) {
+                    break;
+                }
+            }
+            if (outputStream.size() > MAX_REPLY_BYTES) {
+                // Too big for one reply even at low quality: fail plainly instead of breaking the binder.
+                Main.logToFile("DisplayCapture: picture too large to send, " + outputStream.size() + " bytes", null);
+                return null;
+            }
+            Main.logToFile("DisplayCapture: sent as JPEG, " + outputStream.size() + " bytes", null);
             return outputStream.toByteArray();
         } finally {
             if (croppedBitmap != null && croppedBitmap != bitmap) {
