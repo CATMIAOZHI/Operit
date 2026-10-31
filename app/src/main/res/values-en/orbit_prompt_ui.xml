@@ -146,9 +146,10 @@
     <string name="orbit_activity_tool">Using a tool</string>
     <string name="orbit_profile_tab_browser">Browser</string>
     <string name="orbit_profile_browser_count">%1$d browser tasks</string>
-    <string name="orbit_profile_browser_empty">No browser tasks right now</string>
+    <string name="orbit_profile_browser_empty">No browser or background app tasks right now</string>
     <string name="orbit_profile_browser_gone">This page is closed</string>
-    <string name="orbit_profile_browser_empty_desc">When %1$s uses the browser, its pages show here; tap one to watch or take over.</string>
+    <string name="orbit_profile_browser_empty_desc">When %1$s uses the browser or works in an app in the background, it shows here; tap one to watch or take over.</string>
+    <string name="orbit_profile_phone_count">%1$d background app tasks</string>
     <string name="orbit_options_send_failed">Not sent. Tap again to retry</string>
     <string name="orbit_floating_card_title">Open this card in the app</string>
     <string name="orbit_floating_card_sub">Passwords, approvals and sign-ins don\'t work in the floating window</string>

@@ -132,9 +132,9 @@ private fun PhoneScreenCard(
     val title = label.ifBlank { stringResource(R.string.orbit_phone_card_title) }
     val status = when {
         screen == null -> stringResource(R.string.orbit_phone_card_closed)
-        screen.doneAt != null -> stringResource(R.string.orbit_phone_card_done, name)
         screen.control == PhoneBackgroundControl.Control.USER -> stringResource(R.string.orbit_browser_watch_yours)
         screen.control == PhoneBackgroundControl.Control.WAITING -> stringResource(R.string.orbit_browser_watch_waiting, name)
+        screen.doneAt != null -> stringResource(R.string.orbit_phone_card_done, name)
         else -> stringResource(R.string.orbit_phone_card_working, name)
     }
     val summary = stringResource(R.string.orbit_phone_card_summary, title)
