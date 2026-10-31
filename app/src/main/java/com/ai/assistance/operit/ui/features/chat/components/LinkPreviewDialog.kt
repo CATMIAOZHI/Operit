@@ -19,7 +19,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
+import com.ai.assistance.operit.ui.features.orbit.OrbitAwareDialog
 import androidx.compose.ui.window.DialogProperties
 import com.ai.assistance.operit.R
 
@@ -44,7 +44,7 @@ fun LinkPreviewDialog(
             .fillMaxWidth()
             .verticalScrollWhenCompact(dialogMetrics, scrollState)
     
-    Dialog(
+    OrbitAwareDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(
             dismissOnBackPress = true,

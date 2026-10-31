@@ -53,7 +53,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
+import com.ai.assistance.operit.ui.features.orbit.OrbitAwareDialog
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.llmprovider.ImageLinkTag
 import com.ai.assistance.operit.util.AppLogger
@@ -241,7 +241,7 @@ internal fun MediaImagePreviewBlock(
         // 全尺寸位图解码期间先用缩略图，避免对话框闪空白。
         val displayBitmap = previewBitmap ?: target.thumbnail
         val previewScrollState = remember(target.link.id) { ScrollState(0) }
-        Dialog(onDismissRequest = closePreview) {
+        OrbitAwareDialog(onDismissRequest = closePreview) {
             Surface(
                 modifier = Modifier.fillMaxWidth().wrapContentHeight(),
                 shape = RoundedCornerShape(12.dp),

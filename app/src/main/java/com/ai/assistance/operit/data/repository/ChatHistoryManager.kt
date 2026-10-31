@@ -2766,14 +2766,15 @@ class ChatHistoryManager private constructor(private val context: Context) {
      * @param chatId 聊天ID
      * @param timestamp 消息时间戳
      */
-    suspend fun deleteMessage(chatId: String, timestamp: Long) {
+    /** [clearTodos] false: the message moves rather than goes (Orbit sends it again), the plan stays. */
+    suspend fun deleteMessage(chatId: String, timestamp: Long, clearTodos: Boolean = true) {
         chatMutex(chatId).withLock {
             try {
                 AppLogger.d(TAG, "正在从数据库删除消息. ChatId: $chatId, Timestamp: $timestamp")
                 database.withTransaction {
                     messageVariantDao.deleteVariantsForMessage(chatId, timestamp)
                     messageDao.deleteMessageByTimestamp(chatId, timestamp)
-                    chatTodoDao.deleteByChatId(chatId)
+                    if (clearTodos) chatTodoDao.deleteByChatId(chatId)
                     chatDao.recalculateLastMessageAt(chatId)
 
                     // Update chat metadata

@@ -1,5 +1,6 @@
 package com.ai.assistance.operit.ui.features.tokenstats
 
+import com.ai.assistance.operit.ui.features.orbit.OrbitAwareDropdownMenu
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -713,7 +714,7 @@ private fun ProviderDropdown(
             onClick = { expanded = true },
             label = { Text(selected ?: stringResource(R.string.token_stats_filter_all_providers)) },
         )
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+        OrbitAwareDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             DropdownMenuItem(
                 text = { Text(stringResource(R.string.token_stats_filter_all_providers)) },
                 onClick = { onSelect(null); expanded = false },

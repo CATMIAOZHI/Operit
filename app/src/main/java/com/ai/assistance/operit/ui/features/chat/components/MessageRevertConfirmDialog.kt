@@ -28,7 +28,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
+import com.ai.assistance.operit.ui.features.orbit.OrbitAwareDialog
 import androidx.compose.ui.window.DialogProperties
 import com.ai.assistance.operit.R
 
@@ -56,7 +56,7 @@ fun MessageRevertConfirmDialog(
             .fillMaxWidth(0.95f)
             .compactDialogHeightOrWrapContent(dialogMetrics)
 
-    Dialog(
+    OrbitAwareDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(dismissOnBackPress = true, dismissOnClickOutside = true)
     ) {

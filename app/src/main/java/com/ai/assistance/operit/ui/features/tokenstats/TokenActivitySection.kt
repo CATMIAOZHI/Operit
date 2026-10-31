@@ -1,5 +1,6 @@
 package com.ai.assistance.operit.ui.features.tokenstats
 
+import com.ai.assistance.operit.ui.features.orbit.OrbitAwareDropdownMenu
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Paint
@@ -170,7 +171,7 @@ internal fun TokenActivitySection(
                         .clickable(enabled = state.availableYears.isNotEmpty()) { yearMenuExpanded = true }
                         .padding(horizontal = 8.dp, vertical = 4.dp),
                 )
-                DropdownMenu(
+                OrbitAwareDropdownMenu(
                     expanded = yearMenuExpanded,
                     onDismissRequest = { yearMenuExpanded = false },
                 ) {

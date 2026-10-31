@@ -67,6 +67,11 @@ data class ChatTurnOptions(
      * [ChatMessageTimestampAllocator] just before the send, so it still sorts after earlier rows.
      */
     val userMessageTimestamp: Long? = null,
+    /**
+     * Orbit sends a failed message again: the turn saves it as the latest message, then drops the
+     * old copy with this timestamp. The old copy stays until the new one is saved.
+     */
+    val resendsMessageTimestamp: Long? = null,
     /** In-process only: when the send entry took this message, for the request timing log (LlmPerf). */
     val perfStartMs: Long? = null,
 )

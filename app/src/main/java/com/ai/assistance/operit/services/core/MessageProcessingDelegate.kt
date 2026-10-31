@@ -101,6 +101,8 @@ class MessageProcessingDelegate(
         private val getRuntimeChatHistory: suspend (String) -> List<ChatMessage>,
         private val hasUserMessage: suspend (String) -> Boolean,
         private val addMessageToChat: suspend (String, ChatMessage) -> Unit,
+        /** Drops the old copy of a message sent again, without stopping the turn that sends it. */
+        private val removeResentOriginal: suspend (String, Long) -> Unit,
         private val saveCurrentChat: suspend () -> Unit,
         private val showErrorMessage: (String) -> Unit,
         private val updateChatTitle: (chatId: String, title: String) -> Unit,
@@ -1095,6 +1097,13 @@ class MessageProcessingDelegate(
                 val addUserMessageStartTime = messageTimingNow()
                 addMessageToChat(chatId, userMessage)
                 userMessageAdded = true
+                // A message sent again is saved under its own time: it is on its way now.
+                com.ai.assistance.operit.core.chat.ChatSendFailures.clear(context, chatId, userMessage.timestamp)
+                // Sent again: the new copy is saved as the latest message, so the old one goes.
+                turnOptions.resendsMessageTimestamp?.let { old ->
+                    removeResentOriginal(chatId, old)
+                    com.ai.assistance.operit.core.chat.ChatSendFailures.clear(context, chatId, old)
+                }
                 logMessageTiming(
                     stage = "delegate.addUserMessageToChat",
                     startTimeMs = addUserMessageStartTime,
@@ -1127,6 +1136,13 @@ class MessageProcessingDelegate(
             var turnOutputTokens = 0
             var turnCachedInputTokens = 0
             var calculateNextWindowSize: (suspend () -> Int?)? = null
+            // In an Orbit chat a message the owner typed that never reached the model gets a red
+            // sign to send it again, as in a messenger, instead of an error dialog.
+            fun marksUnsentOrbitMessage(): Boolean =
+                chatId != null && userMessageAdded && firstResponseElapsed == null &&
+                    !effectiveHideUserMessage && !turnOptions.isSubTask && !turnOptions.deliveredByTool &&
+                    com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context)
+                        .snapshot.orbitForChat(chatId) != null
             var cancellationToPropagate: kotlinx.coroutines.CancellationException? = null
             var terminalFailureMessage: String? = null
             var assistantMessageTimestampForTurn: Long? = null
@@ -1177,7 +1193,13 @@ class MessageProcessingDelegate(
 
                             if (state is EnhancedInputProcessingState.Error) {
                                 val msg = state.message
-                                if (msg != lastErrorMessage) {
+                                if (state.unreachable && marksUnsentOrbitMessage()) {
+                                    lastErrorMessage = msg
+                                    activeChatId?.let {
+                                        com.ai.assistance.operit.core.chat.ChatSendFailures
+                                            .mark(context, it, userMessage.timestamp)
+                                    }
+                                } else if (msg != lastErrorMessage) {
                                     lastErrorMessage = msg
                                     withContext(Dispatchers.Main) {
                                         showErrorMessage(msg)
@@ -1253,7 +1275,11 @@ class MessageProcessingDelegate(
                 }
 
                 val loadChatHistoryStartTime = messageTimingNow()
-                val chatHistory = getRuntimeChatHistory(activeChatId)
+                // A message sent again is sent once: its old copy is already gone, kept out here too.
+                val chatHistory = getRuntimeChatHistory(activeChatId).let { history ->
+                    turnOptions.resendsMessageTimestamp?.let { old -> history.filterNot { it.timestamp == old } }
+                        ?: history
+                }
                 logMessageTiming(
                     stage = "delegate.loadChatHistory",
                     startTimeMs = loadChatHistoryStartTime,
@@ -1753,6 +1779,10 @@ class MessageProcessingDelegate(
                                         if (firstResponseElapsed == null) {
                                             firstResponseElapsed = messageTimingNow()
                                             chatRuntime.firstResponseElapsed = firstResponseElapsed
+                                            // The model got this chat's history, earlier unsent messages included.
+                                            activeChatId?.let {
+                                                com.ai.assistance.operit.core.chat.ChatSendFailures.clearChat(context, it)
+                                            }
                                         }
                                         logMessageTiming(
                                             stage = "delegate.firstResponseChunk",
@@ -1924,10 +1954,17 @@ class MessageProcessingDelegate(
                             context.getString(R.string.message_send_failed, userVisibleFailureMessage)
                         )
                     )
-                    withContext(Dispatchers.Main) {
-                        showErrorMessage(
-                            context.getString(R.string.message_send_failed, userVisibleFailureMessage)
-                        )
+                    val unsentOrbitMessage =
+                        com.ai.assistance.operit.core.chat.ChatSendFailures.isUnreachable(e) &&
+                            marksUnsentOrbitMessage()
+                    if (unsentOrbitMessage && chatId != null) {
+                        com.ai.assistance.operit.core.chat.ChatSendFailures.mark(context, chatId, userMessage.timestamp)
+                    } else {
+                        withContext(Dispatchers.Main) {
+                            showErrorMessage(
+                                context.getString(R.string.message_send_failed, userVisibleFailureMessage)
+                            )
+                        }
                     }
                 }
             } finally {

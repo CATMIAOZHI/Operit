@@ -43,6 +43,35 @@ fun ErrorDialog(
     val clipboardManager = LocalClipboardManager.current
     val displayMessage = errorMessage.ifBlank { stringResource(R.string.unknown_error) }
 
+    if (com.ai.assistance.operit.ui.features.orbit.inOrbitSurface()) {
+        // Inside an Orbit the dialog follows the predictive back swipe like Orbit's other dialogs.
+        com.ai.assistance.operit.ui.features.orbit.OrbitDialog(
+            onDismissRequest = onDismiss,
+            title = stringResource(R.string.request_failed),
+            text = {
+                SelectionContainer {
+                    Text(
+                        text = displayMessage,
+                        style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+            },
+            confirmButton = {
+                com.ai.assistance.operit.ui.features.orbit.OrbitDialogAction(onClick = onDismiss) {
+                    Text(stringResource(R.string.confirm))
+                }
+            },
+            dismissButton = {
+                com.ai.assistance.operit.ui.features.orbit.OrbitDialogAction(
+                    onClick = { clipboardManager.setText(AnnotatedString(displayMessage)) },
+                    secondary = true,
+                ) { Text(stringResource(android.R.string.copy)) }
+            },
+        )
+        return
+    }
+
     AlertDialog(
             onDismissRequest = onDismiss,
             title = { Text(stringResource(R.string.request_failed)) },

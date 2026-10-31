@@ -1,5 +1,8 @@
 package com.ai.assistance.operit.ui.features.chat.components
 
+import com.ai.assistance.operit.ui.features.orbit.OrbitAwareDropdownMenu
+import com.ai.assistance.operit.ui.features.orbit.OrbitAwareDialog
+import com.ai.assistance.operit.ui.features.orbit.OrbitAwareAlertDialog
 import androidx.annotation.StringRes
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
@@ -211,7 +214,7 @@ internal fun MessageEditor(
         onSave()
     }
 
-    Dialog(
+    OrbitAwareDialog(
         onDismissRequest = onCancel,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
@@ -878,7 +881,7 @@ private fun TagEditorDialog(
 ) {
     if (part?.type == PartType.DYNAMIC_UI) {
         var source by remember(part) { mutableStateOf(part.content) }
-        AlertDialog(
+        OrbitAwareAlertDialog(
             onDismissRequest = onDismiss,
             title = { Text(stringResource(R.string.memory_editor_edit_source)) },
             text = {
@@ -905,7 +908,7 @@ private fun TagEditorDialog(
     var tagMenuExpanded by remember { mutableStateOf(false) }
     val isNewTag = part == null
 
-    Dialog(onDismissRequest = onDismiss) {
+    OrbitAwareDialog(onDismissRequest = onDismiss) {
         Surface(
             modifier = Modifier
                 .fillMaxWidth(0.9f)
@@ -970,7 +973,7 @@ private fun TagEditorDialog(
                                 )
                             }
 
-                            DropdownMenu(
+                            OrbitAwareDropdownMenu(
                                 expanded = tagMenuExpanded,
                                 onDismissRequest = { tagMenuExpanded = false },
                                 modifier = Modifier

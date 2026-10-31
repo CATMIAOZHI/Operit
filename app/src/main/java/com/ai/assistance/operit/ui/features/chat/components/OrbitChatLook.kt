@@ -104,6 +104,13 @@ val LocalOrbitReactions = compositionLocalOf<Map<String, String>> { emptyMap() }
  */
 val LocalShowHiddenChatRows = compositionLocalOf { false }
 
+/** The user's messages in this Orbit chat that never reached the model, and how to send one again. */
+@androidx.compose.runtime.Immutable
+class OrbitUnsentMessages(val timestamps: Set<Long>, val resend: (ChatMessage) -> Unit)
+
+/** Set in an Orbit chat; a user bubble listed there shows a red sign that sends it again. */
+val LocalOrbitUnsentMessages = compositionLocalOf<OrbitUnsentMessages?> { null }
+
 /**
  * How far a note that rose above Orbit's message box (an "added" confirmation) reaches up, so the
  * round "back to the newest" button above the box can step over it instead of being covered.

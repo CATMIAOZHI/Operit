@@ -1,5 +1,7 @@
 package com.ai.assistance.operit.ui.features.chat.components
 
+import com.ai.assistance.operit.ui.features.orbit.OrbitAwareAlertDialog
+import com.ai.assistance.operit.ui.features.orbit.orbitDismissLayer
 import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
 import android.content.Intent
@@ -235,7 +237,11 @@ fun ChatScreenContent(
             selectionAnchor = chatHistory.getOrNull(target)?.timestamp
         }
     }
-    androidx.activity.compose.BackHandler(enabled = orbitMessageHost != null && isMultiSelectMode) {
+    // In an Orbit the selection bar follows the back swipe down before selecting ends.
+    val selectionBack = com.ai.assistance.operit.ui.features.orbit.rememberOrbitBackMotion()
+    com.ai.assistance.operit.ui.features.orbit.OrbitBackHandler(
+        selectionBack, enabled = orbitMessageHost != null && isMultiSelectMode,
+    ) {
         isMultiSelectMode = false
         selectedMessageIndices = emptySet()
     }
@@ -351,11 +357,25 @@ fun ChatScreenContent(
                 )
             }).sortedBy { it.steeringAt }
     }
+    // The rows only see this chat's unsent messages; another chat's change keeps the same value.
+    val unsentInChat = if (orbitMessageHost != null && !transcriptLocked) {
+        val failedFlow = remember { com.ai.assistance.operit.core.chat.ChatSendFailures.failed(context) }
+        val failed by failedFlow.collectAsState()
+        val timestamps = failed[currentChatId].orEmpty()
+        val latestScroll by androidx.compose.runtime.rememberUpdatedState(onAutoScrollToBottomChange)
+        remember(timestamps, actualViewModel) {
+            OrbitUnsentMessages(timestamps) { message ->
+                // Follow the chat again, so the reply that comes is in view.
+                if (actualViewModel.resendUnsentMessage(message)) latestScroll(true)
+            }
+        }
+    } else null
     androidx.compose.runtime.CompositionLocalProvider(
         com.ai.assistance.operit.ui.common.dynamicui.LocalDynamicUiSubmit provides
             if (transcriptLocked) null else actualViewModel::submitDynamicUi,
         com.ai.assistance.operit.ui.features.orbit.LocalOrbitOptionSend provides
             if (transcriptLocked) null else actualViewModel::sendOrbitOption,
+        LocalOrbitUnsentMessages provides unsentInChat,
     ) {
     Box(modifier = modifier.fillMaxSize().padding(paddingValues)) {
         // A page's own header (Orbit's) always floats over the chat: messages slide softly under
@@ -631,6 +651,7 @@ fun ChatScreenContent(
         ) {
         AnimatedVisibility(
             visible = isMultiSelectMode && !transcriptLocked,
+            modifier = Modifier.orbitDismissLayer(selectionBack, fromBottom = true),
             enter = fadeIn() + slideInVertically(initialOffsetY = { it }),
             exit = fadeOut() + slideOutVertically(targetOffsetY = { it }),
         ) {
@@ -927,7 +948,7 @@ fun ChatScreenContent(
         }
 
         if (showDeleteSelectedConfirmDialog) {
-            AlertDialog(
+            OrbitAwareAlertDialog(
                 onDismissRequest = { showDeleteSelectedConfirmDialog = false },
                 title = { Text(stringResource(R.string.confirm_delete)) },
                 text = { Text(stringResource(R.string.chat_delete_selected_messages_confirm, selectedMessageIndices.size)) },
