@@ -566,41 +566,48 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
         }
     }
     val localizedUserRoleName = stringResource(R.string.message_role_user)
+    // Only the two names matter: the chat list and the run record change on every saved message
+    // or tool call, which must not rebuild every row of a running subagent's transcript.
+    val transcriptParentName =
+        if (!isReadOnlyTranscript) ""
+        else currentChatView?.characterCardName
+            ?: chatHistories.firstOrNull { it.id == currentChatView?.parentChatId }?.characterCardName
+            ?: activeCharacterCard?.name
+            ?: ""
+    val transcriptSubagentName =
+        remember(isReadOnlyTranscript, currentSubagentRun?.agentConfigSnapshot, currentSubagentRun?.agentProfileId) {
+            if (isReadOnlyTranscript) resolveSubagentAgentName(currentSubagentRun) else ""
+        }
+    // Renamed rows by the message they come from, so an unchanged message keeps the same row.
+    val transcriptRows =
+        remember(transcriptParentName, transcriptSubagentName, localizedUserRoleName) {
+            java.util.IdentityHashMap<com.ai.assistance.operit.data.model.ChatMessage, com.ai.assistance.operit.data.model.ChatMessage>()
+        }
     val displayedChatHistory =
         remember(
             chatHistory,
             isReadOnlyTranscript,
-            currentSubagentRun,
-            currentChatView?.characterCardName,
-            currentChatView?.parentChatId,
-            chatHistories,
-            activeCharacterCard,
-            localizedUserRoleName,
+            transcriptRows,
         ) {
             if (!isReadOnlyTranscript) {
                 chatHistory
             } else {
-                val parentCharacterName =
-                    currentChatView?.characterCardName
-                        ?: chatHistories
-                            .firstOrNull { it.id == currentChatView?.parentChatId }
-                            ?.characterCardName
-                        ?: activeCharacterCard?.name
-                        ?: ""
-                val subagentName = resolveSubagentAgentName(currentSubagentRun)
+                val previous = java.util.IdentityHashMap(transcriptRows)
+                transcriptRows.clear()
                 chatHistory.map { message ->
-                    val displayedRoleName =
-                        resolveSubagentTranscriptRoleName(
-                            message = message,
-                            parentAgentName = parentCharacterName,
-                            subagentName = subagentName,
-                            localizedUserRoleName = localizedUserRoleName,
-                        )
-                    if (displayedRoleName == message.roleName) {
-                        message
-                    } else {
-                        message.copy(roleName = displayedRoleName)
+                    val row = previous[message] ?: run {
+                        val displayedRoleName =
+                            resolveSubagentTranscriptRoleName(
+                                message = message,
+                                parentAgentName = transcriptParentName,
+                                subagentName = transcriptSubagentName,
+                                localizedUserRoleName = localizedUserRoleName,
+                            )
+                        if (displayedRoleName == message.roleName) message
+                        else message.copy(roleName = displayedRoleName)
                     }
+                    transcriptRows[message] = row
+                    row
                 }
             }
         }

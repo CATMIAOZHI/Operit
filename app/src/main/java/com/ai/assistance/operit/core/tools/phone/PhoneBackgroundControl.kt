@@ -495,7 +495,9 @@ internal object PhoneBackgroundControl {
         val remote = "/data/local/tmp/orbit-phone-${screen.id}.png"
         try {
             val out = shell("screencap -d ${screen.displayId} -p $remote && cat $remote | base64")
-            check(out.success && out.stdout.isNotBlank()) { "The background screen picture is unavailable." }
+            check(out.success && out.stdout.isNotBlank()) {
+                "The background screen picture could not be taken this time. Observe again, or use mode=accessibility."
+            }
             file.writeBytes(android.util.Base64.decode(out.stdout.trim(), android.util.Base64.DEFAULT))
         } finally {
             withContext(NonCancellable) { shell("rm -f $remote") }
