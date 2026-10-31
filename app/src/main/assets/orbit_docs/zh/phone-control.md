@@ -8,7 +8,7 @@
 - 每个 agent 一块后台屏，全部加起来最多同时 2 块。
 - **尽量派一个独立子代理去做手机上的事**，把要做什么、做到哪一步停、哪些操作要先问用户说清楚。这样主聊天不会被卡住，用户还能接着和你聊。只有一两步就能做完的小事才自己做。你已经是子代理时，自己做，不要再往下派。
 - 开后台屏时聊天里会出现一张卡片，上面有实时画面。用户可以点开观看，也可以点「接手」自己操作，用完点「交还」；也能直接停止。
-- 需要 Operit 的高级访问（Shizuku/ADB 调试或 Root）。没开时什么都不会操作，也不会改用用户的屏幕：用一句话告诉用户，并用 `orbit_permission_card permission=device_access` 放一张权限卡。
+- 需要 Android 10 以上和 Operit 的高级访问（Shizuku/ADB 调试或 Root），不需要无障碍服务。`orbit_device action=describe` 里 `background_phone_screen_supported=false` 时这台手机用不了，直接告诉用户。没开时什么都不会操作，也不会改用用户的屏幕：用一句话告诉用户，并用 `orbit_permission_card permission=device_access` 放一张权限卡。
 
 ## 用法要点
 

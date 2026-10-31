@@ -28,14 +28,20 @@ internal object OrbitPermissionTools {
                 "phone notifications); notification_read (read other apps' notifications, for watching deliveries and the " +
                 "like); sms (read text messages); contacts (read contacts); calendar (read calendar events); " +
                 "microphone (record audio); location (current location, approximate is enough); " +
-                "geofence (arrival/departure reminders: precise and background location); device_access (Operit's " +
-                "elevated access through ADB debugging/Shizuku or Root, which phone control, app installs " +
+                "geofence (arrival/departure reminders: precise and background location); overlay (display over other " +
+                "apps, which the browser needs to open full screen when the user watches or takes over a page); " +
+                "accessibility (Operit's accessibility service, a small app bundled with Operit that the user installs and " +
+                "turns on; used by tools and packages that read or tap the screen without ADB/Root. Your background " +
+                "phone screen does not need it); device_access (Operit's " +
+                "elevated access through ADB debugging/Shizuku or Root, which your background phone screen, app installs " +
                 "and system settings need; the device admin level only allows locking the screen and a few similar actions)", required = true),
         ),
         details = """
   - Checks what is on first. When it is already on, no card is placed and the result says so.
   - To see every permission at once without placing any card, call orbit_device action=describe and read its permissions; the app reads them itself, so no ADB, Shizuku or terminal command is needed.
   - device_access opens Operit's own access page over the chat (pick a level there and follow its steps). The result gives the picked level and whether it answers now.
+  - accessibility has two steps on the card: install the bundled service app (or update an old one), then turn its service on (done for the user when ADB debugging works, otherwise the system's accessibility settings open). The result gives installed, update_needed and enabled.
+  - overlay: before orbit_browser_handoff or showing the browser full screen, check it; when it is off, put this card so the user's tap on the page opens.
   - Otherwise the card shows the setting with a button that opens the system prompt or settings screen, and a "Don't remind me" button; then it returns at once. End the turn with one short line.
   - After the user opens permission controls from the card and returns, the app checks again. Only an off-to-on change sends a hidden note to this original chat, so you can continue the work. A denial or unchanged setting sends nothing. "Don't remind me" also sends a hidden note.
   - location is only for the current position; coarse location is enough. geofence requires fine location, background location on Android 10+, and the phone's location service. Check coarse/fine/background/location_services separately in the result. Do not continue a geofence while can_continue=false.
@@ -95,6 +101,14 @@ internal object OrbitPermissionTools {
         if (access != null) {
             result.put("level", access.level?.name?.lowercase() ?: "not_set")
                 .put("level_working", access.working)
+                .put("background_phone_screen_supported", PHONE_SCREEN_SUPPORTED)
+            if (!PHONE_SCREEN_SUPPORTED) result.put("phone_screen_note", "This phone runs Android ${android.os.Build.VERSION.RELEASE}; " +
+                "the background phone screen needs Android 10 or later, so device_access cannot give it here. It still helps with app installs and system settings.")
+        }
+        val accessibility = if (permission == OrbitPermissionCards.ACCESSIBILITY) OrbitPermissionCards.accessibilityState(context) else null
+        if (accessibility != null) {
+            result.put("installed", accessibility.installed).put("update_needed", accessibility.updateNeeded)
+                .put("enabled", accessibility.enabled)
         }
         if (permission == OrbitPermissionCards.NOTIFY) {
             // Three separate switches: the app may notify, Orbit's own system channel, and the
@@ -106,7 +120,7 @@ internal object OrbitPermissionTools {
             if (switch == false) result.put("switch_note", "The user turned off message notifications in Orbit settings > " +
                 "Notifications. That is their choice: no card changes it; mention it only if they ask why nothing arrives.")
         }
-        val on = access?.working ?: OrbitPermissionCards.isOn(context, permission)
+        val on = access?.working ?: accessibility?.ready ?: OrbitPermissionCards.isOn(context, permission)
         val ready = on && (location == null || location.optBoolean("location_services"))
         result.put("can_continue", ready)
         if (on) {
@@ -135,4 +149,7 @@ internal object OrbitPermissionTools {
         }
         return ToolResult(NAME, true, StringResultData(result.toString()))
     }
+
+    /** Orbit's background phone screen (a virtual display) needs Android 10. */
+    val PHONE_SCREEN_SUPPORTED: Boolean get() = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q
 }

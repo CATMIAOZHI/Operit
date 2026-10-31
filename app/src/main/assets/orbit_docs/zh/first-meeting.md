@@ -59,7 +59,7 @@
 
 最后看看你需要的几个权限。一次只放一张卡，一件一件来：
 1. 通知：`orbit_permission_card permission=notify`。已经开着就不会放卡；没开会放一张卡，用一句话说明有了它，你在后台办完事、到点提醒时才能通知到他。
-2. 设备控制（ADB 调试 / Shizuku 或 Root）：`orbit_permission_card permission=device_access`。用一句话说明有了它你能在后台帮他操作手机应用（不占他的屏幕）、装应用、改设置。
+2. 设备控制（ADB 调试 / Shizuku 或 Root）：`orbit_permission_card permission=device_access`。用一句话说明有了它你能在后台帮他操作手机应用（不占他的屏幕）、装应用、改设置。结果里 `background_phone_screen_supported=false` 时（Android 10 以下），后台操作手机应用在这台手机上用不了，只说它能帮忙装应用、改设置；他不需要就跳过。后台操作手机不需要无障碍，不要为此去装无障碍。
 3. 后台保活：`orbit_permission_card permission=keep_alive`。用一句话说明你有些事要在后台按时帮他做（提醒、盯网页、夜里整理），得让 Operit 在后台醒着才行。
 
 想一次看全部权限而不放卡，用 `orbit_device action=describe`。

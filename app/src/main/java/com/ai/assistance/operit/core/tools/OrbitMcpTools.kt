@@ -26,7 +26,7 @@ internal object OrbitMcpTools {
     val prompt = ToolPrompt(
         name = NAME,
         description = "See the app's MCP servers, start one, or ask the user to switch them on/off for you. " +
-            "查看主程序配好的 MCP 服务、启动、申请开关。",
+            "查看 App 里配好的 MCP 服务、启动、申请开关。",
         parametersStructured = listOf(
             ToolParameterSchema("action", description = "list / start / request_toggle", required = true),
             ToolParameterSchema("name", description = "start: the server name from list", required = false),
@@ -35,13 +35,13 @@ internal object OrbitMcpTools {
             ToolParameterSchema("reason", description = "request_toggle: one or two sentences telling the user why", required = false),
         ),
         details = """
-  - MCP servers are set up by the user in the app's MCP settings; you cannot add one. You have your own on/off list for them, apart from the main app's chats.
+  - MCP servers are set up by the user in the MCP settings page, which opens inside Orbit: put a card for it with orbit_settings action=open_page page=mcp. You cannot add one yourself. You have your own on/off list for them, apart from the main app's chats.
   - list: every server set up, whether it is on for you, and its state: ready, starting, not_started, failed, off_for_orbit, off_in_app. Each has a one-line note on what to do. ready means the app has it set up; use_package connects to it.
   - Servers that are on for you are listed with the packages. Load one with use_package as usual; if it is not started yet, it is started then (this can take up to a minute).
   - start: starts the server if needed and connects to it once to check it answers; also retries one that failed. Starting also starts the app's other MCP servers.
   - request_toggle: puts an approval card in the chat to switch servers on or off for you. End the turn with one short line; you get a hidden note with the result.
-  - off_in_app means the user switched it off in the app's MCP settings; only they can switch it back on there. When one fails, tell the user the reason from the note in one short line.
-  - 只能用主程序 MCP 设置里配好的服务。需要但关着就用 request_toggle 申请；连不上时把原因一句话告诉用户。
+  - off_in_app means the user switched it off in the MCP settings; only they can switch it back on there (the open_page card above takes them there). When one fails, tell the user the reason from the note in one short line.
+  - 只能用 MCP 设置里配好的服务；要新增、修改或在 App 里重新打开，用 orbit_settings action=open_page page=mcp 放卡片，用户在 Orbit 里就能改。对你关着就用 request_toggle 申请；连不上时把原因一句话告诉用户。
 """,
     )
 
@@ -68,7 +68,8 @@ internal object OrbitMcpTools {
                             .put("note", OrbitMcp.explain(s.id, status)))
                     }
                     JSONObject().put("servers", servers).apply {
-                        if (configured.isEmpty()) put("note", "No MCP server is set up in the app. The user adds them in the app's MCP settings.")
+                        if (configured.isEmpty()) put("note", "No MCP server is set up yet. The user adds one in the MCP settings: " +
+                            "put a card that opens it with orbit_settings action=open_page page=mcp.")
                     }
                 }
                 "start" -> {

@@ -58,7 +58,7 @@ import org.json.JSONObject
 
 /** Orbit pages a chat card can open over the chat. */
 internal enum class OrbitCardPage {
-    SPEECH_SETTINGS, MODEL_CONFIG, DEVICE_ACCESS, WEIXIN, ROLE_CARDS, TOOL_ACCESS, TOOL_PERMISSIONS, ORBIT_MODELS, NOTIFICATIONS,
+    SPEECH_SETTINGS, MODEL_CONFIG, DEVICE_ACCESS, WEIXIN, ROLE_CARDS, TOOL_ACCESS, TOOL_PERMISSIONS, ORBIT_MODELS, NOTIFICATIONS, MCP_CONFIG,
 }
 
 /** Opens an Orbit page from a card; null where the chat cannot open pages (then the button is off). */
@@ -284,6 +284,8 @@ internal fun OrbitOpenPageCard(card: JSONObject) {
             R.string.orbit_page_card_orbit_models_sub, R.string.orbit_page_card_orbit_models_open, OrbitCardPage.ORBIT_MODELS)
         OrbitChatCards.PAGE_NOTIFICATIONS -> Look("bell", R.string.orbit_page_card_notify_title,
             R.string.orbit_page_card_notify_sub, R.string.orbit_page_card_notify_open, OrbitCardPage.NOTIFICATIONS)
+        OrbitChatCards.PAGE_MCP -> Look("server", R.string.orbit_page_card_mcp_title,
+            R.string.orbit_page_card_mcp_sub, R.string.orbit_page_card_mcp_open, OrbitCardPage.MCP_CONFIG)
         else -> return
     }
     CardColumn {

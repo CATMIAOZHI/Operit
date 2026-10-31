@@ -241,7 +241,7 @@ internal object OrbitBrowserWatch {
 
     /** From a hand-off card: opens the page and gives the user control at once. */
     suspend fun openAndTakeOver(context: Context, executorChatId: String) {
-        open(context, executorChatId)
+        open(context, executorChatId, take = true)
         if (_watching.value == executorChatId) withContext(Dispatchers.Main) { takeOver(executorChatId) }
     }
 
@@ -497,17 +497,59 @@ internal object OrbitBrowserWatch {
         }.getOrNull()
     }
 
-    /** Opens the browser full screen on the work's page; it shows as the watch screen. */
-    suspend fun open(context: Context, talkChatId: String) {
+    /** Waits for the overlay permission after the user was sent to allow it; one at a time. */
+    @Volatile
+    private var overlayWait: Job? = null
+
+    /** Operit is on screen (the user came back from the system settings). */
+    private fun inForeground(): Boolean = runCatching {
+        val info = android.app.ActivityManager.RunningAppProcessInfo()
+        android.app.ActivityManager.getMyMemoryState(info)
+        info.importance <= android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
+    }.getOrDefault(false)
+
+    /**
+     * Opens the browser full screen on the work's page; it shows as the watch screen. Without the
+     * overlay permission the system screen to allow it opens instead, and once the user is back in
+     * Operit with it allowed the page opens by itself ([take]: and they get control, as from a hand-off card).
+     */
+    suspend fun open(context: Context, talkChatId: String, take: Boolean = false) {
         val work = _works.value[talkChatId] ?: return
         if (work.stopping) return
         val sessionId = work.sessionId?.takeIf {
             StandardBrowserSessionTools.sessions[it]?.browserTaskId == work.executorChatId
         } ?: return
         if (!Settings.canDrawOverlays(context)) {
-            Toast.makeText(context, R.string.orbit_browser_overlay_required, Toast.LENGTH_SHORT).show()
+            val opened = OrbitPermissionCards.openSettings(context, OrbitPermissionCards.OVERLAY)
+            Toast.makeText(context, if (opened) R.string.orbit_browser_overlay_then_back else R.string.orbit_browser_overlay_required,
+                Toast.LENGTH_LONG).show()
+            if (!opened) return
+            overlayWait?.cancel()
+            val startedAt = work.startedAt
+            overlayWait = scope.launch(Dispatchers.Main) {
+                val until = android.os.SystemClock.elapsedRealtime() + 5 * 60_000L
+                var left = false
+                while (android.os.SystemClock.elapsedRealtime() < until) {
+                    delay(500)
+                    val current = _works.value[talkChatId]
+                    // The task this wait was for has ended (or a new one took the chat).
+                    if (current == null || current.stopping || current.startedAt != startedAt) break
+                    val front = inForeground()
+                    if (!front) { left = true; continue }
+                    if (Settings.canDrawOverlays(app)) {
+                        // Not cancelled by the open below, which cancels a wait it does not need any more.
+                        overlayWait = null
+                        if (take) openAndTakeOver(app, talkChatId) else open(app, talkChatId)
+                        return@launch
+                    }
+                    // Came back without allowing it: this request is over.
+                    if (left) break
+                }
+                if (overlayWait === coroutineContext[Job]) overlayWait = null
+            }
             return
         }
+        overlayWait?.cancel()
         _works.value.values.firstOrNull { it.executorChatId != talkChatId && it.control != Control.NONE }
             ?.let { handBack(it.executorChatId) }
         _watching.value = talkChatId

@@ -25,6 +25,7 @@ Call `orbit_browser_show` when the user only needs to see the page.
 It sends the current browser entry as a card in chat.
 Simply saying “look here” or pasting an internal page identifier does not create that card.
 Call `orbit_browser_handoff` to hand over control and wait for the user to act; show alone does not hand over control.
+Opening the page full screen for the user needs Operit's "display over other apps" permission. When it is off, the user's tap on the card first opens that system setting, and the page opens by itself once they allow it and come back; you can also place `orbit_permission_card permission=overlay` beforehand.
 
 A card reflects the corresponding browser's state; it does not prove the intended action is complete.
 When that browser closes, the card becomes expired and must not be treated as a live entry point.

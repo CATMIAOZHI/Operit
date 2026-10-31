@@ -244,9 +244,11 @@ internal object OrbitMcp {
         State.STARTING -> "MCP server '$name' is still starting. ${status.reason.orEmpty()}".trim()
         State.NOT_STARTED -> "MCP server '$name' is not started. ${status.reason ?: "Use orbit_mcp start to start it."}".trim()
         State.FAILED -> "MCP server '$name' could not start or connect: ${status.reason.orEmpty()} " +
-            "Retry with orbit_mcp start; if it keeps failing, tell the user the reason and to check it in the app's MCP settings."
+            "Retry with orbit_mcp start; if it keeps failing, tell the user the reason and offer the MCP settings card " +
+            "(orbit_settings action=open_page page=mcp) so they can check it."
         State.OFF_IN_ORBIT -> "MCP server '$name' is off for you. Ask the user with orbit_mcp request_toggle to switch it on."
-        State.OFF_IN_APP -> "MCP server '$name' is switched off in the app's MCP settings. Only the user can switch it on there."
+        State.OFF_IN_APP -> "MCP server '$name' is switched off in the MCP settings. Only the user can switch it on there; " +
+            "put a card that opens that page with orbit_settings action=open_page page=mcp."
         State.NOT_CONFIGURED -> "There is no MCP server '$name'. See orbit_mcp list."
     }
 

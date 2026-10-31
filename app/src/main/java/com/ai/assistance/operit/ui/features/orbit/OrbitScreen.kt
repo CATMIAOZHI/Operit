@@ -376,6 +376,7 @@ private fun OrbitChatPage(
                 OrbitCardPage.TOOL_PERMISSIONS -> OrbitSubPage.TOOL_PERMISSIONS
                 OrbitCardPage.ORBIT_MODELS -> OrbitSubPage.MODELS
                 OrbitCardPage.NOTIFICATIONS -> OrbitSubPage.NOTIFICATION_SETTINGS
+                OrbitCardPage.MCP_CONFIG -> OrbitSubPage.MCP_CONFIG
                 // Role cards are managed in the app's role card page; back returns here.
                 OrbitCardPage.ROLE_CARDS -> null
             }

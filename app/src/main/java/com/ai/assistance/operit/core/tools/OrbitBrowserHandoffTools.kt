@@ -42,10 +42,15 @@ internal object OrbitBrowserHandoffTools {
                 ?.replace(Regex("[\\r\\n]+"), " ")?.trim()?.take(80).orEmpty()
             require(reason.isNotEmpty()) { "Say in a few words what the user should do there (reason)" }
             OrbitBrowserWatch.askUser(caller, reason)
+            // Without it the page cannot open full screen; the card's button sends the user to allow it first.
+            val overlay = if (android.provider.Settings.canDrawOverlays(context)) "" else
+                " Operit is not allowed to display over other apps yet, which the page needs to open for the user. Tapping the " +
+                    "card first opens that system setting and then the page by itself, so tell them in the same line to allow " +
+                    "\"display over other apps\" for Operit when asked."
             ToolResult(NAME, true, StringResultData(
                 "A card asking the user to take over is now in the chat (\"$reason\"). End this turn now with one short " +
                     "line telling them what to do. Do not call browser tools until they hand the page back; you will be " +
-                    "told then. Look at the page again before going on."
+                    "told then. Look at the page again before going on.$overlay"
             ))
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
