@@ -1802,7 +1802,8 @@ class ChatHistoryDelegate(
                 currentDisplayStartTimestamp != null &&
                 persistedSummaryMessage.timestamp < currentDisplayStartTimestamp
             ) {
-                revealMessageForCurrentChat(persistedSummaryMessage.timestamp)
+                // A summary placed before the loaded messages (the newest part stays beside it) is
+                // found by scrolling up; jumping to it would pull the latest messages off screen.
             } else {
                 reloadCurrentChatDisplayHistory(chatId)
             }

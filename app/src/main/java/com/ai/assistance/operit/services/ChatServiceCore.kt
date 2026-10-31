@@ -197,6 +197,9 @@ class ChatServiceCore(
                         chatIdOverride = chatId
                     )
                 }
+                if (turnOptions.persistTurn && !turnOptions.isSubTask && !turnOptions.isCollaborationAgent) {
+                    messageCoordinationDelegate.onTurnCompleted(chatId, windowSize)
+                }
                 additionalOnTurnComplete?.invoke(
                     chatId,
                     inputTokens.toTokenCountCallbackInt(),
