@@ -108,12 +108,22 @@ class ShowerController {
         if (videoWidth > 0 && videoHeight > 0) Pair(videoWidth, videoHeight) else null
 
     private val binaryLock = Any()
-    private val earlyBinaryFrames = ArrayDeque<ByteArray>()
+    /**
+     * The frames since the latest keyframe, kept whether or not someone watches, so a viewer
+     * that opens on a still screen gets a full picture at once instead of waiting for a change.
+     */
+    private val gopFrames = ArrayDeque<ByteArray>()
     /** The latest SPS and PPS: a viewer that attaches late needs them before any frame. */
     private val configFrames = arrayOfNulls<ByteArray>(2)
 
     @Volatile
     private var binaryHandler: ((ByteArray) -> Unit)? = null
+
+    /**
+     * Live frames that arrive while a new receiver is still getting the cached ones; they go
+     * to it right after, in order. Null when no replay is running.
+     */
+    private var replayBacklog: ArrayDeque<ByteArray>? = null
 
     /** The type of the first H.264 NAL unit in an Annex-B packet; -1 when unknown. */
     private fun nalType(packet: ByteArray): Int {
@@ -131,31 +141,58 @@ class ShowerController {
         return -1
     }
 
+    /** Whether any NAL unit in the Annex-B [packet] is a keyframe slice (IDR), not just the first. */
+    private fun hasIdr(packet: ByteArray): Boolean {
+        var i = 0
+        while (i + 3 < packet.size) {
+            if (packet[i] == 0.toByte() && packet[i + 1] == 0.toByte() && packet[i + 2] == 1.toByte()) {
+                if ((packet[i + 3].toInt() and 0x1F) == 5) return true
+                i += 3
+            } else {
+                i++
+            }
+        }
+        return false
+    }
+
     /**
      * Sets the receiver of the video stream. A new receiver first gets the latest SPS/PPS, then the
      * frames since the latest keyframe, so it can start decoding however late it attaches.
-     * Call it off the main thread: the replay goes through the decoder.
+     * Call it off the main thread: the replay goes through the decoder. It runs outside the lock,
+     * so removing the receiver never waits for it; live frames meanwhile wait in [replayBacklog]
+     * and follow the replayed ones in order.
      */
     fun setBinaryHandler(handler: ((ByteArray) -> Unit)?) {
-        val framesToReplay: List<ByteArray>
+        var batch: List<ByteArray>
         synchronized(binaryLock) {
             binaryHandler = handler
-            ShowerLog.d(TAG, "setBinaryHandler: id=${virtualDisplayId} handlerSet=${handler != null}, bufferedFrames=${earlyBinaryFrames.size}")
-            framesToReplay = if (handler != null) {
-                val list = configFrames.filterNotNull() + earlyBinaryFrames.toList()
-                earlyBinaryFrames.clear()
-                list
-            } else {
-                emptyList()
+            ShowerLog.d(TAG, "setBinaryHandler: id=${virtualDisplayId} handlerSet=${handler != null}, bufferedFrames=${gopFrames.size}")
+            if (handler == null) {
+                replayBacklog = null
+                return
             }
+            batch = configFrames.filterNotNull() + gopFrames
+            replayBacklog = ArrayDeque()
         }
-        if (handler != null && framesToReplay.isNotEmpty()) {
-            ShowerLog.d(TAG, "setBinaryHandler: replaying ${framesToReplay.size} buffered frames")
-            framesToReplay.forEach { frame ->
+        val receiver = handler ?: return
+        while (true) {
+            for (frame in batch) {
+                // Replaced or removed meanwhile: the next receiver has its own replay.
+                if (binaryHandler !== receiver) return
                 try {
-                    handler(frame)
+                    receiver(frame)
                 } catch (_: Exception) {
                 }
+            }
+            synchronized(binaryLock) {
+                if (binaryHandler !== receiver) return
+                val backlog = replayBacklog ?: return
+                if (backlog.isEmpty()) {
+                    replayBacklog = null
+                    return
+                }
+                batch = backlog.toList()
+                backlog.clear()
             }
         }
     }
@@ -163,25 +200,43 @@ class ShowerController {
     /** Removes [handler], unless another one has replaced it meanwhile. */
     fun clearBinaryHandler(handler: (ByteArray) -> Unit) {
         synchronized(binaryLock) {
-            if (binaryHandler === handler) binaryHandler = null
+            if (binaryHandler === handler) {
+                binaryHandler = null
+                replayBacklog = null
+            }
         }
     }
 
     private val videoSink = object : IShowerVideoSink.Stub() {
         override fun onVideoFrame(data: ByteArray) {
-            val handler: ((ByteArray) -> Unit)?
+            var handler: ((ByteArray) -> Unit)?
             synchronized(binaryLock) {
                 handler = binaryHandler
-                when (val type = nalType(data)) {
-                    7, 8 -> configFrames[type - 7] = data
-                    else -> if (handler == null) {
-                        // Frames before a keyframe cannot be decoded once it is here.
-                        if (type == 5) earlyBinaryFrames.clear()
-                        if (earlyBinaryFrames.size >= 120) {
-                            earlyBinaryFrames.removeFirst()
-                        }
-                        earlyBinaryFrames.addLast(data)
+                val type = nalType(data)
+                when {
+                    // A keyframe, even one sent together with SPS/PPS: frames before it are
+                    // not needed any more, and it starts the cache.
+                    type == 5 || hasIdr(data) -> {
+                        gopFrames.clear()
+                        gopFrames.addLast(data)
                     }
+                    type == 7 || type == 8 -> configFrames[type - 7] = data
+                    // Keyframes come every second while the screen changes; past the cap,
+                    // keep the start so the cached frames still decode.
+                    gopFrames.size < 120 -> gopFrames.addLast(data)
+                }
+                val backlog = replayBacklog
+                if (handler != null && backlog != null) {
+                    // The receiver is still replaying; it takes this one after. If too much piles
+                    // up, it restarts from the latest keyframe on, which still decodes.
+                    if (backlog.size < 240) {
+                        backlog.addLast(data)
+                    } else {
+                        backlog.clear()
+                        backlog.addAll(configFrames.filterNotNull())
+                        backlog.addAll(gopFrames)
+                    }
+                    handler = null
                 }
             }
             handler?.invoke(data)
@@ -557,7 +612,9 @@ class ShowerController {
         videoHeight = 0
         synchronized(binaryLock) {
             binaryHandler = null
-            earlyBinaryFrames.clear()
+            replayBacklog = null
+            gopFrames.clear()
+            configFrames.fill(null)
         }
         if (id != null && id > 0 && service?.asBinder()?.isBinderAlive == true) {
             try {
