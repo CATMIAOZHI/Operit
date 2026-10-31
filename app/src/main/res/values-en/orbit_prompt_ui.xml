@@ -193,4 +193,16 @@
     <string name="orbit_phone_card_watch">Watch</string>
     <string name="orbit_phone_watch_back">Back</string>
     <string name="orbit_phone_watch_hint">Watching only. Tap Take over to use it yourself</string>
+    <string name="orbit_permission_name_overlay">Display over other apps</string>
+    <string name="orbit_permission_name_accessibility">Accessibility service</string>
+    <string name="orbit_overlay_card_note">Needed to show you the browser full screen or let you take over a page</string>
+    <string name="orbit_accessibility_card_note">A small app bundled with Operit. Install it, then turn on its accessibility service. Reading and tapping the screen use it when there is no ADB or Root</string>
+    <string name="orbit_accessibility_install">Install the accessibility component</string>
+    <string name="orbit_accessibility_install_action">Install</string>
+    <string name="orbit_accessibility_update">Update</string>
+    <string name="orbit_accessibility_enable">Turn on the accessibility service</string>
+    <string name="orbit_browser_overlay_then_back">Allow Operit to display over other apps; the page opens by itself when you come back</string>
+    <string name="orbit_page_card_mcp_title">MCP settings</string>
+    <string name="orbit_page_card_mcp_sub">Add, edit or switch MCP servers on and off</string>
+    <string name="orbit_page_card_mcp_open">Open MCP settings</string>
 </resources>

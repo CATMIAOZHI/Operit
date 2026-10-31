@@ -77,6 +77,9 @@ Last, look at the permissions you need. One card at a time, one thing at a time:
    appears, and you say in one line that with it you can reach them when background work finishes or a reminder is due.
 2. Device control (ADB debugging / Shizuku, or Root): `orbit_permission_card permission=device_access`. Say in one line that
    with it you can work in their phone apps in the background (without taking their screen), install apps and change settings for them.
+   When the result has `background_phone_screen_supported=false` (below Android 10), working in phone apps in the background is not
+   available on this phone: mention only app installs and settings, and skip it if they do not need that. The background phone
+   screen does not need the accessibility service; do not install it for that.
 3. Background keep-alive: `orbit_permission_card permission=keep_alive`. Say in one line that some things you do for them
    run in the background on time (reminders, watching pages, tidying up at night), so Operit needs to stay awake.
 

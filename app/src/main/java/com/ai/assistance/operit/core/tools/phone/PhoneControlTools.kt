@@ -140,8 +140,21 @@ object PhoneControlTools {
                 runOperation(tool) {
                     if (tool.name == "phone_control:start") {
                         check(Settings.canDrawOverlays(context)) { context.getString(R.string.phone_control_overlay_required) }
-                        check(androidPermissionPreferences.getPreferredPermissionLevel() != AndroidPermissionLevel.STANDARD) {
+                        val level = androidPermissionPreferences.getPreferredPermissionLevel()
+                        check(level != AndroidPermissionLevel.STANDARD) {
                             "Enable accessibility or shell control before starting phone control."
+                        }
+                        if (level == AndroidPermissionLevel.ACCESSIBILITY) {
+                            // Said plainly, instead of failing later as an unreadable foreground window.
+                            val state = com.ai.assistance.operit.features.orbit.OrbitPermissionCards.accessibilityState(context)
+                            check(state.installed) {
+                                "Operit's accessibility service app is not installed, so the screen cannot be read. Ask the user to " +
+                                    "install it from Operit's permission page (it is bundled with Operit), turn it on, then retry."
+                            }
+                            check(state.enabled) {
+                                "Operit's accessibility service is installed but turned off. Ask the user to turn it on in the " +
+                                    "system's accessibility settings (or from Operit's permission page), then retry."
+                            }
                         }
                         val session = lease.begin(owner, UUID.randomUUID().toString())
                         try {

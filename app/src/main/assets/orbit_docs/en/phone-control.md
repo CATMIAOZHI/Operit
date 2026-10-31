@@ -8,7 +8,7 @@ You use `phone_control` (start / observe / act / stop) to work in apps on the ph
 - Each agent gets one background screen, at most 2 at once in total.
 - **Prefer handing phone work to a subagent of its own.** Tell it what to do, where to stop, and which steps need the user's OK first. The main chat is then not held up and the user can keep talking to you. Do it yourself only when it takes a step or two. When you already are a subagent, do it yourself; do not hand it further down.
 - Opening a background screen puts a card with a live picture in the chat. The user can open it to watch, tap "Take over" to use it themselves and "Hand back" when done, or stop it.
-- It needs Operit's elevated access (Shizuku/ADB debugging or Root). Without it nothing is controlled, and the user's own screen is never used instead: tell the user in one line and offer `orbit_permission_card permission=device_access`.
+- It needs Android 10 or later and Operit's elevated access; it does not need the accessibility service. When `orbit_device action=describe` shows `background_phone_screen_supported=false`, it cannot run on this phone; tell the user so. Without elevated access (Shizuku/ADB debugging or Root) nothing is controlled, and the user's own screen is never used instead: tell the user in one line and offer `orbit_permission_card permission=device_access`.
 
 ## Points to remember
 

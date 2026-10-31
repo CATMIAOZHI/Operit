@@ -193,4 +193,16 @@
     <string name="orbit_phone_card_watch">查看</string>
     <string name="orbit_phone_watch_back">返回</string>
     <string name="orbit_phone_watch_hint">只能观看。点「接手」后可以自己操作</string>
+    <string name="orbit_permission_name_overlay">显示在其他应用上层</string>
+    <string name="orbit_permission_name_accessibility">无障碍服务</string>
+    <string name="orbit_overlay_card_note">浏览器全屏给你看、或请你接手页面时需要它</string>
+    <string name="orbit_accessibility_card_note">一个随 Operit 自带的小应用。先安装，再开启它的无障碍服务。没有 ADB 或 Root 时，读屏和点屏幕的功能靠它</string>
+    <string name="orbit_accessibility_install">安装无障碍组件</string>
+    <string name="orbit_accessibility_install_action">安装</string>
+    <string name="orbit_accessibility_update">更新</string>
+    <string name="orbit_accessibility_enable">开启无障碍服务</string>
+    <string name="orbit_browser_overlay_then_back">请允许 Operit「显示在其他应用上层」，回来后页面会自动打开</string>
+    <string name="orbit_page_card_mcp_title">MCP 设置</string>
+    <string name="orbit_page_card_mcp_sub">添加、修改或开关 MCP 服务</string>
+    <string name="orbit_page_card_mcp_open">打开 MCP 设置</string>
 </resources>
