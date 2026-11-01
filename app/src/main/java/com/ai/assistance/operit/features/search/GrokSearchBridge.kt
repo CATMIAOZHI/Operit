@@ -161,15 +161,28 @@ object GrokSearchBridge {
     private suspend fun search(token: String, query: String, model: String, tool: JSONObject): JSONObject {
         val payload = JSONObject()
             .put("model", model)
-            .put("input", JSONArray().put(JSONObject().put("role", "user").put("content", query)))
+            .put("input", JSONArray()
+                // The caller sums up itself: a short list of findings with sources costs less output.
+                .put(JSONObject().put("role", "system").put("content",
+                    "Search, then reply briefly: the key findings as short points, each with its source. No long essay. " +
+                        "Answer in the language of the query."))
+                .put(JSONObject().put("role", "user").put("content", query)))
             .put("tools", JSONArray().put(tool))
             // Without this the model may answer from memory, skipping the search and its filters.
             .put("tool_choice", "required")
+        // Every URL the web search found, not only the ones the answer cites.
+        val sources = tool.optString("type") == "web_search"
+        if (sources) payload.put("include", JSONArray().put("web_search_call.action.sources"))
         // The account token works on the public API; the CLI proxy is the fallback for accounts
         // whose token only works there, as with Grok Draw.
         var last: Pair<Int, String>? = null
         for (base in ENDPOINTS) {
-            val response = request(base + "/responses", token, payload, viaProxy = base != ENDPOINTS.first())
+            var response = request(base + "/responses", token, payload, viaProxy = base != ENDPOINTS.first())
+            // An endpoint that does not take the source list still searches without it.
+            if (sources && response.first == 400 && payload.has("include")) {
+                payload.remove("include")
+                response = request(base + "/responses", token, payload, viaProxy = base != ENDPOINTS.first())
+            }
             if (response.first in 200..299) return parse(query, response.second)
             last = response
             if (response.first !in setOf(401, 403, 404, 405)) break
@@ -191,6 +204,8 @@ object GrokSearchBridge {
         }
         val summary = StringBuilder()
         val citations = LinkedHashMap<String, String?>()
+        // Sources the search found but the answer may not cite; listed after the cited ones.
+        val found = LinkedHashSet<String>()
         val searched = mutableListOf<String>()
         val output = body.optJSONArray("output") ?: JSONArray()
         for (index in 0 until output.length()) {
@@ -209,6 +224,12 @@ object GrokSearchBridge {
                 "web_search_call", "x_search_call", "custom_tool_call" -> {
                     val action = item.optJSONObject("action")
                     action?.optString("query")?.takeIf { it.isNotBlank() }?.let { searched += it }
+                    action?.optJSONArray("sources")?.let { list ->
+                        for (source in 0 until list.length()) {
+                            val url = list.optJSONObject(source)?.optString("url")?.takeIf { it.startsWith("http") } ?: continue
+                            found += url
+                        }
+                    }
                 }
             }
         }
@@ -221,9 +242,10 @@ object GrokSearchBridge {
                     is JSONObject -> value.optString("url")
                     else -> null
                 }?.takeIf { it.startsWith("http") } ?: continue
-                if (url !in citations) citations[url] = null
+                found += url
             }
         }
+        found.forEach { url -> if (url !in citations) citations[url] = null }
         if (summary.isBlank() && citations.isEmpty()) throw IOException("Grok 没有返回搜索结果，请换个说法再试")
         return SearchResults.entry(query, summary.toString().trim(), citations, searched)
     }
