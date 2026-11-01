@@ -158,7 +158,8 @@ object GrokDrawBridge {
 
     private suspend fun save(bytes: ByteArray, requestedName: String): File = withContext(Dispatchers.IO) {
         val dir = outputDir()
-        if (!dir.isDirectory && !dir.mkdirs()) throw IOException("无法创建绘图目录")
+        // mkdirs() is false when a parallel call created the folder first, so check again.
+        if (!dir.isDirectory && !dir.mkdirs() && !dir.isDirectory) throw IOException("无法创建绘图目录")
         val base = requestedName.trim()
             .replace(Regex("""[\\/:*?"<>|\u0000-\u001F]"""), "_")
             .trim('.', ' ')

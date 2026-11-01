@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.last
 import kotlinx.coroutines.runBlocking
 
 /**
@@ -212,6 +213,31 @@ class AIToolHandler private constructor(private val context: Context) {
                             override fun invoke(tool: AITool): ToolResult {
                                 return executor(tool)
                             }
+                        }
+        )
+    }
+
+    /**
+     * Registers a tool written as a suspend function. Its stream runs in the caller's coroutine,
+     * so stopping the turn cancels it; plain [ToolExecutor.invoke] callers still get a blocking call.
+     */
+    fun registerSuspendTool(
+            name: String,
+            descriptionGenerator: ((AITool) -> String)? = null,
+            executor: suspend (AITool) -> ToolResult
+    ) {
+        registerTool(
+                name = name,
+                descriptionGenerator = descriptionGenerator,
+                executor =
+                        object : ToolExecutor {
+                            override fun invoke(tool: AITool): ToolResult =
+                                    runBlocking(ToolExecutionManager.toolRuntimeContextElement()) {
+                                        executor(tool)
+                                    }
+
+                            override fun invokeAndStream(tool: AITool): Flow<ToolResult> =
+                                    flow { emit(executor(tool)) }
                         }
         )
     }
@@ -472,6 +498,52 @@ class AIToolHandler private constructor(private val context: Context) {
         notifyToolExecutionStarted(tool)
         return try {
             val result = executor.invoke(tool)
+            notifyToolExecutionResult(tool, result)
+            result
+        } catch (e: Exception) {
+            notifyToolExecutionError(tool, e)
+            throw e
+        } finally {
+            notifyToolExecutionFinished(tool)
+        }
+    }
+
+    /**
+     * As [executeToolWithExecutor], but a script package tool runs suspended instead of blocking,
+     * so cancelling the caller (stopping the turn) stops the script too.
+     */
+    suspend fun executeToolWithExecutorSuspending(tool: AITool, executor: ToolExecutor): ToolResult {
+        notifyToolCallRequested(tool)
+        when (val interception = checkToolInterception(tool)) {
+            AIToolHookDecision.Allow -> Unit
+            is AIToolHookDecision.Block -> {
+                val interceptedResult = buildToolInterceptionResult(tool.name, interception)
+                notifyToolExecutionResult(tool, interceptedResult)
+                notifyToolExecutionFinished(tool)
+                return interceptedResult
+            }
+        }
+        if (executor !is JsPackageToolExecutorMarker) return executeResolvedTool(tool, executor)
+
+        ToolExecutionManager.inspectToolParameters(tool, executor)
+        val validationResult = executor.validateParameters(tool)
+        if (!validationResult.valid) {
+            val validationFailedResult =
+                ToolResult(
+                    toolName = tool.name,
+                    success = false,
+                    result = StringResultData(""),
+                    error = validationResult.errorMessage
+                )
+            notifyToolExecutionResult(tool, validationFailedResult)
+            notifyToolExecutionFinished(tool)
+            return validationFailedResult
+        }
+
+        notifyToolExecutionStarted(tool)
+        return try {
+            // A package executor's stream carries exactly one final result.
+            val result = executor.invokeAndStream(tool).last()
             notifyToolExecutionResult(tool, result)
             result
         } catch (e: Exception) {

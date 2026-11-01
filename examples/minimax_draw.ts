@@ -158,7 +158,7 @@ const minimaxDraw = (function () {
         }
         const rawPrompt = String(prompt || "").trim();
         const shortPrompt = rawPrompt.length > 40 ? `${rawPrompt.substring(0, 40)}...` : rawPrompt;
-        return `${sanitizeFileName(shortPrompt || fallbackPrefix, fallbackPrefix)}_${Date.now()}`;
+        return `${sanitizeFileName(shortPrompt || fallbackPrefix, fallbackPrefix)}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     }
 
     async function ensureDirectories() {

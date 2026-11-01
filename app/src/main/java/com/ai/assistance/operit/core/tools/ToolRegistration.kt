@@ -322,7 +322,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
         )
     }
 
-    fun executeProxyTargetWithPermissionCheck(
+    suspend fun executeProxyTargetWithPermissionCheck(
         targetToolName: String,
         forwardedParameters: List<ToolParameter>,
         useEnglish: Boolean,
@@ -358,7 +358,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
         val permissionDecision =
             if (runtimeContext?.permissionCheckedToolName == targetToolName) {
                 ToolPermissionDecision.Allowed
-            } else runBlocking {
+            } else {
                 handler.getToolPermissionSystem().checkToolPermission(
                 tool = proxiedTool,
                 conversationLabel = conversationLabel ?: runtimeContext?.conversationLabel,
@@ -395,7 +395,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
         // classification above is only valid for the exact executor instance it was made
         // against, and a re-resolution could replace it with an MCP executor between the
         // classification and the invocation.
-        val proxiedResult = handler.executeToolWithExecutor(proxiedTool, executor)
+        val proxiedResult = handler.executeToolWithExecutorSuspending(proxiedTool, executor)
         return ToolResult(
             toolName = targetToolName,
             success = proxiedResult.success,
@@ -1193,7 +1193,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
             }
     )
 
-    handler.registerTool(
+    handler.registerSuspendTool(
             name = CliToolModeSupport.PROXY_TOOL_NAME,
             descriptionGenerator = { tool ->
                 val targetToolName = tool.parameters.find { it.name == "tool_name" }?.value ?: ""
@@ -1203,7 +1203,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val useEnglish = isEnglishLanguage()
                 val runtimeContext = ToolExecutionManager.currentToolRuntimeContext()
                 if (runtimeContext?.toolExposureMode != ToolExposureMode.CLI) {
-                    return@registerTool ToolResult(
+                    return@registerSuspendTool ToolResult(
                         toolName = tool.name,
                         success = false,
                         result = StringResultData(""),
@@ -1216,15 +1216,15 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                     requireQualifiedTarget = false
                 )
                 if (parseError != null) {
-                    return@registerTool parseError
+                    return@registerSuspendTool parseError
                 }
-                val resolvedInvocation = parsedInvocation ?: return@registerTool buildToolErrorResult(
+                val resolvedInvocation = parsedInvocation ?: return@registerSuspendTool buildToolErrorResult(
                     tool,
                     "Missing required parameter: tool_name"
                 )
 
                 if (CliToolModeSupport.isReservedProxyTarget(resolvedInvocation.targetToolName)) {
-                    return@registerTool ToolResult(
+                    return@registerSuspendTool ToolResult(
                         toolName = tool.name,
                         success = false,
                         result = StringResultData(""),
@@ -1242,7 +1242,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                         roleCardToolAccess = roleCardToolAccess
                     )
                 ) {
-                    return@registerTool ToolResult(
+                    return@registerSuspendTool ToolResult(
                         toolName = resolvedInvocation.targetToolName,
                         success = false,
                         result = StringResultData(""),
@@ -1259,7 +1259,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
             }
     )
 
-    handler.registerTool(
+    handler.registerSuspendTool(
             name = "package_proxy",
             descriptionGenerator = { tool ->
                 val targetToolName = tool.parameters.find { it.name == "tool_name" }?.value ?: ""
@@ -1271,19 +1271,19 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                     requireQualifiedTarget = true
                 )
                 if (parseError != null) {
-                    return@registerTool parseError
+                    return@registerSuspendTool parseError
                 }
-                val resolvedInvocation = parsedInvocation ?: return@registerTool buildToolErrorResult(
+                val resolvedInvocation = parsedInvocation ?: return@registerSuspendTool buildToolErrorResult(
                     tool,
                     "Missing required parameter: tool_name"
                 )
                 if (resolvedInvocation.targetToolName == CliToolModeSupport.PACKAGE_PROXY_TOOL_NAME) {
-                    return@registerTool buildToolErrorResult(tool, "tool_name cannot be package_proxy")
+                    return@registerSuspendTool buildToolErrorResult(tool, "tool_name cannot be package_proxy")
                 }
 
                 val targetExecutor = handler.getToolExecutorOrActivate(resolvedInvocation.targetToolName)
                 if (targetExecutor == null) {
-                    return@registerTool buildToolErrorResult(
+                    return@registerSuspendTool buildToolErrorResult(
                         tool,
                         CliToolModeSupport.buildProxyTargetUnavailableMessage(
                             resolvedInvocation.targetToolName,
@@ -1313,7 +1313,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 // classification above is only valid for the exact executor instance it was made
                 // against, and a re-resolution could replace it with an MCP executor between the
                 // classification and the invocation.
-                val proxiedResult = handler.executeToolWithExecutor(proxiedTool, targetExecutor)
+                val proxiedResult = handler.executeToolWithExecutorSuspending(proxiedTool, targetExecutor)
                 ToolResult(
                     toolName = resolvedInvocation.targetToolName,
                     success = proxiedResult.success,

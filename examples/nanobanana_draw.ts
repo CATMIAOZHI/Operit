@@ -335,7 +335,7 @@ const nanobananaDraw = (function () {
         const shortPrompt = prompt.length > 40 ? `${prompt.substring(0, 40)}...` : prompt;
         const base = sanitizeFileName(shortPrompt || "image");
         const timestamp = Date.now();
-        return `${base}_${timestamp}`;
+        return `${base}_${timestamp}_${Math.random().toString(36).slice(2, 6)}`;
     }
 
     async function ensureDirectories(): Promise<void> {

@@ -116,7 +116,7 @@ const openaiDraw = (function () {
         const shortPrompt = prompt.length > 40 ? `${prompt.substring(0, 40)}...` : prompt;
         const base = sanitizeFileName(shortPrompt || "image");
         const timestamp = Date.now();
-        return `${base}_${timestamp}`;
+        return `${base}_${timestamp}_${Math.random().toString(36).slice(2, 6)}`;
     }
     async function ensureDirectories() {
         const dirs = [DRAW_ROOT_DIR, STORAGE_DIR, DRAWS_DIR];
@@ -193,7 +193,7 @@ const openaiDraw = (function () {
         }
         if (item.url && String(item.url).trim().length > 0) {
             // Some OpenAI-compatible APIs may return url only. We download it, then read as base64.
-            const tmpName = `openai_tmp_${Date.now()}`;
+            const tmpName = `openai_tmp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
             const tmpPath = `${DRAWS_DIR}/${tmpName}.png`;
             const downloadResult = await Tools.Files.download(String(item.url), tmpPath);
             if (!downloadResult.successful) {

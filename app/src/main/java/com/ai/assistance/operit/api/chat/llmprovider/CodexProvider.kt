@@ -102,7 +102,8 @@ class CodexProvider(
         super.customizeFinalRequestObject(requestObject, messagesArray, toolsJson)
         CodexModelVariant.applyRequestParameters(requestObject, modelName)
         requestObject.put("store", false)
-        requestObject.put("parallel_tool_calls", false)
+        // Several calls in one turn let independent searches and drawings run side by side.
+        requestObject.put("parallel_tool_calls", true)
         CodexRequestAdapter.moveSystemInstructions(requestObject)
         val include = requestObject.optJSONArray("include") ?: JSONArray().also {
             requestObject.put("include", it)

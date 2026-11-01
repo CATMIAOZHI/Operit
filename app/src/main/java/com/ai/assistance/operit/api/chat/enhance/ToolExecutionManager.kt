@@ -66,6 +66,32 @@ import org.json.JSONObject
 /** Utility class for managing tool executions */
 object ToolExecutionManager {
     private const val TAG = "ToolExecutionManager"
+
+    /**
+     * Built-in packages whose tools may run side by side within one model turn: each call only
+     * sends its own network request and writes a uniquely named file, never touching the screen,
+     * the browser, settings or another call's state. Packages that drive a WebView (google_search,
+     * various_search) stay serial.
+     */
+    internal val PARALLEL_SAFE_PACKAGES: Set<String> =
+        setOf(
+            "codex_search",
+            "grok_search",
+            "deepseek_search",
+            "ollama_search",
+            "tavily",
+            "zhipu_search",
+            "crossref",
+            "codex_draw",
+            "grok_draw",
+            "openai_draw",
+            "qwen_draw",
+            "nanobanana_draw",
+            "minimax_draw",
+            "siliconflow_draw",
+            "xai_draw",
+            "zhipu_draw",
+        )
     private const val PACKAGE_PROXY_TOOL_NAME = "package_proxy"
     private const val PACKAGE_CALLER_NAME_PARAM = "__operit_package_caller_name"
     private const val PACKAGE_CHAT_ID_PARAM = "__operit_package_chat_id"
@@ -1524,12 +1550,12 @@ object ToolExecutionManager {
         // 4. 所有权限结果齐备后，严格按模型原始调用顺序返回或执行。
         // A rejected item occupies its original slot; a later rejection can no longer be emitted
         // before an earlier allowed tool has finished.
-        // Subagent task invocations run in parallel: the coordinator already supports concurrent
-        // child runs per parent, so a sequential loop would needlessly serialize independent
-        // agents. Contiguous task runs form one parallel group; non-task tools stay serial and
-        // act as ordering barriers. Results are published strictly in the model's original call
-        // order from the single driver coroutine, so the shared collector and round manager are
-        // never written concurrently and the transcript cannot reorder tool results.
+        // Independent calls run in parallel: subagent `task` runs (the coordinator supports
+        // concurrent child runs per parent) and calls into built-in search/draw packages that only
+        // talk to the network. Contiguous calls of one kind form one parallel group; every other
+        // tool stays serial and acts as an ordering barrier. Results are published strictly in the
+        // model's original call order from the single driver coroutine, so the shared collector and
+        // round manager are never written concurrently and the transcript cannot reorder results.
         fun key(callId: String?, invocationIndex: Int?): String =
             callId?.takeIf(String::isNotBlank) ?: "index:${invocationIndex ?: -1}"
 
@@ -1545,6 +1571,35 @@ object ToolExecutionManager {
                 key(invocation.callId, invocation.invocationIndex.takeIf { it >= 0 })
             }
         val orderedResults = mutableListOf<ToolResult>()
+
+        // Decided when the walk reaches the call, in call order: looking the executor up may
+        // activate the package, which must not happen ahead of earlier calls in the batch.
+        suspend fun isParallelPackageCall(invocation: ToolInvocation): Boolean {
+            // A package_proxy call runs its target, so judge by the target tool.
+            val name = resolveToolTarget(invocation.tool).tool.name
+            val packageName = name.substringBefore(':', missingDelimiterValue = "")
+            if (packageName !in PARALLEL_SAFE_PACKAGES) return false
+            // Only the app's own script: an MCP server or an imported package can reuse the name.
+            // Look it up as the calling chat, like the run itself: an Orbit has its own package
+            // switches and keys, so activation depends on who calls.
+            val executor =
+                withContext(
+                    toolRuntimeContextElement(
+                        toolRuntimeContext.copy(
+                            callId = invocation.callId,
+                            invocationIndex = invocation.invocationIndex.takeIf { it >= 0 },
+                        )
+                    )
+                ) { toolHandler.getToolExecutorOrActivate(name) } ?: return false
+            return executor is JsPackageToolExecutorMarker && executor.registeredFromBuiltIn
+        }
+
+        suspend fun parallelKind(invocation: ToolInvocation): String? =
+            when {
+                invocation.tool.name == "task" -> "task"
+                isParallelPackageCall(invocation) -> "package"
+                else -> null
+            }
 
         suspend fun runTool(
             invocation: ToolInvocation,
@@ -1610,14 +1665,15 @@ object ToolExecutionManager {
                 index += 1
                 continue
             }
-            if (invocation.tool.name != "task") {
+            val kind = parallelKind(invocation)
+            if (kind == null) {
                 val result = runTool(invocation)
                 orderedResults += result
                 index += 1
                 continue
             }
-            // A contiguous run of executable task calls: launch them concurrently, then publish
-            // their results in call order once the whole group has finished.
+            // A contiguous run of executable calls of the same kind: launch them concurrently,
+            // then publish their results in call order once the whole group has finished.
             var groupEnd = index + 1
             while (groupEnd < boundInvocations.size) {
                 val candidateKey =
@@ -1626,7 +1682,7 @@ object ToolExecutionManager {
                         boundInvocations[groupEnd].invocationIndex.takeIf { it >= 0 },
                     )
                 val candidate = executableByInvocation[candidateKey]
-                if (candidate == null || candidate.tool.name != "task") break
+                if (candidate == null || parallelKind(candidate) != kind) break
                 groupEnd += 1
             }
             val groupInvocations =
@@ -1638,16 +1694,29 @@ object ToolExecutionManager {
                         )
                     executableByInvocation[slotKey]
                 }
+            if (groupInvocations.size == 1) {
+                orderedResults += runTool(groupInvocations.single())
+                index = groupEnd
+                continue
+            }
             val executionResults =
                 java.util.concurrent.ConcurrentHashMap<ToolInvocation, ToolResult>()
             runParallelGroupWithOrderedPublishing(
                 items = groupInvocations,
                 executionResults = executionResults,
-                execute = { taskInvocation ->
-                    runTool(taskInvocation, deferredResultSink = executionResults)
+                execute = { groupInvocation ->
+                    if (kind == "package") {
+                        // Package scripts share the JS engine pool (4 engines), which also caps
+                        // how many run at once; IO keeps waiting calls off the caller's thread.
+                        withContext(Dispatchers.IO) {
+                            runTool(groupInvocation, deferredResultSink = executionResults)
+                        }
+                    } else {
+                        runTool(groupInvocation, deferredResultSink = executionResults)
+                    }
                 },
-                publish = { taskInvocation, result ->
-                    publishResult(taskInvocation, result, sendFinished = true)
+                publish = { groupInvocation, result ->
+                    publishResult(groupInvocation, result, sendFinished = true)
                 },
                 record = { result -> orderedResults += result },
             )
