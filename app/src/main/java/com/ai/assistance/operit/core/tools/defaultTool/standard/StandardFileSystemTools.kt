@@ -176,6 +176,35 @@ open class StandardFileSystemTools(protected val context: Context) {
         SafFileSystemTools(context, apiPreferences)
     }
 
+    /**
+     * Runs a repo:... operation. Orbit and its subagents do not use the main app's attached
+     * repositories; when the calling chat cannot be placed, it is treated as Orbit's.
+     */
+    private suspend fun saf(tool: AITool, op: suspend SafFileSystemTools.(AITool) -> ToolResult): ToolResult =
+        orbitRepoRefusal(tool) ?: safTools.op(tool)
+
+    /** The refusal for a repo:... call made by Orbit or its subagents; null for the main app. */
+    private suspend fun orbitRepoRefusal(tool: AITool): ToolResult? {
+        val callerChatId = ToolExecutionManager.currentToolRuntimeContext()?.callerChatId
+        val inOrbit = callerChatId != null && try {
+            com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context, callerChatId) != null
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            true
+        }
+        if (!inOrbit) return null
+        return ToolResult(
+            toolName = tool.name,
+            success = false,
+            result = StringResultData(""),
+            error = "Not run: Orbit does not use attached repositories (environment=repo:...). " +
+                "For Android files use environment=android with a known full path. For Linux files use " +
+                "environment=linux with the file tools, or run a terminal command (it takes no environment). " +
+                "Read GitHub repositories through GitHub."
+        )
+    }
+
     protected fun isSafEnvironment(environment: String?): Boolean {
         return environment?.startsWith("repo:", ignoreCase = true) == true
     }
@@ -423,7 +452,7 @@ open class StandardFileSystemTools(protected val context: Context) {
             return linuxTools.listFiles(tool)
         }
         if (isSafEnvironment(environment)) {
-            return safTools.listFiles(tool)
+            return saf(tool) { listFiles(it) }
         }
         PathValidator.validateAndroidPath(path, tool.name)?.let { return it }
 
@@ -989,7 +1018,7 @@ open class StandardFileSystemTools(protected val context: Context) {
         }
 
         if (isSafEnvironment(environment)) {
-            return safTools.readFileFull(tool)
+            return saf(tool) { readFileFull(it) }
         }
         PathValidator.validateAndroidPath(path, tool.name)?.let { return it }
 
@@ -1089,7 +1118,7 @@ open class StandardFileSystemTools(protected val context: Context) {
         }
 
         if (isSafEnvironment(environment)) {
-            return safTools.readFileBinary(tool)
+            return saf(tool) { readFileBinary(it) }
         }
         PathValidator.validateAndroidPath(path, tool.name)?.let { return it }
 
@@ -1150,7 +1179,7 @@ open class StandardFileSystemTools(protected val context: Context) {
         }
 
         if (isSafEnvironment(environment)) {
-            return safTools.readFile(tool)
+            return saf(tool) { readFile(it) }
         }
         PathValidator.validateAndroidPath(path, tool.name)?.let { return it }
 
@@ -1266,7 +1295,7 @@ open class StandardFileSystemTools(protected val context: Context) {
         }
 
         if (isSafEnvironment(environment)) {
-            return safTools.readFilePart(tool)
+            return saf(tool) { readFilePart(it) }
         }
         PathValidator.validateAndroidPath(path, tool.name)?.let { return it }
 
@@ -1390,7 +1419,7 @@ open class StandardFileSystemTools(protected val context: Context) {
             return linuxTools.writeFile(tool)
         }
         if (isSafEnvironment(environment)) {
-            return safTools.writeFile(tool)
+            return saf(tool) { writeFile(it) }
         }
         PathValidator.validateAndroidPath(path, tool.name)?.let { return it }
 
@@ -1527,7 +1556,7 @@ open class StandardFileSystemTools(protected val context: Context) {
             return linuxTools.writeFileBinary(tool)
         }
         if (isSafEnvironment(environment)) {
-            return safTools.writeFileBinary(tool)
+            return saf(tool) { writeFileBinary(it) }
         }
         PathValidator.validateAndroidPath(path, tool.name)?.let { return it }
 
@@ -1643,7 +1672,7 @@ open class StandardFileSystemTools(protected val context: Context) {
             return linuxTools.deleteFile(tool)
         }
         if (isSafEnvironment(environment)) {
-            return safTools.deleteFile(tool)
+            return saf(tool) { deleteFile(it) }
         }
         PathValidator.validateAndroidPath(path, tool.name)?.let { return it }
 
@@ -1768,7 +1797,7 @@ open class StandardFileSystemTools(protected val context: Context) {
             return linuxTools.fileExists(tool)
         }
         if (isSafEnvironment(environment)) {
-            return safTools.fileExists(tool)
+            return saf(tool) { fileExists(it) }
         }
         PathValidator.validateAndroidPath(path, tool.name)?.let { return it }
 
@@ -1838,7 +1867,7 @@ open class StandardFileSystemTools(protected val context: Context) {
         }
 
         if (isSafEnvironment(environment)) {
-            return safTools.moveFile(tool)
+            return saf(tool) { moveFile(it) }
         }
         PathValidator.validateAndroidPath(sourcePath, tool.name, "source")?.let { return it }
         PathValidator.validateAndroidPath(destPath, tool.name, "destination")?.let { return it }
@@ -2349,6 +2378,10 @@ open class StandardFileSystemTools(protected val context: Context) {
         val srcEnv = sourceEnvironment ?: environment ?: "android"
         val dstEnv = destEnvironment ?: environment ?: "android"
 
+        if (isSafEnvironment(srcEnv) || isSafEnvironment(dstEnv) || isSafEnvironment(environment)) {
+            orbitRepoRefusal(tool)?.let { return it }
+        }
+
         if ((isSafEnvironment(srcEnv) || isSafEnvironment(dstEnv)) &&
             (isLinuxEnvironment(srcEnv) || isLinuxEnvironment(dstEnv))) {
             return ToolResult(
@@ -2394,6 +2427,7 @@ open class StandardFileSystemTools(protected val context: Context) {
         }
 
         if (isSafEnvironment(srcEnv) || isSafEnvironment(dstEnv) || isSafEnvironment(environment)) {
+            // Orbit's repo calls were already refused before the environment split above.
             return safTools.copyFile(tool)
         }
         PathValidator.validateAndroidPath(sourcePath, tool.name, "source")?.let { return it }
@@ -2546,7 +2580,7 @@ open class StandardFileSystemTools(protected val context: Context) {
             return linuxTools.makeDirectory(tool)
         }
         if (isSafEnvironment(environment)) {
-            return safTools.makeDirectory(tool)
+            return saf(tool) { makeDirectory(it) }
         }
         PathValidator.validateAndroidPath(path, tool.name)?.let { return it }
 
@@ -2667,7 +2701,7 @@ open class StandardFileSystemTools(protected val context: Context) {
             return linuxTools.findFiles(tool)
         }
         if (isSafEnvironment(environment)) {
-            return safTools.findFiles(tool)
+            return saf(tool) { findFiles(it) }
         }
         PathValidator.validateAndroidPath(path, tool.name)?.let { return it }
 
@@ -2955,7 +2989,7 @@ open class StandardFileSystemTools(protected val context: Context) {
         }
 
         if (isSafEnvironment(environment)) {
-            return safTools.fileInfo(tool)
+            return saf(tool) { fileInfo(it) }
         }
         PathValidator.validateAndroidPath(path, tool.name)?.let { return it }
 

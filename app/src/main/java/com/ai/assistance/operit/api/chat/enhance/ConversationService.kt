@@ -680,7 +680,8 @@ class ConversationService(
                     apiPreferences.toolPromptVisibilityFlow.first()
                 }.getOrElse { emptyMap() }
 
-                val safBookmarkNames = runCatching {
+                // Orbit and its subagents do not use the main app's attached storage repositories.
+                val safBookmarkNames = if (privateOwner != null) emptyList() else runCatching {
                     apiPreferences.safBookmarksFlow.first().map { it.name }
                 }.getOrElse { emptyList() }
 
@@ -731,7 +732,10 @@ class ConversationService(
                     hookMetadata = activePromptMetadata,
                     dispatchSystemPromptComposeHooks = dispatchSystemPromptComposeHooks,
                     dispatchToolPromptComposeHooks = dispatchToolPromptComposeHooks
-                )
+                ).let {
+                    // Orbit does not use the main app's attached repositories.
+                    if (privateOwner != null) com.ai.assistance.operit.core.config.SystemToolPrompts.withoutRepoEnvironment(it) else it
+                }
 
                 // 构建waifu特殊规则。Orbit 有自己的身份和性格，主应用的老婆模式规则不进 Orbit。
                 val waifuRulesText =

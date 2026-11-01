@@ -1395,7 +1395,8 @@ open class DebuggerFileSystemTools(context: Context) : AccessibilityFileSystemTo
         val dstEnv = destEnvironment ?: environment ?: "android"
         
         // 如果是 Linux 环境或跨环境操作，委托给父类处理
-        if (srcEnv.lowercase() == "linux" || dstEnv.lowercase() == "linux") {
+        if (srcEnv.lowercase() == "linux" || dstEnv.lowercase() == "linux" ||
+            isSafEnvironment(srcEnv) || isSafEnvironment(dstEnv)) {
             return super.copyFile(tool)
         }
         

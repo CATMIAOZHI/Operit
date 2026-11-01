@@ -3646,7 +3646,12 @@ class EnhancedAIService private constructor(
             val hasBackendAudioRecognition = multiServiceManager.hasAudioRecognitionConfigured()
             val hasBackendVideoRecognition = multiServiceManager.hasVideoRecognitionConfigured()
 
-            val safBookmarkNames = runCatching {
+            // Orbit and its subagents do not use the main app's attached storage repositories;
+            // a chat that cannot be placed is treated as Orbit's.
+            val inOrbit = runCatching {
+                com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context, chatId) != null
+            }.getOrElse { if (it is kotlinx.coroutines.CancellationException) throw it else true }
+            val safBookmarkNames = if (inOrbit) emptyList() else runCatching {
                 apiPreferences.safBookmarksFlow.first().map { it.name }
             }.getOrElse { emptyList() }
 
@@ -3740,7 +3745,14 @@ class EnhancedAIService private constructor(
                 "Tool Call已启用，提供 ${hookedTools.size} 个工具 (base=${selectedTools.size}, enableTools=$enableTools, visibleToolOverrides=${toolPromptVisibility.size}, roleCardCustomTools=${roleCardToolAccess.customEnabled})"
             )
             (hookedTools + com.ai.assistance.operit.features.orbit.OrbitTaskExecution
-                .additionalPrompts(context, chatId)).distinctBy { it.name }
+                .additionalPrompts(context, chatId)).distinctBy { it.name }.let { tools ->
+                    if (!inOrbit) tools else tools.map { tool ->
+                        // Orbit does not use the main app's attached repositories.
+                        tool.copy(parametersStructured = tool.parametersStructured?.map {
+                            it.copy(description = SystemToolPrompts.withoutRepoEnvironment(it.description))
+                        })
+                    }
+                }
         } catch (e: Exception) {
             AppLogger.e(TAG, "获取工具列表失败", e)
             null

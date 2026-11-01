@@ -1172,11 +1172,22 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                     query = query,
                     limit = limit
                 )
+                val searchText = CliToolModeSupport.formatSearchResults(query, results, useEnglish)
+                // Orbit does not use the main app's attached repositories.
+                val inOrbit = runBlocking {
+                    try {
+                        com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context, runtimeContext?.callerChatId) != null
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        true
+                    }
+                }
                 ToolResult(
                     toolName = tool.name,
                     success = true,
                     result = StringResultData(
-                        CliToolModeSupport.formatSearchResults(query, results, useEnglish)
+                        if (inOrbit) com.ai.assistance.operit.core.config.SystemToolPrompts.withoutRepoEnvironment(searchText) else searchText
                     )
                 )
             }
@@ -1981,7 +1992,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 s(R.string.toolreg_list_files_desc, path, envInfo)
             },
             executor = { tool ->
-                runBlocking(Dispatchers.IO) { fileSystemTools.listFiles(tool) }
+                runBlockingIoPreservingToolRuntimeContext { fileSystemTools.listFiles(tool) }
             }
     )
 
@@ -2017,7 +2028,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 s(R.string.toolreg_read_file_part_desc, rangeInfo, path, envInfo)
             },
             executor = { tool ->
-                runBlocking(Dispatchers.IO) { fileSystemTools.readFilePart(tool) }
+                runBlockingIoPreservingToolRuntimeContext { fileSystemTools.readFilePart(tool) }
             }
     )
 
@@ -2044,7 +2055,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val envInfo = formatEnvInfo(environment)
                 s(R.string.toolreg_read_file_binary_desc, path, envInfo)
             },
-            executor = { tool -> runBlocking(Dispatchers.IO) { fileSystemTools.readFileBinary(tool) } }
+            executor = { tool -> runBlockingIoPreservingToolRuntimeContext { fileSystemTools.readFileBinary(tool) } }
     )
 
     // 写入文件
@@ -2064,7 +2075,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 s(R.string.toolreg_write_file_desc, operation, path, envInfo)
             },
             executor = { tool ->
-                runBlocking(Dispatchers.IO) {
+                runBlockingIoPreservingToolRuntimeContext {
                     fileSystemTools.writeFile(tool).also { com.ai.assistance.operit.features.orbit.OrbitFolderGuard.afterWrite(context, tool) }
                 }
             }
@@ -2080,7 +2091,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
             s(R.string.toolreg_write_file_binary_desc, path, envInfo)
         },
         executor = { tool ->
-            runBlocking(Dispatchers.IO) { fileSystemTools.writeFileBinary(tool) }
+            runBlockingIoPreservingToolRuntimeContext { fileSystemTools.writeFileBinary(tool) }
         }
     )
 
@@ -2102,7 +2113,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
             },
             // Inside an Orbit's folder only its notes and files/ can go, and the people index stays current.
             executor = { tool ->
-                runBlocking(Dispatchers.IO) {
+                runBlockingIoPreservingToolRuntimeContext {
                     com.ai.assistance.operit.features.orbit.OrbitFolderGuard.deleteFile(context, tool)
                         ?: fileSystemTools.deleteFile(tool)
                 }
@@ -2253,7 +2264,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 s(R.string.toolreg_file_exists_desc, path, envInfo)
             },
             executor = { tool ->
-                runBlocking(Dispatchers.IO) { fileSystemTools.fileExists(tool) }
+                runBlockingIoPreservingToolRuntimeContext { fileSystemTools.fileExists(tool) }
             }
     )
 
@@ -2267,7 +2278,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val envInfo = formatEnvInfo(environment)
                 s(R.string.toolreg_move_file_desc, source, destination, envInfo)
             },
-            executor = { tool -> runBlocking(Dispatchers.IO) { fileSystemTools.moveFile(tool) } }
+            executor = { tool -> runBlockingIoPreservingToolRuntimeContext { fileSystemTools.moveFile(tool) } }
     )
 
     // 复制文件或目录
@@ -2287,7 +2298,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val envInfo = formatEnvArrowInfo(srcEnv, dstEnv)
                 s(R.string.toolreg_copy_file_desc, source, destination, envInfo)
             },
-            executor = { tool -> runBlocking(Dispatchers.IO) { fileSystemTools.copyFile(tool) } }
+            executor = { tool -> runBlockingIoPreservingToolRuntimeContext { fileSystemTools.copyFile(tool) } }
     )
 
     // 创建目录
@@ -2300,7 +2311,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 s(R.string.toolreg_make_directory_desc, path, envInfo)
             },
             executor = { tool ->
-                runBlocking(Dispatchers.IO) { fileSystemTools.makeDirectory(tool) }
+                runBlockingIoPreservingToolRuntimeContext { fileSystemTools.makeDirectory(tool) }
             }
     )
 
@@ -2315,7 +2326,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 s(R.string.toolreg_find_files_desc, path, pattern, envInfo)
             },
             executor = { tool ->
-                runBlocking(Dispatchers.IO) { fileSystemTools.findFiles(tool) }
+                runBlockingIoPreservingToolRuntimeContext { fileSystemTools.findFiles(tool) }
             }
     )
 
@@ -2328,7 +2339,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val envInfo = formatEnvInfo(environment)
                 s(R.string.toolreg_file_info_desc, path, envInfo)
             },
-            executor = { tool -> runBlocking(Dispatchers.IO) { fileSystemTools.fileInfo(tool) } }
+            executor = { tool -> runBlockingIoPreservingToolRuntimeContext { fileSystemTools.fileInfo(tool) } }
     )
 
     // 智能应用文件绑定
@@ -2367,7 +2378,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 "Create file $path$envInfo"
             },
             executor = { tool ->
-                runBlocking(Dispatchers.IO) {
+                runBlockingIoPreservingToolRuntimeContext {
                     fileSystemTools.createFile(tool).also { com.ai.assistance.operit.features.orbit.OrbitFolderGuard.afterWrite(context, tool) }
                 }
             }
@@ -2382,7 +2393,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 "Edit file $path$envInfo"
             },
             executor = { tool ->
-                runBlocking(Dispatchers.IO) {
+                runBlockingIoPreservingToolRuntimeContext {
                     fileSystemTools.editFile(tool).also { com.ai.assistance.operit.features.orbit.OrbitFolderGuard.afterWrite(context, tool) }
                 }
             }
@@ -2398,7 +2409,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val envInfo = formatEnvInfo(environment)
                 s(R.string.toolreg_zip_files_desc, source, destination, envInfo)
             },
-            executor = { tool -> runBlocking(Dispatchers.IO) { fileSystemTools.zipFiles(tool) } }
+            executor = { tool -> runBlockingIoPreservingToolRuntimeContext { fileSystemTools.zipFiles(tool) } }
     )
 
     // 解压缩文件
@@ -2412,7 +2423,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 s(R.string.toolreg_unzip_files_desc, source, destination, envInfo)
             },
             executor = { tool ->
-                runBlocking(Dispatchers.IO) { fileSystemTools.unzipFiles(tool) }
+                runBlockingIoPreservingToolRuntimeContext { fileSystemTools.unzipFiles(tool) }
             }
     )
 
@@ -2425,7 +2436,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val envInfo = formatEnvInfo(environment)
                 s(R.string.toolreg_open_file_desc, path, envInfo)
             },
-            executor = { tool -> runBlocking(Dispatchers.IO) { fileSystemTools.openFile(tool) } }
+            executor = { tool -> runBlockingIoPreservingToolRuntimeContext { fileSystemTools.openFile(tool) } }
     )
 
     // 分享文件
@@ -2438,7 +2449,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 s(R.string.toolreg_share_file_desc, path, envInfo)
             },
             executor = { tool ->
-                runBlocking(Dispatchers.IO) { fileSystemTools.shareFile(tool) }
+                runBlockingIoPreservingToolRuntimeContext { fileSystemTools.shareFile(tool) }
             }
     )
 
@@ -2458,7 +2469,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 }
             },
             executor = { tool ->
-                runBlocking(Dispatchers.IO) { fileSystemTools.grepCode(tool) }
+                runBlockingIoPreservingToolRuntimeContext { fileSystemTools.grepCode(tool) }
             }
     )
 
@@ -2473,7 +2484,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 s(R.string.toolreg_download_file_desc, url, destination, envInfo)
             },
             executor = { tool ->
-                runBlocking(Dispatchers.IO) { fileSystemTools.downloadFile(tool) }
+                runBlockingIoPreservingToolRuntimeContext { fileSystemTools.downloadFile(tool) }
             }
     )
 
