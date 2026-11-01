@@ -97,6 +97,12 @@ object SystemToolPrompts {
 - 当前可用仓库：$listed
 """.trimEnd()
     }
+
+    /** Tool text without the repo:... option, for Orbit, which does not use attached repositories. */
+    fun withoutRepoEnvironment(text: String): String =
+        text
+            .replace(" | \"repo:<repositoryName>\" (attached local storage repository)", "")
+            .replace("| \"repo:<仓库名>\"（附加本地储存仓库）", "")
     
     // ==================== 基础工具 ====================
     val basicTools = SystemToolPromptCategory(
