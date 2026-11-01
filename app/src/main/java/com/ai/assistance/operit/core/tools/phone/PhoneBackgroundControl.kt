@@ -101,8 +101,6 @@ internal object PhoneBackgroundControl {
         val createdAt: Long,
         val packageName: String? = null,
         val appLabel: String = "",
-        /** Every app seen on this screen (opened, or found on top when it was read); they all live until it closes. */
-        val apps: Set<String> = emptySet(),
         val control: Control = Control.AI,
         val lastUsedAt: Long = System.currentTimeMillis(),
         val stopping: Boolean = false,
@@ -169,25 +167,6 @@ internal object PhoneBackgroundControl {
     fun talkChats(): Set<String> = _screens.value.values.map { it.talkChatId }.toSet()
 
     fun stopAll() { _screens.value.keys.forEach { close(it, End.PACKAGE) } }
-
-    private val appLaunchOrStop = Regex("""\b(am|cmd\s+activity)\s+(force-stop|kill|start|start-activity|stop-app)\b|\bmonkey\b""")
-
-    /**
-     * A shell command that would start or stop an app now running on a background screen. On some
-     * phones that turns it into a floating window that covers the user's screen, so it is refused.
-     */
-    fun shellConflict(command: String): String? {
-        if (!appLaunchOrStop.containsMatchIn(command)) return null
-        var app: String? = null
-        val screen = _screens.value.values.firstOrNull { screen ->
-            !screen.stopping && (screen.apps + listOfNotNull(screen.packageName)).firstOrNull {
-                Regex("""(?<![A-Za-z0-9_.])${Regex.escape(it)}(?![A-Za-z0-9_.])""").containsMatchIn(command)
-            }?.also { app = it } != null
-        } ?: return null
-        return "$app is running on a background screen (session_id=${screen.id}). Nothing was run: starting or stopping it " +
-            "from the shell can turn it into a floating window that covers the user's screen. To restart it, call phone_control:stop " +
-            "session_id=${screen.id} close_now=true, then phone_control:start package_name=$app."
-    }
 
     /** phone_control was switched off for [orbitId]: its screens close. */
     fun stopOrbit(orbitId: String) {
@@ -504,7 +483,6 @@ internal object PhoneBackgroundControl {
         // A screen that already floats is closed before anything is started on it.
         val before = windows()
         closeIfFloating(screen, before)
-        before.top[screen.displayId]?.first?.let { seen -> change(id) { if (seen in it.apps) it else it.copy(apps = it.apps + seen) } }
         check(userApp(context, before) != packageName) {
             "The user is using $packageName on their phone screen right now. Do not open it on the background screen " +
                 "(that would pull it away from them). Tell the user, or do another part of the work first."
@@ -533,7 +511,7 @@ internal object PhoneBackgroundControl {
                 val label = runCatching {
                     context.packageManager.getApplicationLabel(context.packageManager.getApplicationInfo(packageName, 0)).toString()
                 }.getOrDefault(packageName)
-                change(id) { it.copy(packageName = packageName, appLabel = label, apps = it.apps + packageName) }
+                change(id) { it.copy(packageName = packageName, appLabel = label) }
                 updateCardLabel(id, label)
                 return "Opened $label ($packageName) on the background screen."
             }
@@ -591,7 +569,6 @@ internal object PhoneBackgroundControl {
         val windows = windows()
         closeIfFloating(screen, windows)
         val page = windows.top[screen.displayId]
-        page?.first?.let { seen -> change(id) { if (seen in it.apps) it else it.copy(apps = it.apps + seen) } }
         var elements = emptyList<PhoneControlElement>()
         var accessibilityError: String? = null
         var shoot = mode != "accessibility"
@@ -716,9 +693,8 @@ internal object PhoneBackgroundControl {
             val step = steps[index]
             val windows = windows()
             closeIfFloating(screen, windows)
-            val now = windows.top[screen.displayId]
-            now?.first?.let { seen -> change(id) { if (seen in it.apps) it else it.copy(apps = it.apps + seen) } }
             if (step.action != "open_app" && step.action != "wait") {
+                val now = windows.top[screen.displayId]
                 check(now == page) {
                     if (now == null && prior.page != null && userApp(context) == prior.page.first)
                         "The user opened ${prior.page.first} on their phone screen, so it left the background screen. Do not take it back; tell the user."
