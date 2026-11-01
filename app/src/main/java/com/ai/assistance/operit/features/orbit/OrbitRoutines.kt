@@ -156,13 +156,13 @@ internal object OrbitRoutines {
             }
         }
         ensure(context, orbit, FEED, R.string.orbit_routine_feed, FEED_SOURCE, "INTERVAL", 0,
-            interval = FEED_INTERVAL_MINUTES, background = true) { if (it) FEED_EN else FEED_ZH }
+            interval = FEED_INTERVAL_MINUTES, background = true, refreshInstruction = true) { if (it) FEED_EN else FEED_ZH }
     }
 
     /** The Ideas routine: a background subagent comes up with new ideas every morning at 9. */
     suspend fun ensureIdeas(context: Context, orbit: OrbitProfile) {
         ensure(context, orbit, IDEAS, R.string.orbit_routine_ideas, IDEAS_SOURCE, "DAILY", IDEAS_MINUTE,
-            background = true) { if (it) IDEAS_EN else IDEAS_ZH }
+            background = true, refreshInstruction = true) { if (it) IDEAS_EN else IDEAS_ZH }
     }
 
     /**
@@ -597,7 +597,9 @@ internal object OrbitRoutines {
         2. 结合你对用户的了解（记忆、用户资料、最近聊的事）选题。素材不限于网上：可以上网搜、打开页面查新鲜事，
            也可以用你能用的工具看手机上和用户有关的事（短信、通知、日程、邮件等），比如短信里有快递取件码，
            就写一条提醒他去取件。只引用你真的打开过的链接，不要编造。
-        3. 用 orbit_feed action=post 发布：简短的标题、一个贴合内容的 emoji、几段短正文，why_for_you 用一句话说明为什么给这位用户看。
+        3. 用 orbit_feed action=post 发布：简短的标题、一个贴合内容的 emoji、简短的正文，why_for_you 用一句话说明为什么给这位用户看。
+           正文要短：一两段、大约 150 字以内，收起时一眼能读完。只讲一个要点，细节交给卡片、图片或链接；
+           动态说明里用户明确想看长文时才写长。
            表格、对比、图表、可点的清单、取件码这类提醒，可以先用 dynamic_ui 做一张卡片（不要用 live），把引用名（如 card-1）填进 card。
            卡片会显示在正文下面；body 里只写文字，不要写 a2ui-ref 代码块。
            像发朋友圈一样可以配图（images，最多 9 张，每行一个）：网页上看到合适的图，填图片本身的网址，或者填已经存好的图片路径。
@@ -616,8 +618,11 @@ internal object OrbitRoutines {
            not limited to the web: search and read pages for fresh news, or use the tools you have to look at what on
            the phone concerns the user (messages, notifications, calendar, email). For example, a parcel pickup code in
            a text message makes a post reminding them to collect it. Cite only links you actually opened; invent nothing.
-        3. Publish with orbit_feed action=post: a short title, one fitting emoji, a body of a few short paragraphs, and
-           why_for_you saying in one sentence why this post is for this user.
+        3. Publish with orbit_feed action=post: a short title, one fitting emoji, a short body, and why_for_you saying
+           in one sentence why this post is for this user.
+           Keep the body short: one or two paragraphs, about 80 words at most, readable at a glance while folded.
+           Make one point and leave the details to a card, pictures or links; write longer only when the feed brief
+           clearly asks for long posts.
            For a table, comparison, chart, tappable list or a reminder such as a pickup code, make a card with
            dynamic_ui first (not live) and put its name (such as card-1) in card. The card shows under the text;
            body holds only text, never an a2ui-ref block.
@@ -635,6 +640,8 @@ internal object OrbitRoutines {
         2. 每个点子都要选一个贴合内容的 emoji 和一个分类（productivity 效率提升、money 财务管理、relationships 人际关系、health 健康与健身、shopping 购物、other 更多点子）。同一批尽量用不同的 emoji。
         3. 先多想几个候选，每个打三项分（1–5）：feasibility 你现在真能做成吗，personal_fit 和这位用户多贴合，novelty 是否新、不和已有或 past 里的重复。任何一项低于 3 就丢掉，按总分从高到低挑最多 3 个。
         4. 每个点子都写 rationale（一两句话：为什么现在给他提这个）和 sources（依据从哪来：聊天消息 id、记忆文件、目标、你打开过的链接）。找不到真实依据的不提。
+           给用户看的部分写精简：title 一句话、15 字左右；description 一两句、大约 60 字以内，说清做什么、对他有什么用；
+           includes 每项一句短话。细节写进 plan（那是给你自己看的）。
         5. list 里 emoji 或 category 为空的旧点子，用 action=update 补上。
         6. 没有真正有用的点子就不提，不要凑数。
         点子会自己出现在点子页，不要给用户发消息：userMessage 留空，decision 写一句这次提了什么。
@@ -652,6 +659,9 @@ internal object OrbitRoutines {
            a rating under 3; keep at most 3, highest total first.
         4. Give every idea a rationale (one or two sentences: why this user, why now) and sources (where that comes
            from: message ids, memory files, goals, links you opened). Propose nothing you cannot ground.
+           Keep what the user reads lean: a title of a few words; a description of one or two sentences, about 40
+           words at most, saying what you would do and why it helps; one short line per includes item. Details go in
+           plan, which is for you.
         5. Fill in the emoji or category of older ideas in the list that have none, with action=update.
         6. Propose nothing rather than something weak.
         Ideas show up on the Ideas tab on their own. Do not message the user: leave userMessage empty and say in

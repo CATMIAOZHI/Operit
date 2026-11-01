@@ -11,6 +11,7 @@ Private sources such as messages and notifications still require appropriate aut
 Use links from real sources you found, not guessed URLs.
 
 Every post needs `why_for_you`, a sentence explaining why it is worth this user's attention.
+Keep the body short by default: one or two paragraphs, about 80 words at most, readable at a glance while folded. Make one point and leave details to a card, pictures, or links. Write longer only when the brief clearly asks for long posts.
 For a table, comparison, chart, or checklist, you can first create a supported card with `dynamic_ui` and pass its reference to the Feed tool.
 Feed cards do not use live mode, and their internal references should not be pasted into the body as content.
 
