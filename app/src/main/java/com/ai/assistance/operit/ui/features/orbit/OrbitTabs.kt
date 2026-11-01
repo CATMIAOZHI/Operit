@@ -914,9 +914,13 @@ private fun FeedPostRow(
     }
     Column(Modifier.bleed(20.dp)) {
         Box {
+            // Opening or folding moves everything below the tap at once, so a press ripple would be
+            // left flashing where the button or row used to be. These taps show no ripple.
+            val rowTaps = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+            val toggleTaps = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
             Row(
                 Modifier.fillMaxWidth()
-                    .clickable(onClick = toggle)
+                    .clickable(interactionSource = rowTaps, indication = null, onClick = toggle)
                     .padding(start = 12.dp, end = 20.dp, top = 16.dp, bottom = 4.dp),
             ) {
                 BoardEmoji(post.emoji, "📰")
@@ -940,22 +944,21 @@ private fun FeedPostRow(
                     FeedImages(images, post.title)
                     if (post.card && expanded) FeedPostCard(post, cardOf, onCardSubmit, cardOwner)
                     if (expanded || cutOff || post.card) {
-                        TextButton(
-                            onClick = toggle,
-                            contentPadding = PaddingValues(horizontal = 12.dp),
-                            modifier = Modifier.offset(x = (-12).dp),
-                        ) {
-                            Text(
-                                stringResource(
-                                    when {
-                                        expanded -> R.string.orbit_feed_collapse
-                                        post.card -> R.string.orbit_feed_expand_card
-                                        else -> R.string.orbit_feed_expand
-                                    },
-                                ),
-                                style = MaterialTheme.typography.bodyLarge,
-                            )
-                        }
+                        Text(
+                            stringResource(
+                                when {
+                                    expanded -> R.string.orbit_feed_collapse
+                                    post.card -> R.string.orbit_feed_expand_card
+                                    else -> R.string.orbit_feed_expand
+                                },
+                            ),
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = colors.primary,
+                            modifier = Modifier
+                                .clickable(interactionSource = toggleTaps, indication = null, role = Role.Button, onClick = toggle)
+                                .heightIn(min = 48.dp)
+                                .wrapContentHeight(Alignment.CenterVertically),
+                        )
                     }
                     if (showWhy && post.extra.isNotBlank()) {
                         Spacer(Modifier.height(10.dp))
