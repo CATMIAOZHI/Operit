@@ -102,21 +102,25 @@ function normalizeArrays(params, names) {
   return request;
 }
 
-/** The results as readable text: each query's summary, then its numbered sources. */
+/** The results as readable text: each query's text, its numbered sources (with snippets) and any note. */
 function formatSearches(result) {
+  const MAX_LISTED = 15;
   const parts = [];
   (result.searches || []).forEach((search) => {
     const lines = ["## " + search.query];
     if (search.error) {
       lines.push("搜索失败：" + search.error);
     } else {
+      if (search.note) lines.push("（" + search.note + "）");
       if (search.summary) lines.push(search.summary);
       const sources = search.results || [];
       if (sources.length) {
         lines.push("", "来源：");
-        sources.forEach((source, index) => {
+        sources.slice(0, MAX_LISTED).forEach((source, index) => {
           lines.push((index + 1) + ". " + (source.title ? source.title + " - " : "") + source.url);
+          if (source.snippet) lines.push("   " + source.snippet);
         });
+        if (sources.length > MAX_LISTED) lines.push("……另有 " + (sources.length - MAX_LISTED) + " 个来源未列出");
       } else {
         lines.push("", "（这次没有返回来源链接）");
       }
@@ -132,7 +136,7 @@ async function run(mode, params, arrays) {
     complete({
       success: !!result.success,
       message: formatSearches(result),
-      data: result
+      data: { provider: result.provider, model: result.model, searched_at: result.searched_at, success: !!result.success }
     });
   } catch (error) {
     complete({
