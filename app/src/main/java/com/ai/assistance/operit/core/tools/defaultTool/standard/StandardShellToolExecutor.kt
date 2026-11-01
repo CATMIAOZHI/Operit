@@ -131,7 +131,9 @@ open class StandardShellToolExecutor(private val context: Context) {
                 )
             }
             else -> {
-                ToolValidationResult(valid = true)
+                com.ai.assistance.operit.core.tools.phone.PhoneBackgroundControl.shellConflict(command)
+                    ?.let { ToolValidationResult(valid = false, errorMessage = it) }
+                    ?: ToolValidationResult(valid = true)
             }
         }
     }

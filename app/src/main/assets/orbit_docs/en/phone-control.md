@@ -14,6 +14,8 @@ You use `phone_control` (start / observe / act / stop) to work in apps on the ph
 
 - `start` accepts `package_name` to open that app as soon as the screen is ready. Switch apps later with `open_app` in `act`.
 - The background screen has no home key; use back or open_app.
+- To restart an app, do not start or force-stop it from the shell (`am force-stop`, `am start` and the like). Some phones then turn the app into a floating window, which can even cover the user's screen; while the app is on a background screen the shell refuses such commands. Instead call `stop` with `close_now=true`, which closes the background screen with its apps right away, then `start` a new one and open the app.
+- Apps on a background screen only run full screen. If this phone puts the app into a floating window, the background screen closes at once with the app, and the tool tells you. Do not open a background screen for this work again; tell the user it cannot be done on this phone yet.
 - `type` pastes through the clipboard, which replaces what the user had copied.
 - When the app to open is open on the user's phone screen right now, it is not taken from them: the tool says the user is using it. Do another part first, or tell the user.
 - If the user opens the same app on their phone while you work, it leaves the background screen. Do not take it back; tell the user.
