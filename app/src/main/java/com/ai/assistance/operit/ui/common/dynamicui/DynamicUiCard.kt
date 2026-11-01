@@ -57,6 +57,12 @@ val LocalDynamicUiBlockIndex = staticCompositionLocalOf<Int?> { null }
 class DynamicUiPartOffset(val cards: Int, val same: Map<String, Int>)
 val LocalDynamicUiPartOffset = staticCompositionLocalOf<DynamicUiPartOffset?> { null }
 
+/**
+ * True while the card only shows as a short folded preview (the feed): taps never reach it, so
+ * an open popover is closed and the back key is left alone.
+ */
+val LocalDynamicUiPeek = compositionLocalOf { false }
+
 @Composable
 fun DynamicUiCard(source: String, closed: Boolean, streaming: Boolean, blockIndex: Int, ink: Color = Color.Unspecified) {
     val owner = LocalDynamicUiOwner.current
