@@ -97,6 +97,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 
 private const val TABS_TAG = "OrbitTabs"
 
@@ -329,6 +330,7 @@ private fun TabList(
     action: (@Composable () -> Unit)? = null,
     info: (() -> Unit)? = null,
     overlay: (@Composable (top: Dp) -> Unit)? = null,
+    state: androidx.compose.foundation.lazy.LazyListState = androidx.compose.foundation.lazy.rememberLazyListState(),
     content: LazyListScope.() -> Unit,
 ) {
     val openDrawer = com.ai.assistance.operit.ui.main.LocalOpenAppDrawer.current
@@ -340,6 +342,7 @@ private fun TabList(
     Box(Modifier.fillMaxSize()) {
         LazyColumn(
             modifier = if (header == null) Modifier.fillMaxSize().statusBarsPadding() else Modifier.fillMaxSize(),
+            state = state,
             contentPadding = PaddingValues(
                 start = 20.dp, end = 20.dp, bottom = 24.dp,
                 top = if (headerHeight == null) 8.dp else (headerHeight - 12.dp).coerceAtLeast(0.dp),
@@ -502,8 +505,9 @@ private fun Modifier.bleed(horizontal: Dp): Modifier = layout { measurable, cons
 /** The emoji beside a post or an idea, drawn large like Muse's little pictures. */
 @Composable
 private fun BoardEmoji(emoji: String, fallback: String) {
-    Box(Modifier.size(52.dp), contentAlignment = Alignment.Center) {
-        Text(emoji.ifBlank { fallback }, fontSize = 36.sp, lineHeight = 42.sp, maxLines = 1)
+    // Kept small, so the text beside it gets most of the width.
+    Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
+        Text(emoji.ifBlank { fallback }, fontSize = 28.sp, lineHeight = 32.sp, maxLines = 1)
     }
 }
 
@@ -685,6 +689,9 @@ private fun OrbitFeedPage(
         }
     }
     val askingOpenUrl = remember { { url: String -> pendingLink = url } }
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    // Votes are saved in the order they were tapped, so the last tap is the vote that stays.
+    val voteLock = remember { kotlinx.coroutines.sync.Mutex() }
 
     CompositionLocalProvider(
         androidx.compose.ui.platform.LocalUriHandler provides askingUriHandler,
@@ -693,6 +700,7 @@ private fun OrbitFeedPage(
         TabList(
             title = stringResource(R.string.orbit_tab_feed),
             info = { showIntro = true },
+            state = listState,
             action = {
                 // Asks Orbit in the chat; the request waits in the input box for the user to send.
                 OrbitCircleButton(orbitIcon("refresh-cw"), stringResource(R.string.orbit_feed_write_now), {
@@ -711,8 +719,24 @@ private fun OrbitFeedPage(
                 else -> items(list, key = { it.id }) { post ->
                     FeedPostRow(
                         post = post,
-                        // Tapping the chosen answer again takes it back.
-                        onVote = { vote -> action { repository.update(post.id, vote = if (post.vote == vote) 0 else vote) } },
+                        // A long post folded while its top is scrolled away would leave the list
+                        // past its end for a frame; its top is brought back into view first.
+                        beforeCollapse = {
+                            val shown = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == post.id }
+                            // Queued, so the scroll and the fold are laid out together in one pass.
+                            if (shown != null && shown.offset < 0) listState.requestScrollToItem(shown.index)
+                        },
+                        onVote = { vote, onSettled ->
+                            action {
+                                var saved = false
+                                try {
+                                    voteLock.withLock { repository.update(post.id, vote = vote) }
+                                    saved = true
+                                } finally {
+                                    onSettled(saved)
+                                }
+                            }
+                        },
                         onDiscuss = {
                             // The post is quoted above the input box, like a reply; the user writes the rest.
                             onQuote(
@@ -835,10 +859,14 @@ private fun BriefDialog(who: String, initial: String, onDismiss: () -> Unit, onS
     )
 }
 
+/** A vote shown before the board has it: which tap made it, and whether saving it is done. */
+private data class PendingVote(val tap: Int, val vote: Int, val saved: Boolean = false)
+
 @Composable
 private fun FeedPostRow(
     post: OrbitBoardRepository.Item,
-    onVote: (Int) -> Unit,
+    /** Saves the post's new vote (1, -1 or 0); [onSettled] tells whether it was saved. */
+    onVote: (vote: Int, onSettled: (saved: Boolean) -> Unit) -> Unit,
     onDiscuss: () -> Unit,
     /** Reads the post's Dynamic UI card (only called when it has one). */
     cardOf: suspend () -> String?,
@@ -848,9 +876,35 @@ private fun FeedPostRow(
     cardOwner: String,
     /** The post's pictures, shown under the text like a moments post. */
     images: List<java.io.File> = emptyList(),
+    /** Runs before the opened post folds again. */
+    beforeCollapse: suspend () -> Unit = {},
 ) {
     val colors = MaterialTheme.colorScheme
     var expanded by rememberSaveable(post.id) { mutableStateOf(false) }
+    // The tapped vote shows at once; saving the board takes a moment. Each tap is numbered, and
+    // only the latest one hands over: on failure at once, once saved when the list shows it too.
+    var pendingVote by remember(post.id) { mutableStateOf<PendingVote?>(null) }
+    var voteTaps by remember(post.id) { mutableIntStateOf(0) }
+    LaunchedEffect(post.vote, pendingVote) {
+        val pending = pendingVote
+        if (pending != null && pending.saved && pending.vote == post.vote) pendingVote = null
+    }
+    val shownVote = pendingVote?.vote ?: post.vote
+    val vote: (Int) -> Unit = { choice ->
+        // Tapping the chosen answer again takes it back.
+        val next = if (shownVote == choice) 0 else choice
+        val tap = ++voteTaps
+        pendingVote = PendingVote(tap, next)
+        onVote(next) { saved ->
+            if (pendingVote?.tap == tap) pendingVote = if (saved) PendingVote(tap, next, saved = true) else null
+        }
+    }
+    val scope = rememberCoroutineScope()
+    val currentBeforeCollapse by rememberUpdatedState(beforeCollapse)
+    val toggle: () -> Unit = {
+        if (!expanded) expanded = true
+        else scope.launch { currentBeforeCollapse(); expanded = false }
+    }
     var showWhy by rememberSaveable(post.id) { mutableStateOf(false) }
     // Whether the folded text is cut off; the card only shows once the post is opened.
     var cutOff by remember(post.id) { mutableStateOf(false) }
@@ -862,12 +916,14 @@ private fun FeedPostRow(
         Box {
             Row(
                 Modifier.fillMaxWidth()
-                    .clickable { expanded = !expanded }
-                    .padding(start = 16.dp, end = 20.dp, top = 16.dp, bottom = 4.dp),
+                    .clickable(onClick = toggle)
+                    .padding(start = 12.dp, end = 20.dp, top = 16.dp, bottom = 4.dp),
             ) {
                 BoardEmoji(post.emoji, "📰")
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f).animateContentSize()) {
+                Spacer(Modifier.width(8.dp))
+                // No size animation: growing or shrinking a long post frame by frame re-measured
+                // the whole list and made taps stutter.
+                Column(Modifier.weight(1f)) {
                     // Text owns the long press; links and the row's normal expand tap still work.
                     // Keep interactive cards and action buttons outside the selection area.
                     SelectionContainer {
@@ -885,7 +941,7 @@ private fun FeedPostRow(
                     if (post.card && expanded) FeedPostCard(post, cardOf, onCardSubmit, cardOwner)
                     if (expanded || cutOff || post.card) {
                         TextButton(
-                            onClick = { expanded = !expanded },
+                            onClick = toggle,
                             contentPadding = PaddingValues(horizontal = 12.dp),
                             modifier = Modifier.offset(x = (-12).dp),
                         ) {
@@ -914,8 +970,8 @@ private fun FeedPostRow(
                     }
                     // The buttons line up with the text; their touch area reaches past it to the left.
                     Row(Modifier.fillMaxWidth().offset(x = (-12).dp), verticalAlignment = Alignment.CenterVertically) {
-                        VoteButton("thumbs-up", stringResource(R.string.orbit_feed_like), post.liked) { onVote(1) }
-                        VoteButton("thumbs-down", stringResource(R.string.orbit_feed_dislike), post.disliked) { onVote(-1) }
+                        VoteButton("thumbs-up", stringResource(R.string.orbit_feed_like), shownVote > 0) { vote(1) }
+                        VoteButton("thumbs-down", stringResource(R.string.orbit_feed_dislike), shownVote < 0) { vote(-1) }
                         // With large text the label shortens before the ⓘ button is squeezed.
                         TextButton(
                             onClick = onDiscuss, colors = ButtonDefaults.textButtonColors(contentColor = colors.onSurface),
@@ -1255,13 +1311,13 @@ private fun DoneIdeaRow(idea: OrbitBoardRepository.Item, onClick: () -> Unit) {
     Column(Modifier.bleed(20.dp)) {
         Row(
             Modifier.fillMaxWidth().clickable(role = Role.Button, onClick = onClick)
-                .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 10.dp),
+                    .padding(start = 12.dp, end = 16.dp, top = 10.dp, bottom = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
-                Text(idea.emoji.ifBlank { "💡" }, fontSize = 26.sp, lineHeight = 30.sp, maxLines = 1)
+                Box(Modifier.size(36.dp), contentAlignment = Alignment.Center) {
+                    Text(idea.emoji.ifBlank { "💡" }, fontSize = 22.sp, lineHeight = 26.sp, maxLines = 1)
             }
-            Spacer(Modifier.width(14.dp))
+                Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {
                 Text(idea.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(
@@ -1327,12 +1383,12 @@ private fun IdeaRow(idea: OrbitBoardRepository.Item, onOpen: () -> Unit, onVote:
                             CustomAccessibilityAction(dislikeLabel) { onVote(-1); true },
                         )
                     }
-                    .padding(start = 16.dp, end = 20.dp, top = 16.dp, bottom = 16.dp)
+                    .padding(start = 12.dp, end = 20.dp, top = 16.dp, bottom = 16.dp)
                     // An idea the user does not want fades back, so the rest stand out.
                     .graphicsLayer { alpha = if (idea.disliked) 0.5f else 1f },
             ) {
                 BoardEmoji(idea.emoji, "💡")
-                Spacer(Modifier.width(12.dp))
+                Spacer(Modifier.width(8.dp))
                 Column(Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.Top) {
                         Text(
