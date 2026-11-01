@@ -1129,9 +1129,9 @@ object AIMessageManager {
                     content = finalSummary,
                     timestamp = ChatMessageTimestampAllocator.next(),
                     roleName = "system", // 总结消息的角色名
-                    // When it was written. Its timestamp places it among the messages, before the
-                    // recent ones kept beside it, so only messages after this time are new.
-                    completedAt = System.currentTimeMillis(),
+                    // Its timestamp places it before the kept recent messages. Count only messages
+                    // beyond the actual covered history as new, even when the summary waited in cache.
+                    completedAt = messagesToSummarize.maxOf { it.timestamp },
                 )
             }
         } catch (e: Exception) {
