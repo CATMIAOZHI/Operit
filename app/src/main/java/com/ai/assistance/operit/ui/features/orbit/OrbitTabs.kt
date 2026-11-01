@@ -68,6 +68,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.ChatRuntimeHolder
@@ -505,6 +506,19 @@ private fun Modifier.bleed(horizontal: Dp): Modifier = layout { measurable, cons
     val width = constraints.maxWidth + extra
     val placeable = measurable.measure(constraints.copy(minWidth = width, maxWidth = width))
     layout(constraints.maxWidth, placeable.height) { placeable.place(-extra / 2, 0) }
+}
+
+/**
+ * A post's or an idea's title in the list: a little above the body text, bolder rather than larger.
+ * Scaled from the theme's title, so it follows the app's text size setting with the body.
+ */
+@Composable
+private fun boardTitleStyle(): androidx.compose.ui.text.TextStyle {
+    val title = MaterialTheme.typography.titleLarge
+    return title.copy(
+        fontSize = if (title.fontSize.isSpecified) title.fontSize * (18f / 22f) else 18.sp,
+        lineHeight = if (title.lineHeight.isSpecified) title.lineHeight * (24f / 28f) else title.lineHeight,
+    )
 }
 
 /** The emoji beside a post or an idea, drawn large like Muse's little pictures. */
@@ -951,7 +965,7 @@ private fun FeedPostRow(
                                     // Keep interactive cards and action buttons outside the selection area.
                                     SelectionContainer {
                                         Column {
-                                            Text(post.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Medium)
+                                            Text(post.title, style = boardTitleStyle(), fontWeight = FontWeight.SemiBold)
                                             Spacer(Modifier.height(4.dp))
                                             Text(
                                                 body, style = MaterialTheme.typography.bodyLarge,
@@ -1569,7 +1583,7 @@ private fun IdeaRow(idea: OrbitBoardRepository.Item, onOpen: () -> Unit, onVote:
                 Column(Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.Top) {
                         Text(
-                            idea.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Medium,
+                            idea.title, style = boardTitleStyle(), fontWeight = FontWeight.SemiBold,
                             modifier = Modifier.weight(1f),
                         )
                         if (idea.vote != 0) {
