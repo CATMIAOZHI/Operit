@@ -20,7 +20,7 @@ When Legado is not installed, never opened, or cannot be reached, the tool says 
 
 When you read a book together, first `copy` the chapters you will read, so you do not ask Legado every time.
 Each copied line is `[n] text`, with the same `n` that `write_comments` takes.
-Read the files with `orbit_file read`, and use `grep_code` (`environment=android`, `path` = the `absolute_folder` that `copy` returned) to find where a name, a place or a line appears in the whole book; the full paths it finds can go straight to `orbit_file read`.
+Read the files with `read_file` or `read_file_part` (`environment=android`, a full path under the `absolute_folder` that `copy` returned), and use `grep_code` (`path` = `absolute_folder`) to find where a name, a place or a line appears in the whole book; the full paths it finds can be read directly.
 Chapters Legado has not saved are downloaded from the book's website, so copy a few to twenty at a time and go on with the returned `next_chapter`; do not copy the whole book at once.
 If the user switched source or the text changed in Legado, paragraph numbers can move; when unsure, `orbit_reading read` the chapter again before commenting.
 
@@ -58,7 +58,7 @@ For a detail the summaries do not have, search the copied text.
 
 ## Your own reading notes
 
-`orbit_reading` does not keep notes or summaries for you; keep them yourself with `orbit_file`.
+`orbit_reading` does not keep notes or summaries for you; keep them yourself: create with `write_file`, change with `edit_file`.
 A good place is the `reading_folder` returned by `copy`: `summaries-*.md` for the chapter summaries, `notes.md` for where you got to, the characters, what the user thinks of the book and the comment style you agreed on.
 How you split and what you write is up to you; when you pick the book up again, read your notes and summaries first.
 These files show in the Library, so the user can see them too.

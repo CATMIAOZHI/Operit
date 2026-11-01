@@ -689,7 +689,12 @@ object AIMessageManager {
         autoContinue: Boolean = false,
         isGroupChat: Boolean = false,
         summaryConfig: ConversationSummaryConfig = ConversationSummaryConfig(),
-        chatId: String? = null
+        chatId: String? = null,
+        /**
+         * Writes the summary in place of the separate summary request, for one that reuses the
+         * chat's prompt cache; null when it cannot, and the separate request runs instead.
+         */
+        cachedGenerator: (suspend (config: ConversationSummaryConfig) -> String?)? = null,
     ): ChatMessage? {
         val lastSummaryIndex = messages.indexOfLast { it.sender == "summary" }
         val previousSummary = if (lastSummaryIndex != -1) messages[lastSummaryIndex].content.trim() else null
@@ -1076,11 +1081,8 @@ object AIMessageManager {
             val summaryService = chatId?.let { EnhancedAIService.getChatInstance(context, it) }
                 ?: enhancedAiService
             val summary =
-                summaryService.generateSummary(
-                    conversationToSummarize,
-                    previousSummary,
-                    effectiveSummaryConfig
-                )
+                cachedGenerator?.invoke(effectiveSummaryConfig)?.takeIf { it.isNotBlank() }
+                    ?: generateShrinkingOnOverflow(summaryService, conversationToSummarize, previousSummary, effectiveSummaryConfig)
             AppLogger.d(TAG, "AI生成总结完成: ${summary.take(50)}...")
 
             if (summary.isBlank()) {
@@ -1126,7 +1128,10 @@ object AIMessageManager {
                     sender = "summary",
                     content = finalSummary,
                     timestamp = ChatMessageTimestampAllocator.next(),
-                    roleName = "system" // 总结消息的角色名
+                    roleName = "system", // 总结消息的角色名
+                    // Its timestamp places it before the kept recent messages. Count only messages
+                    // beyond the actual covered history as new, even when the summary waited in cache.
+                    completedAt = messagesToSummarize.maxOf { it.timestamp },
                 )
             }
         } catch (e: Exception) {
@@ -1135,6 +1140,36 @@ object AIMessageManager {
             }
             AppLogger.e(TAG, "AI生成总结过程中发生异常", e)
             throw e
+        }
+    }
+
+    /**
+     * The summary request, sent again shorter each time the provider rejects it as too long: at
+     * 85%, 70%, 50% and then 35% of the transcript's first size. A fifth rejection is the error.
+     */
+    private suspend fun generateShrinkingOnOverflow(
+        service: EnhancedAIService,
+        conversation: List<Pair<String, String>>,
+        previousSummary: String?,
+        config: ConversationSummaryConfig,
+    ): String {
+        val compaction = com.ai.assistance.operit.api.chat.compaction.ContextCompaction
+        val firstSize = conversation.sumOf { compaction.estimateTokens(it.second).toLong() }
+            .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+        var attempt = conversation
+        var step = 0
+        while (true) {
+            try {
+                return service.generateSummary(attempt, previousSummary, config)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (!compaction.isContextOverflow(e) || step >= compaction.SHRINK_STEPS.size) throw e
+                val target = (firstSize * compaction.SHRINK_STEPS[step]).toInt()
+                step++
+                AppLogger.w(TAG, "Summary request rejected as too long; retrying at about $target tokens")
+                attempt = compaction.shrinkTranscript(conversation, target)
+            }
         }
     }
 
@@ -1350,7 +1385,9 @@ object AIMessageManager {
             } else {
                 messages
             }
-            val userAiMessagesSinceLastSummary = relevantMessages.count { it.sender == "user"}
+            // The recent messages kept beside a summary come after it but were already summarized.
+            val writtenAt = messages.getOrNull(lastSummaryIndex)?.completedAt ?: 0L
+            val userAiMessagesSinceLastSummary = relevantMessages.count { it.sender == "user" && it.timestamp > writtenAt }
 
             if (userAiMessagesSinceLastSummary >= summaryMessageCountThreshold) {
                 AppLogger.d(TAG, "自上次总结后新消息数量达到阈值 ($userAiMessagesSinceLastSummary)，生成总结.")

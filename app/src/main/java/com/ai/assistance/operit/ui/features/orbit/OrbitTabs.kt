@@ -32,6 +32,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.clipToBounds
@@ -64,6 +68,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.ChatRuntimeHolder
@@ -89,6 +94,7 @@ import java.text.DateFormat
 import java.util.Date
 import java.util.UUID
 import kotlin.math.abs
+import kotlin.math.roundToInt
 import kotlin.math.sign
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -97,6 +103,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 
 private const val TABS_TAG = "OrbitTabs"
 
@@ -329,6 +336,7 @@ private fun TabList(
     action: (@Composable () -> Unit)? = null,
     info: (() -> Unit)? = null,
     overlay: (@Composable (top: Dp) -> Unit)? = null,
+    state: androidx.compose.foundation.lazy.LazyListState = androidx.compose.foundation.lazy.rememberLazyListState(),
     content: LazyListScope.() -> Unit,
 ) {
     val openDrawer = com.ai.assistance.operit.ui.main.LocalOpenAppDrawer.current
@@ -340,6 +348,7 @@ private fun TabList(
     Box(Modifier.fillMaxSize()) {
         LazyColumn(
             modifier = if (header == null) Modifier.fillMaxSize().statusBarsPadding() else Modifier.fillMaxSize(),
+            state = state,
             contentPadding = PaddingValues(
                 start = 20.dp, end = 20.dp, bottom = 24.dp,
                 top = if (headerHeight == null) 8.dp else (headerHeight - 12.dp).coerceAtLeast(0.dp),
@@ -499,11 +508,25 @@ private fun Modifier.bleed(horizontal: Dp): Modifier = layout { measurable, cons
     layout(constraints.maxWidth, placeable.height) { placeable.place(-extra / 2, 0) }
 }
 
+/**
+ * A post's or an idea's title in the list: a little above the body text, bolder rather than larger.
+ * Scaled from the theme's title, so it follows the app's text size setting with the body.
+ */
+@Composable
+private fun boardTitleStyle(): androidx.compose.ui.text.TextStyle {
+    val title = MaterialTheme.typography.titleLarge
+    return title.copy(
+        fontSize = if (title.fontSize.isSpecified) title.fontSize * (18f / 22f) else 18.sp,
+        lineHeight = if (title.lineHeight.isSpecified) title.lineHeight * (24f / 28f) else title.lineHeight,
+    )
+}
+
 /** The emoji beside a post or an idea, drawn large like Muse's little pictures. */
 @Composable
 private fun BoardEmoji(emoji: String, fallback: String) {
-    Box(Modifier.size(52.dp), contentAlignment = Alignment.Center) {
-        Text(emoji.ifBlank { fallback }, fontSize = 36.sp, lineHeight = 42.sp, maxLines = 1)
+    // Kept small, so the text beside it gets most of the width.
+    Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
+        Text(emoji.ifBlank { fallback }, fontSize = 28.sp, lineHeight = 32.sp, maxLines = 1)
     }
 }
 
@@ -685,6 +708,9 @@ private fun OrbitFeedPage(
         }
     }
     val askingOpenUrl = remember { { url: String -> pendingLink = url } }
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    // Votes are saved in the order they were tapped, so the last tap is the vote that stays.
+    val voteLock = remember { kotlinx.coroutines.sync.Mutex() }
 
     CompositionLocalProvider(
         androidx.compose.ui.platform.LocalUriHandler provides askingUriHandler,
@@ -693,6 +719,7 @@ private fun OrbitFeedPage(
         TabList(
             title = stringResource(R.string.orbit_tab_feed),
             info = { showIntro = true },
+            state = listState,
             action = {
                 // Asks Orbit in the chat; the request waits in the input box for the user to send.
                 OrbitCircleButton(orbitIcon("refresh-cw"), stringResource(R.string.orbit_feed_write_now), {
@@ -711,8 +738,24 @@ private fun OrbitFeedPage(
                 else -> items(list, key = { it.id }) { post ->
                     FeedPostRow(
                         post = post,
-                        // Tapping the chosen answer again takes it back.
-                        onVote = { vote -> action { repository.update(post.id, vote = if (post.vote == vote) 0 else vote) } },
+                        // A long post folded while its top is scrolled away would leave the list
+                        // past its end for a frame; its top is brought back into view first.
+                        beforeCollapse = {
+                            val shown = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == post.id }
+                            // Queued, so the scroll and the fold are laid out together in one pass.
+                            if (shown != null && shown.offset < 0) listState.requestScrollToItem(shown.index)
+                        },
+                        onVote = { vote, onSettled ->
+                            action {
+                                var saved = false
+                                try {
+                                    voteLock.withLock { repository.update(post.id, vote = vote) }
+                                    saved = true
+                                } finally {
+                                    onSettled(saved)
+                                }
+                            }
+                        },
                         onDiscuss = {
                             // The post is quoted above the input box, like a reply; the user writes the rest.
                             onQuote(
@@ -835,10 +878,14 @@ private fun BriefDialog(who: String, initial: String, onDismiss: () -> Unit, onS
     )
 }
 
+/** A vote shown before the board has it: which tap made it, and whether saving it is done. */
+private data class PendingVote(val tap: Int, val vote: Int, val saved: Boolean = false)
+
 @Composable
 private fun FeedPostRow(
     post: OrbitBoardRepository.Item,
-    onVote: (Int) -> Unit,
+    /** Saves the post's new vote (1, -1 or 0); [onSettled] tells whether it was saved. */
+    onVote: (vote: Int, onSettled: (saved: Boolean) -> Unit) -> Unit,
     onDiscuss: () -> Unit,
     /** Reads the post's Dynamic UI card (only called when it has one). */
     cardOf: suspend () -> String?,
@@ -848,57 +895,129 @@ private fun FeedPostRow(
     cardOwner: String,
     /** The post's pictures, shown under the text like a moments post. */
     images: List<java.io.File> = emptyList(),
+    /** Runs before the opened post folds again. */
+    beforeCollapse: suspend () -> Unit = {},
 ) {
     val colors = MaterialTheme.colorScheme
     var expanded by rememberSaveable(post.id) { mutableStateOf(false) }
+    // The tapped vote shows at once; saving the board takes a moment. Each tap is numbered, and
+    // only the latest one hands over: on failure at once, once saved when the list shows it too.
+    var pendingVote by remember(post.id) { mutableStateOf<PendingVote?>(null) }
+    var voteTaps by remember(post.id) { mutableIntStateOf(0) }
+    LaunchedEffect(post.vote, pendingVote) {
+        val pending = pendingVote
+        if (pending != null && pending.saved && pending.vote == post.vote) pendingVote = null
+    }
+    val shownVote = pendingVote?.vote ?: post.vote
+    val vote: (Int) -> Unit = { choice ->
+        // Tapping the chosen answer again takes it back.
+        val next = if (shownVote == choice) 0 else choice
+        val tap = ++voteTaps
+        pendingVote = PendingVote(tap, next)
+        onVote(next) { saved ->
+            if (pendingVote?.tap == tap) pendingVote = if (saved) PendingVote(tap, next, saved = true) else null
+        }
+    }
+    val scope = rememberCoroutineScope()
+    val currentBeforeCollapse by rememberUpdatedState(beforeCollapse)
+    val growth = remember(post.id) { GrowOnly() }
+    val toggle: () -> Unit = {
+        if (!expanded) { growth.open(); expanded = true }
+        else { growth.fold(); scope.launch { currentBeforeCollapse(); expanded = false } }
+    }
     var showWhy by rememberSaveable(post.id) { mutableStateOf(false) }
-    // Whether the folded text is cut off; the card only shows once the post is opened.
-    var cutOff by remember(post.id) { mutableStateOf(false) }
+    // Whether the folded text is cut off (null until first measured); the card only shows once
+    // the post is opened.
+    var cutOff by remember(post.id) { mutableStateOf<Boolean?>(null) }
     // Posts written before card references were moved out of the text still carry the raw fence.
     val body = remember(post.body, colors.primary) {
         linkify(com.ai.assistance.operit.features.orbit.OrbitBoardRepository.withoutCardFences(post.body), colors.primary)
     }
+    // Folded, the pictures show their first row only; the rest come with the opened post.
+    val hiddenImages = if (expanded) 0 else (images.size - feedImageColumns(images.size)).coerceAtLeast(0)
     Column(Modifier.bleed(20.dp)) {
         Box {
+            // Opening or folding moves everything below the tap at once, so a press ripple would be
+            // left flashing where the button or row used to be. These taps show no ripple.
+            val rowTaps = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+            val toggleTaps = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
             Row(
                 Modifier.fillMaxWidth()
-                    .clickable { expanded = !expanded }
-                    .padding(start = 16.dp, end = 20.dp, top = 16.dp, bottom = 4.dp),
+                    .clickable(interactionSource = rowTaps, indication = null, onClick = toggle)
+                    .padding(start = 12.dp, end = 20.dp, top = 16.dp, bottom = 4.dp),
             ) {
                 BoardEmoji(post.emoji, "📰")
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f).animateContentSize()) {
-                    // Text owns the long press; links and the row's normal expand tap still work.
-                    // Keep interactive cards and action buttons outside the selection area.
-                    SelectionContainer {
-                        Column {
-                            Text(post.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Medium)
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                body, style = MaterialTheme.typography.bodyLarge,
-                                maxLines = if (expanded) Int.MAX_VALUE else 6, overflow = TextOverflow.Ellipsis,
-                                onTextLayout = { if (!expanded) cutOff = it.hasVisualOverflow },
-                            )
+                Spacer(Modifier.width(8.dp))
+                // Opening grows smoothly; folding is at once, since shrinking a long post frame by
+                // frame made the list jump and stutter.
+                Column(Modifier.weight(1f).clipToBounds().layout { measurable, constraints ->
+                    val placeable = measurable.measure(constraints)
+                    val height = growth.heightFor(placeable.height, scope)
+                    layout(placeable.width, height) { placeable.placeRelative(0, 0) }
+                }) {
+                    // Whether the text is cut off is only known once it is measured. The button is
+                    // decided in that same layout pass, so it does not pop in a frame later.
+                    androidx.compose.ui.layout.Layout(
+                        contents = listOf(
+                            {
+                                Column {
+                                    // Text owns the long press; links and the row's normal expand tap still work.
+                                    // Keep interactive cards and action buttons outside the selection area.
+                                    SelectionContainer {
+                                        Column {
+                                            Text(post.title, style = boardTitleStyle(), fontWeight = FontWeight.SemiBold)
+                                            Spacer(Modifier.height(4.dp))
+                                            Text(
+                                                body, style = MaterialTheme.typography.bodyLarge,
+                                                maxLines = if (expanded) Int.MAX_VALUE else 6, overflow = TextOverflow.Ellipsis,
+                                                onTextLayout = { if (!expanded) cutOff = it.hasVisualOverflow },
+                                            )
+                                        }
+                                    }
+                                    FeedImages(images, post.title, folded = !expanded, onMore = toggle)
+                                    if (post.card) FeedCardPeek(folded = !expanded, onOpen = toggle) {
+                                        FeedPostCard(post, cardOf, onCardSubmit, cardOwner)
+                                    }
+                                }
+                            },
+                            {
+                                // Always composed, even for short posts: if a width change makes
+                                // the text overflow, the button must be ready in that same pass.
+                                run {
+                                    Text(
+                                        stringResource(
+                                            when {
+                                                expanded -> R.string.orbit_feed_collapse
+                                                post.card -> R.string.orbit_feed_expand_card
+                                                else -> R.string.orbit_feed_expand
+                                            },
+                                        ),
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = colors.primary,
+                                        modifier = Modifier
+                                            .clickable(interactionSource = toggleTaps, indication = null, role = Role.Button, onClick = toggle)
+                                            .heightIn(min = 48.dp)
+                                            .wrapContentHeight(Alignment.CenterVertically),
+                                    )
+                                }
+                            },
+                        ),
+                    ) { (mainParts, buttonParts), constraints ->
+                        val loose = constraints.copy(minHeight = 0)
+                        val main = mainParts.first().measure(loose)
+                        // Measuring the text above has just updated cutOff for this width.
+                        val button = if (expanded || post.card || hiddenImages > 0 || cutOff == true) {
+                            buttonParts.firstOrNull()?.measure(loose.copy(minWidth = 0))
+                        } else {
+                            null
                         }
-                    }
-                    FeedImages(images, post.title)
-                    if (post.card && expanded) FeedPostCard(post, cardOf, onCardSubmit, cardOwner)
-                    if (expanded || cutOff || post.card) {
-                        TextButton(
-                            onClick = { expanded = !expanded },
-                            contentPadding = PaddingValues(horizontal = 12.dp),
-                            modifier = Modifier.offset(x = (-12).dp),
-                        ) {
-                            Text(
-                                stringResource(
-                                    when {
-                                        expanded -> R.string.orbit_feed_collapse
-                                        post.card -> R.string.orbit_feed_expand_card
-                                        else -> R.string.orbit_feed_expand
-                                    },
-                                ),
-                                style = MaterialTheme.typography.bodyLarge,
-                            )
+                        val width = maxOf(main.width, button?.width ?: 0)
+                            .coerceIn(constraints.minWidth, constraints.maxWidth)
+                        val height = (main.height + (button?.height ?: 0))
+                            .coerceIn(constraints.minHeight, constraints.maxHeight)
+                        layout(width, height) {
+                            main.placeRelative(0, 0)
+                            button?.placeRelative(0, main.height)
                         }
                     }
                     if (showWhy && post.extra.isNotBlank()) {
@@ -914,8 +1033,8 @@ private fun FeedPostRow(
                     }
                     // The buttons line up with the text; their touch area reaches past it to the left.
                     Row(Modifier.fillMaxWidth().offset(x = (-12).dp), verticalAlignment = Alignment.CenterVertically) {
-                        VoteButton("thumbs-up", stringResource(R.string.orbit_feed_like), post.liked) { onVote(1) }
-                        VoteButton("thumbs-down", stringResource(R.string.orbit_feed_dislike), post.disliked) { onVote(-1) }
+                        VoteButton("thumbs-up", stringResource(R.string.orbit_feed_like), shownVote > 0) { vote(1) }
+                        VoteButton("thumbs-down", stringResource(R.string.orbit_feed_dislike), shownVote < 0) { vote(-1) }
                         // With large text the label shortens before the ⓘ button is squeezed.
                         TextButton(
                             onClick = onDiscuss, colors = ButtonDefaults.textButtonColors(contentColor = colors.onSurface),
@@ -951,38 +1070,166 @@ private fun FeedPostRow(
 
 /**
  * A post's pictures, at most nine, laid out like a moments post: one large, two or four in a
- * 2-column grid, otherwise three to a row. Tapping one opens it full screen.
+ * 2-column grid, otherwise three to a row. Tapping one opens it full screen. [folded] shows the
+ * first row only, its last picture marked "+N"; tapping that one opens the post ([onMore]).
  */
 @Composable
-private fun FeedImages(files: List<java.io.File>, title: String) {
+private fun FeedImages(files: List<java.io.File>, title: String, folded: Boolean, onMore: () -> Unit) {
     if (files.isEmpty()) return
     var viewing by remember(files) { mutableStateOf<java.io.File?>(null) }
-    val columns = when (files.size) { 1 -> 1; 2, 4 -> 2; else -> 3 }
+    val columns = feedImageColumns(files.size)
+    val shown = if (folded) files.take(columns) else files
+    val more = files.size - shown.size
     val shape = RoundedCornerShape(10.dp)
     val placeholder = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
     val resources = LocalContext.current.resources
+    val moreLabel = stringResource(R.string.orbit_feed_expand)
     fun label(file: java.io.File) =
         resources.getString(R.string.orbit_feed_image_desc, title, files.indexOf(file) + 1, files.size)
     Column(
         Modifier.padding(top = 10.dp).fillMaxWidth(if (columns == 3) 1f else 0.7f),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        files.chunked(columns).forEach { row ->
+        shown.chunked(columns).forEach { row ->
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 row.forEach { file ->
-                    coil.compose.AsyncImage(
-                        model = file,
-                        contentDescription = label(file),
-                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                        modifier = Modifier.weight(1f).aspectRatio(1f).clip(shape).background(placeholder)
-                            .clickable { viewing = file },
-                    )
+                    val opensPost = more > 0 && file == shown.last()
+                    Box(
+                        Modifier.weight(1f).aspectRatio(1f).clip(shape).background(placeholder)
+                            .clickable(onClickLabel = if (opensPost) moreLabel else null) {
+                                if (opensPost) onMore() else viewing = file
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        coil.compose.AsyncImage(
+                            model = file,
+                            contentDescription = label(file),
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                        if (opensPost) {
+                            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.4f)))
+                            Text("+$more", color = Color.White, style = MaterialTheme.typography.titleLarge)
+                        }
+                    }
                 }
                 repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
             }
         }
     }
     viewing?.let { file -> OrbitImageViewer(file, label(file)) { viewing = null } }
+}
+
+/** How many pictures a feed post puts in a row: one large, two or four in two columns, else three. */
+private fun feedImageColumns(count: Int) = when (count) { 1 -> 1; 2, 4 -> 2; else -> 3 }
+
+/**
+ * A feed card under a folded post shows only its top, fading out, and a tap there opens the post;
+ * opened, the same card shows whole. It stays the one card either way, so opening never reads or
+ * draws it again.
+ */
+@Composable
+private fun FeedCardPeek(folded: Boolean, onOpen: () -> Unit, card: @Composable () -> Unit) {
+    val density = LocalDensity.current
+    val limit = with(density) { 160.dp.roundToPx() }
+    val fade = with(density) { 56.dp.toPx() }
+    var cut by remember { mutableStateOf(false) }
+    val taps = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    // A field typed into before folding would keep taking keys behind the fold: its focus goes.
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    var holdsFocus by remember { mutableStateOf(false) }
+    LaunchedEffect(folded) { if (folded && holdsFocus) focusManager.clearFocus() }
+    Box(
+        Modifier
+            .graphicsLayer {
+                clip = true
+                // The fade needs its own layer to cut the card's pixels; only then is it paid for.
+                compositingStrategy = if (cut) androidx.compose.ui.graphics.CompositingStrategy.Offscreen
+                else androidx.compose.ui.graphics.CompositingStrategy.Auto
+            }
+            .drawWithContent {
+                drawContent()
+                if (cut) drawRect(
+                    androidx.compose.ui.graphics.Brush.verticalGradient(
+                        listOf(Color.Black, Color.Transparent), startY = size.height - fade, endY = size.height,
+                    ),
+                    blendMode = androidx.compose.ui.graphics.BlendMode.DstIn,
+                )
+            }
+            .layout { measurable, constraints ->
+                // Folded, the card is still measured at its full height, then cut to the limit.
+                val placeable = measurable.measure(
+                    if (folded) constraints.copy(maxHeight = androidx.compose.ui.unit.Constraints.Infinity) else constraints,
+                )
+                val height = if (folded) minOf(placeable.height, limit) else placeable.height
+                cut = placeable.height > height
+                layout(placeable.width, height.coerceIn(constraints.minHeight, constraints.maxHeight)) {
+                    placeable.placeRelative(0, 0)
+                }
+            }
+            // The preview's buttons are out of reach, so screen readers skip it too.
+            .then(if (folded) Modifier.clearAndSetSemantics {} else Modifier)
+            .onFocusChanged { holdsFocus = it.hasFocus }
+            // Nor can the keyboard's Tab or arrow keys move into it.
+            .then(
+                if (folded) Modifier.focusProperties { onEnter = { cancelFocusChange() } }
+                else Modifier,
+            )
+            .focusGroup(),
+    ) {
+        CompositionLocalProvider(com.ai.assistance.operit.ui.common.dynamicui.LocalDynamicUiPeek provides folded) {
+            card()
+        }
+        if (folded) Box(Modifier.matchParentSize().clickable(taps, indication = null, onClick = onOpen))
+    }
+}
+
+/**
+ * The height of a feed post. Only a growth the user asked for ([open]) is animated, and it keeps
+ * following the content while it runs; anything else, folding, loading, or the first height,
+ * is taken at once, so plain scrolling never animates.
+ */
+private class GrowOnly {
+    private val height = Animatable(0f)
+    private var last = -1
+    /** Where a growth starts, until its animation has taken over. */
+    private var startingFrom: Float? = null
+    /** The user opened the post: the next growth is animated. */
+    private var opening = false
+
+    fun open() { opening = true }
+    fun fold() { opening = false }
+
+    /** The height to show for content measured at [target]; called while laying out. */
+    fun heightFor(target: Int, scope: kotlinx.coroutines.CoroutineScope): Int {
+        // Read every time, so the post is laid out again when an animation starts or stops.
+        val running = height.isRunning
+        val animating = running || startingFrom != null
+        if (last >= 0 && target > last && (opening || animating)) {
+            opening = false
+            // From where it is now: the last height, or mid-way through an earlier opening.
+            val from = startingFrom ?: if (running) height.value else last.toFloat()
+            last = target
+            startingFrom = from
+            scope.launch {
+                height.snapTo(from)
+                startingFrom = null
+                height.animateTo(target.toFloat(), androidx.compose.animation.core.tween(250, easing = androidx.compose.animation.core.FastOutSlowInEasing))
+            }
+            return from.roundToInt().coerceAtMost(target)
+        }
+        if (target != last) {
+            last = target
+            if (animating) {
+                startingFrom = null
+                scope.launch { height.stop() }
+            }
+            return target
+        }
+        startingFrom?.let { return it.roundToInt().coerceAtMost(target) }
+        // Only an animation's frames read the value, so a resting post costs nothing per frame.
+        return if (running) height.value.roundToInt().coerceAtMost(target) else target
+    }
 }
 
 /**
@@ -1255,13 +1502,13 @@ private fun DoneIdeaRow(idea: OrbitBoardRepository.Item, onClick: () -> Unit) {
     Column(Modifier.bleed(20.dp)) {
         Row(
             Modifier.fillMaxWidth().clickable(role = Role.Button, onClick = onClick)
-                .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 10.dp),
+                    .padding(start = 12.dp, end = 16.dp, top = 10.dp, bottom = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
-                Text(idea.emoji.ifBlank { "💡" }, fontSize = 26.sp, lineHeight = 30.sp, maxLines = 1)
+                Box(Modifier.size(36.dp), contentAlignment = Alignment.Center) {
+                    Text(idea.emoji.ifBlank { "💡" }, fontSize = 22.sp, lineHeight = 26.sp, maxLines = 1)
             }
-            Spacer(Modifier.width(14.dp))
+                Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {
                 Text(idea.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(
@@ -1327,16 +1574,16 @@ private fun IdeaRow(idea: OrbitBoardRepository.Item, onOpen: () -> Unit, onVote:
                             CustomAccessibilityAction(dislikeLabel) { onVote(-1); true },
                         )
                     }
-                    .padding(start = 16.dp, end = 20.dp, top = 16.dp, bottom = 16.dp)
+                    .padding(start = 12.dp, end = 20.dp, top = 16.dp, bottom = 16.dp)
                     // An idea the user does not want fades back, so the rest stand out.
                     .graphicsLayer { alpha = if (idea.disliked) 0.5f else 1f },
             ) {
                 BoardEmoji(idea.emoji, "💡")
-                Spacer(Modifier.width(12.dp))
+                Spacer(Modifier.width(8.dp))
                 Column(Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.Top) {
                         Text(
-                            idea.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Medium,
+                            idea.title, style = boardTitleStyle(), fontWeight = FontWeight.SemiBold,
                             modifier = Modifier.weight(1f),
                         )
                         if (idea.vote != 0) {

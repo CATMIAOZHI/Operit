@@ -9174,9 +9174,7 @@
     <string name="orbit_quota_status_paused">两份额度都用完了，%1$s 已暂停</string>
     <string name="orbit_quota_status_extra">本周额度已用完，正在用额外额度</string>
     <string name="orbit_quota_usage">用量统计</string>
-    <string name="orbit_quota_usage_desc">看看 %1$s 的 token 都花在哪了</string>
     <string name="orbit_quota_adjust">调整额度</string>
-    <string name="orbit_quota_adjust_desc">每周 %1$s · 额外 %2$s</string>
     <string name="orbit_quota_adjust_help">每周额度每周一 0 点重置，最低 1 亿。额外额度在每周额度用完后才会用，设成 0 就是不用。两份都用完，%1$s 会暂停。</string>
     <string name="orbit_quota_weekly_field">每周额度</string>
     <string name="orbit_quota_extra_field">额外额度</string>
@@ -9194,7 +9192,6 @@
     <string name="orbit_quota_weekly_info">这是你给 %1$s 定的每周 token 上限，用来防止 token 被不知不觉用光。每周一 0 点自动重置，所有 Orbit 共用同一份。默认 10 亿，最低可以调到 1 亿。用完时会先告诉 %1$s，让它自己留意；之后开始用额外额度。</string>
     <string name="orbit_quota_extra_info">每周额度用完以后，%1$s 才会开始用这份额外额度。额外额度也用完，%1$s 就会暂停，等下周重置或你补满。可以设成 0（每周额度用完就直接暂停），也可以选「永久有效」（只有你点「重置额外额度」才会补满）或「每周重置」。随时都可以手动补满，不用等它用完。</string>
     <string name="orbit_quota_reset_extra">重置额外额度</string>
-    <string name="orbit_quota_reset_extra_desc">已用的 %1$s 清零，重新开始算</string>
     <string name="orbit_quota_reset_extra_none">还没用过，不需要重置</string>
     <string name="orbit_quota_reset_extra_confirm">确定把已用的 %1$s 清零吗？</string>
     <string name="orbit_quota_reset_extra_action">确定重置</string>
@@ -9388,7 +9385,6 @@
     <string name="orbit_soul_note">关于这个文件：这是 %1$s 的人格，写着它在每次对话里坚持的价值观和习惯。人格最初来自角色卡，之后会慢慢完善，有改动时会告诉你。你可以随时编辑。这段说明不属于文件内容。</string>
     <string name="orbit_prompt_note">关于这个文件：这是 Orbit 的工作手册，写着它怎么主动做事、安排提醒、记住东西和说话。它由应用内置、只读，始终跟着应用更新；文件夹里的 PROMPT.md 被谁改了都不会生效。这段说明不属于文件内容。</string>
     <string name="orbit_file_read_only">只读</string>
-    <string name="orbit_section_prompts">提示词</string>
     <string name="orbit_prompt_layers">提示词层</string>
     <string name="orbit_prompt_layers_desc">看看 Orbit 每次回复前读了什么</string>
     <string name="orbit_prompt_layers_help">下面每一层都按顺序放进 Orbit 的系统提示词，不能关掉；对齐总结要等第一次复盘写好后才带上。点开可以查看或编辑。</string>
@@ -9717,11 +9713,15 @@
     <string name="orbit_vault_empty">还没有保存的密码、密钥或 OAuth 登录。需要时，%1$s 会弹出安全卡片。</string>
     <string name="orbit_vault_delete_title">删除这条登录信息或密钥？</string>
     <string name="orbit_vault_delete_confirm">%1$s 的这条内容会被永久删除。</string>
-    <string name="orbit_section_privacy">隐私与数据</string>
+    <string name="orbit_section_privacy">隐私与安全</string>
+    <string name="orbit_section_display">显示</string>
+    <string name="orbit_section_messages">消息与语音</string>
+    <string name="orbit_section_tools">工具</string>
+    <string name="orbit_section_data">数据</string>
     <string name="orbit_section_developer">开发者</string>
     <string name="orbit_developer_switch">开发者模式</string>
     <string name="orbit_developer_switch_desc">在任务列表顶部显示“原始对话”：用普通聊天界面打开 Orbit 的对话，能看到全部思考、工具调用，聊天中隐藏的消息（比如表情通知、静默结束）也会标出来。后台任务的详情也会显示完整指令。</string>
-    <string name="orbit_tools_row">工具权限</string>
+    <string name="orbit_tools_row">每个工具的权限</string>
     <string name="orbit_tools_row_desc">Orbit 自己的一套，和主应用分开</string>
     <string name="orbit_tools_title">工具权限</string>
     <string name="orbit_tools_help">只管 Orbit 的聊天和它的后台任务，主应用的工具权限不受影响。Orbit 自己的工具，以及内置包里只做查询的工具（时间、搜索、天气等），默认直接允许；其他工具默认走自动审核（快速）。</string>
@@ -9913,6 +9913,10 @@
     <string name="orbit_selection_copy_failed">内容太多，复制失败</string>
     <string name="orbit_selection_cut">内容太长，只保留了前面一部分</string>
     <string name="orbit_selection_share">分享</string>
+    <string name="orbit_share_image_making">正在生成聊天图片 %1$d%%</string>
+    <string name="orbit_selection_range_here">选到这里</string>
+    <string name="orbit_share_image_failed">聊天图片没能生成，请再试一次</string>
+    <string name="orbit_share_image_title">聊天图片</string>
     <string name="orbit_export_card_title">导出 %1$s 的数据</string>
     <string name="orbit_export_card_sub">文件、记忆、任务和聊天打成一个压缩包</string>
     <string name="orbit_export_card_button">导出并分享</string>

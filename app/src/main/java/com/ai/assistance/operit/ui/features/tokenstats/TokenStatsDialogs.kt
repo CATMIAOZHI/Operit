@@ -1,5 +1,6 @@
 package com.ai.assistance.operit.ui.features.tokenstats
 
+import com.ai.assistance.operit.ui.features.orbit.OrbitAwareDropdownMenu
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -706,7 +707,7 @@ internal fun GroupManageDialog(
                         SettingsDialogTextButton(onClick = { targetExpanded = true }) {
                             Text(stringResource(R.string.token_stats_group_pick))
                         }
-                        DropdownMenu(expanded = targetExpanded, onDismissRequest = { targetExpanded = false }) {
+                        OrbitAwareDropdownMenu(expanded = targetExpanded, onDismissRequest = { targetExpanded = false }) {
                             otherGroups.forEach { group ->
                                 DropdownMenuItem(
                                     text = {

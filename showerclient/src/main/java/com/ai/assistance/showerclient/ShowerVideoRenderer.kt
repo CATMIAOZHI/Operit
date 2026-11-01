@@ -51,6 +51,9 @@ class ShowerVideoRenderer {
     @Volatile
     private var warnedNoSurface: Boolean = false
 
+    /** Shows each decoded picture as soon as it is ready; see [startDrainLocked]. */
+    private var drainThread: Thread? = null
+
     fun attach(surface: Surface, videoWidth: Int, videoHeight: Int) {
         synchronized(lock) {
             this.surface = surface
@@ -74,6 +77,15 @@ class ShowerVideoRenderer {
     private fun releaseDecoderLocked() {
         val dec = decoder
         decoder = null
+        val drain = drainThread
+        drainThread = null
+        if (drain != null && drain !== Thread.currentThread()) {
+            try {
+                drain.join(200)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
+        }
         if (dec != null) {
             try {
                 dec.stop()
@@ -110,6 +122,8 @@ class ShowerVideoRenderer {
                         csd1 = packet
                     }
                 } else {
+                    // Without SPS/PPS nothing decodes; keep only the latest frames meanwhile.
+                    if (pendingFrames.size >= 120) pendingFrames.removeAt(0)
                     pendingFrames.add(packet)
                 }
 
@@ -157,13 +171,6 @@ class ShowerVideoRenderer {
                         inputBuffer.put(packet)
                         dec.queueInputBuffer(inIndex, 0, packet.size, System.nanoTime() / 1000, 0)
                     }
-                }
-
-                val bufferInfo = BufferInfo()
-                var outIndex = dec.dequeueOutputBuffer(bufferInfo, 0)
-                while (outIndex >= 0) {
-                    dec.releaseOutputBuffer(outIndex, true)
-                    outIndex = dec.dequeueOutputBuffer(bufferInfo, 0)
                 }
             } catch (e: Exception) {
                 ShowerLog.e(TAG, "Decoder error on frame", e)
@@ -253,15 +260,71 @@ class ShowerVideoRenderer {
             val format = MediaFormat.createVideoFormat("video/avc", width, height)
             format.setByteBuffer("csd-0", ByteBuffer.wrap(csd0Annexb))
             format.setByteBuffer("csd-1", ByteBuffer.wrap(csd1Annexb))
+            // Hand out each picture at once instead of holding a few back.
+            if (Build.VERSION.SDK_INT >= 30) format.setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
 
-            val dec = MediaCodec.createDecoderByType("video/avc")
-            dec.configure(format, s, null, 0)
-            dec.start()
+            val dec = try {
+                startCodec(format, s)
+            } catch (e: Exception) {
+                if (Build.VERSION.SDK_INT < 30) throw e
+                // A codec that failed may be left unusable, so a fresh one goes without it.
+                ShowerLog.w(TAG, "Decoder refused low latency; starting a new one without it", e)
+                format.removeKey(MediaFormat.KEY_LOW_LATENCY)
+                startCodec(format, s)
+            }
             decoder = dec
+            startDrainLocked(dec)
             ShowerLog.d(TAG, "MediaCodec decoder initialized for ${width}x${height}")
         } catch (e: Exception) {
             ShowerLog.e(TAG, "Failed to init decoder", e)
             releaseDecoderLocked()
         }
+    }
+
+    /** A started decoder, or an exception with the half-made one released. */
+    private fun startCodec(format: MediaFormat, s: Surface): MediaCodec {
+        val dec = MediaCodec.createDecoderByType("video/avc")
+        try {
+            dec.configure(format, s, null, 0)
+            dec.start()
+            return dec
+        } catch (e: Exception) {
+            try {
+                dec.release()
+            } catch (_: Exception) {
+            }
+            throw e
+        }
+    }
+
+    /**
+     * Takes pictures out of [dec] on its own thread. A still screen sends no new packets, so
+     * waiting for the next packet to collect the last picture would leave the view blank. If
+     * the codec fails, it is dropped so the next packet starts a new one.
+     */
+    private fun startDrainLocked(dec: MediaCodec) {
+        val thread = Thread({
+            val info = BufferInfo()
+            while (decoder === dec) {
+                try {
+                    val index = dec.dequeueOutputBuffer(info, 20_000)
+                    if (index < 0) continue
+                    dec.releaseOutputBuffer(index, true)
+                } catch (e: Exception) {
+                    synchronized(lock) {
+                        // Not when it was already replaced or released on purpose.
+                        if (decoder === dec) {
+                            ShowerLog.e(TAG, "Decoder failed while showing a picture", e)
+                            releaseDecoderLocked()
+                            pendingFrames.clear()
+                        }
+                    }
+                    break
+                }
+            }
+        }, "shower-video-drain")
+        thread.isDaemon = true
+        drainThread = thread
+        thread.start()
     }
 }

@@ -106,6 +106,7 @@ internal fun OrbitPermissionCard(card: JSONObject) {
             OrbitPermissionCards.KEEP_ALIVE ->
                 KeepAliveBody(name, tick, onRefresh = { tick++ }, onBeginGrant, onChecked)
             OrbitPermissionCards.DEVICE_ACCESS -> DeviceAccessBody(name, tick, onRefresh = { tick++ }, onBeginGrant, onChecked)
+            OrbitPermissionCards.ACCESSIBILITY -> AccessibilityBody(name, tick, onRefresh = { tick++ }, onBeginGrant, onChecked)
             else -> PhoneBody(permission, cardId, name, tick, onRefresh = { tick++ }, onBeginGrant, onChecked)
         }
         if (!on) DismissFooter(cardId, name, enabled = orbit != null, onDismiss)
@@ -163,6 +164,81 @@ private fun DeviceAccessBody(name: String, tick: Int, onRefresh: () -> Unit,
         openPage?.invoke(OrbitCardPage.DEVICE_ACCESS)
     }
     return on
+}
+
+/**
+ * Operit's accessibility service, in two steps: install the small service app bundled with Operit
+ * (or update an old one), then turn its service on. With ADB debugging (Shizuku) working, turning it
+ * on is done for the user; otherwise the system's accessibility settings open. Returns whether it is ready.
+ */
+@Composable
+private fun AccessibilityBody(name: String, tick: Int, onRefresh: () -> Unit,
+    onBeginGrant: (Boolean) -> Unit, onChecked: (Boolean, Int) -> Unit): Boolean {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var busy by remember { mutableStateOf(false) }
+    val state by produceState(OrbitPermissionCards.lastAccessibility, tick) {
+        val read = withContext(Dispatchers.IO) {
+            runCatching { OrbitPermissionCards.accessibilityState(context.applicationContext) }.getOrNull()
+        }
+        value = read ?: value
+        if (read != null) onChecked(read.ready, tick)
+    }
+    val s = state
+    val ready = s?.ready == true
+    CardHeader("accessibility", stringResource(R.string.orbit_permission_phone_title, name,
+        stringResource(R.string.orbit_permission_name_accessibility)),
+        if (ready) stringResource(R.string.orbit_permission_phone_on, name) else stringResource(R.string.orbit_accessibility_card_note),
+        subMaxLines = Int.MAX_VALUE)
+    Spacer(Modifier.height(14.dp))
+    PermissionRow(
+        label = stringResource(R.string.orbit_accessibility_install),
+        on = s?.let { it.installed && !it.updateNeeded },
+        action = stringResource(if (s?.installed == true) R.string.orbit_accessibility_update else R.string.orbit_accessibility_install_action),
+        enabled = !busy,
+    ) {
+        onBeginGrant(!ready)
+        // The system installer opens; coming back reads the state again.
+        com.ai.assistance.operit.core.tools.system.AccessibilityProviderInstaller.launchInstall(context.applicationContext)
+    }
+    Spacer(Modifier.height(8.dp))
+    PermissionRow(
+        label = stringResource(R.string.orbit_accessibility_enable),
+        on = s?.let { if (!it.installed) false else it.enabled },
+        action = stringResource(R.string.orbit_permission_turn_on),
+        enabled = !busy && s?.installed == true,
+    ) {
+        busy = true
+        onBeginGrant(!ready)
+        scope.launch {
+            val access = withContext(Dispatchers.IO) {
+                try { OrbitPermissionCards.deviceAccess(context.applicationContext) }
+                catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                catch (_: Exception) { null }
+            }
+            val viaAdb = access?.working == true &&
+                access.level == com.ai.assistance.operit.core.tools.system.AndroidPermissionLevel.DEBUGGER
+            val done = viaAdb && try {
+                withContext(Dispatchers.IO) {
+                    com.ai.assistance.operit.core.tools.system.AccessibilityAdbAuthorizer.enable(context.applicationContext)
+                }
+                true
+            } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
+                false
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                false
+            }
+            busy = false
+            if (done) onRefresh()
+            else if (!OrbitPermissionCards.openSettings(context, OrbitPermissionCards.ACCESSIBILITY)) {
+                onBeginGrant(false)
+                Toast.makeText(context, R.string.orbit_permission_failed, Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+    return ready
 }
 
 /** Background keep-alive and the battery exemption; returns whether both are on. */
@@ -230,6 +306,7 @@ private fun phoneLook(permission: String) = when (permission) {
     OrbitPermissionCards.CALENDAR -> PhoneLook("calendar-days", R.string.orbit_phone_calendar, R.string.orbit_phone_calendar_note)
     OrbitPermissionCards.MICROPHONE -> PhoneLook("mic", R.string.orbit_phone_microphone, R.string.orbit_phone_microphone_note)
     OrbitPermissionCards.GEOFENCE -> PhoneLook("map-pin", R.string.orbit_tool_geofence_title, R.string.orbit_tool_geofence_note)
+    OrbitPermissionCards.OVERLAY -> PhoneLook("layers", R.string.orbit_permission_name_overlay, R.string.orbit_overlay_card_note)
     else -> PhoneLook("map-pin", R.string.orbit_tool_current_location_title, R.string.orbit_tool_current_location_note)
 }
 

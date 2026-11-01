@@ -97,6 +97,9 @@ public class Main {
     private static final int VIRTUAL_DISPLAY_FLAG_TOUCH_FEEDBACK_DISABLED = 1 << 13;
     private static final int VIRTUAL_DISPLAY_FLAG_OWN_FOCUS = 1 << 14;
     private static final int VIRTUAL_DISPLAY_FLAG_DEVICE_DISPLAY_GROUP = 1 << 15;
+    // Android 14+: touching the virtual display must not take the top focus (and the keyboard)
+    // away from the app the user is using on the phone screen.
+    private static final int VIRTUAL_DISPLAY_FLAG_STEAL_TOP_FOCUS_DISABLED = 1 << 16;
 
     private static Main sInstance;
 
@@ -147,6 +150,9 @@ public class Main {
         IBinder videoSinkBinder;
         IBinder.DeathRecipient videoSinkDeathRecipient;
         final Object lock = new Object();
+        /** The latest SPS/PPS, sent again to each new sink: it may attach after they first went out. */
+        volatile byte[] lastCsd0;
+        volatile byte[] lastCsd1;
 
         DisplaySession(int displayId, VirtualDisplay virtualDisplay, MediaCodec videoEncoder, Surface encoderSurface, InputController inputController) {
             this.displayId = displayId;
@@ -239,6 +245,21 @@ public class Main {
                 }
                 videoSink = IShowerVideoSink.Stub.asInterface(sink);
             }
+            // A late sink still needs the codec config and a keyframe to start decoding.
+            byte[] csd0 = lastCsd0;
+            byte[] csd1 = lastCsd1;
+            if (csd0 != null) sendVideoFrame(csd0);
+            if (csd1 != null) sendVideoFrame(csd1);
+            MediaCodec codec = videoEncoder;
+            if (codec != null && encoderRunning) {
+                try {
+                    android.os.Bundle params = new android.os.Bundle();
+                    params.putInt(MediaCodec.PARAMETER_KEY_REQUEST_SYNC_FRAME, 0);
+                    codec.setParameters(params);
+                } catch (Exception e) {
+                    logToFile("request sync frame failed: " + e.getMessage(), e);
+                }
+            }
         }
 
         private void encodeLoop() {
@@ -286,8 +307,19 @@ public class Main {
         private void trySendConfig(MediaFormat format) {
             ByteBuffer csd0 = format.getByteBuffer("csd-0");
             ByteBuffer csd1 = format.getByteBuffer("csd-1");
+            lastCsd0 = copyOf(csd0);
+            lastCsd1 = copyOf(csd1);
             sendVideoFrame(csd0);
             sendVideoFrame(csd1);
+        }
+
+        private byte[] copyOf(ByteBuffer buffer) {
+            if (buffer == null || !buffer.hasRemaining()) return null;
+            ByteBuffer dup = buffer.duplicate();
+            dup.position(0);
+            byte[] data = new byte[dup.remaining()];
+            dup.get(data);
+            return data;
         }
 
         private void sendVideoFrame(ByteBuffer buffer) {
@@ -538,6 +570,44 @@ public class Main {
                 public byte[] requestScreenshot(int displayId) {
                     markClientActive();
                     return captureScreenshotBytes(displayId);
+                }
+
+                @Override
+                public android.os.ParcelFileDescriptor requestScreenshotFd(int displayId, int jpegQuality) {
+                    markClientActive();
+                    final byte[] bytes = DisplayCapture.captureDisplay(displayId, jpegQuality, 0);
+                    if (bytes == null) {
+                        return null;
+                    }
+                    final android.os.ParcelFileDescriptor[] pipe;
+                    try {
+                        pipe = android.os.ParcelFileDescriptor.createPipe();
+                    } catch (IOException e) {
+                        logToFile("requestScreenshotFd: createPipe failed: " + e.getMessage(), e);
+                        return null;
+                    }
+                    // The pipe holds only a little, so the picture is written while the app reads it.
+                    // If the app closes its end early, the write fails and this thread ends.
+                    Thread writer = new Thread(new Runnable() {
+                        @Override
+                        public void run() {
+                            java.io.OutputStream out = new android.os.ParcelFileDescriptor.AutoCloseOutputStream(pipe[1]);
+                            try {
+                                out.write(bytes);
+                            } catch (IOException e) {
+                                logToFile("requestScreenshotFd: write ended early: " + e.getMessage(), null);
+                            } finally {
+                                try {
+                                    out.close();
+                                } catch (IOException ignored) {
+                                }
+                            }
+                        }
+                    }, "shower-screenshot");
+                    writer.setDaemon(true);
+                    writer.start();
+                    logToFile("requestScreenshotFd: " + bytes.length + " bytes for display " + displayId, null);
+                    return pipe[0];
                 }
 
                 @Override
@@ -851,21 +921,24 @@ public class Main {
 
             if (Build.VERSION.SDK_INT >= 34) {
                 flags |= VIRTUAL_DISPLAY_FLAG_OWN_FOCUS
-                        | VIRTUAL_DISPLAY_FLAG_DEVICE_DISPLAY_GROUP;
+                        | VIRTUAL_DISPLAY_FLAG_DEVICE_DISPLAY_GROUP
+                        | VIRTUAL_DISPLAY_FLAG_STEAL_TOP_FOCUS_DISABLED;
             }
 
             java.lang.reflect.Constructor<DisplayManager> ctor = DisplayManager.class.getDeclaredConstructor(Context.class);
             ctor.setAccessible(true);
             DisplayManager dm = ctor.newInstance(FakeContext.get());
 
-            virtualDisplay = dm.createVirtualDisplay(
-                    "ShowerVirtualDisplay-" + System.currentTimeMillis() % 1000,
-                    alignedWidth,
-                    alignedHeight,
-                    dpi,
-                    encoderSurface,
-                    flags
-            );
+            String displayName = "ShowerVirtualDisplay-" + System.currentTimeMillis() % 1000;
+            try {
+                virtualDisplay = dm.createVirtualDisplay(displayName, alignedWidth, alignedHeight, dpi, encoderSurface, flags);
+            } catch (RuntimeException e) {
+                if ((flags & VIRTUAL_DISPLAY_FLAG_STEAL_TOP_FOCUS_DISABLED) == 0) throw e;
+                // Some builds reject the newer focus flag; a display without it still works.
+                logToFile("createVirtualDisplay rejected STEAL_TOP_FOCUS_DISABLED, retrying without it: " + e.getMessage(), e);
+                flags &= ~VIRTUAL_DISPLAY_FLAG_STEAL_TOP_FOCUS_DISABLED;
+                virtualDisplay = dm.createVirtualDisplay(displayName, alignedWidth, alignedHeight, dpi, encoderSurface, flags);
+            }
 
             if (virtualDisplay != null && virtualDisplay.getDisplay() != null) {
                 virtualDisplayId = virtualDisplay.getDisplay().getDisplayId();

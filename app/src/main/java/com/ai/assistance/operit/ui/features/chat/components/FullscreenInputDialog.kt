@@ -16,7 +16,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
+import com.ai.assistance.operit.ui.features.orbit.OrbitAwareDialog
 import androidx.compose.ui.window.DialogProperties
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.ComposerPredictionTextField
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.rememberComposerPredictionTransformation
@@ -45,7 +45,7 @@ fun FullscreenInputDialog(
         onDismiss()
     }
 
-    Dialog(
+    OrbitAwareDialog(
         onDismissRequest = { finishEditing() },
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
     ) {

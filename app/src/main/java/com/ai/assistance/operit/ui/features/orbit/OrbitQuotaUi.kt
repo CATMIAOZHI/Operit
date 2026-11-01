@@ -6,12 +6,15 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -236,6 +239,7 @@ private fun QuotaHeading(title: String, subtitle: String, trailing: String, info
  * The allowance at the top of Orbit's settings, like Muse's plan card: the week's allowance and
  * the extra one, each with a bar, then the usage page and the place to change them.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun OrbitQuotaCard(
     orbit: OrbitProfile,
@@ -288,35 +292,22 @@ internal fun OrbitQuotaCard(
                     else -> MaterialTheme.colorScheme.onSurfaceVariant
                 })
         }
-        Spacer(Modifier.height(12.dp))
-        SettingsRowDivider(inset = false)
-        SettingsNavRow(
-            title = stringResource(R.string.orbit_quota_usage),
-            subtitle = stringResource(R.string.orbit_quota_usage_desc, orbitName(orbit)),
-            icon = orbitIcon("chart-column"),
-            searchable = false,
-            onClick = onOpenUsage,
-        )
-        SettingsRowDivider(inset = false)
-        SettingsNavRow(
-            title = stringResource(R.string.orbit_quota_adjust),
-            subtitle = if (ready) stringResource(R.string.orbit_quota_adjust_desc,
-                OrbitQuota.amount(context, state.weeklyLimit), OrbitQuota.amount(context, state.extraLimit)) else " ",
-            icon = orbitIcon("sliders-horizontal"),
-            searchable = false,
-            onClick = { adjusting = true },
-        )
-        SettingsRowDivider(inset = false)
-        // The extra allowance can be filled again at any time, not only once it has run out.
-        SettingsNavRow(
-            title = stringResource(R.string.orbit_quota_reset_extra),
-            subtitle = if (!ready) " " else if (state.extraUsed > 0L)
-                stringResource(R.string.orbit_quota_reset_extra_desc, OrbitQuota.amount(context, state.extraUsed))
-            else stringResource(R.string.orbit_quota_reset_extra_none),
-            icon = orbitIcon("rotate-ccw"),
-            searchable = false,
-            onClick = { if (ready) resetting = true },
-        )
+        Spacer(Modifier.height(14.dp))
+        // Three small buttons in one line (wrapping if the words are long), so the card stays short.
+        FlowRow(
+            modifier = Modifier.padding(horizontal = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            QuotaSmallButton(stringResource(R.string.orbit_quota_usage), "chart-column", onClick = onOpenUsage)
+            QuotaSmallButton(stringResource(R.string.orbit_quota_adjust), "sliders-horizontal", enabled = ready) {
+                adjusting = true
+            }
+            // The extra allowance can be filled again at any time, not only once it has run out.
+            QuotaSmallButton(stringResource(R.string.orbit_quota_reset_extra), "rotate-ccw", enabled = ready) {
+                resetting = true
+            }
+        }
         if (adjusting && ready) {
             OrbitQuotaSheet(state = state, orbitName = orbitName(orbit), onDismiss = { adjusting = false })
         }
@@ -339,6 +330,27 @@ internal fun OrbitQuotaCard(
                 dismissButton = { OrbitDialogAction(onClick = { resetting = false }, secondary = true) { Text(stringResource(R.string.cancel)) } },
             )
         }
+    }
+}
+
+/** A small rounded button under the allowance bars: an icon and a short word. */
+@Composable
+private fun QuotaSmallButton(label: String, icon: String, enabled: Boolean = true, onClick: () -> Unit) {
+    val content = MaterialTheme.colorScheme.onSurface
+    Row(
+        Modifier
+            .heightIn(min = 40.dp)
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+            .alpha(if (enabled) 1f else 0.5f)
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(orbitIcon(icon), contentDescription = null, tint = content, modifier = Modifier.size(16.dp))
+        Spacer(Modifier.width(6.dp))
+        // Wraps inside the button on a narrow screen or with large text, instead of being cut off.
+        Text(label, style = MaterialTheme.typography.labelLarge, color = content)
     }
 }
 

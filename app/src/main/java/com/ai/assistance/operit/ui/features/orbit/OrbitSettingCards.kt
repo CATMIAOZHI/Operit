@@ -32,6 +32,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.flow.map
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -57,7 +58,7 @@ import org.json.JSONObject
 
 /** Orbit pages a chat card can open over the chat. */
 internal enum class OrbitCardPage {
-    SPEECH_SETTINGS, MODEL_CONFIG, DEVICE_ACCESS, WEIXIN, ROLE_CARDS, TOOL_ACCESS, TOOL_PERMISSIONS, ORBIT_MODELS, NOTIFICATIONS,
+    SPEECH_SETTINGS, MODEL_CONFIG, DEVICE_ACCESS, WEIXIN, ROLE_CARDS, TOOL_ACCESS, TOOL_PERMISSIONS, ORBIT_MODELS, NOTIFICATIONS, MCP_CONFIG,
 }
 
 /** Opens an Orbit page from a card; null where the chat cannot open pages (then the button is off). */
@@ -116,6 +117,8 @@ internal fun OrbitAccountLoginCard(card: JSONObject) {
     val manager by produceState<ProviderAccountManager?>(null, provider) {
         value = withContext(Dispatchers.IO) { ProviderAccountManager.get(context.applicationContext, provider) }
     }
+    // A shared picture waits for it, so it shows whether the account is signed in.
+    com.ai.assistance.operit.ui.common.markdown.MarkdownSnapshotWork(manager == null)
     val signedIn = manager?.account?.collectAsState()?.value != null
     // Asked to sign in again: an old sign-in is saved but no longer works. Done once a new one is made here.
     var relogged by rememberSaveable { mutableStateOf(false) }
@@ -185,9 +188,14 @@ internal fun OrbitWeixinLoginCard(card: JSONObject) {
     if (orbitId.isBlank()) return
     val orbit = remember { OrbitPreferences.getInstance(context).settingsFlow }
         .collectAsState(initial = null).value?.orbits?.firstOrNull { it.id == orbitId }
+    // A shared picture waits for the link's state, so it shows whether WeChat is linked.
+    var read by remember(orbitId) { mutableStateOf(false) }
     androidx.compose.runtime.LaunchedEffect(orbitId) {
-        com.ai.assistance.operit.features.orbit.OrbitWeixin.refreshStatus(context.applicationContext, orbitId)
+        try {
+            com.ai.assistance.operit.features.orbit.OrbitWeixin.refreshStatus(context.applicationContext, orbitId)
+        } finally { read = true }
     }
+    com.ai.assistance.operit.ui.common.markdown.MarkdownSnapshotWork(!read)
     val status = com.ai.assistance.operit.features.orbit.OrbitWeixin.status.collectAsState().value
         ?.takeIf { it.orbitId == orbitId }
     val linked = status?.connected == true && !status.loginExpired
@@ -223,8 +231,17 @@ internal fun OrbitWeixinLoginCard(card: JSONObject) {
 internal fun OrbitSpeechSettingsCard() {
     val context = LocalContext.current
     val profiles = remember { SpeechServiceProfilesPreferences(context.applicationContext) }
-    val tts by profiles.currentTtsProfileOrNullFlow.collectAsState(initial = null)
-    val stt by profiles.currentSttProfileOrNullFlow.collectAsState(initial = null)
+    // Each wrapped in a list, so "not read yet" (null) differs from "none set" (a list holding null);
+    // a shared picture waits for both.
+    val ttsRead by remember(profiles) {
+        profiles.currentTtsProfileOrNullFlow.map { listOf(it) }
+    }.collectAsState(initial = null)
+    val sttRead by remember(profiles) {
+        profiles.currentSttProfileOrNullFlow.map { listOf(it) }
+    }.collectAsState(initial = null)
+    com.ai.assistance.operit.ui.common.markdown.MarkdownSnapshotWork(ttsRead == null || sttRead == null)
+    val tts = ttsRead?.firstOrNull()
+    val stt = sttRead?.firstOrNull()
     val openPage = LocalOrbitOpenPage.current
     CardColumn {
         CardHeading("volume-2", stringResource(R.string.orbit_speech_card_title),
@@ -267,6 +284,8 @@ internal fun OrbitOpenPageCard(card: JSONObject) {
             R.string.orbit_page_card_orbit_models_sub, R.string.orbit_page_card_orbit_models_open, OrbitCardPage.ORBIT_MODELS)
         OrbitChatCards.PAGE_NOTIFICATIONS -> Look("bell", R.string.orbit_page_card_notify_title,
             R.string.orbit_page_card_notify_sub, R.string.orbit_page_card_notify_open, OrbitCardPage.NOTIFICATIONS)
+        OrbitChatCards.PAGE_MCP -> Look("server", R.string.orbit_page_card_mcp_title,
+            R.string.orbit_page_card_mcp_sub, R.string.orbit_page_card_mcp_open, OrbitCardPage.MCP_CONFIG)
         else -> return
     }
     CardColumn {

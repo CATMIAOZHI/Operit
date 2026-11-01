@@ -39,6 +39,7 @@ import com.ai.assistance.operit.util.streamnative.NativeXmlSplitter
 import com.github.difflib.DiffUtils
 import com.github.difflib.UnifiedDiffUtils
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.sync.Mutex
@@ -146,6 +147,17 @@ class ConversationService(
             multiServiceManager: MultiServiceManager,
             summaryConfig: ConversationSummaryConfig = ConversationSummaryConfig()
     ): String {
+        // A summary written ahead in the background runs on its own provider: replacing or dropping
+        // it closes that provider's connection, and it never shares the foreground summary's.
+        val quiet = kotlinx.coroutines.currentCoroutineContext()[
+            com.ai.assistance.operit.api.chat.compaction.QuietSummary
+        ] != null
+        val isolatedLease = if (quiet) multiServiceManager.acquireIsolatedServiceForFunction(FunctionType.SUMMARY) else null
+        // A plugin provider cannot be built apart from the shared one, so a background summary on it
+        // could not be stopped; the summary is then written when compaction is due.
+        if (quiet && isolatedLease == null) {
+            throw java.io.IOException("No background summary on a plugin provider")
+        }
         try {
             val useEnglish = LocaleUtils.usesEnglishPrompt(context)
             val activePromptMetadata = buildActivePromptHookMetadata(context)
@@ -165,7 +177,7 @@ class ConversationService(
             val serializedModelParameters = serializeSummaryHookModelParameters(modelParameters)
 
             // 获取SUMMARY功能类型的AIService实例
-            val summaryService = multiServiceManager.getServiceForFunction(FunctionType.SUMMARY)
+            val summaryService = isolatedLease?.service ?: multiServiceManager.getServiceForFunction(FunctionType.SUMMARY)
             var summaryHistory = sanitizedMessages
             var summaryPrompt = FunctionalPrompts.summaryUserMessage(useEnglish)
             val baseSummaryMetadata =
@@ -232,12 +244,12 @@ class ConversationService(
 
             // 使用summaryService发送请求，收集完整响应
             val contentBuilder = StringBuilder()
+            // A summary written ahead in the background shows no progress: the bar belongs to whatever runs now.
+            fun showProgress(progress: Float, message: String) {
+                if (!quiet) ToolProgressBus.update(ToolProgressBus.SUMMARY_PROGRESS_TOOL_NAME, progress, message)
+            }
 
-            ToolProgressBus.update(
-                ToolProgressBus.SUMMARY_PROGRESS_TOOL_NAME,
-                0.05f,
-                context.getString(R.string.conversation_summary_preparing)
-            )
+            showProgress(0.05f, context.getString(R.string.conversation_summary_preparing))
 
             data class Stage(
                 val matchers: List<(String) -> Boolean>,
@@ -287,11 +299,7 @@ class ConversationService(
                     val matched = next.matchers.any { it(snapshot) }
                     if (!matched) break
                     lastStageIndex += 1
-                    ToolProgressBus.update(
-                        ToolProgressBus.SUMMARY_PROGRESS_TOOL_NAME,
-                        next.progress,
-                        next.message
-                    )
+                    showProgress(next.progress, next.message)
                 }
             }
 
@@ -305,16 +313,25 @@ class ConversationService(
                     )
 
             // 收集流中的所有内容
-            stream.collect { content ->
-                contentBuilder.append(content)
-                updateStageIfNeeded()
+            kotlinx.coroutines.coroutineScope {
+                // A blocking network read does not stop for a cancelled coroutine; closing the
+                // isolated provider's connection does.
+                val cancellationWatcher = isolatedLease?.let { lease ->
+                    launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                        try { kotlinx.coroutines.awaitCancellation() } finally { lease.service.cancelStreaming() }
+                    }
+                }
+                try {
+                    stream.collect { content ->
+                        contentBuilder.append(content)
+                        updateStageIfNeeded()
+                    }
+                } finally {
+                    cancellationWatcher?.cancel()
+                }
             }
 
-            ToolProgressBus.update(
-                ToolProgressBus.SUMMARY_PROGRESS_TOOL_NAME,
-                1f,
-                context.getString(R.string.conversation_summary_completed)
-            )
+            showProgress(1f, context.getString(R.string.conversation_summary_completed))
 
             // 获取完整的总结内容
             var summaryContent = ChatUtils.removeThinkingContent(contentBuilder.toString().trim())
@@ -359,6 +376,8 @@ class ConversationService(
             AppLogger.e(TAG, "生成总结时出错", e)
             // return "对话摘要：生成摘要时出错，但对话仍在继续。"
             throw e
+        } finally {
+            isolatedLease?.let { lease -> try { lease.service.cancelStreaming() } finally { lease.close() } }
         }
     }
 

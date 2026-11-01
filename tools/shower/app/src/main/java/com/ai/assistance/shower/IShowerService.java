@@ -4,6 +4,7 @@ import android.os.Binder;
 import android.os.IBinder;
 import android.os.IInterface;
 import android.os.Parcel;
+import android.os.ParcelFileDescriptor;
 import android.os.RemoteException;
 
 public interface IShowerService extends IInterface {
@@ -46,6 +47,14 @@ public interface IShowerService extends IInterface {
 
     byte[] requestScreenshot(int displayId) throws RemoteException;
 
+    /**
+     * The screenshot through a pipe, so its size is not bound by the binder buffer (about 1 MB,
+     * shared by every call in flight). [jpegQuality] 1..100 sends JPEG at that quality, else PNG.
+     * Null when the picture could not be taken. A server without this call makes the proxy throw
+     * {@link UnsupportedOperationException}; the caller then uses {@link #requestScreenshot}.
+     */
+    ParcelFileDescriptor requestScreenshotFd(int displayId, int jpegQuality) throws RemoteException;
+
     void setVideoSink(int displayId, IBinder sink) throws RemoteException;
 
     abstract class Stub extends Binder implements IShowerService {
@@ -64,6 +73,7 @@ public interface IShowerService extends IInterface {
         static final int TRANSACTION_injectKeyWithMeta = IBinder.FIRST_CALL_TRANSACTION + 10;
         static final int TRANSACTION_setVideoSink = IBinder.FIRST_CALL_TRANSACTION + 11;
         static final int TRANSACTION_injectTouchEvent = IBinder.FIRST_CALL_TRANSACTION + 12;
+        static final int TRANSACTION_requestScreenshotFd = IBinder.FIRST_CALL_TRANSACTION + 13;
 
         public Stub() {
             attachInterface(this, DESCRIPTOR);
@@ -180,6 +190,21 @@ public interface IShowerService extends IInterface {
                     byte[] result = requestScreenshot(displayId);
                     reply.writeNoException();
                     reply.writeByteArray(result);
+                    return true;
+                }
+                case TRANSACTION_requestScreenshotFd: {
+                    data.enforceInterface(DESCRIPTOR);
+                    int displayId = data.readInt();
+                    int jpegQuality = data.readInt();
+                    ParcelFileDescriptor result = requestScreenshotFd(displayId, jpegQuality);
+                    reply.writeNoException();
+                    if (result != null) {
+                        reply.writeInt(1);
+                        // Closes this side's copy once it is in the reply.
+                        result.writeToParcel(reply, android.os.Parcelable.PARCELABLE_WRITE_RETURN_VALUE);
+                    } else {
+                        reply.writeInt(0);
+                    }
                     return true;
                 }
                 case TRANSACTION_injectKeyWithMeta: {
@@ -471,6 +496,25 @@ public interface IShowerService extends IInterface {
                     remote.transact(TRANSACTION_requestScreenshot, data, reply, 0);
                     reply.readException();
                     return reply.createByteArray();
+                } finally {
+                    reply.recycle();
+                    data.recycle();
+                }
+            }
+
+            @Override
+            public ParcelFileDescriptor requestScreenshotFd(int displayId, int jpegQuality) throws RemoteException {
+                Parcel data = Parcel.obtain();
+                Parcel reply = Parcel.obtain();
+                try {
+                    data.writeInterfaceToken(DESCRIPTOR);
+                    data.writeInt(displayId);
+                    data.writeInt(jpegQuality);
+                    if (!remote.transact(TRANSACTION_requestScreenshotFd, data, reply, 0)) {
+                        throw new UnsupportedOperationException("requestScreenshotFd is not supported by this server");
+                    }
+                    reply.readException();
+                    return reply.readInt() != 0 ? ParcelFileDescriptor.CREATOR.createFromParcel(reply) : null;
                 } finally {
                     reply.recycle();
                     data.recycle();

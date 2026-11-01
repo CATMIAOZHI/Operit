@@ -24,7 +24,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
+import com.ai.assistance.operit.ui.features.orbit.OrbitAwareDialog
 import androidx.compose.ui.window.DialogProperties
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.ui.features.chat.components.compactDialogHeightWhenShort
@@ -165,7 +165,7 @@ internal fun ToolResultDetailDialog(
     val resultMaxHeight = if (dialogMetrics.isCompactHeight) 160.dp else 300.dp
     val cardModifier =
             Modifier.fillMaxWidth().padding(16.dp).compactDialogHeightWhenShort(dialogMetrics)
-    Dialog(
+    OrbitAwareDialog(
             onDismissRequest = onDismiss,
             properties = DialogProperties(dismissOnBackPress = true, dismissOnClickOutside = true)
     ) {

@@ -185,6 +185,8 @@ fun OrbitScreen(
     // With the app lock on, nothing of Orbit draws until the system check is passed.
     OrbitAppLockGate(enabled = loadedSettings.appLock, orbit = loadedSettings.active) {
         OrbitScreenContent(loadedSettings, hasBackgroundImage, onManageRoleCards, chatContent)
+        // Orbit's background phone screen in full, opened from its card in the chat.
+        OrbitPhoneWatchHost()
     }
 }
 
@@ -374,6 +376,7 @@ private fun OrbitChatPage(
                 OrbitCardPage.TOOL_PERMISSIONS -> OrbitSubPage.TOOL_PERMISSIONS
                 OrbitCardPage.ORBIT_MODELS -> OrbitSubPage.MODELS
                 OrbitCardPage.NOTIFICATIONS -> OrbitSubPage.NOTIFICATION_SETTINGS
+                OrbitCardPage.MCP_CONFIG -> OrbitSubPage.MCP_CONFIG
                 // Role cards are managed in the app's role card page; back returns here.
                 OrbitCardPage.ROLE_CARDS -> null
             }
@@ -710,14 +713,18 @@ private fun OrbitChatPage(
                     LocalOrbitMessageHost provides
                         if (devView) null else {
                             val name = orbitName(orbit)
+                            val orbitNow = rememberUpdatedState(orbit)
                             remember(orbit.id, name, currentChatId, messageScope) {
-                                OrbitMessageHost(orbit.id, name, currentChatId, messageScope)
+                                OrbitMessageHost(orbit.id, name, currentChatId, messageScope) { orbitNow.value }
                             }
                         },
                     LocalOrbitForkMessage provides
                         if (!devView && currentChatId == orbit.chatId && !forkingMessage && orbit.canAddSideChat)
                             ::forkMessage else null,
                     com.ai.assistance.operit.ui.features.chat.components.LocalShowHiddenChatRows provides devView,
+                    // A long screenshot only scrolls the chat while nothing covers it.
+                    com.ai.assistance.operit.ui.features.chat.components.LocalLongScreenshotEnabled provides
+                        (chatOnScreen && stack.isEmpty() && editingFile == null),
                     com.ai.assistance.operit.ui.features.chat.components.LocalOrbitReactions provides reactions,
                     com.ai.assistance.operit.ui.features.chat.components.LocalOrbitUserReactions provides userReactions,
                     // Orbit's browser cards, each where it first showed in the chat.
@@ -727,7 +734,10 @@ private fun OrbitChatPage(
                             val cardVisible = chatOnScreen && stack.isEmpty() && editingFile == null
                             remember(currentChatId, cardVisible) {
                                 { color: androidx.compose.ui.graphics.Color, slot: com.ai.assistance.operit.ui.features.chat.components.OrbitCardSlot ->
-                                    OrbitBrowserCard(currentChatId, color, cardVisible, slot)
+                                    androidx.compose.foundation.layout.Column {
+                                        OrbitBrowserCard(currentChatId, color, cardVisible, slot)
+                                        OrbitPhoneCard(currentChatId, color, cardVisible, slot)
+                                    }
                                 }
                             }
                         },
@@ -1579,7 +1589,9 @@ private fun OrbitSettingsPage(
     var query by rememberSaveable { mutableStateOf("") }
     val searching = query.isNotBlank()
     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
-    BackHandler(enabled = searching) {
+    // The results follow the back swipe before the full settings page returns.
+    val searchBack = rememberOrbitBackMotion()
+    OrbitBackHandler(searchBack, enabled = searching) {
         query = ""
         focusManager.clearFocus()
     }
@@ -1616,9 +1628,11 @@ private fun OrbitSettingsPage(
     }
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         if (searching) {
-            OrbitSettingsSearchResults(searchOrbitSettings(query, searchEntries), cardColor) { entry ->
-                focusManager.clearFocus()
-                entry.onClick()
+            Box(Modifier.fillMaxSize().orbitDismissLayer(searchBack)) {
+                OrbitSettingsSearchResults(searchOrbitSettings(query, searchEntries), cardColor) { entry ->
+                    focusManager.clearFocus()
+                    entry.onClick()
+                }
             }
         } else {
         Column(
@@ -1637,166 +1651,7 @@ private fun OrbitSettingsPage(
             // Show the weekly and extra allowance together.
             OrbitQuotaCard(orbit = orbit, cardColor = cardColor, onOpenUsage = onOpenUsage)
 
-            SettingsCard(backgroundColor = cardColor) {
-                SettingsNavRow(
-                    title = stringResource(R.string.orbit_models_title),
-                    subtitle = stringResource(R.string.orbit_models_entry_note),
-                    icon = lucide("brain"),
-                    searchable = false,
-                    onClick = onOpenModels,
-                )
-                SettingsRowDivider(inset = false)
-                SettingsNavRow(
-                    title = stringResource(R.string.orbit_context_title),
-                    subtitle = stringResource(R.string.orbit_context_row),
-                    icon = lucide("archive"),
-                    searchable = false,
-                    onClick = onOpenContext,
-                )
-            }
-
-            SettingsCard(backgroundColor = cardColor) {
-                Box(anchor(SWITCH_LAUNCH_MODE)) {
-                    com.ai.assistance.operit.ui.features.settings.components.LaunchModeSettingsRow(searchable = false)
-                }
-                SettingsRowDivider(inset = false)
-                SettingsNavRow(
-                    title = stringResource(R.string.orbit_notification_settings),
-                    subtitle = stringResource(R.string.orbit_phone_notify_note),
-                    icon = lucide("bell"),
-                    searchable = false,
-                    onClick = onOpenNotificationSettings,
-                )
-                SettingsRowDivider(inset = false)
-                SettingsNavRow(
-                    title = stringResource(R.string.orbit_appearance_title),
-                    subtitle = stringResource(R.string.orbit_appearance_note),
-                    icon = lucide("paintbrush"),
-                    searchable = false,
-                    onClick = onOpenAppearance,
-                )
-                SettingsRowDivider(inset = false)
-                SettingsNavRow(
-                    title = stringResource(R.string.pet_title),
-                    subtitle = stringResource(R.string.orbit_pet_row),
-                    icon = lucide("paw-print"),
-                    searchable = false,
-                    onClick = onOpenPet,
-                )
-                SettingsRowDivider(inset = false)
-                SettingsNavRow(
-                    title = stringResource(R.string.orbit_text_settings_title),
-                    subtitle = stringResource(R.string.orbit_text_settings_row),
-                    icon = lucide("type"),
-                    searchable = false,
-                    onClick = onOpenText,
-                )
-                SettingsRowDivider(inset = false)
-                SettingsNavRow(
-                    title = stringResource(R.string.language_settings),
-                    subtitle = stringResource(R.string.orbit_language_row),
-                    icon = lucide("languages"),
-                    searchable = false,
-                    onClick = onOpenLanguage,
-                )
-                SettingsRowDivider(inset = false)
-                SettingsNavRow(
-                    title = stringResource(R.string.orbit_speech_card_title),
-                    subtitle = stringResource(R.string.orbit_speech_row),
-                    icon = lucide("audio-lines"),
-                    searchable = false,
-                    onClick = onOpenSpeech,
-                )
-                SettingsRowDivider(inset = false)
-                SettingsNavRow(
-                    title = stringResource(R.string.orbit_phone_permissions),
-                    subtitle = stringResource(R.string.orbit_phone_permissions_row),
-                    icon = lucide("hand"),
-                    searchable = false,
-                    onClick = onOpenPhonePermissions,
-                )
-                SettingsRowDivider(inset = false)
-                SettingsNavRow(
-                    title = stringResource(R.string.orbit_channels_title),
-                    subtitle = stringResource(R.string.orbit_channels_row),
-                    icon = lucide("message-circle"),
-                    searchable = false,
-                    onClick = onOpenChannels,
-                )
-            }
-
-            Column {
-                SettingsSectionTitle(
-                    text = stringResource(R.string.orbit_section_device),
-                    icon = lucide("smartphone"),
-                )
-                SettingsCard(backgroundColor = cardColor) {
-                    SettingsNavRow(
-                        title = stringResource(R.string.orbit_automation_settings_title),
-                        subtitle = stringResource(R.string.orbit_automation_settings_row),
-                        icon = lucide("scan-line"),
-                        searchable = false,
-                        onClick = onOpenAutomation,
-                    )
-                    SettingsRowDivider(inset = false)
-                    SettingsNavRow(
-                        title = stringResource(R.string.orbit_backup_title),
-                        subtitle = stringResource(R.string.orbit_backup_row),
-                        icon = lucide("database-backup"),
-                        searchable = false,
-                        onClick = onOpenBackup,
-                    )
-                    SettingsRowDivider(inset = false)
-                    SettingsNavRow(
-                        title = stringResource(R.string.storage_title),
-                        subtitle = stringResource(R.string.orbit_storage_row),
-                        icon = lucide("hard-drive"),
-                        searchable = false,
-                        onClick = onOpenStorage,
-                    )
-                    SettingsRowDivider(inset = false)
-                    SettingsNavRow(
-                        title = stringResource(R.string.components_title),
-                        subtitle = stringResource(R.string.orbit_components_row),
-                        icon = lucide("boxes"),
-                        searchable = false,
-                        onClick = onOpenComponents,
-                    )
-                }
-            }
-
-            Column {
-                SettingsSectionTitle(
-                    text = stringResource(R.string.orbit_section_prompts),
-                    icon = lucide("file-text"),
-                )
-                SettingsCard(backgroundColor = cardColor) {
-                    SettingsNavRow(
-                        title = stringResource(R.string.orbit_prompt_layers),
-                        subtitle = stringResource(R.string.orbit_prompt_layers_desc),
-                        icon = lucide("layers"),
-                        searchable = false,
-                        onClick = onOpenPrompts,
-                    )
-                    SettingsRowDivider(inset = false)
-                    SettingsNavRow(
-                        title = stringResource(R.string.orbit_packages_title),
-                        subtitle = stringResource(R.string.orbit_packages_row_desc),
-                        icon = lucide("package"),
-                        searchable = false,
-                        onClick = onOpenPackages,
-                    )
-                    SettingsRowDivider(inset = false)
-                    SettingsNavRow(
-                        title = stringResource(R.string.orbit_mcp_config_title),
-                        subtitle = stringResource(R.string.orbit_mcp_config_row),
-                        icon = lucide("server-cog"),
-                        searchable = false,
-                        onClick = onOpenMcp,
-                    )
-                }
-            }
-
+            // Passwords and privacy come first, right under the allowance.
             Column {
                 SettingsSectionTitle(
                     text = stringResource(R.string.orbit_section_privacy),
@@ -1841,36 +1696,11 @@ private fun OrbitSettingsPage(
                     )
                     SettingsRowDivider(inset = false)
                     SettingsNavRow(
-                        title = stringResource(R.string.orbit_access_title),
-                        subtitle = stringResource(R.string.orbit_access_row_desc),
-                        icon = lucide("shield"),
-                        searchable = false,
-                        onClick = onOpenToolAccess,
-                        trailing = {
-                            fullAccess?.let { full ->
-                                Text(
-                                    text = stringResource(orbitAccessLabel(full)),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.primary,
-                                )
-                            }
-                        },
-                    )
-                    SettingsRowDivider(inset = false)
-                    SettingsNavRow(
                         title = stringResource(R.string.orbit_vault_row),
                         subtitle = stringResource(R.string.orbit_vault_row_desc),
                         icon = lucide("key-round"),
                         searchable = false,
                         onClick = onOpenVault,
-                    )
-                    SettingsRowDivider(inset = false)
-                    SettingsNavRow(
-                        title = stringResource(R.string.orbit_import_row),
-                        subtitle = stringResource(R.string.orbit_import_row_desc),
-                        icon = lucide("download"),
-                        searchable = false,
-                        onClick = onOpenImport,
                     )
                     SettingsRowDivider(inset = false)
                     val separateLoginsSupported = remember {
@@ -1957,7 +1787,210 @@ private fun OrbitSettingsPage(
                 }
             }
 
-            OrbitLogExportSection(cardColor = cardColor)
+            SettingsCard(backgroundColor = cardColor) {
+                SettingsNavRow(
+                    title = stringResource(R.string.orbit_models_title),
+                    subtitle = stringResource(R.string.orbit_models_entry_note),
+                    icon = lucide("brain"),
+                    searchable = false,
+                    onClick = onOpenModels,
+                )
+                SettingsRowDivider(inset = false)
+                SettingsNavRow(
+                    title = stringResource(R.string.orbit_context_title),
+                    subtitle = stringResource(R.string.orbit_context_row),
+                    icon = lucide("archive"),
+                    searchable = false,
+                    onClick = onOpenContext,
+                )
+            }
+
+            // How Orbit looks and opens.
+            Column {
+                SettingsSectionTitle(
+                    text = stringResource(R.string.orbit_section_display),
+                    icon = lucide("paintbrush"),
+                )
+                SettingsCard(backgroundColor = cardColor) {
+                    Box(anchor(SWITCH_LAUNCH_MODE)) {
+                        com.ai.assistance.operit.ui.features.settings.components.LaunchModeSettingsRow(searchable = false)
+                    }
+                    SettingsRowDivider(inset = false)
+                    SettingsNavRow(
+                        title = stringResource(R.string.orbit_appearance_title),
+                        subtitle = stringResource(R.string.orbit_appearance_note),
+                        icon = lucide("paintbrush"),
+                        searchable = false,
+                        onClick = onOpenAppearance,
+                    )
+                    SettingsRowDivider(inset = false)
+                    SettingsNavRow(
+                        title = stringResource(R.string.pet_title),
+                        subtitle = stringResource(R.string.orbit_pet_row),
+                        icon = lucide("paw-print"),
+                        searchable = false,
+                        onClick = onOpenPet,
+                    )
+                    SettingsRowDivider(inset = false)
+                    SettingsNavRow(
+                        title = stringResource(R.string.orbit_text_settings_title),
+                        subtitle = stringResource(R.string.orbit_text_settings_row),
+                        icon = lucide("type"),
+                        searchable = false,
+                        onClick = onOpenText,
+                    )
+                    SettingsRowDivider(inset = false)
+                    SettingsNavRow(
+                        title = stringResource(R.string.language_settings),
+                        subtitle = stringResource(R.string.orbit_language_row),
+                        icon = lucide("languages"),
+                        searchable = false,
+                        onClick = onOpenLanguage,
+                    )
+                }
+            }
+
+            // How Orbit reaches the user: notifications, voice and other chat apps.
+            Column {
+                SettingsSectionTitle(
+                    text = stringResource(R.string.orbit_section_messages),
+                    icon = lucide("message-circle"),
+                )
+                SettingsCard(backgroundColor = cardColor) {
+                    SettingsNavRow(
+                        title = stringResource(R.string.orbit_notification_settings),
+                        subtitle = stringResource(R.string.orbit_phone_notify_note),
+                        icon = lucide("bell"),
+                        searchable = false,
+                        onClick = onOpenNotificationSettings,
+                    )
+                    SettingsRowDivider(inset = false)
+                    SettingsNavRow(
+                        title = stringResource(R.string.orbit_speech_card_title),
+                        subtitle = stringResource(R.string.orbit_speech_row),
+                        icon = lucide("audio-lines"),
+                        searchable = false,
+                        onClick = onOpenSpeech,
+                    )
+                    SettingsRowDivider(inset = false)
+                    SettingsNavRow(
+                        title = stringResource(R.string.orbit_channels_title),
+                        subtitle = stringResource(R.string.orbit_channels_row),
+                        icon = lucide("message-circle"),
+                        searchable = false,
+                        onClick = onOpenChannels,
+                    )
+                }
+            }
+
+            Column {
+                SettingsSectionTitle(
+                    text = stringResource(R.string.orbit_section_device),
+                    icon = lucide("smartphone"),
+                )
+                SettingsCard(backgroundColor = cardColor) {
+                    SettingsNavRow(
+                        title = stringResource(R.string.orbit_phone_permissions),
+                        subtitle = stringResource(R.string.orbit_phone_permissions_row),
+                        icon = lucide("hand"),
+                        searchable = false,
+                        onClick = onOpenPhonePermissions,
+                    )
+                    SettingsRowDivider(inset = false)
+                    SettingsNavRow(
+                        title = stringResource(R.string.orbit_automation_settings_title),
+                        subtitle = stringResource(R.string.orbit_automation_settings_row),
+                        icon = lucide("scan-line"),
+                        searchable = false,
+                        onClick = onOpenAutomation,
+                    )
+                    SettingsRowDivider(inset = false)
+                    SettingsNavRow(
+                        title = stringResource(R.string.components_title),
+                        subtitle = stringResource(R.string.orbit_components_row),
+                        icon = lucide("boxes"),
+                        searchable = false,
+                        onClick = onOpenComponents,
+                    )
+                }
+            }
+
+            // What Orbit can use, and how its tool use is let through.
+            Column {
+                SettingsSectionTitle(
+                    text = stringResource(R.string.orbit_section_tools),
+                    icon = lucide("package"),
+                )
+                SettingsCard(backgroundColor = cardColor) {
+                    SettingsNavRow(
+                        title = stringResource(R.string.orbit_access_title),
+                        subtitle = stringResource(R.string.orbit_access_row_desc),
+                        icon = lucide("shield"),
+                        searchable = false,
+                        onClick = onOpenToolAccess,
+                        trailing = {
+                            fullAccess?.let { full ->
+                                Text(
+                                    text = stringResource(orbitAccessLabel(full)),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                        },
+                    )
+                    SettingsRowDivider(inset = false)
+                    SettingsNavRow(
+                        title = stringResource(R.string.orbit_packages_title),
+                        subtitle = stringResource(R.string.orbit_packages_row_desc),
+                        icon = lucide("package"),
+                        searchable = false,
+                        onClick = onOpenPackages,
+                    )
+                    SettingsRowDivider(inset = false)
+                    SettingsNavRow(
+                        title = stringResource(R.string.orbit_mcp_config_title),
+                        subtitle = stringResource(R.string.orbit_mcp_config_row),
+                        icon = lucide("server-cog"),
+                        searchable = false,
+                        onClick = onOpenMcp,
+                    )
+                }
+            }
+
+            // What Orbit keeps: memories brought in, backups and the space it takes.
+            Column {
+                SettingsSectionTitle(
+                    text = stringResource(R.string.orbit_section_data),
+                    icon = lucide("database"),
+                )
+                SettingsCard(backgroundColor = cardColor) {
+                    SettingsNavRow(
+                        title = stringResource(R.string.orbit_import_row),
+                        subtitle = stringResource(R.string.orbit_import_row_desc),
+                        icon = lucide("download"),
+                        searchable = false,
+                        onClick = onOpenImport,
+                    )
+                    SettingsRowDivider(inset = false)
+                    SettingsNavRow(
+                        title = stringResource(R.string.orbit_backup_title),
+                        subtitle = stringResource(R.string.orbit_backup_row),
+                        icon = lucide("database-backup"),
+                        searchable = false,
+                        onClick = onOpenBackup,
+                    )
+                    SettingsRowDivider(inset = false)
+                    SettingsNavRow(
+                        title = stringResource(R.string.storage_title),
+                        subtitle = stringResource(R.string.orbit_storage_row),
+                        icon = lucide("hard-drive"),
+                        searchable = false,
+                        onClick = onOpenStorage,
+                    )
+                }
+            }
+
+            Box(anchor(ROW_LOGS)) { OrbitLogExportSection(cardColor = cardColor) }
 
             Column {
                 SettingsSectionTitle(
@@ -1965,6 +1998,15 @@ private fun OrbitSettingsPage(
                     icon = lucide("code-xml"),
                 )
                 SettingsCard(backgroundColor = cardColor) {
+                    // What Orbit reads before each reply; open to everyone, it sits with the inner workings.
+                    SettingsNavRow(
+                        title = stringResource(R.string.orbit_prompt_layers),
+                        subtitle = stringResource(R.string.orbit_prompt_layers_desc),
+                        icon = lucide("layers"),
+                        searchable = false,
+                        onClick = onOpenPrompts,
+                    )
+                    SettingsRowDivider(inset = false)
                     SettingsSwitchRow(
                         modifier = anchor(SWITCH_DEVELOPER),
                         title = stringResource(R.string.orbit_developer_switch),
@@ -2048,6 +2090,7 @@ private const val SWITCH_SHARED_LOGIN = "shared_login"
 private const val SWITCH_DEVELOPER = "developer"
 private const val SWITCH_APP_LOCK = "app_lock"
 private const val ROW_CLEAR_LOGINS = "clear_logins"
+private const val ROW_LOGS = "logs"
 
 /** The rows of Orbit's settings page for its search (same names and notes as shown): pages, and switches on it. */
 @Composable
@@ -2080,9 +2123,13 @@ private fun orbitSettingsEntries(
     onOpenAgreement: () -> Unit,
 ): List<OrbitSettingsEntry> {
     val settingsTitle = stringResource(R.string.orbit_settings)
+    val display = stringResource(R.string.orbit_section_display)
+    val messages = stringResource(R.string.orbit_section_messages)
     val device = stringResource(R.string.orbit_section_device)
-    val prompts = stringResource(R.string.orbit_section_prompts)
+    val tools = stringResource(R.string.orbit_section_tools)
     val privacy = stringResource(R.string.orbit_section_privacy)
+    val data = stringResource(R.string.orbit_section_data)
+    val troubleshoot = stringResource(R.string.orbit_section_troubleshoot)
     val developer = stringResource(R.string.orbit_section_developer)
     @Composable
     fun entry(title: Int, subtitle: Int, icon: String, section: String, onClick: () -> Unit) =
@@ -2090,24 +2137,24 @@ private fun orbitSettingsEntries(
     return buildList {
         add(entry(R.string.orbit_models_title, R.string.orbit_models_entry_note, "brain", settingsTitle, onOpenModels))
         add(entry(R.string.orbit_context_title, R.string.orbit_context_row, "archive", settingsTitle, onOpenContext))
-        add(entry(R.string.orbit_notification_settings, R.string.orbit_phone_notify_note, "bell", settingsTitle, onOpenNotificationSettings))
-        add(entry(R.string.orbit_appearance_title, R.string.orbit_appearance_note, "paintbrush", settingsTitle, onOpenAppearance))
-        add(entry(R.string.pet_title, R.string.orbit_pet_row, "paw-print", settingsTitle, onOpenPet))
-        add(entry(R.string.orbit_text_settings_title, R.string.orbit_text_settings_row, "type", settingsTitle, onOpenText))
-        add(entry(R.string.language_settings, R.string.orbit_language_row, "languages", settingsTitle, onOpenLanguage))
-        add(entry(R.string.orbit_speech_card_title, R.string.orbit_speech_row, "audio-lines", settingsTitle, onOpenSpeech))
-        add(entry(R.string.orbit_phone_permissions, R.string.orbit_phone_permissions_row, "hand", settingsTitle, onOpenPhonePermissions))
-        add(entry(R.string.orbit_channels_title, R.string.orbit_channels_row, "message-circle", settingsTitle, onOpenChannels))
+        add(entry(R.string.orbit_appearance_title, R.string.orbit_appearance_note, "paintbrush", display, onOpenAppearance))
+        add(entry(R.string.pet_title, R.string.orbit_pet_row, "paw-print", display, onOpenPet))
+        add(entry(R.string.orbit_text_settings_title, R.string.orbit_text_settings_row, "type", display, onOpenText))
+        add(entry(R.string.language_settings, R.string.orbit_language_row, "languages", display, onOpenLanguage))
+        add(entry(R.string.orbit_notification_settings, R.string.orbit_phone_notify_note, "bell", messages, onOpenNotificationSettings))
+        add(entry(R.string.orbit_speech_card_title, R.string.orbit_speech_row, "audio-lines", messages, onOpenSpeech))
+        add(entry(R.string.orbit_channels_title, R.string.orbit_channels_row, "message-circle", messages, onOpenChannels))
+        add(entry(R.string.orbit_phone_permissions, R.string.orbit_phone_permissions_row, "hand", device, onOpenPhonePermissions))
         add(entry(R.string.orbit_automation_settings_title, R.string.orbit_automation_settings_row, "scan-line", device, onOpenAutomation))
-        add(entry(R.string.orbit_backup_title, R.string.orbit_backup_row, "database-backup", device, onOpenBackup))
-        add(entry(R.string.storage_title, R.string.orbit_storage_row, "hard-drive", device, onOpenStorage))
         add(entry(R.string.components_title, R.string.orbit_components_row, "boxes", device, onOpenComponents))
-        add(entry(R.string.orbit_prompt_layers, R.string.orbit_prompt_layers_desc, "layers", prompts, onOpenPrompts))
-        add(entry(R.string.orbit_packages_title, R.string.orbit_packages_row_desc, "package", prompts, onOpenPackages))
-        add(entry(R.string.orbit_mcp_config_title, R.string.orbit_mcp_config_row, "server-cog", prompts, onOpenMcp))
-        add(entry(R.string.orbit_access_title, R.string.orbit_access_row_desc, "shield", privacy, onOpenToolAccess))
+        add(entry(R.string.orbit_access_title, R.string.orbit_access_row_desc, "shield", tools, onOpenToolAccess))
+        add(entry(R.string.orbit_packages_title, R.string.orbit_packages_row_desc, "package", tools, onOpenPackages))
+        add(entry(R.string.orbit_mcp_config_title, R.string.orbit_mcp_config_row, "server-cog", tools, onOpenMcp))
         add(entry(R.string.orbit_vault_row, R.string.orbit_vault_row_desc, "key-round", privacy, onOpenVault))
-        add(entry(R.string.orbit_import_row, R.string.orbit_import_row_desc, "download", privacy, onOpenImport))
+        add(entry(R.string.orbit_import_row, R.string.orbit_import_row_desc, "download", data, onOpenImport))
+        add(entry(R.string.orbit_backup_title, R.string.orbit_backup_row, "database-backup", data, onOpenBackup))
+        add(entry(R.string.storage_title, R.string.orbit_storage_row, "hard-drive", data, onOpenStorage))
+        add(entry(R.string.orbit_prompt_layers, R.string.orbit_prompt_layers_desc, "layers", developer, onOpenPrompts))
         add(entry(R.string.nav_about, R.string.orbit_about_row, "info", settingsTitle, onOpenAbout))
         add(entry(R.string.nav_help, R.string.orbit_help_row, "life-buoy", settingsTitle, onOpenHelp))
         add(entry(R.string.agreement_title, R.string.orbit_agreement_row, "scroll-text", settingsTitle, onOpenAgreement))
@@ -2115,7 +2162,9 @@ private fun orbitSettingsEntries(
         add(entry(R.string.orbit_web_wait_title, R.string.orbit_web_wait_desc, "timer", device, onOpenAutomation))
         add(entry(R.string.keep_screen_on, R.string.keep_screen_on_description, "monitor-smartphone", device, onOpenAutomation))
         // Switches on the page itself: found, they are shown where they are.
-        add(entry(R.string.launch_mode_setting_title, R.string.launch_mode_setting_orbit, "rocket", settingsTitle) { onShowSwitch(SWITCH_LAUNCH_MODE) })
+        add(entry(R.string.launch_mode_setting_title, R.string.launch_mode_setting_orbit, "rocket", display) { onShowSwitch(SWITCH_LAUNCH_MODE) })
+        add(entry(R.string.orbit_log_export_app, R.string.orbit_log_export_app_desc, "scroll-text", troubleshoot) { onShowSwitch(ROW_LOGS) })
+        add(entry(R.string.orbit_log_export_tool_errors, R.string.orbit_log_export_tool_errors_desc, "file-warning", troubleshoot) { onShowSwitch(ROW_LOGS) })
         add(entry(R.string.orbit_app_lock, R.string.orbit_app_lock_desc, "fingerprint", privacy) { onShowSwitch(SWITCH_APP_LOCK) })
         add(entry(R.string.orbit_browser_share_login, R.string.orbit_browser_share_login_off, "link", privacy) { onShowSwitch(SWITCH_SHARED_LOGIN) })
         add(entry(R.string.orbit_developer_switch, R.string.orbit_developer_switch_desc, "code-xml", developer) { onShowSwitch(SWITCH_DEVELOPER) })

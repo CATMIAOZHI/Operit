@@ -40,6 +40,8 @@ import com.ai.assistance.operit.util.ChatMarkupRegex
 import com.ai.assistance.operit.util.ChatUtils
 import com.ai.assistance.operit.util.LocaleUtils
 import com.ai.assistance.operit.data.repository.MemoryAutoSaveCandidateRepository
+import com.ai.assistance.operit.api.chat.compaction.ContextCompaction
+import kotlinx.coroutines.sync.withLock
 import com.ai.assistance.operit.data.model.ChatMessageTimestampAllocator
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.CoroutineScope
@@ -121,6 +123,30 @@ class MessageCoordinationDelegate(
     // 保存总结任务的 Job 引用，用于取消
     private var summaryJob: Job? = null
     private var sendTriggeredSummaryJob: Job? = null
+
+    /**
+     * A summary written ahead in the background (OpenCode's background compaction). It covers the
+     * first [coveredCount] runtime messages and goes in at [insertAt]; it is only used while those
+     * messages are unchanged ([coveredFingerprint]) and the summary settings are the same.
+     */
+    private class HeldSummary(
+        val coveredCount: Int,
+        val coveredFingerprint: Long,
+        val insertAt: Int,
+        val config: ConversationSummaryConfig,
+        val job: kotlinx.coroutines.Deferred<ChatMessage?>,
+        /** Background summaries that failed since the last compaction, this one included once it has. */
+        val failures: Int,
+    ) {
+        val failed: Boolean
+            get() = job.isCompleted && (job.isCancelled || runCatching {
+                @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class) job.getCompleted()
+            }.getOrNull() == null)
+    }
+    private val heldSummaries = ConcurrentHashMap<String, HeldSummary>()
+    private val precomputeMutex = kotlinx.coroutines.sync.Mutex()
+    private val summaryHandoffLock = Any()
+    private val summaryGeneration = java.util.concurrent.atomic.AtomicLong()
 
     // A core serves foreground chats and Orbit task chats concurrently.
     private data class LastSendRoute(
@@ -432,13 +458,18 @@ class MessageCoordinationDelegate(
         attachments: List<com.ai.assistance.operit.data.model.AttachmentInfo> = emptyList(),
         turnOptions: ChatTurnOptions = ChatTurnOptions(),
         replyToMessage: ChatMessage? = null,
+        /** Sent with exactly this content (a message sent again) instead of building it from [messageText]. */
+        prebuiltUserMessage: ChatMessage? = null,
+        skipSummaryCheck: Boolean = false,
     ): Boolean {
         if (chatId.isBlank()) return false
         return sendMessageInternal(
             promptFunctionType = promptFunctionType,
+            skipSummaryCheck = skipSummaryCheck,
             chatIdOverride = chatId,
             messageTextOverride = messageText,
             attachmentsOverride = attachments,
+            prebuiltUserMessage = prebuiltUserMessage,
             // A message that carries its own quote leaves whatever the composer quotes now alone.
             turnOptions = if (replyToMessage != null) turnOptions.copy(useComposerReply = false) else turnOptions,
             replyToMessageOverride = replyToMessage,
@@ -610,6 +641,10 @@ class MessageCoordinationDelegate(
         if (chatId == null) {
             uiStateDelegate.showErrorMessage(context.getString(R.string.chat_no_active_conversation))
             return false
+        }
+        // A new message may again be compacted once if the provider rejects it as too long.
+        if (!isContinuation && !isAutoContinuation) {
+            com.ai.assistance.operit.api.chat.compaction.ContextOverflowRecovery.reset(chatId)
         }
         if (pendingModelPreparationByChatId.containsKey(chatId)) {
             messageProcessingDelegate.finishUnstartedTurn(chatId, turnOptions,
@@ -871,7 +906,21 @@ class MessageCoordinationDelegate(
 
                 if (isShouldGenerateSummary && chatHistoryDelegate.currentChatId.value == chatId) {
                     val snapshotMessages = currentMessages.toList()
-                    val insertPosition = chatHistoryDelegate.findProperSummaryPosition(snapshotMessages)
+                    val ceiling = (maxTokensForSend.toDouble() * tokenUsageThresholdForSend)
+                        .coerceIn(0.0, Int.MAX_VALUE.toDouble()).toInt()
+                    // A summary already written in the background is swapped in when it still fits.
+                    val heldSummary = if (isGroupOrchestrationTurn || isGroupChatSession(chatId)) {
+                        discardHeldSummary(chatId)
+                        null
+                    } else {
+                        takeHeldSummary(
+                            chatId, snapshotMessages, readSummaryConfig(chatId), ceiling,
+                            ContextCompaction.estimateTokens(pendingText),
+                        )
+                    }
+                    // The newest conversation stays word for word after the summary.
+                    val insertPosition = heldSummary?.insertAt
+                        ?: ContextCompaction.summaryPosition(snapshotMessages, ContextCompaction.keepTokens(ceiling))
                     val beforeTimestamp = snapshotMessages.getOrNull(insertPosition - 1)?.timestamp
                     val afterTimestamp = snapshotMessages.getOrNull(insertPosition)?.timestamp
 
@@ -946,6 +995,7 @@ class MessageCoordinationDelegate(
                         beforeTimestamp = beforeTimestamp,
                         afterTimestamp = afterTimestamp,
                         originalChatId = chatId,
+                        heldSummary = heldSummary?.job,
                         roleCardId = roleCardId,
                         chatModelConfigIdOverride = resolvedChatModelConfigIdOverride,
                         chatModelIndexOverride = resolvedChatModelIndexOverride,
@@ -1956,6 +2006,8 @@ class MessageCoordinationDelegate(
     suspend fun cancelSummaryForDestructiveMutation(chatId: String) {
         cancelSummaryInternal(chatId)
         lastSendRoutes.remove(chatId)
+        discardHeldSummary(chatId)
+        com.ai.assistance.operit.api.chat.compaction.CompactionSnapshots.clear(chatId)
     }
 
     /** The held message went to its turn: hide the waiting copy once the turn is over (its real message is in by then). */
@@ -2026,11 +2078,190 @@ class MessageCoordinationDelegate(
         if (reply != null && uiBridge.getReplyToMessage() == null) uiBridge.restoreReplyToMessage(reply)
     }
 
+    /**
+     * After a persisted turn: once the chat nears its compaction line, its summary is written in
+     * the background, so the next send that compacts can swap it in instead of waiting for one.
+     */
+    fun onTurnCompleted(chatId: String?, windowSize: Long) {
+        if (chatId.isNullOrBlank()) return
+        val generation = summaryGeneration.get()
+        // Hashing and measuring the whole history stays off the main thread.
+        coroutineScope.launch(Dispatchers.Default) {
+            try {
+                precomputeMutex.withLock { precomputeSummary(chatId, windowSize, generation) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AppLogger.w(TAG, "Background summary not started: ${e.message}")
+            }
+        }
+    }
+
+    private suspend fun precomputeSummary(chatId: String, windowSize: Long, generation: Long) {
+        if (summaryGeneration.get() != generation) return
+        if (chatHistoryDelegate.currentChatId.value != chatId) return
+        if (_isSummarizing.value || _isSendTriggeredSummarizing.value) return
+        if (isGroupChatSession(chatId)) return
+        val settings = resolveChatContextSettingsForRequest(lastSendRoutes[chatId]?.modelConfigId, chatId)
+        if (!settings.enableSummary) return
+        val ceiling = compactionCeiling(settings.effectiveContextLength, settings.summaryTokenThreshold.toDouble())
+        if (ceiling <= 0) return
+        if (windowSize < ceiling * ContextCompaction.PRECOMPUTE_RATIO || windowSize < ContextCompaction.PRECOMPUTE_MIN_TOKENS) return
+
+        val messages = chatHistoryDelegate.getRuntimeChatHistory(chatId)
+        if (messages.lastOrNull()?.sender != "ai") return
+        val summaryConfig = readSummaryConfig(chatId)
+        val service = getEnhancedAiService() ?: return
+        val insertAt = ContextCompaction.summaryPosition(messages, ContextCompaction.keepTokens(ceiling))
+        val fingerprint = ContextCompaction.fingerprint(messages)
+        // A send or edit can invalidate this preparation while the history/config loads.
+        // Register and start only while taking/discarding a held summary cannot interleave.
+        synchronized(summaryHandoffLock) {
+            if (summaryGeneration.get() != generation || chatHistoryDelegate.currentChatId.value != chatId ||
+                _isSummarizing.value || _isSendTriggeredSummarizing.value) return
+            val existing = heldSummaries[chatId]
+            val failures = existing?.let { it.failures + if (it.failed) 1 else 0 } ?: 0
+            if (existing != null) {
+                if (!existing.failed && heldStillFits(existing, messages, summaryConfig, ceiling, 0)) return
+                if (failures >= ContextCompaction.PRECOMPUTE_MAX_FAILURES) return
+                existing.job.cancel()
+            }
+            val job = coroutineScope.async(
+                Dispatchers.Default + com.ai.assistance.operit.api.chat.compaction.QuietSummary(),
+                start = kotlinx.coroutines.CoroutineStart.LAZY,
+            ) {
+                try {
+                    writeSummary(service, messages, chatId, autoContinue = false, isGroupChat = false, summaryConfig = summaryConfig)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    AppLogger.w(TAG, "Background summary failed: ${e.message}")
+                    null
+                }
+            }
+            heldSummaries[chatId] = HeldSummary(
+                coveredCount = messages.size,
+                coveredFingerprint = fingerprint,
+                insertAt = insertAt,
+                config = summaryConfig,
+                job = job,
+                failures = failures,
+            )
+            job.start()
+        }
+        AppLogger.d(TAG, "Background summary started: chatId=$chatId, window=$windowSize, ceiling=$ceiling")
+    }
+
+    /** The held summary still describes [messages], and what follows it fits beside it. */
+    private fun heldStillFits(
+        held: HeldSummary,
+        messages: List<ChatMessage>,
+        summaryConfig: ConversationSummaryConfig,
+        ceiling: Int,
+        pendingTokens: Int,
+    ): Boolean {
+        if (held.config != summaryConfig || messages.size < held.coveredCount || held.insertAt > held.coveredCount) return false
+        if (ContextCompaction.fingerprint(messages.subList(0, held.coveredCount)) != held.coveredFingerprint) return false
+        val tail = ContextCompaction.estimateTokens(messages.subList(held.insertAt, messages.size)).toLong() + pendingTokens
+        return tail <= ContextCompaction.heldTailLimit(ceiling)
+    }
+
+    /** Takes the chat's held summary when it can be swapped in; otherwise stops it and returns null. */
+    private fun takeHeldSummary(
+        chatId: String,
+        messages: List<ChatMessage>,
+        summaryConfig: ConversationSummaryConfig,
+        ceiling: Int,
+        pendingTokens: Int,
+    ): HeldSummary? {
+        val held = synchronized(summaryHandoffLock) {
+            summaryGeneration.incrementAndGet()
+            heldSummaries.remove(chatId)
+        } ?: return null
+        if (!held.failed && heldStillFits(held, messages, summaryConfig, ceiling, pendingTokens)) return held
+        held.job.cancel()
+        return null
+    }
+
+    /** Stops the chat's background summary; a compaction or an edit makes it useless. */
+    private suspend fun discardHeldSummary(chatId: String?) {
+        if (chatId == null) return
+        val discarded = synchronized(summaryHandoffLock) {
+            summaryGeneration.incrementAndGet()
+            heldSummaries.remove(chatId)
+        }
+        discarded?.job?.let { job ->
+            job.cancel()
+            try { job.join() } catch (_: CancellationException) {}
+        }
+    }
+
+    private fun compactionCeiling(contextLengthK: Float, threshold: Double): Int =
+        ((contextLengthK * 1024).toDouble() * threshold).coerceIn(0.0, Int.MAX_VALUE.toDouble()).toInt()
+
+    /**
+     * The chat's summary, written by resending the latest turn's request when the summary model is
+     * the model that served it (reading the conversation from the provider's cache), and by the
+     * separate summary request otherwise.
+     */
+    private suspend fun writeSummary(
+        service: EnhancedAIService,
+        messages: List<ChatMessage>,
+        chatId: String,
+        autoContinue: Boolean,
+        isGroupChat: Boolean,
+        summaryConfig: ConversationSummaryConfig,
+    ): ChatMessage? = AIMessageManager.summarizeMemory(
+        enhancedAiService = service,
+        messages = messages,
+        autoContinue = autoContinue,
+        isGroupChat = isGroupChat,
+        summaryConfig = summaryConfig,
+        chatId = chatId,
+        cachedGenerator = cachedSummaryGenerator(chatId, messages, isGroupChat),
+    )
+
+    private suspend fun cachedSummaryGenerator(
+        chatId: String,
+        messages: List<ChatMessage>,
+        isGroupChat: Boolean,
+    ): (suspend (ConversationSummaryConfig) -> String?)? {
+        if (isGroupChat || com.ai.assistance.operit.core.chat.hooks.SummaryHookRegistry.hasHooks()) return null
+        val snapshot = com.ai.assistance.operit.api.chat.compaction.CompactionSnapshots.forConversation(chatId, messages)
+            ?: return null
+        val chatService = EnhancedAIService.getChatInstance(context, chatId)
+        val summaryModel = try {
+            chatService.summaryModelConfig()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return null
+        }
+        if (summaryModel.id != snapshot.modelConfig.id || summaryModel.modelName != snapshot.modelConfig.modelName) return null
+        return { config ->
+            try {
+                val english = LocaleUtils.usesEnglishPrompt(context)
+                val rules = FunctionalPrompts.buildSummarySystemPrompt(null, english, config)
+                chatService.generateCachedSummary(snapshot, ContextCompaction.checkpointInstruction(rules, english))
+            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                AppLogger.w(TAG, "Summary through the chat's cache timed out; using the summary request")
+                null
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AppLogger.w(TAG, "Summary through the chat's cache failed; using the summary request: ${e.message}")
+                null
+            }
+        }
+    }
+
     private fun launchSummaryBeforeSend(
         snapshotMessages: List<ChatMessage>,
         beforeTimestamp: Long?,
         afterTimestamp: Long?,
         originalChatId: String?,
+        /** A summary written ahead in the background for exactly these messages, awaited instead of a new one. */
+        heldSummary: kotlinx.coroutines.Deferred<ChatMessage?>? = null,
         roleCardId: String?,
         chatModelConfigIdOverride: String? = null,
         chatModelIndexOverride: Int? = null,
@@ -2042,6 +2273,7 @@ class MessageCoordinationDelegate(
         onSettled: (Throwable?) -> Unit = {},
     ) {
         if (snapshotMessages.isEmpty() || originalChatId == null) {
+            heldSummary?.cancel()
             onSettled(null)
             return
         }
@@ -2066,13 +2298,24 @@ class MessageCoordinationDelegate(
                 val isGroupChat = currentChat?.characterGroupId != null
 
                 val summaryConfig = readSummaryConfig(originalChatId)
-                val summaryMessage = AIMessageManager.summarizeMemory(
-                    enhancedAiService = service,
+                val heldMessage = heldSummary?.let { held ->
+                    try {
+                        held.await()
+                    } catch (e: CancellationException) {
+                        held.cancel()
+                        // Only this send's cancellation stops it; a held summary that was stopped is written again.
+                        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                        null
+                    }
+                }
+                if (heldMessage != null) AppLogger.d(TAG, "Swapped in the summary written in the background: chatId=$originalChatId")
+                val summaryMessage = heldMessage ?: writeSummary(
+                    service = service,
                     messages = snapshotMessages,
                     chatId = originalChatId,
                     autoContinue = false,
                     isGroupChat = isGroupChat,
-                    summaryConfig = summaryConfig
+                    summaryConfig = summaryConfig,
                 ) ?: error(context.getString(R.string.chat_summarize_failed_no_valid_summary))
 
                 val currentChatId = chatHistoryDelegate.currentChatId.value
@@ -2186,6 +2429,8 @@ class MessageCoordinationDelegate(
                 uiStateDelegate.showErrorMessage(context.getString(R.string.chat_ai_service_unavailable_summarize))
                 return false
             }
+            // This compaction replaces any summary still being written in the background.
+            discardHeldSummary(currentChatId)
 
             val currentMessages =
                 currentChatId?.let { chatHistoryDelegate.getRuntimeChatHistory(it) }.orEmpty()
@@ -2194,22 +2439,29 @@ class MessageCoordinationDelegate(
                 return false
             }
 
-            val summaryInsertReferenceMessages = currentMessages
+            // A reply rejected as too long before it wrote anything is deleted when its turn ends,
+            // so it can be no anchor for the summary.
+            val summaryInsertReferenceMessages = currentMessages.filterNot {
+                it.sender == "ai" && it.completedAt <= 0L && it.content.isBlank()
+            }
+            val contextSettings = resolveChatContextSettingsForRequest(effectiveChatModelConfigIdOverride, currentChatId!!)
+            val ceiling = compactionCeiling(contextSettings.effectiveContextLength, contextSettings.summaryTokenThreshold.toDouble())
+            // The newest conversation stays word for word after the summary.
             val insertPosition =
-                chatHistoryDelegate.findProperSummaryPosition(summaryInsertReferenceMessages)
+                ContextCompaction.summaryPosition(summaryInsertReferenceMessages, ContextCompaction.keepTokens(ceiling))
             val beforeTimestamp =
                 summaryInsertReferenceMessages.getOrNull(insertPosition - 1)?.timestamp
             val afterTimestamp =
                 summaryInsertReferenceMessages.getOrNull(insertPosition)?.timestamp
             val summaryConfig = readSummaryConfig(currentChatId)
             val summaryMessage =
-                AIMessageManager.summarizeMemory(
-                    service,
-                    currentMessages,
-                    autoContinue,
-                    effectiveIsGroupChat,
-                    summaryConfig,
-                    chatId = currentChatId
+                writeSummary(
+                    service = service,
+                    messages = currentMessages,
+                    chatId = currentChatId,
+                    autoContinue = autoContinue,
+                    isGroupChat = effectiveIsGroupChat,
+                    summaryConfig = summaryConfig,
                 )
 
             if (summaryMessage != null) {

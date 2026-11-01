@@ -104,6 +104,13 @@ val LocalOrbitReactions = compositionLocalOf<Map<String, String>> { emptyMap() }
  */
 val LocalShowHiddenChatRows = compositionLocalOf { false }
 
+/** The user's messages in this Orbit chat that never reached the model, and how to send one again. */
+@androidx.compose.runtime.Immutable
+class OrbitUnsentMessages(val timestamps: Set<Long>, val resend: (ChatMessage) -> Unit)
+
+/** Set in an Orbit chat; a user bubble listed there shows a red sign that sends it again. */
+val LocalOrbitUnsentMessages = compositionLocalOf<OrbitUnsentMessages?> { null }
+
 /**
  * How far a note that rose above Orbit's message box (an "added" confirmation) reaches up, so the
  * round "back to the newest" button above the box can step over it instead of being covered.
@@ -470,17 +477,23 @@ object OrbitSpeech {
         return null
     }
 
+    /** The content of each Dynamic UI card of an Orbit message, in the order [pieceList] counts them. */
+    fun uiSources(content: String): List<String> = uiFence.findAll(of(content)).map { m ->
+        m.value.lines().drop(1).let { if (it.lastOrNull()?.trim() == "```") it.dropLast(1) else it }.joinToString("\n").trim()
+    }.toList()
+
     /**
      * [pieces] with what each bubble is: the words (split at message breaks and around Dynamic UI
-     * cards), each Dynamic UI card, then each tool card. [timestamp] is the message's.
+     * cards), each Dynamic UI card, then each tool card. [timestamp] is the message's. [uiOffset]
+     * is how many Dynamic UI cards come before [shown] when it is only a part of its message.
      */
-    fun pieceList(shown: String, timestamp: Long, english: Boolean): List<OrbitPiece> {
+    fun pieceList(shown: String, timestamp: Long, english: Boolean, uiOffset: Int = 0): List<OrbitPiece> {
         val whole = timestamp.toString()
         if (!shown.contains("message_break", ignoreCase = true) && !shown.contains("```$ORBIT_CARD_FENCE\n") &&
             !shown.contains("```a2ui")) return listOf(OrbitPiece(shown, whole, null, true))
         val (parts, cards) = bubbles(shown)
         val out = mutableListOf<OrbitPiece>()
-        var ui = 0
+        var ui = uiOffset
         parts.forEach { part ->
             var at = 0
             fun words(text: String) { text.trim().takeIf { it.isNotEmpty() }?.let { out += OrbitPiece(it, whole, null, false) } }
@@ -673,19 +686,39 @@ fun rememberOrbitLiveSpeech(message: ChatMessage?): androidx.compose.runtime.Sta
             }
         }
         var shownAt = 0L
+        var dirty = false
         suspend fun show() {
+            dirty = false
             val snapshot = tracker.currentContent().toString()
             value = timestamp to kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { OrbitSpeech.live(snapshot) }
+            shownAt = android.os.SystemClock.uptimeMillis()
+        }
+        // One refresher shows the latest text at most every 200 ms, and also when no next chunk
+        // comes: the stream stays open while a tool runs. Only one clean-up runs at a time.
+        val wake = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.CONFLATED)
+        val refresher = launch {
+            for (ignored in wake) {
+                val wait = 200 - (android.os.SystemClock.uptimeMillis() - shownAt)
+                if (wait > 0) kotlinx.coroutines.delay(wait)
+                if (dirty) {
+                    drainRevisions()
+                    show()
+                }
+            }
         }
         try {
+            var yieldedAt = android.os.SystemClock.uptimeMillis()
             stream.asFlow().collect { chunk ->
                 drainRevisions()
                 tracker.append(chunk)
                 processedChars += chunk.length
+                dirty = true
+                wake.trySend(Unit)
+                // A long reply replays all at once when the chat is reopened; let the UI breathe.
                 val now = android.os.SystemClock.uptimeMillis()
-                if (now - shownAt >= 200) {
-                    shownAt = now
-                    show()
+                if (now - yieldedAt >= 8) {
+                    yieldedAt = now
+                    kotlinx.coroutines.yield()
                 }
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -693,6 +726,10 @@ fun rememberOrbitLiveSpeech(message: ChatMessage?): androidx.compose.runtime.Sta
         } catch (_: Exception) {
             // The sending service reports stream errors; this only feeds the display.
         }
+        // The final text must not be followed by a late, older one from the refresher.
+        refresher.cancel()
+        refresher.join()
+        wake.close()
         drainRevisions()
         show()
     }

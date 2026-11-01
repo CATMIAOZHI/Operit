@@ -166,6 +166,9 @@ class ChatServiceCore(
             addMessageToChat = { chatId, message ->
                 chatHistoryDelegate.addMessageToChat(message, chatId)
             },
+            removeResentOriginal = { chatId, timestamp ->
+                chatHistoryDelegate.removeResentLeftovers(chatId, listOf(timestamp))
+            },
             saveCurrentChat = {
                 val (inputTokens, outputTokens) = tokenStatisticsDelegate.getCumulativeTokenCounts()
                 val windowSize = tokenStatisticsDelegate.getLastCurrentWindowSize()
@@ -193,6 +196,9 @@ class ChatServiceCore(
                         windowSize,
                         chatIdOverride = chatId
                     )
+                }
+                if (turnOptions.persistTurn && !turnOptions.isSubTask && !turnOptions.isCollaborationAgent) {
+                    messageCoordinationDelegate.onTurnCompleted(chatId, windowSize)
                 }
                 additionalOnTurnComplete?.invoke(
                     chatId,

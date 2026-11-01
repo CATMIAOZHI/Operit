@@ -20,7 +20,7 @@
 
 一起读一本书时，先用 `copy` 把要读的章节拷过来，之后就不用每次都问「阅读」要。
 拷过来的每行是 `[n] 原文`，`n` 和 `write_comments` 用的段落号一样。
-用 `orbit_file read` 读这些文件，用 `grep_code`（`environment=android`，`path` 填 `copy` 返回的 `absolute_folder`）在整本书里找人名、地名、某句话出现在哪；搜到的完整路径可以直接给 `orbit_file read`。
+用 `read_file` 或 `read_file_part` 读这些文件（`environment=android`，`path` 填 `absolute_folder` 下的完整路径），用 `grep_code`（`path` 填 `absolute_folder`）在整本书里找人名、地名、某句话出现在哪；搜到的完整路径可以直接拿去读。
 「阅读」没缓存的章节要从书源网站下载，所以一次拷几章到二十章，按返回的 `next_chapter` 接着拷，不要一口气拷整本。
 「阅读」里换了书源或改了正文，段落号可能变；写段评前如果拿不准，用 `orbit_reading read` 再读一遍这一章。
 
@@ -58,7 +58,7 @@
 
 ## 你自己的阅读笔记
 
-`orbit_reading` 不替你保存笔记和小结，都由你自己用 `orbit_file` 记。
+`orbit_reading` 不替你保存笔记和小结，都由你自己记：新建用 `write_file`，修改用 `edit_file`。
 建议都放在 `copy` 返回的 `reading_folder` 下面：`summaries-*.md` 放每章小结，`notes.md` 放读到哪、人物表、用户对这本书的看法、你们约好的段评写法。
 怎么分文件、写什么由你决定；下次接着读时，先读自己的笔记和小结再继续。
 这些文件会出现在文件库里，用户也能看到。

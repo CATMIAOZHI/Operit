@@ -59,6 +59,8 @@ private enum class PhonePermission(
     LOCATION(R.string.orbit_phone_location, R.string.orbit_phone_location_note, "map-pin",
         listOf(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION)),
     BATTERY(R.string.orbit_phone_battery, R.string.orbit_phone_battery_note, "battery"),
+    OVERLAY(R.string.orbit_permission_name_overlay, R.string.orbit_overlay_card_note, "layers"),
+    ACCESSIBILITY(R.string.orbit_permission_name_accessibility, R.string.orbit_accessibility_card_note, "accessibility"),
 }
 
 @Composable
@@ -179,6 +181,8 @@ private fun PhonePermissionsPage(
             PhonePermission.NOTIFY -> Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, app.packageName)
             PhonePermission.NOTIFICATION_READ -> Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
             PhonePermission.BATTERY -> Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+            PhonePermission.OVERLAY -> Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${app.packageName}"))
+            PhonePermission.ACCESSIBILITY -> Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
             else -> Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${app.packageName}"))
         }
         try {
@@ -255,6 +259,14 @@ private fun PhonePermissionsPage(
                     TextButton(enabled = pending == null && result != null, onClick = {
                         if (kind == PhonePermission.BATTERY && granted != true) {
                             if (!OrbitPermissionCards.openBatteryExemption(context)) openSettings(kind)
+                        } else if (kind == PhonePermission.ACCESSIBILITY && granted != true) {
+                            // The bundled service app first (or a newer copy), then its switch in the system settings.
+                            scope.launch {
+                                val state = withContext(Dispatchers.IO) { OrbitPermissionCards.accessibilityState(app) }
+                                if (!state.installed || state.updateNeeded) {
+                                    com.ai.assistance.operit.core.tools.system.AccessibilityProviderInstaller.launchInstall(app)
+                                } else openSettings(kind)
+                            }
                         } else if (settings || activity == null) {
                             openSettings(kind)
                         } else {
@@ -309,6 +321,8 @@ private fun PhonePermission.granted(context: Context): Boolean = when (this) {
     PhonePermission.NOTIFY -> NotificationManagerCompat.from(context).areNotificationsEnabled()
     PhonePermission.NOTIFICATION_READ -> context.packageName in NotificationManagerCompat.getEnabledListenerPackages(context)
     PhonePermission.BATTERY -> context.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(context.packageName)
+    PhonePermission.OVERLAY -> Settings.canDrawOverlays(context)
+    PhonePermission.ACCESSIBILITY -> OrbitPermissionCards.accessibilityState(context).ready
     PhonePermission.LOCATION -> permissions.any { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }
     else -> permissions.all { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }
 }

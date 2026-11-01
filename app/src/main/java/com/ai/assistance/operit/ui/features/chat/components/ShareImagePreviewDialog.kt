@@ -50,7 +50,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
+import com.ai.assistance.operit.ui.features.orbit.OrbitAwareDialog
 import coil.compose.rememberAsyncImagePainter
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.util.AppLogger
@@ -74,7 +74,7 @@ fun ShareImagePreviewDialog(
     onShare: () -> Unit,
     onSave: () -> Unit,
 ) {
-    Dialog(onDismissRequest = onDismiss) {
+    OrbitAwareDialog(onDismissRequest = onDismiss) {
         Surface(
             modifier = Modifier.fillMaxWidth().fillMaxHeight(0.92f),
             shape = RoundedCornerShape(20.dp),

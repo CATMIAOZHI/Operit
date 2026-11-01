@@ -1,5 +1,6 @@
 package com.ai.assistance.operit.ui.features.chat.components
 
+import com.ai.assistance.operit.ui.features.orbit.OrbitAwareAlertDialog
 import android.content.Context
 import android.widget.Toast
 import androidx.compose.animation.core.RepeatMode
@@ -26,6 +27,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
@@ -143,6 +145,9 @@ import kotlinx.coroutines.withTimeoutOrNull
 /**
  * 清理复制文本中的内部标记，保留Markdown格式和纯文本内容
  */
+/** Room on the empty side of a message for the mark and "select to here" while picking. */
+private val ORBIT_PICK_SIDE = 76.dp
+
 internal fun cleanMessageContentForCopy(content: String): String {
     return content
         // Provider元数据必须保留在消息中供后续轮次使用，但不能暴露在复制内容中
@@ -252,6 +257,7 @@ fun ChatArea(
     selectedMessageIndices: Set<Int> = emptySet(), // 已选中的消息索引集合
     onToggleMultiSelectMode: ((Int?) -> Unit)? = null, // 切换多选模式的回调，可传入要初始选中的消息索引
     onToggleMessageSelection: ((Int) -> Unit)? = null, // 切换消息选中状态的回调
+    onSelectMessageRangeTo: ((Int) -> Unit)? = null, // Orbit：把已选消息到这条之间的都选上
     horizontalPadding: Dp = 16.dp, // 水平内边距，可自定义
     bubbleUserImageStyle: BubbleImageStyleConfig? = null,
     bubbleAiImageStyle: BubbleImageStyleConfig? = null,
@@ -445,6 +451,10 @@ fun ChatArea(
                             isMultiSelectMode = isMultiSelectMode,
                             isSelected = selectedMessageIndices.contains(renderIndex),
                             onToggleSelection = { onToggleMessageSelection?.invoke(renderIndex) },
+                            onSelectRangeHere = if (onSelectMessageRangeTo != null && selectedMessageIndices.isNotEmpty() &&
+                                !selectedMessageIndices.contains(renderIndex)) {
+                                { onSelectMessageRangeTo(renderIndex) }
+                            } else null,
                             onToggleMultiSelectMode = onToggleMultiSelectMode,
                             messageIndex = renderIndex,
                             bubbleUserImageStyle = bubbleUserImageStyle,
@@ -655,6 +665,7 @@ private fun MessageItem(
     isMultiSelectMode: Boolean = false, // 是否处于多选模式
     isSelected: Boolean = false, // 是否被选中
     onToggleSelection: (() -> Unit)? = null, // 切换选中状态的回调
+    onSelectRangeHere: (() -> Unit)? = null, // 不为空时显示「选到这里」
     onToggleMultiSelectMode: ((Int?) -> Unit)? = null, // 切换多选模式的回调，可传入要初始选中的消息索引
     messageIndex: Int, // 消息索引，用于进入多选时自动选中
     bubbleUserImageStyle: BubbleImageStyleConfig? = null,
@@ -823,9 +834,16 @@ private fun MessageItem(
         ) {
         // While picking messages the whole row is one choice; its cards and links do not take
         // screen-reader actions underneath it.
+        // The empty side keeps room for the round mark and "select to here", so they never sit on
+        // the message.
         Column(
             if (orbitMessageHost != null && isMultiSelectMode && isActionable && !isHiddenUserMessage) {
                 Modifier.clearAndSetSemantics {}
+                    .padding(
+                        start = if (message.sender == "user") ORBIT_PICK_SIDE else 0.dp,
+                        end = if (message.sender == "user") 0.dp else ORBIT_PICK_SIDE,
+                    )
+                    .heightIn(min = 56.dp)
             } else Modifier
         ) {
             if (quietOrbitReply) {
@@ -923,25 +941,71 @@ private fun MessageItem(
                     },
             ) {
                 val tint = MaterialTheme.colorScheme.primary
-                Box(
-                    Modifier.align(if (message.sender == "user") Alignment.CenterStart else Alignment.CenterEnd)
-                        .padding(horizontal = 8.dp).size(22.dp)
-                        .clip(androidx.compose.foundation.shape.CircleShape)
-                        .then(
-                            if (isSelected) Modifier.background(tint)
-                            else Modifier.border(1.5.dp, MaterialTheme.colorScheme.outline, androidx.compose.foundation.shape.CircleShape)
-                        ),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    if (isSelected) {
-                        Icon(Icons.Default.Check, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onPrimary)
+                val mark: @Composable () -> Unit = {
+                    // Its own tap, so a finger on the mark picks this row even where the touch area of
+                    // "select to here" below reaches up.
+                    Box(
+                        Modifier.size(22.dp)
+                            .clip(androidx.compose.foundation.shape.CircleShape)
+                            // The row already reads as one selectable item to a screen reader.
+                            .clearAndSetSemantics {}
+                            .clickable(
+                                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                                indication = null,
+                                onClickLabel = selectLabel,
+                            ) { onToggleSelection?.invoke() }
+                            .then(
+                                if (isSelected) Modifier.background(tint)
+                                else Modifier.border(1.5.dp, MaterialTheme.colorScheme.outline, androidx.compose.foundation.shape.CircleShape)
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (isSelected) {
+                            Icon(Icons.Default.Check, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onPrimary)
+                        }
                     }
+                }
+                // Like QQ: an unpicked row offers "select to here", which picks every message between.
+                // It sits under the mark, on the side the bubble leaves empty.
+                val rangeHere: @Composable () -> Unit = {
+                    onSelectRangeHere?.let { selectRange ->
+                        // Only its own pill takes the tap; a bigger touch area would reach the mark above.
+                        androidx.compose.runtime.CompositionLocalProvider(
+                            androidx.compose.material3.LocalMinimumInteractiveComponentSize provides androidx.compose.ui.unit.Dp.Unspecified,
+                        ) {
+                        Surface(
+                            onClick = selectRange,
+                            shape = RoundedCornerShape(50),
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                        ) {
+                            Text(
+                                stringResource(R.string.orbit_selection_range_here),
+                                style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                modifier = Modifier.widthIn(max = 64.dp).padding(horizontal = 6.dp, vertical = 4.dp),
+                            )
+                        }
+                        }
+                    }
+                }
+                // Same size whether "select to here" shows or not, so the mark never moves under a finger.
+                Column(
+                    Modifier.align(if (message.sender == "user") Alignment.CenterStart else Alignment.CenterEnd)
+                        .requiredWidth(ORBIT_PICK_SIDE),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    mark()
+                    Box(Modifier.height(26.dp), contentAlignment = Alignment.Center) { rangeHere() }
                 }
             }
         }
 
         val messageMenu: @Composable (@Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) -> Unit = { content ->
-            if (orbitLook) {
+            // Orbit's developer view is still in the Orbit: its menu follows the back swipe too.
+            if (orbitLook || showHiddenRows) {
                 com.ai.assistance.operit.ui.features.orbit.OrbitDropdownMenu(
                     expanded = showContextMenu,
                     onDismissRequest = { showContextMenu = false },
@@ -984,6 +1048,50 @@ private fun MessageItem(
                     modifier = Modifier.padding(vertical = 4.dp),
                     color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
                 )
+            }
+            // A message that did not go out can be sent again from here too (or deleted below).
+            val unsent = LocalOrbitUnsentMessages.current
+            if (orbitLook && message.sender == "user" && unsent != null && message.timestamp in unsent.timestamps) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.orbit_resend), style = MaterialTheme.typography.bodyMedium) },
+                    onClick = {
+                        showContextMenu = false
+                        unsent.resend(message)
+                    },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    },
+                    modifier = Modifier.heightIn(min = 44.dp),
+                )
+                if (onDeleteMessage != null) {
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                stringResource(R.string.delete),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        },
+                        onClick = {
+                            showContextMenu = false
+                            showDeleteMessageConfirmDialog = true
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        },
+                        modifier = Modifier.heightIn(min = 44.dp),
+                    )
+                }
             }
             // A card has no words to copy or read out.
             if (!isHiddenUserMessage && menuPiece == null) {
@@ -1461,7 +1569,7 @@ private fun MessageItem(
         }
 
         if (enableDialogs && isHiddenUserMessage && showHiddenUserMessageDialog) {
-            AlertDialog(
+            OrbitAwareAlertDialog(
                 onDismissRequest = { showHiddenUserMessageDialog = false },
                 title = { Text(text = stringResource(R.string.chat_hidden_user_message_badge)) },
                 text = {
@@ -1493,7 +1601,7 @@ private fun MessageItem(
         }
 
         if (showDeleteMessageConfirmDialog) {
-            AlertDialog(
+            OrbitAwareAlertDialog(
                 onDismissRequest = { showDeleteMessageConfirmDialog = false },
                 title = { Text(text = stringResource(R.string.confirm_delete)) },
                 text = { Text(text = stringResource(R.string.chat_delete_message_confirm_message)) },

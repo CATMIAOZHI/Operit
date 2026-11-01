@@ -146,9 +146,10 @@
     <string name="orbit_activity_tool">Using a tool</string>
     <string name="orbit_profile_tab_browser">Browser</string>
     <string name="orbit_profile_browser_count">%1$d browser tasks</string>
-    <string name="orbit_profile_browser_empty">No browser tasks right now</string>
+    <string name="orbit_profile_browser_empty">No browser or background app tasks right now</string>
     <string name="orbit_profile_browser_gone">This page is closed</string>
-    <string name="orbit_profile_browser_empty_desc">When %1$s uses the browser, its pages show here; tap one to watch or take over.</string>
+    <string name="orbit_profile_browser_empty_desc">When %1$s uses the browser or works in an app in the background, it shows here; tap one to watch or take over.</string>
+    <string name="orbit_profile_phone_count">%1$d background app tasks</string>
     <string name="orbit_options_send_failed">Not sent. Tap again to retry</string>
     <string name="orbit_floating_card_title">Open this card in the app</string>
     <string name="orbit_floating_card_sub">Passwords, approvals and sign-ins don\'t work in the floating window</string>
@@ -170,6 +171,9 @@
     <string name="orbit_link_confirm_open">Open</string>
     <string name="orbit_send_lost_restored">Message not sent; it\'s back in the input box</string>
     <string name="orbit_send_lost">Message not sent: %1$s</string>
+    <string name="orbit_resend">Send again</string>
+    <string name="orbit_send_failed_mark">Not sent. Tap to send again</string>
+    <string name="orbit_resend_busy">Still replying. Send it again when it\'s done</string>
     <string name="orbit_pet_section_look">Appearance</string>
     <string name="orbit_pet_section_show">Where it shows</string>
     <string name="orbit_pet_section_reset">Reset</string>
@@ -185,4 +189,24 @@
     <string name="orbit_attach_location">Location</string>
     <string name="orbit_attach_region">Region</string>
     <string name="orbit_floating_attach_note">To send photos or files, go back to Orbit\'s chat page</string>
+    <string name="orbit_phone_card_title">Background screen</string>
+    <string name="orbit_phone_card_summary">[Background screen: %1$s]</string>
+    <string name="orbit_phone_card_working">%1$s is working in the background, not on your screen</string>
+    <string name="orbit_phone_card_closed">Background screen closed</string>
+    <string name="orbit_phone_card_done">%1$s is done; it stays up to 5 more minutes</string>
+    <string name="orbit_phone_card_watch">Watch</string>
+    <string name="orbit_phone_watch_back">Back</string>
+    <string name="orbit_phone_watch_hint">Watching only. Tap Take over to use it yourself</string>
+    <string name="orbit_permission_name_overlay">Display over other apps</string>
+    <string name="orbit_permission_name_accessibility">Accessibility service</string>
+    <string name="orbit_overlay_card_note">Needed to show you the browser full screen or let you take over a page</string>
+    <string name="orbit_accessibility_card_note">A small app bundled with Operit. Install it, then turn on its accessibility service. Reading and tapping the screen use it when there is no ADB or Root</string>
+    <string name="orbit_accessibility_install">Install the accessibility component</string>
+    <string name="orbit_accessibility_install_action">Install</string>
+    <string name="orbit_accessibility_update">Update</string>
+    <string name="orbit_accessibility_enable">Turn on the accessibility service</string>
+    <string name="orbit_browser_overlay_then_back">Allow Operit to display over other apps; the page opens by itself when you come back</string>
+    <string name="orbit_page_card_mcp_title">MCP settings</string>
+    <string name="orbit_page_card_mcp_sub">Add, edit or switch MCP servers on and off</string>
+    <string name="orbit_page_card_mcp_open">Open MCP settings</string>
 </resources>

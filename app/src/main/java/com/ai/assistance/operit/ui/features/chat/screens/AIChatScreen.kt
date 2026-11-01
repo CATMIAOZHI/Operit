@@ -1,5 +1,6 @@
 package com.ai.assistance.operit.ui.features.chat.screens
 
+import com.ai.assistance.operit.ui.features.orbit.OrbitAwareAlertDialog
 import com.ai.assistance.operit.ui.features.chat.components.rememberChatAppearance
 
 import android.os.Build
@@ -432,7 +433,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
 
     // 模型建议对话框
     if (showModelSuggestionDialog) {
-        AlertDialog(
+        OrbitAwareAlertDialog(
             onDismissRequest = { showModelSuggestionDialog = false },
             title = { Text(stringResource(R.string.model_suggestion_title)) },
             text = { Text(stringResource(R.string.model_suggestion_message)) },
@@ -566,41 +567,48 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
         }
     }
     val localizedUserRoleName = stringResource(R.string.message_role_user)
+    // Only the two names matter: the chat list and the run record change on every saved message
+    // or tool call, which must not rebuild every row of a running subagent's transcript.
+    val transcriptParentName =
+        if (!isReadOnlyTranscript) ""
+        else currentChatView?.characterCardName
+            ?: chatHistories.firstOrNull { it.id == currentChatView?.parentChatId }?.characterCardName
+            ?: activeCharacterCard?.name
+            ?: ""
+    val transcriptSubagentName =
+        remember(isReadOnlyTranscript, currentSubagentRun?.agentConfigSnapshot, currentSubagentRun?.agentProfileId) {
+            if (isReadOnlyTranscript) resolveSubagentAgentName(currentSubagentRun) else ""
+        }
+    // Renamed rows by the message they come from, so an unchanged message keeps the same row.
+    val transcriptRows =
+        remember(transcriptParentName, transcriptSubagentName, localizedUserRoleName) {
+            java.util.IdentityHashMap<com.ai.assistance.operit.data.model.ChatMessage, com.ai.assistance.operit.data.model.ChatMessage>()
+        }
     val displayedChatHistory =
         remember(
             chatHistory,
             isReadOnlyTranscript,
-            currentSubagentRun,
-            currentChatView?.characterCardName,
-            currentChatView?.parentChatId,
-            chatHistories,
-            activeCharacterCard,
-            localizedUserRoleName,
+            transcriptRows,
         ) {
             if (!isReadOnlyTranscript) {
                 chatHistory
             } else {
-                val parentCharacterName =
-                    currentChatView?.characterCardName
-                        ?: chatHistories
-                            .firstOrNull { it.id == currentChatView?.parentChatId }
-                            ?.characterCardName
-                        ?: activeCharacterCard?.name
-                        ?: ""
-                val subagentName = resolveSubagentAgentName(currentSubagentRun)
+                val previous = java.util.IdentityHashMap(transcriptRows)
+                transcriptRows.clear()
                 chatHistory.map { message ->
-                    val displayedRoleName =
-                        resolveSubagentTranscriptRoleName(
-                            message = message,
-                            parentAgentName = parentCharacterName,
-                            subagentName = subagentName,
-                            localizedUserRoleName = localizedUserRoleName,
-                        )
-                    if (displayedRoleName == message.roleName) {
-                        message
-                    } else {
-                        message.copy(roleName = displayedRoleName)
+                    val row = previous[message] ?: run {
+                        val displayedRoleName =
+                            resolveSubagentTranscriptRoleName(
+                                message = message,
+                                parentAgentName = transcriptParentName,
+                                subagentName = transcriptSubagentName,
+                                localizedUserRoleName = localizedUserRoleName,
+                            )
+                        if (displayedRoleName == message.roleName) message
+                        else message.copy(roleName = displayedRoleName)
                     }
+                    transcriptRows[message] = row
+                    row
                 }
             }
         }
@@ -1022,7 +1030,13 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                                 .matchParentSize()
                                 .graphicsLayer { translationY = -chatViewportTranslationYPx }
                     ) {
+                        // A long screenshot only scrolls the chat while nothing on this screen covers it.
+                        val longScreenshotEnabled =
+                            com.ai.assistance.operit.ui.features.chat.components.LocalLongScreenshotEnabled.current &&
+                                !isFloatingMode && isCurrentScreen && !showChatHistorySelector && !showCharacterSelector &&
+                                !showWebView && !showAiComputer && !isWorkspacePreparing && !showConfig
                         androidx.compose.runtime.CompositionLocalProvider(
+                            com.ai.assistance.operit.ui.features.chat.components.LocalLongScreenshotEnabled provides longScreenshotEnabled,
                             com.ai.assistance.operit.ui.features.chat.components.LocalOrbitTurnFloor provides orbitTurnFloor,
                             com.ai.assistance.operit.ui.features.chat.components.LocalOrbitBottomNoteLift provides
                                 with(density) { orbitNoteHeightPx.toDp() },
@@ -1630,7 +1644,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
 
     // Show popup message dialog when needed
     popupMessage?.let { message ->
-        AlertDialog(
+        OrbitAwareAlertDialog(
                 onDismissRequest = { actualViewModel.clearPopupMessage() },
                 title = { Text(stringResource(R.string.dialog_title_prompt)) },
                 text = { Text(message ?: "") },

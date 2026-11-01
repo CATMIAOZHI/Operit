@@ -154,7 +154,17 @@ internal object OrbitDeviceTools {
             .put("background_keep_alive", keep.keepAlive).put("battery_exemption", keep.battery))
         val access = runCatching { OrbitPermissionCards.deviceAccess(context) }.getOrNull()
         out.put(OrbitPermissionCards.DEVICE_ACCESS, JSONObject().put("on", access?.working ?: false)
-            .put("level", access?.level?.name?.lowercase() ?: "not_set"))
+            .put("level", access?.level?.name?.lowercase() ?: "not_set")
+            .put("background_phone_screen_supported", OrbitPermissionTools.PHONE_SCREEN_SUPPORTED)
+            .apply {
+                if (!OrbitPermissionTools.PHONE_SCREEN_SUPPORTED) put("note", "Android ${android.os.Build.VERSION.RELEASE}: " +
+                    "the background phone screen needs Android 10+, so phone_control cannot run here even with this on.")
+            })
+        val accessibility = runCatching { OrbitPermissionCards.accessibilityState(context) }.getOrNull()
+        out.put(OrbitPermissionCards.ACCESSIBILITY, JSONObject().put("on", accessibility?.ready ?: false)
+            .put("installed", accessibility?.installed ?: false)
+            .put("update_needed", accessibility?.updateNeeded ?: false)
+            .put("enabled", accessibility?.enabled ?: false))
         for (kind in OrbitPermissionCards.phoneKinds) {
             val entry = JSONObject().put("on", runCatching { OrbitPermissionCards.isOn(context, kind) }.getOrDefault(false))
             if (kind == OrbitPermissionCards.GEOFENCE) {

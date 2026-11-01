@@ -36,6 +36,9 @@ interface SummaryGenerateHook {
 object SummaryHookRegistry {
     private val summaryGenerateHooks = CopyOnWriteArrayList<SummaryGenerateHook>()
 
+    /** A plugin shapes summaries; a summary must then go through the request the hooks see. */
+    fun hasHooks(): Boolean = summaryGenerateHooks.isNotEmpty()
+
     @Synchronized
     fun registerSummaryGenerateHook(hook: SummaryGenerateHook) {
         unregisterSummaryGenerateHook(hook.id)

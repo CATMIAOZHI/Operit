@@ -116,7 +116,9 @@ private fun OrbitLockScreen(orbit: OrbitProfile?, resumed: Boolean) {
         }
     }
     // Back leaves the app as it would from Orbit's first page; it never skips the lock.
-    BackHandler { context.lockActivity()?.moveTaskToBack(true) }
+    // The lock's content follows the back swipe; its background stays, so nothing behind shows.
+    val leaveBack = rememberOrbitBackMotion()
+    OrbitBackHandler(leaveBack) { context.lockActivity()?.moveTaskToBack(true) }
     androidx.compose.material3.Surface(
         modifier = Modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background,
@@ -124,6 +126,7 @@ private fun OrbitLockScreen(orbit: OrbitProfile?, resumed: Boolean) {
     ) {
     androidx.compose.foundation.layout.BoxWithConstraints(
         Modifier.fillMaxSize()
+            .orbitDismissLayer(leaveBack)
             // Taps never reach anything behind the lock.
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
             .statusBarsPadding()

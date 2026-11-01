@@ -139,6 +139,8 @@ internal object OrbitTools {
         val files = com.ai.assistance.operit.features.orbit.OrbitPromptFiles
         // The handbook tells Orbit to read docs/ in its folder; put the built-in copy there first.
         com.ai.assistance.operit.features.orbit.OrbitDocs.ensure(context, orbit.id, useEnglish)
+        // Notebooks are read and edited with the app's file tools, which need a real file to open.
+        com.ai.assistance.operit.features.orbit.OrbitFiles.ensureTemplatesOnce(context, orbit.id)
         // File text is data inside our tags, so escape it the way memory notes are escaped.
         fun escape(text: String) = text.trim().replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         val handbook = "<orbit_handbook source=\"PROMPT.md\">\n${escape(files.prompt(context, orbit.id))}\n</orbit_handbook>"
@@ -175,12 +177,13 @@ internal object OrbitTools {
     private fun folderLine(context: Context, orbitId: String, useEnglish: Boolean): String {
         val root = OrbitPreferences.getInstance(context).orbitDir(orbitId).absolutePath
         return if (useEnglish) {
-            "Your Orbit folder is at $root. A short path such as files/a.md is $root/files/a.md. Save and refer to " +
-                "files by short path; use the full path with the app's file tools (environment=android, e.g. grep_code, " +
-                "read_file) and the local terminal. orbit_file takes either."
+            "Your Orbit folder is at $root. A short path such as files/a.md is $root/files/a.md. Refer to files by " +
+                "short path; use the full path with the app's file tools (environment=android: read_file, read_file_part, " +
+                "edit_file, write_file, delete_file, grep_code) and the local terminal. orbit_file takes either."
         } else {
-            "你的 Orbit 文件夹在 $root。短路径 files/a.md 就是 $root/files/a.md。保存和引用文件用短路径；" +
-                "用应用的文件工具（environment=android，比如 grep_code、read_file）或本地终端时用完整路径。orbit_file 两种都接受。"
+            "你的 Orbit 文件夹在 $root。短路径 files/a.md 就是 $root/files/a.md。引用文件用短路径；" +
+                "用应用的文件工具（environment=android：read_file、read_file_part、edit_file、write_file、delete_file、grep_code）" +
+                "或本地终端时用完整路径。orbit_file 两种都接受。"
         }
     }
 

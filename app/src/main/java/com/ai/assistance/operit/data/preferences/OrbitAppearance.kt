@@ -9,7 +9,7 @@ enum class OrbitColorMode { SYSTEM, LIGHT, DARK }
 /** Per-companion appearance, independent of the main application's theme preferences. */
 data class OrbitAppearance(
     val palette: OrbitChatPalette = OrbitChatPalette.AVATAR,
-    val avatarSize: OrbitAvatarSize = OrbitAvatarSize.LARGE,
+    val avatarSize: OrbitAvatarSize = OrbitAvatarSize.MEDIUM,
     val mode: OrbitColorMode = OrbitColorMode.SYSTEM,
     /**
      * Colors of the Orbit logo shown while there is no picture, as "#RRGGBB"; null uses the logo's
@@ -41,7 +41,7 @@ data class OrbitAppearance(
 
         fun fromJson(json: JSONObject?): OrbitAppearance = OrbitAppearance(
             palette = OrbitChatPalette.entries.firstOrNull { it.name == json?.optString("palette") } ?: OrbitChatPalette.AVATAR,
-            avatarSize = OrbitAvatarSize.entries.firstOrNull { it.name == json?.optString("avatarSize") } ?: OrbitAvatarSize.LARGE,
+            avatarSize = OrbitAvatarSize.entries.firstOrNull { it.name == json?.optString("avatarSize") } ?: OrbitAvatarSize.MEDIUM,
             mode = OrbitColorMode.entries.firstOrNull { it.name == json?.optString("mode") } ?: OrbitColorMode.SYSTEM,
             logoUserColor = normalizeColor(json?.optString("logoUserColor")),
             logoOrbitColor = normalizeColor(json?.optString("logoOrbitColor")),

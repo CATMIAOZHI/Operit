@@ -89,6 +89,8 @@ import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 private enum class OrbitProfileTab(val icon: String, val label: Int) {
@@ -138,6 +140,14 @@ internal fun OrbitProfilePage(
         browserWorks.values.filter { it.orbitId == orbit.id && !it.stopping && OrbitBrowserWatch.pageAlive(it) }
             .sortedByDescending { it.lastActionAt }
     }
+    // Only what the rows show, to the minute: the user's touches on a screen update it many times a second.
+    val apps by remember(orbit.id) {
+        com.ai.assistance.operit.core.tools.phone.PhoneBackgroundControl.screens.map { all ->
+            all.values.filter { it.orbitId == orbit.id && !it.stopping }
+                .sortedByDescending { it.lastUsedAt }
+                .map { AppRow(it.id, it.appLabel, it.control, it.doneAt != null, it.lastUsedAt / 60_000 * 60_000) }
+        }.distinctUntilChanged()
+    }.collectAsState(initial = emptyList())
     var tabIndex by rememberSaveable(orbit.id) { mutableIntStateOf(0) }
     val tab = OrbitProfileTab.entries[tabIndex]
     // A failed read shows an empty list; the profile stays usable.
@@ -225,7 +235,9 @@ internal fun OrbitProfilePage(
                 activitySection(who, activity, chatTurns, onOpenProcess)
             }
             OrbitProfileTab.APPROVALS -> approvalsSection(tasks, approvals, onOpenTask) { openApproval = it }
-            OrbitProfileTab.BROWSER -> browserSection(who, pages) { work ->
+            OrbitProfileTab.BROWSER -> browserSection(who, pages, apps, onOpenApp = { screen ->
+                com.ai.assistance.operit.core.tools.phone.PhoneBackgroundControl.watch(screen.id)
+            }) { work ->
                 if (OrbitBrowserWatch.pageAlive(work)) {
                     scope.launch { OrbitBrowserWatch.open(context, work.executorChatId) }
                 } else {
@@ -1000,13 +1012,27 @@ private fun LazyListScope.approvalsSection(
 internal fun relativeTime(time: Long): String =
     DateUtils.getRelativeTimeSpanString(time, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS).toString()
 
-/** The pages the Orbit has open in its browser; tapping one shows it, and the user can take over there. */
+/** A background screen as its row shows it; [usedAt] is to the minute. */
+private data class AppRow(
+    val id: String,
+    val label: String,
+    val control: com.ai.assistance.operit.core.tools.phone.PhoneBackgroundControl.Control,
+    val done: Boolean,
+    val usedAt: Long,
+)
+
+/**
+ * The pages the Orbit has open in its browser and the apps it runs on a background screen;
+ * tapping one shows it, and the user can take over there.
+ */
 private fun LazyListScope.browserSection(
     who: String,
     pages: List<OrbitBrowserWatch.Work>,
+    apps: List<AppRow>,
+    onOpenApp: (AppRow) -> Unit,
     onOpen: (OrbitBrowserWatch.Work) -> Unit,
 ) {
-    if (pages.isEmpty()) {
+    if (pages.isEmpty() && apps.isEmpty()) {
         item(key = "browser-empty") {
             EmptyHint(
                 stringResource(R.string.orbit_profile_browser_empty) + "\n" +
@@ -1015,6 +1041,29 @@ private fun LazyListScope.browserSection(
         }
         return
     }
+    if (apps.isNotEmpty()) {
+        item(key = "phone-count") { SectionTitle(stringResource(R.string.orbit_profile_phone_count, apps.size)) }
+        items(apps, key = { "phone-${it.id}" }) { screen ->
+            val label = remember(screen.label) { screen.label.replace(Regex("[\\r\\n\\[\\]<>]"), " ").trim() }
+            OrbitListRow(
+                icon = orbitIcon("smartphone"),
+                title = label.ifBlank { stringResource(R.string.orbit_phone_card_title) },
+                detail = when {
+                    // The user's control wins over "done", as on the full view.
+                    screen.control == com.ai.assistance.operit.core.tools.phone.PhoneBackgroundControl.Control.USER ->
+                        stringResource(R.string.orbit_browser_watch_yours)
+                    screen.control == com.ai.assistance.operit.core.tools.phone.PhoneBackgroundControl.Control.WAITING ->
+                        stringResource(R.string.orbit_browser_watch_waiting, who)
+                    screen.done -> stringResource(R.string.orbit_phone_card_done, who)
+                    else -> stringResource(R.string.orbit_phone_card_working, who)
+                },
+                meta = relativeTime(screen.usedAt),
+                showChevron = true,
+                onClick = { onOpenApp(screen) },
+            )
+        }
+    }
+    if (pages.isEmpty()) return
     item(key = "browser-count") { SectionTitle(stringResource(R.string.orbit_profile_browser_count, pages.size)) }
     items(pages, key = { "browser-${it.executorChatId}" }) { work ->
         val host = remember(work.url) { runCatching { Uri.parse(work.url).host }.getOrNull()?.removePrefix("www.") }

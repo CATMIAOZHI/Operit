@@ -368,7 +368,9 @@ internal fun OrbitChatSearchPage(
     val openMessage: (String, Long) -> Unit = { id, time -> onOpen(id, time, null) }
     var query by remember(chatId) { mutableStateOf("") }
     var kind by remember(chatId) { mutableStateOf<OrbitFindKind?>(null) }
-    BackHandler(enabled = active && kind != null) { kind = null }
+    // Leaving a category follows the back swipe; with none open, Back closes search as a page.
+    val kindBack = rememberOrbitBackMotion()
+    OrbitBackHandler(kindBack, enabled = active && kind != null) { kind = null }
     val focus = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
@@ -383,7 +385,7 @@ internal fun OrbitChatSearchPage(
         }
     }
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-        Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()) {
+        Column(Modifier.fillMaxSize().orbitDismissLayer(kindBack).statusBarsPadding().navigationBarsPadding().imePadding()) {
             Row(
                 Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,

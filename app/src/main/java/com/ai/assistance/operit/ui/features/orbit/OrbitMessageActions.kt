@@ -1,7 +1,6 @@
 package com.ai.assistance.operit.ui.features.orbit
 
 import android.content.Context
-import android.content.Intent
 import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -24,13 +23,15 @@ import java.util.Locale
 
 /**
  * Which Orbit chat is on screen, for keeping, copying and sharing its messages. [scope] outlives
- * the menu a message is kept from, so saving finishes after the menu closes.
+ * the menu a message is kept from, so saving finishes after the menu closes. [orbit] is the Orbit
+ * as it is now, for the picture a share draws.
  */
 internal class OrbitMessageHost(
     val orbitId: String,
     val orbitName: String,
     val chatId: String,
     val scope: kotlinx.coroutines.CoroutineScope,
+    val orbit: () -> com.ai.assistance.operit.data.preferences.OrbitProfile? = { null },
 )
 
 /** Set by the Orbit chat; null in every other chat. */
@@ -132,21 +133,6 @@ internal object OrbitMessageActions {
             else -> R.string.orbit_selection_copied
         }
         Toast.makeText(context, context.getString(note), Toast.LENGTH_SHORT).show()
-    }
-
-    fun share(context: Context, transcript: Transcript) {
-        if (transcript.text.isBlank()) {
-            Toast.makeText(context, context.getString(R.string.orbit_favorite_nothing), Toast.LENGTH_SHORT).show()
-            return
-        }
-        if (transcript.cut) Toast.makeText(context, context.getString(R.string.orbit_selection_cut), Toast.LENGTH_SHORT).show()
-        val send = Intent(Intent.ACTION_SEND).apply {
-            type = "text/plain"
-            putExtra(Intent.EXTRA_TEXT, transcript.text)
-        }
-        val chooser = Intent.createChooser(send, context.getString(R.string.orbit_selection_share))
-        if (context !is android.app.Activity) chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        runCatching { context.startActivity(chooser) }
     }
 
     /** About 300 KB at most, well inside what the clipboard and another app can take. */

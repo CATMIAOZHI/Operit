@@ -9197,9 +9197,7 @@
     <string name="orbit_quota_status_paused">Both allowances are used up; %1$s is paused</string>
     <string name="orbit_quota_status_extra">This week\'s allowance is used up; using the extra allowance</string>
     <string name="orbit_quota_usage">Usage</string>
-    <string name="orbit_quota_usage_desc">See where %1$s\'s tokens went</string>
     <string name="orbit_quota_adjust">Change allowances</string>
-    <string name="orbit_quota_adjust_desc">Weekly %1$s · extra %2$s</string>
     <string name="orbit_quota_adjust_help">The weekly allowance starts over every Monday at midnight and can\'t go below 100M. The extra allowance is only used once the week\'s is gone; 0 turns it off. With both used up, %1$s pauses.</string>
     <string name="orbit_quota_weekly_field">Weekly allowance</string>
     <string name="orbit_quota_extra_field">Extra allowance</string>
@@ -9217,7 +9215,6 @@
     <string name="orbit_quota_weekly_info">This is the weekly token cap you set for %1$s, so tokens can\'t quietly run out. It resets every Monday at 00:00 and every Orbit shares it. The default is 1 billion and the lowest is 100 million. When it runs out, %1$s is told first so it can keep an eye on usage, and the extra allowance starts being used.</string>
     <string name="orbit_quota_extra_info">%1$s only starts using this extra allowance after the weekly allowance runs out. When the extra allowance runs out too, %1$s pauses until next week\'s reset or until you refill it. You can set it to 0 (pause as soon as the weekly allowance is gone), choose Keep (only refilled when you tap Reset extra allowance), or choose Every week. You can refill it any time without waiting for it to run out.</string>
     <string name="orbit_quota_reset_extra">Reset extra allowance</string>
-    <string name="orbit_quota_reset_extra_desc">Clear the %1$s used and start over</string>
     <string name="orbit_quota_reset_extra_none">Nothing used yet, no need to reset</string>
     <string name="orbit_quota_reset_extra_confirm">Clear the %1$s already used?</string>
     <string name="orbit_quota_reset_extra_action">Reset</string>
@@ -9411,7 +9408,6 @@
     <string name="orbit_soul_note">About this file: this is %1$s\'s persona, the values and habits it holds to in every conversation. This persona starts from the role card and is refined over time; you will be told about changes. You can edit it at any time. This note is not part of the file.</string>
     <string name="orbit_prompt_note">About this file: this is Orbit\'s handbook, covering how it takes initiative, sets reminders, remembers things and talks. It is built into the app, read only, and always follows app updates; a PROMPT.md edited in the folder has no effect. This note is not part of the file.</string>
     <string name="orbit_file_read_only">Read only</string>
-    <string name="orbit_section_prompts">Prompts</string>
     <string name="orbit_prompt_layers">Prompt layers</string>
     <string name="orbit_prompt_layers_desc">See what Orbit reads before each reply</string>
     <string name="orbit_prompt_layers_help">Each of these goes into Orbit\'s system prompt in this order and cannot be turned off; the alignment synthesis joins once the first review writes it. Tap one to see or edit it.</string>
@@ -9740,11 +9736,15 @@
     <string name="orbit_vault_empty">No passwords, keys or OAuth logins saved yet. When one is needed, %1$s shows a secure card.</string>
     <string name="orbit_vault_delete_title">Delete this sign-in or key?</string>
     <string name="orbit_vault_delete_confirm">This item for %1$s will be deleted for good.</string>
-    <string name="orbit_section_privacy">Privacy and data</string>
+    <string name="orbit_section_privacy">Privacy and security</string>
+    <string name="orbit_section_display">Display</string>
+    <string name="orbit_section_messages">Messages and voice</string>
+    <string name="orbit_section_tools">Tools</string>
+    <string name="orbit_section_data">Data</string>
     <string name="orbit_section_developer">Developer</string>
     <string name="orbit_developer_switch">Developer mode</string>
     <string name="orbit_developer_switch_desc">Shows \"Raw conversation\" at the top of the task list: Orbit\'s chat opened in the normal chat screen, with all thinking and tool calls, and messages hidden in the chat (such as tapback notices and quiet endings) labeled. Background task details also show their full instructions.</string>
-    <string name="orbit_tools_row">Tool permissions</string>
+    <string name="orbit_tools_row">Per-tool permissions</string>
     <string name="orbit_tools_row_desc">Orbit\'s own list, separate from the main app</string>
     <string name="orbit_tools_title">Tool permissions</string>
     <string name="orbit_tools_help">Only for Orbit\'s chats and its background tasks; the main app\'s tool permissions stay as they are. Orbit\'s own tools and the built-in lookup-only tools (time, search, weather and the like) are allowed by default; other tools go through the fast automatic review.</string>
@@ -9936,6 +9936,10 @@
     <string name="orbit_selection_copy_failed">Too much to copy</string>
     <string name="orbit_selection_cut">Too long, only the first part was kept</string>
     <string name="orbit_selection_share">Share</string>
+    <string name="orbit_share_image_making">Making the chat picture… %1$d%%</string>
+    <string name="orbit_selection_range_here">To here</string>
+    <string name="orbit_share_image_failed">Couldn\'t make the chat picture. Try again.</string>
+    <string name="orbit_share_image_title">Chat picture</string>
     <string name="orbit_export_card_title">Export %1$s\'s data</string>
     <string name="orbit_export_card_sub">Files, memory, tasks and chats in one zip</string>
     <string name="orbit_export_card_button">Export and share</string>

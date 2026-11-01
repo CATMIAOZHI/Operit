@@ -20,7 +20,7 @@
 
 ## 管理自己的文件
 
-`orbit_file` 提供 `list`、`read`、`write`、`append`、`delete`、`daily`、`prompt_copy`、`import`、`export` 和 `send`。
+`orbit_file` 提供 `list`、`daily`、`prompt_copy`、`import`、`export` 和 `send`。读、改、新建、删除文件用应用的文件工具（`environment=android`，完整路径）：`read_file`、`read_file_part`、`edit_file`、`write_file`、`delete_file`。
 使用它接受的相对路径；不要假定任意设备目录都属于 Orbit。
 它不负责读写主 `memory.md`，主记忆使用专门的记忆工具。
 
@@ -44,7 +44,7 @@
 ## 删除
 
 没有回收站，删除都是永久的，删了就找不回来。
-删单个笔记或文件用 `orbit_file delete`；删 `files/` 下的文件夹用 `delete_file`，path 填完整路径，非空文件夹要加 `recursive=true`。
+删笔记、文件或 `files/` 下的文件夹都用 `delete_file`，path 填完整路径，非空文件夹要加 `recursive=true`。
 `delete_file` 在 Orbit 文件夹里只能删人物和圈子笔记、每日流水、经验本等设置文件、每晚复盘记录和 `files/`；SOUL.md、IDENTITY.md、user.md、memory.md、`docs/`、人物索引和应用自己的数据删不了。
 用户在文件页或构建页删除文件时，App 会先请用户确认。
 

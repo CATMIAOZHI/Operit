@@ -50,7 +50,7 @@ Show adult and child quantities, taxes, uncovered costs and arithmetic. Cite exc
 
 ## Save and deliver
 
-Maintain one trip file under `files/` with `orbit_file`. When the user requests or accepts file delivery, prepare it for use. Read before rewriting, preserve unrelated content and do not assume automatic file history.
+Maintain one trip file under `files/` (`write_file` to create, `edit_file` to revise). When the user requests or accepts file delivery, prepare it for use. Read before rewriting, preserve unrelated content and do not assume automatic file history.
 
 Include local times, transport, buffers, costs, booking states, sources and unresolved choices. Distinguish confirmations, user reports, proposals and estimates. Keep brief change notes; avoid competing current copies.
 

@@ -101,6 +101,8 @@ class MessageProcessingDelegate(
         private val getRuntimeChatHistory: suspend (String) -> List<ChatMessage>,
         private val hasUserMessage: suspend (String) -> Boolean,
         private val addMessageToChat: suspend (String, ChatMessage) -> Unit,
+        /** Drops the old copy of a message sent again, without stopping the turn that sends it. */
+        private val removeResentOriginal: suspend (String, Long) -> Unit,
         private val saveCurrentChat: suspend () -> Unit,
         private val showErrorMessage: (String) -> Unit,
         private val updateChatTitle: (chatId: String, title: String) -> Unit,
@@ -1095,6 +1097,13 @@ class MessageProcessingDelegate(
                 val addUserMessageStartTime = messageTimingNow()
                 addMessageToChat(chatId, userMessage)
                 userMessageAdded = true
+                // A message sent again is saved under its own time: it is on its way now.
+                com.ai.assistance.operit.core.chat.ChatSendFailures.clear(context, chatId, userMessage.timestamp)
+                // Sent again: the new copy is saved as the latest message, so the old one goes.
+                turnOptions.resendsMessageTimestamp?.let { old ->
+                    removeResentOriginal(chatId, old)
+                    com.ai.assistance.operit.core.chat.ChatSendFailures.clear(context, chatId, old)
+                }
                 logMessageTiming(
                     stage = "delegate.addUserMessageToChat",
                     startTimeMs = addUserMessageStartTime,
@@ -1127,9 +1136,17 @@ class MessageProcessingDelegate(
             var turnOutputTokens = 0
             var turnCachedInputTokens = 0
             var calculateNextWindowSize: (suspend () -> Int?)? = null
+            // In an Orbit chat a message the owner typed that never reached the model gets a red
+            // sign to send it again, as in a messenger, instead of an error dialog.
+            fun marksUnsentOrbitMessage(): Boolean =
+                chatId != null && userMessageAdded && firstResponseElapsed == null &&
+                    !effectiveHideUserMessage && !turnOptions.isSubTask && !turnOptions.deliveredByTool &&
+                    com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context)
+                        .snapshot.orbitForChat(chatId) != null
             var cancellationToPropagate: kotlinx.coroutines.CancellationException? = null
             var terminalFailureMessage: String? = null
             var assistantMessageTimestampForTurn: Long? = null
+            var compactionGenerationForTurn: Long? = null
             var turnInPlaceCompactionChatId: String? = null
             val toolBoundaryContentSnapshot =
                 AtomicReference<EnhancedAIService.ToolExecutionBoundarySnapshot?>(null)
@@ -1177,7 +1194,13 @@ class MessageProcessingDelegate(
 
                             if (state is EnhancedInputProcessingState.Error) {
                                 val msg = state.message
-                                if (msg != lastErrorMessage) {
+                                if (state.unreachable && marksUnsentOrbitMessage()) {
+                                    lastErrorMessage = msg
+                                    activeChatId?.let {
+                                        com.ai.assistance.operit.core.chat.ChatSendFailures
+                                            .mark(context, it, userMessage.timestamp)
+                                    }
+                                } else if (msg != lastErrorMessage) {
                                     lastErrorMessage = msg
                                     withContext(Dispatchers.Main) {
                                         showErrorMessage(msg)
@@ -1253,7 +1276,11 @@ class MessageProcessingDelegate(
                 }
 
                 val loadChatHistoryStartTime = messageTimingNow()
-                val chatHistory = getRuntimeChatHistory(activeChatId)
+                // A message sent again is sent once: its old copy is already gone, kept out here too.
+                val chatHistory = getRuntimeChatHistory(activeChatId).let { history ->
+                    turnOptions.resendsMessageTimestamp?.let { old -> history.filterNot { it.timestamp == old } }
+                        ?: history
+                }
                 logMessageTiming(
                     stage = "delegate.loadChatHistory",
                     startTimeMs = loadChatHistoryStartTime,
@@ -1316,6 +1343,11 @@ class MessageProcessingDelegate(
                 val prepareResponseStreamStartTime = messageTimingNow()
                 val aiMessageTimestamp = ChatMessageTimestampAllocator.next()
                 assistantMessageTimestampForTurn = aiMessageTimestamp
+                // The previous turn's request no longer ends this chat, even if this turn fails.
+                if (chatId != null) {
+                    compactionGenerationForTurn =
+                        com.ai.assistance.operit.api.chat.compaction.CompactionSnapshots.begin(chatId)
+                }
                 val toolBoundaryMessageReady = CompletableDeferred<ChatMessage?>()
                 coroutineContext[Job]?.invokeOnCompletion {
                     toolBoundaryMessageReady.complete(null)
@@ -1753,6 +1785,10 @@ class MessageProcessingDelegate(
                                         if (firstResponseElapsed == null) {
                                             firstResponseElapsed = messageTimingNow()
                                             chatRuntime.firstResponseElapsed = firstResponseElapsed
+                                            // The model got this chat's history, earlier unsent messages included.
+                                            activeChatId?.let {
+                                                com.ai.assistance.operit.core.chat.ChatSendFailures.clearChat(context, it)
+                                            }
                                         }
                                         logMessageTiming(
                                             stage = "delegate.firstResponseChunk",
@@ -1924,10 +1960,17 @@ class MessageProcessingDelegate(
                             context.getString(R.string.message_send_failed, userVisibleFailureMessage)
                         )
                     )
-                    withContext(Dispatchers.Main) {
-                        showErrorMessage(
-                            context.getString(R.string.message_send_failed, userVisibleFailureMessage)
-                        )
+                    val unsentOrbitMessage =
+                        com.ai.assistance.operit.core.chat.ChatSendFailures.isUnreachable(e) &&
+                            marksUnsentOrbitMessage()
+                    if (unsentOrbitMessage && chatId != null) {
+                        com.ai.assistance.operit.core.chat.ChatSendFailures.mark(context, chatId, userMessage.timestamp)
+                    } else {
+                        withContext(Dispatchers.Main) {
+                            showErrorMessage(
+                                context.getString(R.string.message_send_failed, userVisibleFailureMessage)
+                            )
+                        }
                     }
                 }
             } finally {
@@ -1966,7 +2009,8 @@ class MessageProcessingDelegate(
                                             replayContent,
                                         )
                                 },
-                                turnOptions = turnOptions
+                                turnOptions = turnOptions,
+                                dropWhenEmpty = returnedForSummary,
                             )
                         } finally {
                             // The finalizer rethrows a cancellation raised while it was finishing, and
@@ -2007,6 +2051,28 @@ class MessageProcessingDelegate(
                 if (shouldNotifyTurnComplete && !deferTurnCompleteToAsyncJob) {
                     val service = serviceForTurnComplete
                     if (service != null) {
+                        // Kept before the turn-complete callback, which may start a background
+                        // summary that resends this request to read it from the cache.
+                        try {
+                            val compactionSnapshot = assistantMessageTimestampForTurn?.toString()
+                                ?.let(service::takeCompactionSnapshot)
+                            val compactionGeneration = compactionGenerationForTurn
+                            if (compactionSnapshot != null && chatId != null && compactionGeneration != null &&
+                                finalInputStateAfterSend is com.ai.assistance.operit.data.model.InputProcessingState.Completed &&
+                                turnOptions.persistTurn && !turnOptions.isSubTask &&
+                                !turnOptions.isCollaborationAgent && !isGroupOrchestrationTurn
+                            ) {
+                                com.ai.assistance.operit.api.chat.compaction.CompactionSnapshots.put(
+                                    chatId, compactionSnapshot, assistantMessageTimestampForTurn ?: Long.MAX_VALUE,
+                                    // A newer turn started after loading was released, or an edit, bumps it.
+                                    compactionGeneration,
+                                )
+                            }
+                        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                            throw cancelled
+                        } catch (error: Exception) {
+                            AppLogger.w(TAG, "Unable to keep the turn's request for compaction", error)
+                        }
                         notifyTurnComplete(
                             chatId,
                             activeChatId,
@@ -2400,12 +2466,22 @@ class MessageProcessingDelegate(
         syncWaifuMessageMetrics: suspend (ChatMessage) -> Unit,
         calculateNextWindowSize: (suspend () -> Int?)? = null,
         finalContentTransform: (String) -> String = { it },
-        turnOptions: ChatTurnOptions = ChatTurnOptions()
+        turnOptions: ChatTurnOptions = ChatTurnOptions(),
+        /** The turn was handed to compaction; a reply that never started is not kept. */
+        dropWhenEmpty: Boolean = false,
     ): Boolean {
         try {
             val aiMessage = aiMessageProvider()
             // 优先使用共享流的全量重放缓存重建最终文本，避免完成信号早于收集协程处理尾部字符时丢字。
             val finalContent = finalContentTransform(resolveFinalContent(aiMessage))
+            if (dropWhenEmpty && finalContent.isBlank() && !isWaifuModeEnabled) {
+                // The provider rejected the request as too long before writing anything; the
+                // compaction sends it again, so an empty reply row would stay behind as a blank bubble.
+                if (turnOptions.persistTurn && chatId != null) {
+                    withContext(Dispatchers.Main) { removeResentOriginal(chatId, aiMessage.timestamp) }
+                }
+                return false
+            }
             aiMessage.content = finalContent
             val completedAt = System.currentTimeMillis()
 

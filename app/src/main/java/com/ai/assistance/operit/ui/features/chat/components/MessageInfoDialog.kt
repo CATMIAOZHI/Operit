@@ -1,5 +1,6 @@
 package com.ai.assistance.operit.ui.features.chat.components
 
+import com.ai.assistance.operit.ui.features.orbit.OrbitAwareAlertDialog
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -61,7 +62,7 @@ fun MessageInfoDialog(
         }
     }
 
-    AlertDialog(
+    OrbitAwareAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(text = stringResource(R.string.message_info_title)) },
         text = {

@@ -52,8 +52,12 @@ internal object OrbitPermissionCards {
     const val GEOFENCE = "geofence"
     /** Operit's own elevated access: ADB debugging through Shizuku, device admin, or Root. */
     const val DEVICE_ACCESS = "device_access"
-    val phoneKinds = listOf(NOTIFY, NOTIFICATION_READ, SMS, CONTACTS, CALENDAR, MICROPHONE, LOCATION, GEOFENCE)
-    val kinds = setOf(KEEP_ALIVE, DEVICE_ACCESS) + phoneKinds
+    /** Display over other apps: the browser opens full screen for the user to watch or take over. */
+    const val OVERLAY = "overlay"
+    /** Operit's accessibility service: a separate small app bundled with Operit, installed and then turned on. */
+    const val ACCESSIBILITY = "accessibility"
+    val phoneKinds = listOf(NOTIFY, NOTIFICATION_READ, SMS, CONTACTS, CALENDAR, MICROPHONE, LOCATION, GEOFENCE, OVERLAY)
+    val kinds = setOf(KEEP_ALIVE, DEVICE_ACCESS, ACCESSIBILITY) + phoneKinds
 
     const val MARKER = "[orbit-permission]"
     private val markerLine = Regex(Regex.escape(MARKER) + "[ \\t]*([^\\n]+)")
@@ -165,6 +169,36 @@ internal object OrbitPermissionCards {
             if (permission == LOCATION || permission == GEOFENCE) locationStatus(context) else null)
             .also { lastPhoneStatus[permission] = it }
 
+    /**
+     * Operit's accessibility service: [installed] the bundled service app is on the phone,
+     * [updateNeeded] it is older than the copy bundled with Operit, [enabled] its service is on in
+     * the system's accessibility settings. Read from settings, without binding to the service.
+     */
+    data class AccessibilityState(val installed: Boolean, val updateNeeded: Boolean, val enabled: Boolean) {
+        val ready: Boolean get() = installed && enabled
+    }
+
+    @Volatile
+    var lastAccessibility: AccessibilityState? = null
+
+    fun accessibilityState(context: Context): AccessibilityState {
+        val provider = com.ai.assistance.operit.data.repository.UIHierarchyManager.PROVIDER_PACKAGE_NAME
+        val installed = runCatching {
+            com.ai.assistance.operit.data.repository.UIHierarchyManager.isProviderAppInstalled(context)
+        }.getOrDefault(false)
+        val updateNeeded = installed && runCatching {
+            // Fresh after an update: the installer caches the versions for a minute.
+            com.ai.assistance.operit.core.tools.system.AccessibilityProviderInstaller.clearCache()
+            com.ai.assistance.operit.data.repository.UIHierarchyManager.isUpdateNeeded(context)
+        }.getOrDefault(false)
+        val enabled = installed && runCatching {
+            val on = Settings.Secure.getInt(context.contentResolver, Settings.Secure.ACCESSIBILITY_ENABLED, 0) == 1
+            val services = Settings.Secure.getString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES).orEmpty()
+            on && services.split(':').any { it.substringBefore('/') == provider }
+        }.getOrDefault(false)
+        return AccessibilityState(installed, updateNeeded, enabled).also { lastAccessibility = it }
+    }
+
     fun titleOf(content: String): String? =
         markerLine.find(content)?.groupValues?.get(1)?.trim()?.takeIf { it.isNotEmpty() }
 
@@ -206,6 +240,8 @@ internal object OrbitPermissionCards {
     /** Whether the phone permission is on now. Reads system settings; call it off the main thread. */
     fun isOn(context: Context, permission: String): Boolean = when (permission) {
         DEVICE_ACCESS -> deviceAccess(context).working
+        ACCESSIBILITY -> accessibilityState(context).ready
+        OVERLAY -> Settings.canDrawOverlays(context)
         // The app may notify, and the user has not turned off Orbit's own channel.
         NOTIFY -> NotificationManagerCompat.from(context).areNotificationsEnabled() && OrbitDelivery.channelOn(context)
         NOTIFICATION_READ -> context.packageName in NotificationManagerCompat.getEnabledListenerPackages(context)
@@ -227,6 +263,8 @@ internal object OrbitPermissionCards {
                 .putExtra(Settings.EXTRA_CHANNEL_ID, OrbitDelivery.CHANNEL)
         else Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
         NOTIFICATION_READ -> Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+        OVERLAY -> Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
+        ACCESSIBILITY -> Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
         GEOFENCE -> locationStatus(context).let { status ->
             if (status.optBoolean("fine") && status.optBoolean("background") && !status.optBoolean("location_services"))
                 Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)
@@ -258,6 +296,8 @@ internal object OrbitPermissionCards {
     fun label(english: Boolean, permission: String): String = when (permission) {
         KEEP_ALIVE -> if (english) "background keep-alive" else "后台保活"
         DEVICE_ACCESS -> if (english) "device control access (ADB / Root)" else "设备控制权限（ADB / Root）"
+        OVERLAY -> if (english) "display over other apps" else "显示在其他应用上层（悬浮窗）"
+        ACCESSIBILITY -> if (english) "Operit accessibility service" else "Operit 无障碍服务"
         NOTIFY -> if (english) "sending notifications" else "发送通知"
         NOTIFICATION_READ -> if (english) "reading notifications" else "读取通知"
         SMS -> if (english) "reading SMS" else "读取短信"
@@ -411,6 +451,8 @@ internal object OrbitPermissionCards {
     private fun shownName(app: Context, permission: String): String = when (permission) {
         KEEP_ALIVE -> R.string.orbit_permission_name_keep_alive
         DEVICE_ACCESS -> R.string.orbit_permission_name_device_access
+        OVERLAY -> R.string.orbit_permission_name_overlay
+        ACCESSIBILITY -> R.string.orbit_permission_name_accessibility
         NOTIFY -> R.string.orbit_permission_name_notify
         NOTIFICATION_READ -> R.string.orbit_permission_name_notification_read
         SMS -> R.string.orbit_permission_name_sms

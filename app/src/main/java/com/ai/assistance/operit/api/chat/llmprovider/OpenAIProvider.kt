@@ -297,6 +297,11 @@ open class OpenAIProvider(
         val exceptionMessage = context.getString(R.string.openai_error_response_failed, detail)
 
         AppLogger.e("AIService", "【发送消息】响应中包含错误对象: $detail")
+        if (com.ai.assistance.operit.api.chat.compaction.ContextCompaction.isOverflowError(
+                error.opt("code")?.toString(), error.optString("message", ""))
+        ) {
+            throw com.ai.assistance.operit.api.chat.compaction.ContextOverflowException(exceptionMessage)
+        }
         throw IOException(exceptionMessage)
     }
 
@@ -1862,7 +1867,8 @@ open class OpenAIProvider(
 
         val errorText = resolveRetryErrorText(context, exception)
 
-        if (!enableRetry) {
+        // The same request would be rejected as too long again; the caller compacts or shortens it.
+        if (!enableRetry || com.ai.assistance.operit.api.chat.compaction.ContextCompaction.isContextOverflow(exception)) {
             throw IOException(errorText, exception)
         }
 
@@ -2630,6 +2636,11 @@ open class OpenAIProvider(
                         ?: "Responses stream returned $eventType"
 
                 AppLogger.w("AIService", "Responses流式事件错误: $errorMessage")
+                val errorCode = (error ?: responseObj?.optJSONObject("error"))?.opt("code")?.toString()
+                if (com.ai.assistance.operit.api.chat.compaction.ContextCompaction.isOverflowError(errorCode, errorMessage)) {
+                    throw com.ai.assistance.operit.api.chat.compaction.ContextOverflowException(
+                        context.getString(R.string.openai_error_response_failed, errorMessage))
+                }
                 throw IOException(context.getString(R.string.openai_error_response_failed, errorMessage))
             }
         }

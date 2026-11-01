@@ -40,8 +40,9 @@ object ShowerController {
 
     fun setBinaryHandler(handler: ((ByteArray) -> Unit)?) = setBinaryHandler("default", handler)
 
-    suspend fun requestScreenshot(agentId: String, timeoutMs: Long = 3000L): ByteArray? =
-        getInstance(agentId).requestScreenshot(timeoutMs)
+    /** [jpegQuality] 1..100 asks for JPEG at that quality, else PNG. */
+    suspend fun requestScreenshot(agentId: String, timeoutMs: Long = 3000L, jpegQuality: Int = 0): ByteArray? =
+        getInstance(agentId).requestScreenshot(timeoutMs, jpegQuality)
 
     suspend fun requestScreenshot(timeoutMs: Long = 3000L): ByteArray? =
         requestScreenshot("default", timeoutMs)

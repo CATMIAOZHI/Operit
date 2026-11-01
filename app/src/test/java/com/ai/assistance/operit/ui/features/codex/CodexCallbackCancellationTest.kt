@@ -10,7 +10,7 @@ import org.junit.Test
 class CodexCallbackCancellationTest {
     @Test(timeout = 5000)
     fun waitingWithoutBrowserCallbackCanTimeOutAndReleasePort() = runBlocking {
-        val server = CodexOAuthLoopbackCallbackServer.open()
+        val server = CodexOAuthLoopbackCallbackServer.open(port = 0)
         val started = System.nanoTime()
         try {
             withTimeout(300) { server.awaitCallback() }
@@ -20,6 +20,6 @@ class CodexCallbackCancellationTest {
         } finally {
             server.close()
         }
-        CodexOAuthLoopbackCallbackServer.open().close()
+        CodexOAuthLoopbackCallbackServer.open(port = server.port).close()
     }
 }

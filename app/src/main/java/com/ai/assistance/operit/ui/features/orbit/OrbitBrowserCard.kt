@@ -187,7 +187,7 @@ private fun HandoffCard(card: OrbitBrowserWatch.Card, work: OrbitBrowserWatch.Wo
 
 /** The reply, double-tap like, menu and reactions every Orbit card has, around [content]. */
 @Composable
-private fun OrbitCardPiece(summary: String, key: String, time: Long, content: @Composable () -> Unit) {
+internal fun OrbitCardPiece(summary: String, key: String, time: Long, content: @Composable () -> Unit) {
     val context = LocalContext.current
     val piece = OrbitPiece(summary, key, summary, true)
     val reactions = LocalOrbitUserReactions.current

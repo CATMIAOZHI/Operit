@@ -26,6 +26,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
@@ -82,6 +83,8 @@ private data class TableRenderLayout(
     val cellCount: Int,
     val measuredLineCount: Int,
     val overlongCellCount: Int,
+    /** Space at each side of a cell's words; narrower when a picture fits very many columns. */
+    val paddingXPx: Int? = null,
 )
 
 @Composable
@@ -126,10 +129,13 @@ fun EnhancedTableBlock(
     ) {
         val availableWidthPx = with(density) { maxWidth.toPx() }.toInt()
         if (availableWidthPx <= 0) return@BoxWithConstraints
+        // A shared picture cannot be scrolled sideways: its columns are narrowed to fit and wrap.
+        val fitWidthPx = availableWidthPx.takeIf { LocalMarkdownSnapshot.current != null }
 
         val renderLayout = remember(
             tableContent,
             availableWidthPx,
+            fitWidthPx,
             textColor,
             primaryColor,
             typography.bodyMedium,
@@ -151,10 +157,15 @@ fun EnhancedTableBlock(
                 globalLineHeightMultiplier = textLayoutSettings.lineHeightMultiplier,
                 globalLetterSpacingSp = textLayoutSettings.letterSpacingSp,
                 iconStyle = textLayoutSettings.tonedIconStyle,
+                fitWidthPx = fitWidthPx,
             )
         }
 
-        val totalHeightDp = with(density) { renderLayout.totalHeightPx.toDp() }
+        // A table too tall to fit a picture's width narrowed is kept as wide as it is and drawn smaller.
+        val drawScale =
+            if (fitWidthPx != null && renderLayout.totalWidthPx > availableWidthPx) availableWidthPx.toFloat() / renderLayout.totalWidthPx
+            else 1f
+        val totalHeightDp = with(density) { (renderLayout.totalHeightPx * drawScale).toDp() }
         val outerBorderWidthPx = with(density) { TABLE_BORDER_WIDTH.toPx() }
         val gridLineWidthPx = with(density) { TABLE_GRID_WIDTH.toPx() }
         val cornerRadiusPx = with(density) { TABLE_CORNER_RADIUS.toPx() }
@@ -250,6 +261,7 @@ fun EnhancedTableBlock(
                         }
                     }
         ) {
+            scale(drawScale, drawScale, pivot = Offset.Zero) {
             translate(left = -scrollOffsetPx, top = 0f) {
                 drawRoundRect(
                     color = borderColor,
@@ -295,7 +307,7 @@ fun EnhancedTableBlock(
                         drawIntoCanvas { canvas ->
                             canvas.nativeCanvas.save()
                             canvas.nativeCanvas.translate(
-                                currentX + cellHorizontalPaddingPx,
+                                currentX + (renderLayout.paddingXPx?.toFloat() ?: cellHorizontalPaddingPx),
                                 currentY + cellVerticalPaddingPx
                             )
                             drawInlineCodeBackgrounds(cell.layout, canvas.nativeCanvas)
@@ -307,6 +319,7 @@ fun EnhancedTableBlock(
                     }
                     currentY += rowHeightPx
                 }
+            }
             }
         }
     }
@@ -323,6 +336,7 @@ private fun measureTableLayout(
     globalLineHeightMultiplier: Float,
     globalLetterSpacingSp: Float,
     iconStyle: com.ai.assistance.operit.ui.theme.TonedIconStyle,
+    fitWidthPx: Int? = null,
 ): TableRenderLayout {
     val rowCount = tableData.rows.size
     val columnCount = tableData.rows.maxOfOrNull { it.size } ?: 0
@@ -415,6 +429,24 @@ private fun measureTableLayout(
         }
     }
 
+    // Fitting a picture's width: every column first gets an even, readable floor, then the rest is
+    // shared in proportion to how wide it wanted to be; the words in it wrap.
+    val fitting = fitWidthPx != null && columnWidthsPx.sum() > fitWidthPx
+    // So many columns that even the side space would not fit: it shrinks, so every column still fits.
+    var paddingX = cellHorizontalPaddingPx
+    if (fitting) {
+        val fit = fitWidthPx!!
+        val even = (fit / columnCount).coerceAtLeast(1)
+        paddingX = minOf(cellHorizontalPaddingPx, (even - 1) / 2).coerceAtLeast(0)
+        val floor = minOf(minColumnWidthPx, even)
+        val extra = columnWidthsPx.sumOf { (it - floor).coerceAtLeast(0) }.toFloat()
+        val room = (fit - floor * columnCount).coerceAtLeast(0)
+        for (i in columnWidthsPx.indices) {
+            val want = (columnWidthsPx[i] - floor).coerceAtLeast(0)
+            columnWidthsPx[i] = floor + if (extra > 0f) (want * room / extra).toInt() else 0
+        }
+    }
+
     val cells = mutableListOf<List<TableCellRenderData>>()
     val rowHeightsPx = MutableList(rowCount) { 0 }
 
@@ -426,7 +458,7 @@ private fun measureTableLayout(
 
         row.forEachIndexed { colIndex, cell ->
             val innerWidthPx =
-                (columnWidthsPx[colIndex] - cellHorizontalPaddingPx * 2).coerceAtLeast(innerMinWidthPx)
+                (columnWidthsPx[colIndex] - paddingX * 2).coerceAtLeast(if (fitting) 1 else innerMinWidthPx)
             val layout = createCellStaticLayout(cell, paint, innerWidthPx, lineSpacingMultiplier)
             val cellHeightPx = layout.height + cellVerticalPaddingPx * 2
             if (cellHeightPx > maxRowHeightPx) {
@@ -441,6 +473,13 @@ private fun measureTableLayout(
 
     val totalWidthPx = columnWidthsPx.sum().coerceAtLeast(1)
     val totalHeightPx = rowHeightsPx.sum().coerceAtLeast(1)
+    // Narrowed so much that it would grow taller than one picture part can be: drawn smaller instead.
+    if (fitting && totalHeightPx > SNAPSHOT_CODE_MAX_HEIGHT_PX) {
+        return measureTableLayout(
+            tableData, textColor, density, bodyTextStyle, normalTypeface, boldTypeface, primaryColor,
+            globalLineHeightMultiplier, globalLetterSpacingSp, iconStyle, fitWidthPx = null,
+        )
+    }
     return TableRenderLayout(
         columnWidthsPx = columnWidthsPx,
         rowHeightsPx = rowHeightsPx,
@@ -452,6 +491,7 @@ private fun measureTableLayout(
         cellCount = cellCount,
         measuredLineCount = measuredLineCount,
         overlongCellCount = overlongCellCount,
+        paddingXPx = paddingX.takeIf { fitting },
     )
 }
 

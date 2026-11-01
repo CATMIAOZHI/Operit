@@ -3884,8 +3884,8 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
         if (packageName == com.ai.assistance.operit.core.tools.phone.PhoneControlTools.PACKAGE_NAME) {
             // An Orbit keeps its own switch: switching the package off in the main app must not cut
             // into an Orbit that is controlling the phone and still has the package on.
-            val owner = com.ai.assistance.operit.core.tools.phone.PhoneControlTools.activeSessionChatId()
-            if (owner != null && orbitPackagesFor(owner)?.contains(packageName) == true) {
+            val owners = com.ai.assistance.operit.core.tools.phone.PhoneControlTools.activeSessionChatIds()
+            if (owners.any { orbitPackagesFor(it)?.contains(packageName) == true }) {
                 AppLogger.d(TAG, "Keeping phone_control for the Orbit chat that is using it")
                 return
             }

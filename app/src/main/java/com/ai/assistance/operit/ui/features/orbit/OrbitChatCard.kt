@@ -126,6 +126,8 @@ private fun VerifiedVaultCard(source: String, card: JSONObject) {
         }
     }
     val result = checked
+    // A shared picture waits for the check, so it never holds the blank card.
+    com.ai.assistance.operit.ui.common.markdown.MarkdownSnapshotWork(result == null)
     when {
         result == null -> VaultCardPlaceholder()
         else -> result.getOrNull()?.let { VaultCard(it) }
@@ -180,7 +182,8 @@ private fun VaultCard(request: OrbitVault.Request) {
     val version by OrbitVault.version.collectAsState()
     // An update card: whether its entry still exists (null while reading).
     var gone by remember(request) { mutableStateOf(false) }
-    val saved by produceState(false, request, version) {
+    // Null until first read; a shared picture waits for it, so it shows whether this was saved.
+    val savedRead by produceState<Boolean?>(null, request, version) {
         // A new-password card is done once a password is saved after it; an older login does not count.
         value = runCatching {
             val entries = OrbitVault.entries(context, request.orbitId)
@@ -194,6 +197,8 @@ private fun VaultCard(request: OrbitVault.Request) {
             }
         }.getOrDefault(false)
     }
+    com.ai.assistance.operit.ui.common.markdown.MarkdownSnapshotWork(savedRead == null)
+    val saved = savedRead ?: false
     Column(Modifier.widthIn(max = 300.dp).clip(RoundedCornerShape(16.dp)).orbitCardGestures().padding(vertical = 4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             CardTile(if (login) "lock-keyhole" else "layout-grid")
@@ -283,6 +288,7 @@ private fun ChatGptLoginCard(card: JSONObject) {
             com.ai.assistance.operit.data.preferences.CodexAuthPreferences.getInstance(context.applicationContext)
         }
     }
+    com.ai.assistance.operit.ui.common.markdown.MarkdownSnapshotWork(auth == null)
     val signedIn = auth?.authState?.collectAsState()?.value != null
     // Asked to sign in again: an old sign-in is saved but no longer works. Done once a new one is made here.
     var relogged by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
@@ -458,6 +464,8 @@ private fun AttachmentCard(card: JSONObject) {
         }
     }
     val current = lookup.file
+    // A chat picture waits until the file is found.
+    com.ai.assistance.operit.ui.common.markdown.MarkdownSnapshotWork(!lookup.done)
     if (isImage && !lookup.done) {
         Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surface,
             modifier = Modifier.padding(vertical = 4.dp).then(imageSize(ratio))) {}

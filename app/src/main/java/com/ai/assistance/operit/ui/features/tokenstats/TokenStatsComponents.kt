@@ -1,5 +1,6 @@
 package com.ai.assistance.operit.ui.features.tokenstats
 
+import com.ai.assistance.operit.ui.features.orbit.OrbitAwareDropdownMenu
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -862,7 +863,7 @@ private fun FilterDropdown(
             },
             modifier = Modifier.fillMaxWidth(),
         )
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+        OrbitAwareDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             content { expanded = false }
         }
     }

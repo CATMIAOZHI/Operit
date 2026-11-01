@@ -47,6 +47,46 @@ internal fun updateCardField(onError: () -> Unit, update: () -> Unit): Boolean {
     catch (_: Exception) { onError(); false }
 }
 
+/**
+ * A table in a shared picture: [fit] (columns sharing the width) when that stays a height one
+ * layout can hold; otherwise [wide] (each column its own width), drawn smaller to fit both ways.
+ */
+@androidx.compose.runtime.Composable
+private fun SnapshotFitTable(
+    modifier: Modifier,
+    fit: @androidx.compose.runtime.Composable () -> Unit,
+    wide: @androidx.compose.runtime.Composable () -> Unit,
+) {
+    val limit = com.ai.assistance.operit.ui.common.markdown.SNAPSHOT_CODE_MAX_HEIGHT_PX
+    androidx.compose.ui.layout.SubcomposeLayout(modifier.fillMaxWidth()) { constraints ->
+        val width = constraints.maxWidth
+        val fitted = if (!constraints.hasBoundedWidth) emptyList() else subcompose("fit", fit).map {
+            it.measure(androidx.compose.ui.unit.Constraints(minWidth = width, maxWidth = width))
+        }
+        val fittedHeight = fitted.maxOfOrNull { it.height } ?: 0
+        if (fitted.isNotEmpty() && fittedHeight <= limit) {
+            layout(width, fittedHeight) { fitted.forEach { it.place(0, 0) } }
+        } else {
+            // Too tall when the columns share the width, or no width to share (an unbounded row):
+            // each column keeps its own width, drawn smaller to fit.
+            val full = subcompose("wide", wide).map { it.measure(androidx.compose.ui.unit.Constraints()) }
+            val fullWidth = (full.maxOfOrNull { it.width } ?: 1).coerceAtLeast(1)
+            val fullHeight = (full.maxOfOrNull { it.height } ?: 1).coerceAtLeast(1)
+            val room = if (constraints.hasBoundedWidth) width else fullWidth
+            val scale = minOf(1f, room.toFloat() / fullWidth, limit.toFloat() / fullHeight)
+            layout(if (constraints.hasBoundedWidth) width else (fullWidth * scale).toInt(), (fullHeight * scale).toInt()) {
+                full.forEach {
+                    it.placeWithLayer(0, 0) {
+                        scaleX = scale
+                        scaleY = scale
+                        transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0f)
+                    }
+                }
+            }
+        }
+    }
+}
+
 /** Official protocol and Material components, plus small Operit catalog extensions. */
 internal val operitDynamicUiCatalog by lazy {
     A2uiCatalog(
@@ -139,7 +179,10 @@ private class OperitCardComponent(override val name: String) : A2uiComponent {
             }
             "Badge" -> CardStatusBadge(properties.bind(text).orEmpty(), properties.bind(tone), modifier)
             "Code" -> Text(
-                properties.bind(text).orEmpty(), modifier.horizontalScroll(rememberScrollState()).padding(8.dp),
+                // A shared picture cannot be scrolled sideways, so long lines wrap there.
+                properties.bind(text).orEmpty(),
+                (if (com.ai.assistance.operit.ui.common.markdown.LocalMarkdownSnapshot.current != null) modifier
+                else modifier.horizontalScroll(rememberScrollState())).padding(8.dp),
                 fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall,
             )
             "Progress" -> {
@@ -308,16 +351,29 @@ private class OperitCardComponent(override val name: String) : A2uiComponent {
                 }
                 val columnWidths = (properties.bind(widths) as? List<*>)?.map { (it as Number).toInt() }
                     ?: List(headers.size) { 140 }
-                val height = properties.bind(tableHeight)?.toInt()
-                Column(modifier.horizontalScroll(rememberScrollState())) {
-                    Row { headers.forEachIndexed { i, heading -> Text(heading, Modifier.width(columnWidths[i].dp).padding(8.dp), style = MaterialTheme.typography.labelLarge) } }
-                    HorizontalDivider()
-                    Column(if (height != null) Modifier.heightIn(max = height.dp).verticalScroll(rememberScrollState()) else Modifier) {
-                        data.take(32).forEach { row ->
-                            Row { (row as? List<*>).orEmpty().take(8).forEachIndexed { i, cell -> Text(cell?.toString().orEmpty(), Modifier.width(columnWidths[i].dp).padding(8.dp)) } }
+                // A shared picture cannot be scrolled: it shows every row, and the columns share the
+                // card's width evenly, so even a narrow one stays readable; their words wrap.
+                val picture = com.ai.assistance.operit.ui.common.markdown.LocalMarkdownSnapshot.current != null
+                val height = properties.bind(tableHeight)?.toInt()?.takeIf { !picture }
+                // fit: columns share the width evenly (a picture); otherwise each keeps its own width.
+                val table: @Composable (Boolean, Modifier) -> Unit = { fit, outer ->
+                    fun RowScope.cell(i: Int): Modifier =
+                        if (fit) Modifier.weight(1f).padding(horizontal = 4.dp, vertical = 8.dp)
+                        else Modifier.width(columnWidths[i].dp).padding(8.dp)
+                    val line = if (fit) Modifier.fillMaxWidth() else Modifier
+                    Column(outer) {
+                        // Rows show at most 8 cells; in a picture the headings match them, so columns line up.
+                        Row(line) { (if (picture) headers.take(8) else headers).forEachIndexed { i, heading -> Text(heading, cell(i), style = MaterialTheme.typography.labelLarge) } }
+                        HorizontalDivider()
+                        Column(if (height != null) Modifier.heightIn(max = height.dp).verticalScroll(rememberScrollState()) else Modifier) {
+                            data.take(32).forEach { row ->
+                                Row(line) { (row as? List<*>).orEmpty().take(8).forEachIndexed { i, value -> Text(value?.toString().orEmpty(), cell(i)) } }
+                            }
                         }
                     }
                 }
+                if (picture) SnapshotFitTable(modifier, fit = { table(true, Modifier.fillMaxWidth()) }, wide = { table(false, Modifier) })
+                else table(false, modifier.horizontalScroll(rememberScrollState()))
             }
             else -> {
                 val refs = properties.bindChildReferences(children).orEmpty()

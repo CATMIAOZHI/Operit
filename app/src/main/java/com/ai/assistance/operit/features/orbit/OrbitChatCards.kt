@@ -45,8 +45,9 @@ internal object OrbitChatCards {
     const val PAGE_TOOL_PERMISSIONS = "tool_permissions"
     const val PAGE_ORBIT_MODELS = "orbit_models"
     const val PAGE_NOTIFICATIONS = "notifications"
+    const val PAGE_MCP = "mcp"
     val pages = listOf(PAGE_WEIXIN, PAGE_ROLE_CARDS, PAGE_MODEL_CONFIG, PAGE_TOOL_ACCESS, PAGE_TOOL_PERMISSIONS,
-        PAGE_ORBIT_MODELS, PAGE_NOTIFICATIONS)
+        PAGE_ORBIT_MODELS, PAGE_NOTIFICATIONS, PAGE_MCP)
 
     /** Account sign-ins a card can offer: the id Orbit passes, and the account it stands for. */
     val accountProviders: Map<String, com.ai.assistance.operit.data.api.AccountProvider> = mapOf(
@@ -96,6 +97,7 @@ internal object OrbitChatCards {
                 PAGE_TOOL_PERMISSIONS -> if (english) "Tool permissions" else "工具权限"
                 PAGE_ORBIT_MODELS -> if (english) "Models" else "模型"
                 PAGE_NOTIFICATIONS -> if (english) "Notifications" else "通知"
+                PAGE_MCP -> if (english) "MCP settings" else "MCP 设置"
                 else -> ""
             }
             IMAGE -> (if (english) "Picture" else "图片") to field("name")

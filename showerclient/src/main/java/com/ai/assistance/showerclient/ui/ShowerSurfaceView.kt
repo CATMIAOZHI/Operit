@@ -7,11 +7,14 @@ import android.view.SurfaceView
 import com.ai.assistance.showerclient.ShowerController
 import com.ai.assistance.showerclient.ShowerLog
 import com.ai.assistance.showerclient.ShowerVideoRenderer
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * SurfaceView used inside a virtual display overlay to render the Shower video stream.
@@ -69,12 +72,22 @@ open class ShowerSurfaceView @JvmOverloads constructor(
                     holder.setFixedSize(w, h)
                 } catch (_: Exception) {
                 }
-                renderer.attach(holder.surface, w, h)
+                val surface = holder.surface
                 // Route binary video frames to the renderer only after the surface and size are ready,
                 // so that any buffered SPS/PPS frames can be consumed correctly by the decoder.
-                ShowerLog.d(TAG, "surfaceCreated: setting ShowerController binary handler")
-                ctrl.setBinaryHandler { data ->
-                    renderer.onFrame(data)
+                // The buffered frames replay through the decoder, so off the main thread.
+                val handler: (ByteArray) -> Unit = { data -> renderer.onFrame(data) }
+                try {
+                    withContext(Dispatchers.Default) {
+                        renderer.attach(surface, w, h)
+                        ensureActive()
+                        ShowerLog.d(TAG, "surfaceCreated: setting ShowerController binary handler")
+                        ctrl.setBinaryHandler(handler)
+                    }
+                } catch (cancelled: CancellationException) {
+                    // The surface went while the handler was being set: take it off again.
+                    ctrl.clearBinaryHandler(handler)
+                    throw cancelled
                 }
             } else {
                 ShowerLog.e(TAG, "Failed to get video size after multiple retries.")

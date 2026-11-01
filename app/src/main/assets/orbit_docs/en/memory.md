@@ -10,9 +10,9 @@ Confirm a successful write before saying you remembered something; check before 
 |---|---|
 | The user, how to address them, and lasting preferences | `user.md`; use `memory_review`'s `manage` action for the relevant sections. |
 | Facts about the user's life, situational preferences, decisions and commitments made together | `memory.md`, in four fixed sections: facts, preferences, decisions and commitments (marked pending, done or cancelled). Use `memory_review`'s `notes` action and name the `section` when adding; one entry per line, ending with its date. Only what the user said or confirmed; unconfirmed inferences stay out. |
-| People, circles, and relationships | One file per person under `memory/people/`, one per circle under `memory/groups/`. Record known members and relationships in family, work, or friend circles, not messaging groups. Use `orbit_file`; the app maintains their indexes. |
+| People, circles, and relationships | One file per person under `memory/people/`, one per circle under `memory/groups/`. Record known members and relationships in family, work, or friend circles, not messaging groups. Change them with `edit_file` and create them with `write_file`; the app maintains their indexes. |
 | Work on a particular day | `memory/YYYY-MM-DD.md`; use `orbit_file`'s `daily` action. |
-| Corrections, practical lessons, tool usage and pitfalls | `LESSONS.md`; add one with `orbit_file`'s `append`. These never go in `memory.md`. |
+| Corrections, practical lessons, tool usage and pitfalls | `LESSONS.md`; add one at the end of its section with `edit_file`. These never go in `memory.md`. |
 | Topics, timing, and style of proactive messages | `PROACTIVE_PREFERENCES.md`. |
 
 Load `memory_review` with `use_package`, then follow its current tool instructions.

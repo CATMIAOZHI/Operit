@@ -32,7 +32,7 @@ internal object OrbitLogTools {
         description = "把应用日志或工具调用错误记录导出到你自己的 files/logs/。导出后你可以自己读来排查问题，也可以发给用户，让用户转给 Operit 开发者或附在 GitHub issue 里。",
         parametersStructured = listOf(
             ToolParameterSchema("kind", description = "app：应用日志；tool_errors：工具调用错误记录", required = true),
-            ToolParameterSchema("format", description = "text（默认）：存成 .txt，自己用 orbit_file read 读；zip：完整不截断、体积小，适合发给用户", required = false),
+            ToolParameterSchema("format", description = "text（默认）：存成 .txt，自己用 read_file_part 读；zip：完整不截断、体积小，适合发给用户", required = false),
             ToolParameterSchema("hours", "number", "可选：只导出最近几小时的记录，如 1、0.5、24", false),
             ToolParameterSchema("keyword", description = "可选：只保留包含这个词的记录（不分大小写），如 Exception、某个工具名、某个模块名", required = false),
             ToolParameterSchema("tool", description = "可选，只用于 tool_errors：只导出这个工具的错误", required = false),
@@ -40,10 +40,10 @@ internal object OrbitLogTools {
         details = """
   - 用户说某个功能出错、卡住、没反应，或者你自己的工具反复失败、想查原因时用。
   - kind=app：应用的运行记录，包括各模块的报错和异常，以及每次 AI 请求的耗时（搜 LlmPerf）。kind=tool_errors：工具调用出问题的记录，每条一行 JSON，写着工具名、参数和错误信息；executionFailed=true 是调用失败，undeclaredParameters 不为空是传了工具没有的参数（这种调用可能仍然成功）。
-  - format=text：可以直接用 orbit_file read 读。文件最多大约 60 万字节，超出时只保留最新的记录（最新的在最后），单条特别长的记录会截断。想看得更准，就用 hours 缩小时间范围，或者用 keyword 只留相关记录，然后再导出一次。
-  - format=zip：完整、不截断、体积小，orbit_file read 读不了。要交给用户时，用 orbit_file send 发到聊天里，用户可以转给开发者，或者附到 GitHub issue。
+  - format=text：用 read_file_part 读（environment=android，path 填结果里的 absolute_path）。文件最多大约 60 万字节，超出时只保留最新的记录（最新的在最后），单条特别长的记录会截断。想看得更准，就用 hours 缩小时间范围，或者用 keyword 只留相关记录，然后再导出一次。
+  - format=zip：完整、不截断、体积小，自己读不了。要交给用户时，用 orbit_file send 发到聊天里，用户可以转给开发者，或者附到 GitHub issue。
   - 日志里可能有聊天内容和请求内容。发到 GitHub 这类公开的地方之前，先提醒用户检查一下。
-  - 文件存在 files/logs/，用户在构建页的文件里也能看到。用完可以用 orbit_file delete 删掉。
+  - 文件存在 files/logs/，用户在构建页的文件里也能看到。用完可以用 delete_file 删掉（path 填 absolute_path）。
 """,
     )
 
@@ -104,8 +104,10 @@ internal object OrbitLogTools {
                 }
                 val path = "files/logs/$baseName.${if (format == "text") "txt" else "zip"}"
                 val entry = temporary.inputStream().use { files.saveBytes(path, it) }
-                val size = files.fileFor(entry.path).length()
-                val result = JSONObject().put("saved", true).put("path", entry.path).put("kind", kind).put("format", format)
+                val absolute = files.fileFor(entry.path)
+                val size = absolute.length()
+                val result = JSONObject().put("saved", true).put("path", entry.path)
+                    .put("absolute_path", absolute.absolutePath).put("kind", kind).put("format", format)
                     .put("size_bytes", size)
                 missing?.let { result.put("incomplete", it) }
                 if (written.matched > 0) result.put("matched_records", written.matched)
@@ -115,12 +117,12 @@ internal object OrbitLogTools {
                     written.from?.let { result.put("from", it) }
                     written.to?.let { result.put("to", it) }
                     if (written.longCut > 0) result.put("long_records_cut", written.longCut)
-                    result.put("next", "Read it with orbit_file action=read path=${entry.path} (newest records are at the end; " +
-                        "start_line=${(written.lines - 300).coerceAtLeast(1)} reads the last 300 lines). " +
+                    result.put("next", "Read it with read_file_part environment=android path=${absolute.absolutePath} (newest records are at the end; " +
+                        "start_line=${(written.lines - 199).coerceAtLeast(1)} end_line=${written.lines.coerceAtLeast(1)} reads the last 200 lines). " +
                         (if (written.kept < written.matched) "Only the newest records fit; narrow it with hours or keyword to see older ones. " else "") +
                         "To give it to the user, orbit_file action=send path=${entry.path}.")
                 } else {
-                    result.put("next", "A zip cannot be read with orbit_file; export format=text to read it yourself. " +
+                    result.put("next", "A zip cannot be read as text; export format=text to read it yourself. " +
                         "To give it to the user, orbit_file action=send path=${entry.path}.")
                 }
                 ToolResult(tool.name, true, StringResultData(result.toString()))
@@ -206,7 +208,7 @@ internal object OrbitLogTools {
 
     private fun stampFormat() = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
 
-    /** The newest matching records that fit a file orbit_file can read, long ones cut. */
+    /** The newest matching records that fit a text file Orbit reads in parts, long ones cut. */
     private suspend fun writeText(context: Context, kind: String, filter: Filter, toolName: String?, missing: String?, out: OutputStream): Written {
         val kept = ArrayDeque<String>()
         var keptBytes = 0L

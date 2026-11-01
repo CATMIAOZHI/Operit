@@ -1,5 +1,7 @@
 package com.ai.assistance.operit.ui.features.chat.components
 
+import com.ai.assistance.operit.ui.features.orbit.OrbitAwareAlertDialog
+import com.ai.assistance.operit.ui.features.orbit.orbitDismissLayer
 import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
 import android.content.Intent
@@ -45,6 +47,8 @@ import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import com.ai.assistance.operit.ui.features.chat.viewmodel.ChatViewModel
 import com.ai.assistance.operit.ui.features.chat.viewmodel.ChatHistoryDisplayMode
 import com.ai.assistance.operit.ui.features.chat.components.style.bubble.BubbleImageStyleConfig
+import com.ai.assistance.operit.ui.features.chat.components.style.bubble.BubbleStyleChatMessage
+import com.ai.assistance.operit.ui.features.chat.components.style.cursor.CursorStyleChatMessage
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -166,6 +170,52 @@ fun ChatScreenContent(
     val orbitMessageHost = if (LocalOrbitChatLook.current) {
         com.ai.assistance.operit.ui.features.orbit.LocalOrbitMessageHost.current
     } else null
+    // Sharing picked Orbit messages draws them as one picture, with the bubbles this chat shows.
+    val shareOrbitPicture = orbitMessageHost?.let { host ->
+        com.ai.assistance.operit.ui.features.orbit.rememberOrbitPictureShare(host, chatAreaHorizontalPadding.dp) { message ->
+            when (chatStyle) {
+                ChatStyle.CURSOR -> CursorStyleChatMessage(
+                    message = message,
+                    userMessageColor = userMessageColor,
+                    userMessageLiquidGlassEnabled = cursorUserBubbleLiquidGlass,
+                    userMessageWaterGlassEnabled = cursorUserBubbleWaterGlass,
+                    aiMessageColor = aiMessageColor,
+                    userTextColor = userTextColor,
+                    aiTextColor = aiTextColor,
+                    systemMessageColor = systemMessageColor,
+                    systemTextColor = systemTextColor,
+                    thinkingBackgroundColor = thinkingBackgroundColor,
+                    thinkingTextColor = thinkingTextColor,
+                    supportToolMarkup = true,
+                    enableDialogs = false,
+                )
+                ChatStyle.BUBBLE -> BubbleStyleChatMessage(
+                    message = message,
+                    userMessageColor = userMessageColor,
+                    aiMessageColor = aiMessageColor,
+                    userTextColor = userTextColor,
+                    aiTextColor = aiTextColor,
+                    systemMessageColor = systemMessageColor,
+                    systemTextColor = systemTextColor,
+                    userMessageLiquidGlassEnabled = bubbleUserBubbleLiquidGlass,
+                    userMessageWaterGlassEnabled = bubbleUserBubbleWaterGlass,
+                    aiMessageLiquidGlassEnabled = bubbleAiBubbleLiquidGlass,
+                    aiMessageWaterGlassEnabled = bubbleAiBubbleWaterGlass,
+                    userBubbleImageStyle = bubbleUserImageStyle,
+                    aiBubbleImageStyle = bubbleAiImageStyle,
+                    bubbleUserRoundedCornersEnabled = bubbleUserRoundedCornersEnabled,
+                    bubbleAiRoundedCornersEnabled = bubbleAiRoundedCornersEnabled,
+                    bubbleUserContentPaddingLeft = bubbleUserContentPaddingLeft,
+                    bubbleUserContentPaddingRight = bubbleUserContentPaddingRight,
+                    bubbleAiContentPaddingLeft = bubbleAiContentPaddingLeft,
+                    bubbleAiContentPaddingRight = bubbleAiContentPaddingRight,
+                    enableDialogs = false,
+                )
+            }
+        }
+    }
+    // Where "select to here" starts: the message picked last, else the picked one nearest.
+    var selectionAnchor by remember(currentChatId) { mutableStateOf<Long?>(null) }
     val selectableMessageIndices = remember(chatHistory, orbitMessageHost != null) {
         chatHistory.mapIndexedNotNull { index, message ->
             if ((message.sender == "user" || message.sender == "ai") &&
@@ -176,7 +226,22 @@ fun ChatScreenContent(
     LaunchedEffect(currentChatId) {
         if (orbitMessageHost != null) isMultiSelectMode = false
     }
-    androidx.activity.compose.BackHandler(enabled = orbitMessageHost != null && isMultiSelectMode) {
+    val selectRangeTo: (Int) -> Unit = { target ->
+        val picked = selectedMessageIndices
+        val from = selectionAnchor?.let { stamp -> chatHistory.indexOfFirst { it.timestamp == stamp } }?.takeIf { it in picked }
+            ?: picked.minByOrNull { kotlin.math.abs(it - target) }
+        if (from != null) {
+            val low = minOf(from, target)
+            val high = maxOf(from, target)
+            selectedMessageIndices = picked + selectableMessageIndices.filter { it in low..high }
+            selectionAnchor = chatHistory.getOrNull(target)?.timestamp
+        }
+    }
+    // In an Orbit the selection bar follows the back swipe down before selecting ends.
+    val selectionBack = com.ai.assistance.operit.ui.features.orbit.rememberOrbitBackMotion()
+    com.ai.assistance.operit.ui.features.orbit.OrbitBackHandler(
+        selectionBack, enabled = orbitMessageHost != null && isMultiSelectMode,
+    ) {
         isMultiSelectMode = false
         selectedMessageIndices = emptySet()
     }
@@ -292,11 +357,25 @@ fun ChatScreenContent(
                 )
             }).sortedBy { it.steeringAt }
     }
+    // The rows only see this chat's unsent messages; another chat's change keeps the same value.
+    val unsentInChat = if (orbitMessageHost != null && !transcriptLocked) {
+        val failedFlow = remember { com.ai.assistance.operit.core.chat.ChatSendFailures.failed(context) }
+        val failed by failedFlow.collectAsState()
+        val timestamps = failed[currentChatId].orEmpty()
+        val latestScroll by androidx.compose.runtime.rememberUpdatedState(onAutoScrollToBottomChange)
+        remember(timestamps, actualViewModel) {
+            OrbitUnsentMessages(timestamps) { message ->
+                // Follow the chat again, so the reply that comes is in view.
+                if (actualViewModel.resendUnsentMessage(message)) latestScroll(true)
+            }
+        }
+    } else null
     androidx.compose.runtime.CompositionLocalProvider(
         com.ai.assistance.operit.ui.common.dynamicui.LocalDynamicUiSubmit provides
             if (transcriptLocked) null else actualViewModel::submitDynamicUi,
         com.ai.assistance.operit.ui.features.orbit.LocalOrbitOptionSend provides
             if (transcriptLocked) null else actualViewModel::sendOrbitOption,
+        LocalOrbitUnsentMessages provides unsentInChat,
     ) {
     Box(modifier = modifier.fillMaxSize().padding(paddingValues)) {
         // A page's own header (Orbit's) always floats over the chat: messages slide softly under
@@ -395,15 +474,18 @@ fun ChatScreenContent(
                             } else if (initialIndex != null) {
                                 // 进入多选模式时，自动选中触发的消息
                                 selectedMessageIndices = setOf(initialIndex)
+                                selectionAnchor = chatHistory.getOrNull(initialIndex)?.timestamp
                             }
                         },
                         onToggleMessageSelection = { index ->
                             selectedMessageIndices = if (selectedMessageIndices.contains(index)) {
                                 selectedMessageIndices - index
                             } else {
+                                selectionAnchor = chatHistory.getOrNull(index)?.timestamp
                                 selectedMessageIndices + index
                             }
                         },
+                        onSelectMessageRangeTo = if (orbitMessageHost != null) selectRangeTo else null,
                         horizontalPadding = chatAreaHorizontalPadding.dp,
                         bubbleUserImageStyle = bubbleUserImageStyle,
                         bubbleAiImageStyle = bubbleAiImageStyle,
@@ -535,15 +617,18 @@ fun ChatScreenContent(
                             } else if (initialIndex != null) {
                                 // 进入多选模式时，自动选中触发的消息
                                 selectedMessageIndices = setOf(initialIndex)
+                                selectionAnchor = chatHistory.getOrNull(initialIndex)?.timestamp
                             }
                         },
                         onToggleMessageSelection = { index ->
                             selectedMessageIndices = if (selectedMessageIndices.contains(index)) {
                                 selectedMessageIndices - index
                             } else {
+                                selectionAnchor = chatHistory.getOrNull(index)?.timestamp
                                 selectedMessageIndices + index
                             }
                         },
+                        onSelectMessageRangeTo = if (orbitMessageHost != null) selectRangeTo else null,
                         showChatFloatingDotsAnimation = showChatFloatingDotsAnimation,
                         bubbleUserImageStyle = bubbleUserImageStyle,
                         bubbleAiImageStyle = bubbleAiImageStyle,
@@ -566,6 +651,7 @@ fun ChatScreenContent(
         ) {
         AnimatedVisibility(
             visible = isMultiSelectMode && !transcriptLocked,
+            modifier = Modifier.orbitDismissLayer(selectionBack, fromBottom = true),
             enter = fadeIn() + slideInVertically(initialOffsetY = { it }),
             exit = fadeOut() + slideOutVertically(targetOffsetY = { it }),
         ) {
@@ -589,13 +675,8 @@ fun ChatScreenContent(
                         done()
                     },
                     onShare = {
-                        val messages = picked()
-                        orbitMessageHost.scope.launch {
-                            com.ai.assistance.operit.ui.features.orbit.OrbitMessageActions.share(
-                                context,
-                                com.ai.assistance.operit.ui.features.orbit.OrbitMessageActions.transcript(context, orbitMessageHost, messages),
-                            )
-                        }
+                        val messages = picked().sortedBy { it.timestamp }
+                        if (messages.isNotEmpty()) shareOrbitPicture?.invoke(messages)
                         done()
                     },
                     onKeep = {
@@ -867,7 +948,7 @@ fun ChatScreenContent(
         }
 
         if (showDeleteSelectedConfirmDialog) {
-            AlertDialog(
+            OrbitAwareAlertDialog(
                 onDismissRequest = { showDeleteSelectedConfirmDialog = false },
                 title = { Text(stringResource(R.string.confirm_delete)) },
                 text = { Text(stringResource(R.string.chat_delete_selected_messages_confirm, selectedMessageIndices.size)) },

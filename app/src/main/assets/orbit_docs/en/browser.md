@@ -6,6 +6,8 @@ Visiting a page does not mean the user has seen it.
 
 ## Opening, reading, and interacting
 
+**Prefer handing browser work to a subagent of its own.** Tell it what to do, where to stop, and which steps need the user's OK first. The main chat is then not held up and the user can keep talking to you. Do it yourself only for a quick one- or two-step look. When you already are a subagent, do it yourself; do not hand it further down.
+
 Create or select a browser task according to the current tool instructions, then inspect the page state.
 Act on elements you actually observe; inspect again after page changes rather than reusing stale positions.
 Explain website errors, network failures, and login restrictions from the actual result.
@@ -23,6 +25,7 @@ Call `orbit_browser_show` when the user only needs to see the page.
 It sends the current browser entry as a card in chat.
 Simply saying “look here” or pasting an internal page identifier does not create that card.
 Call `orbit_browser_handoff` to hand over control and wait for the user to act; show alone does not hand over control.
+Opening the page full screen for the user needs Operit's "display over other apps" permission. When it is off, the user's tap on the card first opens that system setting, and the page opens by itself once they allow it and come back; you can also place `orbit_permission_card permission=overlay` beforehand.
 
 A card reflects the corresponding browser's state; it does not prove the intended action is complete.
 When that browser closes, the card becomes expired and must not be treated as a live entry point.

@@ -156,13 +156,13 @@ internal object OrbitRoutines {
             }
         }
         ensure(context, orbit, FEED, R.string.orbit_routine_feed, FEED_SOURCE, "INTERVAL", 0,
-            interval = FEED_INTERVAL_MINUTES, background = true) { if (it) FEED_EN else FEED_ZH }
+            interval = FEED_INTERVAL_MINUTES, background = true, refreshInstruction = true) { if (it) FEED_EN else FEED_ZH }
     }
 
     /** The Ideas routine: a background subagent comes up with new ideas every morning at 9. */
     suspend fun ensureIdeas(context: Context, orbit: OrbitProfile) {
         ensure(context, orbit, IDEAS, R.string.orbit_routine_ideas, IDEAS_SOURCE, "DAILY", IDEAS_MINUTE,
-            background = true) { if (it) IDEAS_EN else IDEAS_ZH }
+            background = true, refreshInstruction = true) { if (it) IDEAS_EN else IDEAS_ZH }
     }
 
     /**
@@ -469,7 +469,8 @@ internal object OrbitRoutines {
     private val ALIGNMENT_ZH = """
         夜间对齐复盘。SOURCE 只写了这次的窗口（上次复盘以来的全部主聊天和侧聊）、消息数和今天的日期，聊天内容要你自己读，一条都不能漏。
         这次只管「你和这位用户怎么相处」，事实记忆不归这里管。全部在后台安静完成：
-        1. 用 orbit_file 读 ALIGNMENT_SYNTHESIS.md、alignment/ALIGNMENT_STATE.yaml、alignment/PROGRESSION_HISTORY.yaml、alignment/REPAIR_THREADS.yaml，再 read SOURCE 里 latest_dream 那篇（是 none 就跳过）。SOURCE 说 resumed 时，先读 alignment/REVIEW_NOTES.md，那是之前记下的笔记，接着往下读就行。
+        文件都在你的 Orbit 文件夹里，用应用的文件工具（environment=android，path 填完整路径）：读用 read_file，新建或整篇重写用 write_file，改一处用 edit_file。
+        1. 读 ALIGNMENT_SYNTHESIS.md、alignment/ALIGNMENT_STATE.yaml、alignment/PROGRESSION_HISTORY.yaml、alignment/REPAIR_THREADS.yaml，再 read SOURCE 里 latest_dream 那篇（是 none 就跳过）。SOURCE 说 resumed 时，先读 alignment/REVIEW_NOTES.md，那是之前记下的笔记，接着往下读就行。
         2. 边读边记：orbit_review_read action=next 读一页，读完马上 action=commit 记下这一页说明了什么：摩擦和纠正（带 message id）、新定的规矩、哪里配合得好、还悬着的事。ruptures 填这一页里出现摩擦或纠正的用户消息 id：说「不对」「不是这个意思」、要求重做同一件事、定下新规矩（「以后都……」）、表达不满、给你的消息点了 👎 之类，拿不准就算上。一件事跨页时可以连读几页再记，但最多 3 页就必须 commit，不要全部读完再记。没什么可记就写「没有新内容」。想回看前面的消息用 action=look，不会挪动阅读位置；不确定读到哪就 action=status，应用会告诉你。一直读到 status 的 done 是 true。
         3. 读完后数字以 status 为准：user_turns 和 rupture_turns 是应用按你的 commit 记的，correction_free_rate = 1 - rupture_turns / user_turns，保留两位小数。再读一遍 alignment/REVIEW_NOTES.md（你的笔记），下面几步都以它为依据。
         4. 摩擦清单 alignment/REPAIR_THREADS.yaml：一个 YAML 列表，只存标签和证据，不写正文。每条 {id, trigger（简短英文标签，如 too_verbose）, opened（日期）, evidence（message id 列表）, clean_reviews}。新摩擦开一条；已有的摩擦这次又出现，把新的 message id 加进 evidence，clean_reviews 归零；这次有相关互动但没再出现，clean_reviews 加 1；到 3 才整条删掉，不要刚道歉就算学会了。没有摩擦就写 []。
@@ -496,7 +497,7 @@ internal object OrbitRoutines {
            「## 细节去哪找」：指向 dreams/、LESSONS.md、memory.md 等。
            除红线外用叙述体，不要堆条目。每个判断都要有聊天里的依据。它会全文放进每次聊天，整篇控制在 1500 字以内。没有新证据的节保持原样。
         7. 更新 alignment/ALIGNMENT_STATE.yaml（schema_version: 1；relationship_contract 是你对用户的承诺，user_facets、working_alliance、observed_fit、proactivity_policies 何时主动何时安静，repair_threads 只放摩擦 id）。在 alignment/PROGRESSION_HISTORY.yaml 的 outcomes 末尾追加一条 {observed_at, correction_free_rate, eligible_evidence（= user_turns）, open_repair_threads, classification}（文件里的键如果还叫 observations，改名为 outcomes）：user_turns 少于 10 时 classification 写 insufficient，也不要据此下「关系变好/变差」的结论；够了就和前几条比，写 improving、steady 或 declining。只保留最近 90 条。
-        8. 用户纠正过的具体做法，顺手 append 到 LESSONS.md。
+        8. 用户纠正过的具体做法，顺手记到 LESSONS.md 末尾。
         时间不够读完也没关系：commit 过的不会丢。快到时限时把读过的页 commit 掉，调用 orbit_submit_monitor_result，decision 写「还没读完」，下一轮会从记到的地方接着读。没读完时不要写 dream，也不要改对齐总结、摩擦清单和那几个 yaml。
         不要给用户发消息：userMessage 留空，decision 写一句这次复盘的结论。
     """.trimIndent()
@@ -505,7 +506,9 @@ internal object OrbitRoutines {
         Nightly alignment review. SOURCE only gives this review's window (every main and side chat
         since the last review), how many messages it holds and today's date. Read the messages yourself; skip none.
         This review is only about how to be with this user, not factual memory. Do it all quietly in the background:
-        1. With orbit_file, read ALIGNMENT_SYNTHESIS.md and alignment/ALIGNMENT_STATE.yaml, PROGRESSION_HISTORY.yaml
+        The files are in your Orbit folder; use the app's file tools (environment=android, full path): read_file to
+        read, write_file to create or rewrite a file, edit_file to change part of one.
+        1. Read ALIGNMENT_SYNTHESIS.md and alignment/ALIGNMENT_STATE.yaml, PROGRESSION_HISTORY.yaml
            and REPAIR_THREADS.yaml, then the review named by latest_dream (skip it when none). When SOURCE says
            resumed, read alignment/REVIEW_NOTES.md first: those are your notes so far; read on from there.
         2. Read and write down as you go: orbit_review_read action=next gives a page; right after it, action=commit
@@ -563,7 +566,7 @@ internal object OrbitRoutines {
     private val SELF_REVIEW_ZH = """
         夜间自我整理（只在有新对话时运行）。SOURCE 里是最近的对话。用它做下面几件事，都在后台安静完成：
         1. 记忆：把值得长期保留的新事实、偏好、决定和承诺整理进 memory.md 和 user.md（memory_review 工具包）。memory.md 分四类，新增时用 section=facts/preferences/decisions/commitments 指定；新的说法替换旧的，不留互相矛盾的内容；「未分类（旧内容）」里的条目顺手归类。没有值得保留的变化就不动。
-        2. 人物和圈子：对话里提到的人和现实里的人际圈（家人、同事、朋友，不是聊天群），用 orbit_file 更新 memory/people/、memory/groups/ 里对应的文件，只记用户亲口说的关系。
+        2. 人物和圈子：对话里提到的人和现实里的人际圈（家人、同事、朋友，不是聊天群），更新 memory/people/、memory/groups/ 里对应的文件（edit_file 改，write_file 新建，path 填完整路径），只记用户亲口说的关系。
         3. 反思：用户纠正过的做法、踩过的坑、工具用法追加到 LESSONS.md，不写进 memory.md。对齐总结由夜间对齐复盘负责，这里不改它。
         4. 技能：用 orbit_skills 看已有技能。同一套做法出现了两次以上，就用 memory_review 的 manage（action=skill_create）整理成技能；已有技能和最近的实际做法不符时改好它。
         不要给用户发消息：userMessage 留空，decision 写一句这次整理了什么。
@@ -576,7 +579,8 @@ internal object OrbitRoutines {
            (memory_review package). memory.md has four sections; name one with section=facts/preferences/decisions/
            commitments when adding. Newer claims replace older ones; leave nothing contradictory; sort entries from
            "Unsorted (older notes)" as you go. If nothing is worth keeping, change nothing.
-        2. People and circles: update the files under memory/people/ and memory/groups/ with orbit_file for people and
+        2. People and circles: update the files under memory/people/ and memory/groups/ (edit_file to change, write_file
+           to create, full path) for people and
            real social circles (family, coworkers, friends; not chat groups) mentioned. Record only relationships the
            user stated.
         3. Reflection: append corrected habits, mistakes and tool usage to LESSONS.md, never to memory.md. The nightly
@@ -593,7 +597,9 @@ internal object OrbitRoutines {
         2. 结合你对用户的了解（记忆、用户资料、最近聊的事）选题。素材不限于网上：可以上网搜、打开页面查新鲜事，
            也可以用你能用的工具看手机上和用户有关的事（短信、通知、日程、邮件等），比如短信里有快递取件码，
            就写一条提醒他去取件。只引用你真的打开过的链接，不要编造。
-        3. 用 orbit_feed action=post 发布：简短的标题、一个贴合内容的 emoji、几段短正文，why_for_you 用一句话说明为什么给这位用户看。
+        3. 用 orbit_feed action=post 发布：简短的标题、一个贴合内容的 emoji、简短的正文，why_for_you 用一句话说明为什么给这位用户看。
+           正文要短：一两段、大约 150 字以内，收起时一眼能读完。只讲一个要点，细节交给卡片、图片或链接；
+           动态说明里用户明确想看长文时才写长。
            表格、对比、图表、可点的清单、取件码这类提醒，可以先用 dynamic_ui 做一张卡片（不要用 live），把引用名（如 card-1）填进 card。
            卡片会显示在正文下面；body 里只写文字，不要写 a2ui-ref 代码块。
            像发朋友圈一样可以配图（images，最多 9 张，每行一个）：网页上看到合适的图，填图片本身的网址，或者填已经存好的图片路径。
@@ -612,8 +618,11 @@ internal object OrbitRoutines {
            not limited to the web: search and read pages for fresh news, or use the tools you have to look at what on
            the phone concerns the user (messages, notifications, calendar, email). For example, a parcel pickup code in
            a text message makes a post reminding them to collect it. Cite only links you actually opened; invent nothing.
-        3. Publish with orbit_feed action=post: a short title, one fitting emoji, a body of a few short paragraphs, and
-           why_for_you saying in one sentence why this post is for this user.
+        3. Publish with orbit_feed action=post: a short title, one fitting emoji, a short body, and why_for_you saying
+           in one sentence why this post is for this user.
+           Keep the body short: one or two paragraphs, about 80 words at most, readable at a glance while folded.
+           Make one point and leave the details to a card, pictures or links; write longer only when the feed brief
+           clearly asks for long posts.
            For a table, comparison, chart, tappable list or a reminder such as a pickup code, make a card with
            dynamic_ui first (not live) and put its name (such as card-1) in card. The card shows under the text;
            body holds only text, never an a2ui-ref block.
@@ -631,6 +640,8 @@ internal object OrbitRoutines {
         2. 每个点子都要选一个贴合内容的 emoji 和一个分类（productivity 效率提升、money 财务管理、relationships 人际关系、health 健康与健身、shopping 购物、other 更多点子）。同一批尽量用不同的 emoji。
         3. 先多想几个候选，每个打三项分（1–5）：feasibility 你现在真能做成吗，personal_fit 和这位用户多贴合，novelty 是否新、不和已有或 past 里的重复。任何一项低于 3 就丢掉，按总分从高到低挑最多 3 个。
         4. 每个点子都写 rationale（一两句话：为什么现在给他提这个）和 sources（依据从哪来：聊天消息 id、记忆文件、目标、你打开过的链接）。找不到真实依据的不提。
+           给用户看的部分写精简：title 一句话、15 字左右；description 一两句、大约 60 字以内，说清做什么、对他有什么用；
+           includes 每项一句短话。细节写进 plan（那是给你自己看的）。
         5. list 里 emoji 或 category 为空的旧点子，用 action=update 补上。
         6. 没有真正有用的点子就不提，不要凑数。
         点子会自己出现在点子页，不要给用户发消息：userMessage 留空，decision 写一句这次提了什么。
@@ -648,6 +659,9 @@ internal object OrbitRoutines {
            a rating under 3; keep at most 3, highest total first.
         4. Give every idea a rationale (one or two sentences: why this user, why now) and sources (where that comes
            from: message ids, memory files, goals, links you opened). Propose nothing you cannot ground.
+           Keep what the user reads lean: a title of a few words; a description of one or two sentences, about 40
+           words at most, saying what you would do and why it helps; one short line per includes item. Details go in
+           plan, which is for you.
         5. Fill in the emoji or category of older ideas in the list that have none, with action=update.
         6. Propose nothing rather than something weak.
         Ideas show up on the Ideas tab on their own. Do not message the user: leave userMessage empty and say in

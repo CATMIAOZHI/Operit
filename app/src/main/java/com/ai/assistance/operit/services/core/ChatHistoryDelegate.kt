@@ -1312,6 +1312,23 @@ class ChatHistoryDelegate(
         }
     }
 
+    /**
+     * Drops rows a message Orbit sends again leaves behind: the empty replies of its failed turn,
+     * and its old copy once the new one is saved and its turn is running. Not an edit that stops
+     * the chat's turn, and the chat's plan (todos) stays.
+     */
+    suspend fun removeResentLeftovers(chatId: String, timestamps: Collection<Long>) {
+        if (timestamps.isEmpty()) return
+        historyUpdateMutex.withLock {
+            timestamps.distinct().forEach { chatHistoryManager.deleteMessage(chatId, it, clearTodos = false) }
+            if (_currentChatId.value == chatId) {
+                val shown = _chatHistory.value
+                val left = shown.filterNot { it.timestamp in timestamps }
+                if (left.size != shown.size) setCurrentChatMessagesInMemory(left)
+            }
+        }
+    }
+
     suspend fun deleteMessagesByTimestamps(chatId: String, timestamps: List<Long>) {
         if (timestamps.isEmpty()) {
             return
@@ -1785,7 +1802,8 @@ class ChatHistoryDelegate(
                 currentDisplayStartTimestamp != null &&
                 persistedSummaryMessage.timestamp < currentDisplayStartTimestamp
             ) {
-                revealMessageForCurrentChat(persistedSummaryMessage.timestamp)
+                // A summary placed before the loaded messages (the newest part stays beside it) is
+                // found by scrolling up; jumping to it would pull the latest messages off screen.
             } else {
                 reloadCurrentChatDisplayHistory(chatId)
             }

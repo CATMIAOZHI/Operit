@@ -1371,7 +1371,7 @@ class ClaudeProvider(
 
         val errorText = resolveRetryErrorText(context, exception)
 
-        if (!enableRetry) {
+        if (!enableRetry || com.ai.assistance.operit.api.chat.compaction.ContextCompaction.isContextOverflow(exception)) {
             throw IOException(errorText, exception)
         }
 

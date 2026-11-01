@@ -29,7 +29,10 @@ import java.util.UUID
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 
-/** Foreground control is owned by a main-agent turn. No nested model or virtual display is used. */
+/**
+ * Outside Orbit, foreground control is owned by a main-agent turn and no virtual display is used.
+ * Orbit (and its subagents) control apps on a background screen instead: [PhoneBackgroundControl].
+ */
 object PhoneControlTools {
     const val PACKAGE_NAME = "phone_control"
     val names = setOf("phone_control:start", "phone_control:observe", "phone_control:act", "phone_control:stop")
@@ -46,13 +49,22 @@ object PhoneControlTools {
     @Volatile private var operationJob: Pair<String, Job>? = null
     @Volatile private var packageAvailable = false
 
+    /** False once the phone_control package is switched off for the app. */
+    val isPackageAvailable: Boolean get() = packageAvailable
+
     fun setPackageAvailable(available: Boolean) {
         packageAvailable = available
-        if (!available) lease.active()?.let { stop(it.id) }
+        if (!available) {
+            lease.active()?.let { stop(it.id) }
+            PhoneBackgroundControl.stopAll()
+        }
     }
 
     /** The chat that is controlling the phone right now, if any. */
     fun activeSessionChatId(): String? = lease.active()?.owner?.chat
+
+    /** Every chat controlling the phone right now: the foreground owner and Orbit chats with a background screen. */
+    fun activeSessionChatIds(): Set<String> = listOfNotNull(activeSessionChatId()).toSet() + PhoneBackgroundControl.talkChats()
     private var watchdog: Runnable? = null
 
     private fun armWatchdog(id: String) {
@@ -107,6 +119,13 @@ object PhoneControlTools {
     suspend fun execute(context: Context, tool: AITool): ToolResult {
         return try {
             check(packageAvailable) { "Enable and load the phone_control package first." }
+            // Orbit never drives the user's own screen: its apps run on a background screen.
+            com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.caller()?.let { caller ->
+                return if (tool.name == "phone_control:act") PhoneBackgroundControl.execute(context, tool, caller)
+                else withTimeoutOrNull(90_000) { PhoneBackgroundControl.execute(context, tool, caller) }
+                    ?: ToolResult(toolName = tool.name, success = false, result = StringResultData(""),
+                        error = "The background screen did not answer in time. Observe again, or stop it.")
+            }
             val owner = owner()
             val args = tool.parameters.associate { it.name to it.value }
             if (tool.name == "phone_control:stop") {
@@ -121,8 +140,21 @@ object PhoneControlTools {
                 runOperation(tool) {
                     if (tool.name == "phone_control:start") {
                         check(Settings.canDrawOverlays(context)) { context.getString(R.string.phone_control_overlay_required) }
-                        check(androidPermissionPreferences.getPreferredPermissionLevel() != AndroidPermissionLevel.STANDARD) {
+                        val level = androidPermissionPreferences.getPreferredPermissionLevel()
+                        check(level != AndroidPermissionLevel.STANDARD) {
                             "Enable accessibility or shell control before starting phone control."
+                        }
+                        if (level == AndroidPermissionLevel.ACCESSIBILITY) {
+                            // Said plainly, instead of failing later as an unreadable foreground window.
+                            val state = com.ai.assistance.operit.features.orbit.OrbitPermissionCards.accessibilityState(context)
+                            check(state.installed) {
+                                "Operit's accessibility service app is not installed, so the screen cannot be read. Ask the user to " +
+                                    "install it from Operit's permission page (it is bundled with Operit), turn it on, then retry."
+                            }
+                            check(state.enabled) {
+                                "Operit's accessibility service is installed but turned off. Ask the user to turn it on in the " +
+                                    "system's accessibility settings (or from Operit's permission page), then retry."
+                            }
                         }
                         val session = lease.begin(owner, UUID.randomUUID().toString())
                         try {
