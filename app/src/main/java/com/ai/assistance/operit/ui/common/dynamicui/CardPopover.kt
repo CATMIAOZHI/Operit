@@ -56,9 +56,11 @@ internal fun CardPopoverHost(content: @Composable () -> Unit) {
     val enabled = LocalCardBrowse.current
     val interactive = LocalCardInteractive.current
     val readOnly = LocalCardReadOnly.current
+    val peek = LocalDynamicUiPeek.current
     // A captured A2UI context must never keep an obsolete permission state alive.
-    LaunchedEffect(enabled, interactive, readOnly) { state.entry = null }
-    if (LocalOnBackPressedDispatcherOwner.current != null) BackHandler(enabled = entry != null) { state.entry = null }
+    // A folded preview cannot be tapped, so a popover left open would be stuck behind the fold.
+    LaunchedEffect(enabled, interactive, readOnly, peek) { state.entry = null }
+    if (LocalOnBackPressedDispatcherOwner.current != null) BackHandler(enabled = entry != null && !peek) { state.entry = null }
     CompositionLocalProvider(LocalCardPopover provides state) {
         Box(Modifier.fillMaxWidth().heightIn(min = if (entry != null) 280.dp else 0.dp)
             .bringIntoViewRequester(requester)

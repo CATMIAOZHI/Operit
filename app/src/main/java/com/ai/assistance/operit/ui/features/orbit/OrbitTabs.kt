@@ -32,6 +32,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.clipToBounds
@@ -89,6 +93,7 @@ import java.text.DateFormat
 import java.util.Date
 import java.util.UUID
 import kotlin.math.abs
+import kotlin.math.roundToInt
 import kotlin.math.sign
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -901,9 +906,10 @@ private fun FeedPostRow(
     }
     val scope = rememberCoroutineScope()
     val currentBeforeCollapse by rememberUpdatedState(beforeCollapse)
+    val growth = remember(post.id) { GrowOnly() }
     val toggle: () -> Unit = {
-        if (!expanded) expanded = true
-        else scope.launch { currentBeforeCollapse(); expanded = false }
+        if (!expanded) { growth.open(); expanded = true }
+        else { growth.fold(); scope.launch { currentBeforeCollapse(); expanded = false } }
     }
     var showWhy by rememberSaveable(post.id) { mutableStateOf(false) }
     // Whether the folded text is cut off (null until first measured); the card only shows once
@@ -913,6 +919,8 @@ private fun FeedPostRow(
     val body = remember(post.body, colors.primary) {
         linkify(com.ai.assistance.operit.features.orbit.OrbitBoardRepository.withoutCardFences(post.body), colors.primary)
     }
+    // Folded, the pictures show their first row only; the rest come with the opened post.
+    val hiddenImages = if (expanded) 0 else (images.size - feedImageColumns(images.size)).coerceAtLeast(0)
     Column(Modifier.bleed(20.dp)) {
         Box {
             // Opening or folding moves everything below the tap at once, so a press ripple would be
@@ -926,9 +934,13 @@ private fun FeedPostRow(
             ) {
                 BoardEmoji(post.emoji, "📰")
                 Spacer(Modifier.width(8.dp))
-                // No size animation: growing or shrinking a long post frame by frame re-measured
-                // the whole list and made taps stutter.
-                Column(Modifier.weight(1f)) {
+                // Opening grows smoothly; folding is at once, since shrinking a long post frame by
+                // frame made the list jump and stutter.
+                Column(Modifier.weight(1f).clipToBounds().layout { measurable, constraints ->
+                    val placeable = measurable.measure(constraints)
+                    val height = growth.heightFor(placeable.height, scope)
+                    layout(placeable.width, height) { placeable.placeRelative(0, 0) }
+                }) {
                     // Whether the text is cut off is only known once it is measured. The button is
                     // decided in that same layout pass, so it does not pop in a frame later.
                     androidx.compose.ui.layout.Layout(
@@ -948,8 +960,10 @@ private fun FeedPostRow(
                                             )
                                         }
                                     }
-                                    FeedImages(images, post.title)
-                                    if (post.card && expanded) FeedPostCard(post, cardOf, onCardSubmit, cardOwner)
+                                    FeedImages(images, post.title, folded = !expanded, onMore = toggle)
+                                    if (post.card) FeedCardPeek(folded = !expanded, onOpen = toggle) {
+                                        FeedPostCard(post, cardOf, onCardSubmit, cardOwner)
+                                    }
                                 }
                             },
                             {
@@ -978,7 +992,7 @@ private fun FeedPostRow(
                         val loose = constraints.copy(minHeight = 0)
                         val main = mainParts.first().measure(loose)
                         // Measuring the text above has just updated cutOff for this width.
-                        val button = if (expanded || post.card || cutOff == true) {
+                        val button = if (expanded || post.card || hiddenImages > 0 || cutOff == true) {
                             buttonParts.firstOrNull()?.measure(loose.copy(minWidth = 0))
                         } else {
                             null
@@ -1042,38 +1056,166 @@ private fun FeedPostRow(
 
 /**
  * A post's pictures, at most nine, laid out like a moments post: one large, two or four in a
- * 2-column grid, otherwise three to a row. Tapping one opens it full screen.
+ * 2-column grid, otherwise three to a row. Tapping one opens it full screen. [folded] shows the
+ * first row only, its last picture marked "+N"; tapping that one opens the post ([onMore]).
  */
 @Composable
-private fun FeedImages(files: List<java.io.File>, title: String) {
+private fun FeedImages(files: List<java.io.File>, title: String, folded: Boolean, onMore: () -> Unit) {
     if (files.isEmpty()) return
     var viewing by remember(files) { mutableStateOf<java.io.File?>(null) }
-    val columns = when (files.size) { 1 -> 1; 2, 4 -> 2; else -> 3 }
+    val columns = feedImageColumns(files.size)
+    val shown = if (folded) files.take(columns) else files
+    val more = files.size - shown.size
     val shape = RoundedCornerShape(10.dp)
     val placeholder = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
     val resources = LocalContext.current.resources
+    val moreLabel = stringResource(R.string.orbit_feed_expand)
     fun label(file: java.io.File) =
         resources.getString(R.string.orbit_feed_image_desc, title, files.indexOf(file) + 1, files.size)
     Column(
         Modifier.padding(top = 10.dp).fillMaxWidth(if (columns == 3) 1f else 0.7f),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        files.chunked(columns).forEach { row ->
+        shown.chunked(columns).forEach { row ->
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 row.forEach { file ->
-                    coil.compose.AsyncImage(
-                        model = file,
-                        contentDescription = label(file),
-                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                        modifier = Modifier.weight(1f).aspectRatio(1f).clip(shape).background(placeholder)
-                            .clickable { viewing = file },
-                    )
+                    val opensPost = more > 0 && file == shown.last()
+                    Box(
+                        Modifier.weight(1f).aspectRatio(1f).clip(shape).background(placeholder)
+                            .clickable(onClickLabel = if (opensPost) moreLabel else null) {
+                                if (opensPost) onMore() else viewing = file
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        coil.compose.AsyncImage(
+                            model = file,
+                            contentDescription = label(file),
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                        if (opensPost) {
+                            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.4f)))
+                            Text("+$more", color = Color.White, style = MaterialTheme.typography.titleLarge)
+                        }
+                    }
                 }
                 repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
             }
         }
     }
     viewing?.let { file -> OrbitImageViewer(file, label(file)) { viewing = null } }
+}
+
+/** How many pictures a feed post puts in a row: one large, two or four in two columns, else three. */
+private fun feedImageColumns(count: Int) = when (count) { 1 -> 1; 2, 4 -> 2; else -> 3 }
+
+/**
+ * A feed card under a folded post shows only its top, fading out, and a tap there opens the post;
+ * opened, the same card shows whole. It stays the one card either way, so opening never reads or
+ * draws it again.
+ */
+@Composable
+private fun FeedCardPeek(folded: Boolean, onOpen: () -> Unit, card: @Composable () -> Unit) {
+    val density = LocalDensity.current
+    val limit = with(density) { 160.dp.roundToPx() }
+    val fade = with(density) { 56.dp.toPx() }
+    var cut by remember { mutableStateOf(false) }
+    val taps = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    // A field typed into before folding would keep taking keys behind the fold: its focus goes.
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    var holdsFocus by remember { mutableStateOf(false) }
+    LaunchedEffect(folded) { if (folded && holdsFocus) focusManager.clearFocus() }
+    Box(
+        Modifier
+            .graphicsLayer {
+                clip = true
+                // The fade needs its own layer to cut the card's pixels; only then is it paid for.
+                compositingStrategy = if (cut) androidx.compose.ui.graphics.CompositingStrategy.Offscreen
+                else androidx.compose.ui.graphics.CompositingStrategy.Auto
+            }
+            .drawWithContent {
+                drawContent()
+                if (cut) drawRect(
+                    androidx.compose.ui.graphics.Brush.verticalGradient(
+                        listOf(Color.Black, Color.Transparent), startY = size.height - fade, endY = size.height,
+                    ),
+                    blendMode = androidx.compose.ui.graphics.BlendMode.DstIn,
+                )
+            }
+            .layout { measurable, constraints ->
+                // Folded, the card is still measured at its full height, then cut to the limit.
+                val placeable = measurable.measure(
+                    if (folded) constraints.copy(maxHeight = androidx.compose.ui.unit.Constraints.Infinity) else constraints,
+                )
+                val height = if (folded) minOf(placeable.height, limit) else placeable.height
+                cut = placeable.height > height
+                layout(placeable.width, height.coerceIn(constraints.minHeight, constraints.maxHeight)) {
+                    placeable.placeRelative(0, 0)
+                }
+            }
+            // The preview's buttons are out of reach, so screen readers skip it too.
+            .then(if (folded) Modifier.clearAndSetSemantics {} else Modifier)
+            .onFocusChanged { holdsFocus = it.hasFocus }
+            // Nor can the keyboard's Tab or arrow keys move into it.
+            .then(
+                if (folded) Modifier.focusProperties { onEnter = { cancelFocusChange() } }
+                else Modifier,
+            )
+            .focusGroup(),
+    ) {
+        CompositionLocalProvider(com.ai.assistance.operit.ui.common.dynamicui.LocalDynamicUiPeek provides folded) {
+            card()
+        }
+        if (folded) Box(Modifier.matchParentSize().clickable(taps, indication = null, onClick = onOpen))
+    }
+}
+
+/**
+ * The height of a feed post. Only a growth the user asked for ([open]) is animated, and it keeps
+ * following the content while it runs; anything else, folding, loading, or the first height,
+ * is taken at once, so plain scrolling never animates.
+ */
+private class GrowOnly {
+    private val height = Animatable(0f)
+    private var last = -1
+    /** Where a growth starts, until its animation has taken over. */
+    private var startingFrom: Float? = null
+    /** The user opened the post: the next growth is animated. */
+    private var opening = false
+
+    fun open() { opening = true }
+    fun fold() { opening = false }
+
+    /** The height to show for content measured at [target]; called while laying out. */
+    fun heightFor(target: Int, scope: kotlinx.coroutines.CoroutineScope): Int {
+        // Read every time, so the post is laid out again when an animation starts or stops.
+        val running = height.isRunning
+        val animating = running || startingFrom != null
+        if (last >= 0 && target > last && (opening || animating)) {
+            opening = false
+            // From where it is now: the last height, or mid-way through an earlier opening.
+            val from = startingFrom ?: if (running) height.value else last.toFloat()
+            last = target
+            startingFrom = from
+            scope.launch {
+                height.snapTo(from)
+                startingFrom = null
+                height.animateTo(target.toFloat(), androidx.compose.animation.core.tween(250, easing = androidx.compose.animation.core.FastOutSlowInEasing))
+            }
+            return from.roundToInt().coerceAtMost(target)
+        }
+        if (target != last) {
+            last = target
+            if (animating) {
+                startingFrom = null
+                scope.launch { height.stop() }
+            }
+            return target
+        }
+        startingFrom?.let { return it.roundToInt().coerceAtMost(target) }
+        // Only an animation's frames read the value, so a resting post costs nothing per frame.
+        return if (running) height.value.roundToInt().coerceAtMost(target) else target
+    }
 }
 
 /**
