@@ -1651,6 +1651,142 @@ private fun OrbitSettingsPage(
             // Show the weekly and extra allowance together.
             OrbitQuotaCard(orbit = orbit, cardColor = cardColor, onOpenUsage = onOpenUsage)
 
+            // Passwords and privacy come first, right under the allowance.
+            Column {
+                SettingsSectionTitle(
+                    text = stringResource(R.string.orbit_section_privacy),
+                    icon = lucide("shield-check"),
+                )
+                SettingsCard(backgroundColor = cardColor) {
+                    // Turning the lock on or off takes the same system check it asks for.
+                    var pendingLock by remember { mutableStateOf<Boolean?>(null) }
+                    val lockCheck = rememberOrbitDeviceCheck { ok ->
+                        val target = pendingLock
+                        pendingLock = null
+                        if (ok && target != null) {
+                            if (target) com.ai.assistance.operit.features.orbit.OrbitAppLock.markUnlocked()
+                            CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate).launch {
+                                preferences.setAppLock(target)
+                            }
+                        }
+                    }
+                    val lockTitleOn = stringResource(R.string.orbit_app_lock_turn_on)
+                    val lockTitleOff = stringResource(R.string.orbit_app_lock_turn_off)
+                    SettingsSwitchRow(
+                        modifier = anchor(SWITCH_APP_LOCK),
+                        title = stringResource(R.string.orbit_app_lock),
+                        subtitle = stringResource(R.string.orbit_app_lock_desc),
+                        checked = settings.appLock,
+                        searchable = false,
+                        onCheckedChange = { enabled ->
+                            if (!com.ai.assistance.operit.features.orbit.OrbitAppLock.deviceSecure(context)) {
+                                // With no screen lock left there is nothing to check; turning off is let through.
+                                if (enabled) {
+                                    toast(context, R.string.orbit_app_lock_no_screen_lock)
+                                } else {
+                                    CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate).launch {
+                                        preferences.setAppLock(false)
+                                    }
+                                }
+                            } else if (pendingLock == null) {
+                                pendingLock = enabled
+                                lockCheck(if (enabled) lockTitleOn else lockTitleOff)
+                            }
+                        },
+                    )
+                    SettingsRowDivider(inset = false)
+                    SettingsNavRow(
+                        title = stringResource(R.string.orbit_vault_row),
+                        subtitle = stringResource(R.string.orbit_vault_row_desc),
+                        icon = lucide("key-round"),
+                        searchable = false,
+                        onClick = onOpenVault,
+                    )
+                    SettingsRowDivider(inset = false)
+                    val separateLoginsSupported = remember {
+                        com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserProfiles.isSupported()
+                    }
+                    // Switching logins either way asks first: it changes which accounts Orbit acts as.
+                    var pendingShare by remember { mutableStateOf<Boolean?>(null) }
+                    SettingsSwitchRow(
+                        modifier = anchor(SWITCH_SHARED_LOGIN),
+                        title = stringResource(R.string.orbit_browser_share_login),
+                        subtitle =
+                            when {
+                                !separateLoginsSupported -> stringResource(R.string.orbit_browser_share_login_unsupported)
+                                orbit.browserSharesMainLogin -> stringResource(R.string.orbit_browser_share_login_on)
+                                else -> stringResource(R.string.orbit_browser_share_login_off)
+                            },
+                        checked = orbit.browserSharesMainLogin || !separateLoginsSupported,
+                        enabled = separateLoginsSupported,
+                        searchable = false,
+                        onCheckedChange = { shared ->
+                            pendingShare = shared
+                        },
+                    )
+                    pendingShare?.let { shared ->
+                        TaskConfirmSheet(
+                            icon = if (shared) "link" else "link-2-off",
+                            title = stringResource(
+                                if (shared) R.string.orbit_browser_share_confirm_on_title
+                                else R.string.orbit_browser_share_confirm_off_title,
+                                orbitName(orbit),
+                            ),
+                            message = stringResource(
+                                if (shared) R.string.orbit_browser_share_confirm_on
+                                else R.string.orbit_browser_share_confirm_off,
+                                orbit.name,
+                            ),
+                            confirmText = stringResource(R.string.orbit_browser_share_confirm_ok),
+                            dismissText = stringResource(R.string.cancel),
+                            destructive = false,
+                            onDismiss = { pendingShare = null },
+                            onConfirm = {
+                                pendingShare = null
+                                scope.launch { preferences.setBrowserSharesMainLogin(orbit.id, shared) }
+                            },
+                        )
+                    }
+                    SettingsRowDivider(inset = false)
+                    // Signing out of sites is asked first; with shared logins it signs the app out too.
+                    val clearsMainLogins = orbit.browserSharesMainLogin || !separateLoginsSupported
+                    var askClearLogins by remember { mutableStateOf(false) }
+                    SettingsNavRow(
+                        modifier = anchor(ROW_CLEAR_LOGINS),
+                        title = stringResource(R.string.orbit_clear_logins_title),
+                        subtitle = stringResource(
+                            if (clearsMainLogins) R.string.orbit_clear_logins_desc_shared
+                            else R.string.orbit_clear_logins_desc_own,
+                        ),
+                        icon = lucide("cookie"),
+                        searchable = false,
+                        onClick = { askClearLogins = true },
+                    )
+                    if (askClearLogins) {
+                        TaskConfirmSheet(
+                            icon = "cookie",
+                            title = stringResource(R.string.orbit_clear_logins_confirm_title),
+                            message =
+                                if (clearsMainLogins) stringResource(R.string.orbit_clear_logins_confirm_shared)
+                                else stringResource(R.string.orbit_clear_logins_confirm, orbitName(orbit)),
+                            confirmText = stringResource(R.string.orbit_clear_logins_ok),
+                            dismissText = stringResource(R.string.cancel),
+                            destructive = true,
+                            onDismiss = { askClearLogins = false },
+                            onConfirm = {
+                                askClearLogins = false
+                                com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserProfiles
+                                    .clearOrbitLogins(orbit.id, orbit.browserSharesMainLogin) { ok ->
+                                        android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                            toast(context, if (ok) R.string.orbit_clear_logins_done else R.string.orbit_clear_logins_failed)
+                                        }
+                                    }
+                            },
+                        )
+                    }
+                }
+            }
+
             SettingsCard(backgroundColor = cardColor) {
                 SettingsNavRow(
                     title = stringResource(R.string.orbit_models_title),
@@ -1818,141 +1954,6 @@ private fun OrbitSettingsPage(
                         searchable = false,
                         onClick = onOpenMcp,
                     )
-                }
-            }
-
-            Column {
-                SettingsSectionTitle(
-                    text = stringResource(R.string.orbit_section_privacy),
-                    icon = lucide("shield-check"),
-                )
-                SettingsCard(backgroundColor = cardColor) {
-                    // Turning the lock on or off takes the same system check it asks for.
-                    var pendingLock by remember { mutableStateOf<Boolean?>(null) }
-                    val lockCheck = rememberOrbitDeviceCheck { ok ->
-                        val target = pendingLock
-                        pendingLock = null
-                        if (ok && target != null) {
-                            if (target) com.ai.assistance.operit.features.orbit.OrbitAppLock.markUnlocked()
-                            CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate).launch {
-                                preferences.setAppLock(target)
-                            }
-                        }
-                    }
-                    val lockTitleOn = stringResource(R.string.orbit_app_lock_turn_on)
-                    val lockTitleOff = stringResource(R.string.orbit_app_lock_turn_off)
-                    SettingsSwitchRow(
-                        modifier = anchor(SWITCH_APP_LOCK),
-                        title = stringResource(R.string.orbit_app_lock),
-                        subtitle = stringResource(R.string.orbit_app_lock_desc),
-                        checked = settings.appLock,
-                        searchable = false,
-                        onCheckedChange = { enabled ->
-                            if (!com.ai.assistance.operit.features.orbit.OrbitAppLock.deviceSecure(context)) {
-                                // With no screen lock left there is nothing to check; turning off is let through.
-                                if (enabled) {
-                                    toast(context, R.string.orbit_app_lock_no_screen_lock)
-                                } else {
-                                    CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate).launch {
-                                        preferences.setAppLock(false)
-                                    }
-                                }
-                            } else if (pendingLock == null) {
-                                pendingLock = enabled
-                                lockCheck(if (enabled) lockTitleOn else lockTitleOff)
-                            }
-                        },
-                    )
-                    SettingsRowDivider(inset = false)
-                    SettingsNavRow(
-                        title = stringResource(R.string.orbit_vault_row),
-                        subtitle = stringResource(R.string.orbit_vault_row_desc),
-                        icon = lucide("key-round"),
-                        searchable = false,
-                        onClick = onOpenVault,
-                    )
-                    SettingsRowDivider(inset = false)
-                    val separateLoginsSupported = remember {
-                        com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserProfiles.isSupported()
-                    }
-                    // Switching logins either way asks first: it changes which accounts Orbit acts as.
-                    var pendingShare by remember { mutableStateOf<Boolean?>(null) }
-                    SettingsSwitchRow(
-                        modifier = anchor(SWITCH_SHARED_LOGIN),
-                        title = stringResource(R.string.orbit_browser_share_login),
-                        subtitle =
-                            when {
-                                !separateLoginsSupported -> stringResource(R.string.orbit_browser_share_login_unsupported)
-                                orbit.browserSharesMainLogin -> stringResource(R.string.orbit_browser_share_login_on)
-                                else -> stringResource(R.string.orbit_browser_share_login_off)
-                            },
-                        checked = orbit.browserSharesMainLogin || !separateLoginsSupported,
-                        enabled = separateLoginsSupported,
-                        searchable = false,
-                        onCheckedChange = { shared ->
-                            pendingShare = shared
-                        },
-                    )
-                    pendingShare?.let { shared ->
-                        TaskConfirmSheet(
-                            icon = if (shared) "link" else "link-2-off",
-                            title = stringResource(
-                                if (shared) R.string.orbit_browser_share_confirm_on_title
-                                else R.string.orbit_browser_share_confirm_off_title,
-                                orbitName(orbit),
-                            ),
-                            message = stringResource(
-                                if (shared) R.string.orbit_browser_share_confirm_on
-                                else R.string.orbit_browser_share_confirm_off,
-                                orbit.name,
-                            ),
-                            confirmText = stringResource(R.string.orbit_browser_share_confirm_ok),
-                            dismissText = stringResource(R.string.cancel),
-                            destructive = false,
-                            onDismiss = { pendingShare = null },
-                            onConfirm = {
-                                pendingShare = null
-                                scope.launch { preferences.setBrowserSharesMainLogin(orbit.id, shared) }
-                            },
-                        )
-                    }
-                    SettingsRowDivider(inset = false)
-                    // Signing out of sites is asked first; with shared logins it signs the app out too.
-                    val clearsMainLogins = orbit.browserSharesMainLogin || !separateLoginsSupported
-                    var askClearLogins by remember { mutableStateOf(false) }
-                    SettingsNavRow(
-                        modifier = anchor(ROW_CLEAR_LOGINS),
-                        title = stringResource(R.string.orbit_clear_logins_title),
-                        subtitle = stringResource(
-                            if (clearsMainLogins) R.string.orbit_clear_logins_desc_shared
-                            else R.string.orbit_clear_logins_desc_own,
-                        ),
-                        icon = lucide("cookie"),
-                        searchable = false,
-                        onClick = { askClearLogins = true },
-                    )
-                    if (askClearLogins) {
-                        TaskConfirmSheet(
-                            icon = "cookie",
-                            title = stringResource(R.string.orbit_clear_logins_confirm_title),
-                            message =
-                                if (clearsMainLogins) stringResource(R.string.orbit_clear_logins_confirm_shared)
-                                else stringResource(R.string.orbit_clear_logins_confirm, orbitName(orbit)),
-                            confirmText = stringResource(R.string.orbit_clear_logins_ok),
-                            dismissText = stringResource(R.string.cancel),
-                            destructive = true,
-                            onDismiss = { askClearLogins = false },
-                            onConfirm = {
-                                askClearLogins = false
-                                com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserProfiles
-                                    .clearOrbitLogins(orbit.id, orbit.browserSharesMainLogin) { ok ->
-                                        android.os.Handler(android.os.Looper.getMainLooper()).post {
-                                            toast(context, if (ok) R.string.orbit_clear_logins_done else R.string.orbit_clear_logins_failed)
-                                        }
-                                    }
-                            },
-                        )
-                    }
                 }
             }
 

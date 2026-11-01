@@ -9197,9 +9197,7 @@
     <string name="orbit_quota_status_paused">Both allowances are used up; %1$s is paused</string>
     <string name="orbit_quota_status_extra">This week\'s allowance is used up; using the extra allowance</string>
     <string name="orbit_quota_usage">Usage</string>
-    <string name="orbit_quota_usage_desc">See where %1$s\'s tokens went</string>
     <string name="orbit_quota_adjust">Change allowances</string>
-    <string name="orbit_quota_adjust_desc">Weekly %1$s · extra %2$s</string>
     <string name="orbit_quota_adjust_help">The weekly allowance starts over every Monday at midnight and can\'t go below 100M. The extra allowance is only used once the week\'s is gone; 0 turns it off. With both used up, %1$s pauses.</string>
     <string name="orbit_quota_weekly_field">Weekly allowance</string>
     <string name="orbit_quota_extra_field">Extra allowance</string>
@@ -9217,7 +9215,6 @@
     <string name="orbit_quota_weekly_info">This is the weekly token cap you set for %1$s, so tokens can\'t quietly run out. It resets every Monday at 00:00 and every Orbit shares it. The default is 1 billion and the lowest is 100 million. When it runs out, %1$s is told first so it can keep an eye on usage, and the extra allowance starts being used.</string>
     <string name="orbit_quota_extra_info">%1$s only starts using this extra allowance after the weekly allowance runs out. When the extra allowance runs out too, %1$s pauses until next week\'s reset or until you refill it. You can set it to 0 (pause as soon as the weekly allowance is gone), choose Keep (only refilled when you tap Reset extra allowance), or choose Every week. You can refill it any time without waiting for it to run out.</string>
     <string name="orbit_quota_reset_extra">Reset extra allowance</string>
-    <string name="orbit_quota_reset_extra_desc">Clear the %1$s used and start over</string>
     <string name="orbit_quota_reset_extra_none">Nothing used yet, no need to reset</string>
     <string name="orbit_quota_reset_extra_confirm">Clear the %1$s already used?</string>
     <string name="orbit_quota_reset_extra_action">Reset</string>

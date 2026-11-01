@@ -9174,9 +9174,7 @@
     <string name="orbit_quota_status_paused">两份额度都用完了，%1$s 已暂停</string>
     <string name="orbit_quota_status_extra">本周额度已用完，正在用额外额度</string>
     <string name="orbit_quota_usage">用量统计</string>
-    <string name="orbit_quota_usage_desc">看看 %1$s 的 token 都花在哪了</string>
     <string name="orbit_quota_adjust">调整额度</string>
-    <string name="orbit_quota_adjust_desc">每周 %1$s · 额外 %2$s</string>
     <string name="orbit_quota_adjust_help">每周额度每周一 0 点重置，最低 1 亿。额外额度在每周额度用完后才会用，设成 0 就是不用。两份都用完，%1$s 会暂停。</string>
     <string name="orbit_quota_weekly_field">每周额度</string>
     <string name="orbit_quota_extra_field">额外额度</string>
@@ -9194,7 +9192,6 @@
     <string name="orbit_quota_weekly_info">这是你给 %1$s 定的每周 token 上限，用来防止 token 被不知不觉用光。每周一 0 点自动重置，所有 Orbit 共用同一份。默认 10 亿，最低可以调到 1 亿。用完时会先告诉 %1$s，让它自己留意；之后开始用额外额度。</string>
     <string name="orbit_quota_extra_info">每周额度用完以后，%1$s 才会开始用这份额外额度。额外额度也用完，%1$s 就会暂停，等下周重置或你补满。可以设成 0（每周额度用完就直接暂停），也可以选「永久有效」（只有你点「重置额外额度」才会补满）或「每周重置」。随时都可以手动补满，不用等它用完。</string>
     <string name="orbit_quota_reset_extra">重置额外额度</string>
-    <string name="orbit_quota_reset_extra_desc">已用的 %1$s 清零，重新开始算</string>
     <string name="orbit_quota_reset_extra_none">还没用过，不需要重置</string>
     <string name="orbit_quota_reset_extra_confirm">确定把已用的 %1$s 清零吗？</string>
     <string name="orbit_quota_reset_extra_action">确定重置</string>
