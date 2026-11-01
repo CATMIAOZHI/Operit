@@ -906,8 +906,9 @@ private fun FeedPostRow(
         else scope.launch { currentBeforeCollapse(); expanded = false }
     }
     var showWhy by rememberSaveable(post.id) { mutableStateOf(false) }
-    // Whether the folded text is cut off; the card only shows once the post is opened.
-    var cutOff by remember(post.id) { mutableStateOf(false) }
+    // Whether the folded text is cut off (null until first measured); the card only shows once
+    // the post is opened.
+    var cutOff by remember(post.id) { mutableStateOf<Boolean?>(null) }
     // Posts written before card references were moved out of the text still carry the raw fence.
     val body = remember(post.body, colors.primary) {
         linkify(com.ai.assistance.operit.features.orbit.OrbitBoardRepository.withoutCardFences(post.body), colors.primary)
@@ -928,37 +929,68 @@ private fun FeedPostRow(
                 // No size animation: growing or shrinking a long post frame by frame re-measured
                 // the whole list and made taps stutter.
                 Column(Modifier.weight(1f)) {
-                    // Text owns the long press; links and the row's normal expand tap still work.
-                    // Keep interactive cards and action buttons outside the selection area.
-                    SelectionContainer {
-                        Column {
-                            Text(post.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Medium)
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                body, style = MaterialTheme.typography.bodyLarge,
-                                maxLines = if (expanded) Int.MAX_VALUE else 6, overflow = TextOverflow.Ellipsis,
-                                onTextLayout = { if (!expanded) cutOff = it.hasVisualOverflow },
-                            )
+                    // Whether the text is cut off is only known once it is measured. The button is
+                    // decided in that same layout pass, so it does not pop in a frame later.
+                    androidx.compose.ui.layout.Layout(
+                        contents = listOf(
+                            {
+                                Column {
+                                    // Text owns the long press; links and the row's normal expand tap still work.
+                                    // Keep interactive cards and action buttons outside the selection area.
+                                    SelectionContainer {
+                                        Column {
+                                            Text(post.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Medium)
+                                            Spacer(Modifier.height(4.dp))
+                                            Text(
+                                                body, style = MaterialTheme.typography.bodyLarge,
+                                                maxLines = if (expanded) Int.MAX_VALUE else 6, overflow = TextOverflow.Ellipsis,
+                                                onTextLayout = { if (!expanded) cutOff = it.hasVisualOverflow },
+                                            )
+                                        }
+                                    }
+                                    FeedImages(images, post.title)
+                                    if (post.card && expanded) FeedPostCard(post, cardOf, onCardSubmit, cardOwner)
+                                }
+                            },
+                            {
+                                // Always composed, even for short posts: if a width change makes
+                                // the text overflow, the button must be ready in that same pass.
+                                run {
+                                    Text(
+                                        stringResource(
+                                            when {
+                                                expanded -> R.string.orbit_feed_collapse
+                                                post.card -> R.string.orbit_feed_expand_card
+                                                else -> R.string.orbit_feed_expand
+                                            },
+                                        ),
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = colors.primary,
+                                        modifier = Modifier
+                                            .clickable(interactionSource = toggleTaps, indication = null, role = Role.Button, onClick = toggle)
+                                            .heightIn(min = 48.dp)
+                                            .wrapContentHeight(Alignment.CenterVertically),
+                                    )
+                                }
+                            },
+                        ),
+                    ) { (mainParts, buttonParts), constraints ->
+                        val loose = constraints.copy(minHeight = 0)
+                        val main = mainParts.first().measure(loose)
+                        // Measuring the text above has just updated cutOff for this width.
+                        val button = if (expanded || post.card || cutOff == true) {
+                            buttonParts.firstOrNull()?.measure(loose.copy(minWidth = 0))
+                        } else {
+                            null
                         }
-                    }
-                    FeedImages(images, post.title)
-                    if (post.card && expanded) FeedPostCard(post, cardOf, onCardSubmit, cardOwner)
-                    if (expanded || cutOff || post.card) {
-                        Text(
-                            stringResource(
-                                when {
-                                    expanded -> R.string.orbit_feed_collapse
-                                    post.card -> R.string.orbit_feed_expand_card
-                                    else -> R.string.orbit_feed_expand
-                                },
-                            ),
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = colors.primary,
-                            modifier = Modifier
-                                .clickable(interactionSource = toggleTaps, indication = null, role = Role.Button, onClick = toggle)
-                                .heightIn(min = 48.dp)
-                                .wrapContentHeight(Alignment.CenterVertically),
-                        )
+                        val width = maxOf(main.width, button?.width ?: 0)
+                            .coerceIn(constraints.minWidth, constraints.maxWidth)
+                        val height = (main.height + (button?.height ?: 0))
+                            .coerceIn(constraints.minHeight, constraints.maxHeight)
+                        layout(width, height) {
+                            main.placeRelative(0, 0)
+                            button?.placeRelative(0, main.height)
+                        }
                     }
                     if (showWhy && post.extra.isNotBlank()) {
                         Spacer(Modifier.height(10.dp))
