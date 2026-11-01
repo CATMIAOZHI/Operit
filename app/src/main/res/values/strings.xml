@@ -9388,7 +9388,6 @@
     <string name="orbit_soul_note">关于这个文件：这是 %1$s 的人格，写着它在每次对话里坚持的价值观和习惯。人格最初来自角色卡，之后会慢慢完善，有改动时会告诉你。你可以随时编辑。这段说明不属于文件内容。</string>
     <string name="orbit_prompt_note">关于这个文件：这是 Orbit 的工作手册，写着它怎么主动做事、安排提醒、记住东西和说话。它由应用内置、只读，始终跟着应用更新；文件夹里的 PROMPT.md 被谁改了都不会生效。这段说明不属于文件内容。</string>
     <string name="orbit_file_read_only">只读</string>
-    <string name="orbit_section_prompts">提示词</string>
     <string name="orbit_prompt_layers">提示词层</string>
     <string name="orbit_prompt_layers_desc">看看 Orbit 每次回复前读了什么</string>
     <string name="orbit_prompt_layers_help">下面每一层都按顺序放进 Orbit 的系统提示词，不能关掉；对齐总结要等第一次复盘写好后才带上。点开可以查看或编辑。</string>
@@ -9717,11 +9716,15 @@
     <string name="orbit_vault_empty">还没有保存的密码、密钥或 OAuth 登录。需要时，%1$s 会弹出安全卡片。</string>
     <string name="orbit_vault_delete_title">删除这条登录信息或密钥？</string>
     <string name="orbit_vault_delete_confirm">%1$s 的这条内容会被永久删除。</string>
-    <string name="orbit_section_privacy">隐私与数据</string>
+    <string name="orbit_section_privacy">隐私与安全</string>
+    <string name="orbit_section_display">显示</string>
+    <string name="orbit_section_messages">消息与语音</string>
+    <string name="orbit_section_tools">工具</string>
+    <string name="orbit_section_data">数据</string>
     <string name="orbit_section_developer">开发者</string>
     <string name="orbit_developer_switch">开发者模式</string>
     <string name="orbit_developer_switch_desc">在任务列表顶部显示“原始对话”：用普通聊天界面打开 Orbit 的对话，能看到全部思考、工具调用，聊天中隐藏的消息（比如表情通知、静默结束）也会标出来。后台任务的详情也会显示完整指令。</string>
-    <string name="orbit_tools_row">工具权限</string>
+    <string name="orbit_tools_row">每个工具的权限</string>
     <string name="orbit_tools_row_desc">Orbit 自己的一套，和主应用分开</string>
     <string name="orbit_tools_title">工具权限</string>
     <string name="orbit_tools_help">只管 Orbit 的聊天和它的后台任务，主应用的工具权限不受影响。Orbit 自己的工具，以及内置包里只做查询的工具（时间、搜索、天气等），默认直接允许；其他工具默认走自动审核（快速）。</string>
