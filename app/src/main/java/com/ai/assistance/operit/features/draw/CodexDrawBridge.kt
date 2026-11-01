@@ -130,7 +130,8 @@ object CodexDrawBridge {
         val bytes = decodeImage(imageBase64)
         val extension = imageExtension(bytes)
         val outputDir = codexDrawOutputDir()
-        if (!outputDir.isDirectory && !outputDir.mkdirs()) throw IOException("无法创建绘图目录")
+        // mkdirs() is false when a parallel call created the folder first, so check again.
+        if (!outputDir.isDirectory && !outputDir.mkdirs() && !outputDir.isDirectory) throw IOException("无法创建绘图目录")
         val requestedName = params.optString("file_name").trim()
         val baseName = requestedName
             .replace(Regex("""[\\/:*?"<>|\u0000-\u001F]"""), "_")

@@ -7,9 +7,11 @@ import com.ai.assistance.operit.core.tools.packTool.PackageManager
 import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.model.ToolResult
 import com.ai.assistance.operit.util.AppLogger
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.json.JSONArray
@@ -43,8 +45,20 @@ class JsToolManager private constructor(
     }
 
     private val engines = List(MAX_CONCURRENT_ENGINES) { JsEngine(context) }
-    private val enginePool = Channel<JsEngine>(capacity = MAX_CONCURRENT_ENGINES).also { pool ->
+    @Volatile
+    private var destroyed = false
+
+    // A borrower cancelled right after an engine was handed to it never reaches withEngine's
+    // finally; the channel then reports the engine undelivered and it goes back to the pool.
+    private val enginePool: Channel<JsEngine> = Channel<JsEngine>(
+        capacity = MAX_CONCURRENT_ENGINES,
+        onUndeliveredElement = { engine -> returnEngine(engine) }
+    ).also { pool ->
         engines.forEach(pool::trySend)
+    }
+
+    private fun returnEngine(engine: JsEngine) {
+        if (!destroyed) enginePool.trySend(engine)
     }
 
     private suspend fun <T> withEngine(block: suspend (JsEngine) -> T): T {
@@ -52,7 +66,7 @@ class JsToolManager private constructor(
         return try {
             block(engine)
         } finally {
-            enginePool.trySend(engine)
+            returnEngine(engine)
         }
     }
 
@@ -125,6 +139,12 @@ class JsToolManager private constructor(
     private suspend fun <T> withExecutionEngineForPackage(
         packageName: String,
         block: suspend (JsEngine) -> T
+    ): T = withExecutionEngineForPackageInfo(packageName) { engine, _ -> block(engine) }
+
+    /** As [withExecutionEngineForPackage]; [block] also learns whether the engine is a pooled one only this call uses. */
+    private suspend fun <T> withExecutionEngineForPackageInfo(
+        packageName: String,
+        block: suspend (engine: JsEngine, pooled: Boolean) -> T
     ): T {
         val toolPkgRuntime = packageManager.resolveToolPkgSubpackageRuntimeInternal(packageName)
         if (toolPkgRuntime != null) {
@@ -133,10 +153,11 @@ class JsToolManager private constructor(
                 packageManager.getToolPkgExecutionEngine(
                     contextKey = contextKey,
                     containerPackageName = toolPkgRuntime.containerPackageName
-                )
+                ),
+                false
             )
         }
-        return withEngine(block)
+        return withEngine { engine -> block(engine, true) }
     }
 
     private fun <T> withExecutionEngineForPackageBlocking(
@@ -389,7 +410,7 @@ class JsToolManager private constructor(
             return@channelFlow
         }
         val envOverrides = orbitPackageEnv(callerChatId, packageName)
-        withExecutionEngineForPackage(packageName) { engine ->
+        withExecutionEngineForPackageInfo(packageName) { engine, pooled ->
             val traceListener =
                 object : JsExecutionListener {
                     override fun onCallLog(callId: String, level: String, message: String) {
@@ -417,15 +438,21 @@ class JsToolManager private constructor(
                 }
             try {
                 withTimeout(JsTimeoutConfig.SCRIPT_TIMEOUT_MS) {
-                    val result = engine.executeScriptFunction(
-                        script = script,
-                        functionName = functionName,
-                        params = if (envOverrides.isEmpty()) runtimeParams
-                            else runtimeParams + ("__operit_isolated_modules" to "true"),
-                        envOverrides = envOverrides,
-                        toolPkgApiVersion = toolPkgApiVersion,
-                        executionListener = traceListener
-                    )
+                    val call = {
+                        engine.executeScriptFunction(
+                            script = script,
+                            functionName = functionName,
+                            params = if (envOverrides.isEmpty()) runtimeParams
+                                else runtimeParams + ("__operit_isolated_modules" to "true"),
+                            envOverrides = envOverrides,
+                            toolPkgApiVersion = toolPkgApiVersion,
+                            executionListener = traceListener
+                        )
+                    }
+                    // A pooled engine runs only this call, so cancellation (stop, timeout) may
+                    // interrupt the wait: the engine then stops the script and frees itself. A
+                    // ToolPkg container engine is shared, and its calls are cancelled per chat.
+                    val result = if (pooled) runInterruptible(Dispatchers.IO) { call() } else call()
 
                     val normalizedFailure = extractJsExecutionFailure(result)
                     if (normalizedFailure != null) {
@@ -441,6 +468,8 @@ class JsToolManager private constructor(
                         "Script execution timed out after ${JsTimeoutConfig.SCRIPT_TIMEOUT_MS}ms"
                     )
                 )
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 AppLogger.e(TAG, "Script execution failed: tool=${tool.name}, error=${e.message}", e)
                 send(failure(tool.name, "Script execution failed: ${e.message}"))
@@ -499,6 +528,7 @@ class JsToolManager private constructor(
     }
 
     fun destroy() {
+        destroyed = true
         enginePool.close()
         engines.forEach(JsEngine::destroy)
     }

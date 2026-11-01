@@ -3520,6 +3520,15 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
                             }
                             return packageToolExecutor.invoke(tool)
                         }
+
+                        // Script tools suspend here instead of blocking a thread in invoke(), so
+                        // stopping the turn cancels them and parallel calls do not tie up threads.
+                        override fun invokeAndStream(tool: AITool): kotlinx.coroutines.flow.Flow<ToolResult> =
+                            if (isPhoneControlPackage) {
+                                kotlinx.coroutines.flow.flow { emit(invoke(tool)) }
+                            } else {
+                                packageToolExecutor.invokeAndStream(tool)
+                            }
                     }
             )
         }

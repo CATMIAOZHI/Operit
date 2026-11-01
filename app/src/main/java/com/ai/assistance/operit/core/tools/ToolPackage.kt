@@ -8,6 +8,7 @@ package com.ai.assistance.operit.core.tools
  import com.ai.assistance.operit.data.model.ToolResult
  import com.ai.assistance.operit.data.model.ToolValidationResult
  import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
  import kotlinx.serialization.builtins.MapSerializer
  import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.Serializable
@@ -384,6 +385,18 @@ data class ToolPackage(
              ?.parameters?.map { it.name }?.toSet()
 
      override fun invoke(tool: AITool): ToolResult {
+         // Blocking entry for callers outside coroutines; tool execution goes through invokeAndStream.
+         // Carry the tool's runtime context: the script wait may move to another thread.
+         return runBlocking(
+             com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager.toolRuntimeContextElement()
+         ) { execute(tool) }
+     }
+
+     /**
+      * Runs the tool and returns its final result. Suspends instead of blocking, so cancelling the
+      * calling coroutine (the user stopping the turn) reaches the script.
+      */
+     suspend fun execute(tool: AITool): ToolResult {
          // Parse packageName:toolName pattern
          val parts = tool.name.split(":")
          if (parts.size != 2) {
@@ -417,19 +430,12 @@ data class ToolPackage(
                  error = "Tool '$toolName' not found in package '${toolPackage.name}'"
              )
  
-         // Execute the script using runBlocking since we can't make this a suspending function
-         // without changing the interface. We collect the last result for single-result compatibility.
-         return runBlocking {
-             jsToolManager.executeScript(packageTool.script, tool).last()
-         }
+         // Script logs arrive before the final result; only the final result is the tool's answer.
+         return jsToolManager.executeScript(packageTool.script, tool).last()
      }
  
      override fun invokeAndStream(tool: AITool): Flow<ToolResult> {
-         // Find the tool in the package
-         val packageTool = toolPackage.tools.find { it.name.endsWith(tool.name.split(":").last()) }
-             ?: error("Tool not found in package for streaming") // Should be validated before
- 
-         return jsToolManager.executeScript(packageTool.script, tool)
+         return flow { emit(execute(tool)) }
      }
  
      override fun validateParameters(tool: AITool): ToolValidationResult {
