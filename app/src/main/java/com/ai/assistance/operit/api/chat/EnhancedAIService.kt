@@ -604,6 +604,7 @@ class EnhancedAIService private constructor(
     private fun unregisterExecutionContext(context: MessageExecutionContext) {
         com.ai.assistance.operit.ui.common.dynamicui.CardDelivery.end(context.dynamicUiRunId)
         com.ai.assistance.operit.core.tools.phone.PhoneControlTools.finishTurn(context.toolSequence.scopeId)
+        context.turnCompactor?.endTurn()
         activeExecutionContexts.remove(context.executionId, context)
     }
 
@@ -1058,37 +1059,108 @@ class EnhancedAIService private constructor(
     private class TurnOverCompactionLine : Exception("The request is over the compaction line")
 
     /**
+     * Compaction inside a main chat's turn, after OpenCode: from the precompute share of the line a
+     * summary is written in the background and held; only a request at the line swaps one in,
+     * waiting for it when it is not written yet. The first covers the chat before the turn; later
+     * ones also cover the turn's finished steps, so a long turn compacts as often as it needs.
+     * Returns the new history, or null when nothing was swapped in.
+     */
+    private suspend fun compactTurn(
+        execution: MessageExecutionContext,
+        compactor: com.ai.assistance.operit.api.chat.compaction.TurnCompactor,
+        history: List<PromptTurn>,
+        ratio: Double,
+        threshold: Double,
+        maxTokens: Int,
+        measure: suspend (List<PromptTurn>) -> Double,
+    ): List<PromptTurn>? {
+        if (ratio < threshold * com.ai.assistance.operit.api.chat.compaction.ContextCompaction.PRECOMPUTE_RATIO) return null
+        val tailLimit = com.ai.assistance.operit.api.chat.compaction.ContextCompaction.heldTailLimit(
+            (maxTokens.toDouble() * threshold).coerceIn(0.0, Int.MAX_VALUE.toDouble()).toInt(),
+        )
+        val beforeTurn = compactor.beforeTurnPending && beforeTurnCompactable(execution, history)
+        if (ratio < threshold) {
+            if (beforeTurn) {
+                compactor.prepare()
+            } else {
+                com.ai.assistance.operit.api.chat.compaction.ContextCompaction.stepAnchor(history)
+                    ?.let { compactor.prepareSteps(history, it, tailLimit) }
+            }
+            return null
+        }
+        var current = history
+        if (beforeTurn) {
+            compactWithinTurn(execution, compactor, history)?.let { compacted ->
+                current = compacted
+                if (measure(compacted) < threshold) return compacted
+            }
+        }
+        return compactSteps(execution, compactor, current, tailLimit) ?: current.takeIf { it !== history }
+    }
+
+    /** The chat before the turn has not been summarized in this turn yet. */
+    private fun beforeTurnCompactable(execution: MessageExecutionContext, history: List<PromptTurn>): Boolean {
+        val start = execution.turnStart
+        if (start < 0 || start > history.size) return false
+        return history.subList(0, start).any { it.kind != PromptTurnKind.SYSTEM && it.kind != PromptTurnKind.SUMMARY }
+    }
+
+    /** Shows that the turn waits for a summary while [block] runs. */
+    private suspend fun <T> whileSummarizing(block: suspend () -> T): T {
+        withContext(Dispatchers.Main) {
+            _inputProcessingState.value = InputProcessingState.Summarizing(context.getString(R.string.chat_compressing_history))
+        }
+        try {
+            return block()
+        } finally {
+            withContext(Dispatchers.Main + NonCancellable) {
+                if (_inputProcessingState.value is InputProcessingState.Summarizing) {
+                    _inputProcessingState.value = InputProcessingState.Processing(context.getString(R.string.enhanced_processing_message))
+                }
+            }
+        }
+    }
+
+    /**
+     * Swaps the request before the turn's latest reply for a summary of it, keeping the system
+     * prompts and that reply on word for word. Null when there is nothing to summarize or it failed.
+     */
+    private suspend fun compactSteps(
+        execution: MessageExecutionContext,
+        compactor: com.ai.assistance.operit.api.chat.compaction.TurnCompactor,
+        history: List<PromptTurn>,
+        tailLimit: Int,
+    ): List<PromptTurn>? {
+        val anchor = com.ai.assistance.operit.api.chat.compaction.ContextCompaction.stepAnchor(history) ?: return null
+        val summary = compactor.takeReadySteps(history, tailLimit)
+            ?: whileSummarizing { compactor.awaitSteps(history, anchor, tailLimit) }
+            ?: return null
+        if (summary.covered <= 0 || summary.covered > history.size || summary.text.isBlank()) return null
+        val compacted = history.subList(0, summary.covered).filter { it.kind == PromptTurnKind.SYSTEM } +
+            PromptTurn(PromptTurnKind.SUMMARY, summary.text) +
+            history.subList(summary.covered, history.size)
+        // The chat before the turn is inside this summary now.
+        execution.turnStart = -1
+        execution.conversationHistory.clear()
+        execution.conversationHistory.addAll(compacted)
+        return compacted
+    }
+
+    /**
      * Swaps the conversation before this turn for its summary, keeping the system prompt and the
-     * turn's own part word for word. Waits for the summary only when [waitForSummary]; null when no
-     * summary is ready (or it failed), leaving the history as it was.
+     * turn's own part word for word; waits for the summary when it is not written yet. Null when
+     * there is none (or it failed), leaving the history as it was.
      */
     private suspend fun compactWithinTurn(
         execution: MessageExecutionContext,
         compactor: com.ai.assistance.operit.api.chat.compaction.TurnCompactor,
         history: List<PromptTurn>,
-        waitForSummary: Boolean,
     ): List<PromptTurn>? {
         val start = execution.turnStart
         if (start < 0 || start > history.size) return null
         val leading = history.subList(0, start).takeWhile { it.kind == PromptTurnKind.SYSTEM }
         if (leading.size >= start) return null
-        compactor.prepare()
-        val summary = compactor.takeReady() ?: if (waitForSummary) {
-            withContext(Dispatchers.Main) {
-                _inputProcessingState.value = InputProcessingState.Summarizing(context.getString(R.string.chat_compressing_history))
-            }
-            try {
-                compactor.await()
-            } finally {
-                withContext(Dispatchers.Main + NonCancellable) {
-                    if (_inputProcessingState.value is InputProcessingState.Summarizing) {
-                        _inputProcessingState.value = InputProcessingState.Processing(context.getString(R.string.enhanced_processing_message))
-                    }
-                }
-            }
-        } else {
-            null
-        }
+        val summary = compactor.takeReady() ?: whileSummarizing { compactor.await() }
         if (summary.isNullOrBlank()) return null
         val compacted = leading + PromptTurn(PromptTurnKind.SUMMARY, summary) + history.subList(start, history.size)
         execution.turnStart = leading.size + 1
@@ -1664,9 +1736,18 @@ class EnhancedAIService private constructor(
                     if (initialCompactor != null &&
                         initialRatio >= tokenUsageThreshold * com.ai.assistance.operit.api.chat.compaction.ContextCompaction.PRECOMPUTE_RATIO
                     ) {
-                        // Same as between tool calls: a ready summary goes in now, the line itself waits for one.
-                        val finalWindow = compactWithinTurn(
-                            execContext, initialCompactor, requestHistory, waitForSummary = initialRatio >= tokenUsageThreshold,
+                        // Same as between tool calls: held from the precompute share on, swapped in at the line.
+                        val measureRequest: suspend (List<PromptTurn>) -> Double = { prepared ->
+                            estimatePreparedRequestWindow(
+                                serviceForFunction = serviceForFunction,
+                                preparedHistory = prepared,
+                                availableTools = availableTools,
+                                publishEstimate = false
+                            ).toDouble() / maxTokens
+                        }
+                        val finalWindow = compactTurn(
+                            execContext, initialCompactor, requestHistory, initialRatio, tokenUsageThreshold, maxTokens,
+                            measureRequest,
                         )?.let { compacted ->
                             requestHistory = compacted
                             estimatePreparedRequestWindow(
@@ -3040,9 +3121,8 @@ class EnhancedAIService private constructor(
             if (maxTokens > 0) {
                 var usageRatio = currentTokens.toDouble() / maxTokens.toDouble()
 
-                // A main chat compacts within the turn: a summary of what came before the turn is
-                // written in the background from the precompute share of the line on, swapped in
-                // as soon as it is done, and waited for only once the line itself is reached.
+                // A main chat compacts within the turn (see [compactTurn]): a summary is written in
+                // the background from the precompute share of the line on and swapped in at the line.
                 val turnCompactor = context.turnCompactor?.takeIf {
                     onTokenLimitExceeded != null && !isSubTask &&
                         !com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(this@EnhancedAIService.context).isAgent(chatId) &&
@@ -3051,9 +3131,16 @@ class EnhancedAIService private constructor(
                 if (turnCompactor != null &&
                     usageRatio >= tokenUsageThreshold * com.ai.assistance.operit.api.chat.compaction.ContextCompaction.PRECOMPUTE_RATIO
                 ) {
-                    val compacted = compactWithinTurn(
-                        context, turnCompactor, currentChatHistory, waitForSummary = usageRatio >= tokenUsageThreshold,
-                    )
+                    val compacted = compactTurn(
+                        context, turnCompactor, currentChatHistory, usageRatio, tokenUsageThreshold, maxTokens,
+                    ) { prepared ->
+                        estimatePreparedRequestWindow(
+                            serviceForFunction = serviceForFunction,
+                            preparedHistory = prepared,
+                            availableTools = availableTools,
+                            publishEstimate = false
+                        ).toDouble() / maxTokens.toDouble()
+                    }
                     if (compacted != null) {
                         currentChatHistory = compacted
                         usageRatio = estimatePreparedRequestWindow(

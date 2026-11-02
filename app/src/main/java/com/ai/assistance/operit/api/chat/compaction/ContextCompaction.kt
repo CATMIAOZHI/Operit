@@ -2,6 +2,8 @@ package com.ai.assistance.operit.api.chat.compaction
 
 import com.ai.assistance.operit.api.chat.llmprovider.HttpStatusCodeException
 import com.ai.assistance.operit.api.chat.prediction.ComposerPredictionSnapshot
+import com.ai.assistance.operit.core.chat.hooks.PromptTurn
+import com.ai.assistance.operit.core.chat.hooks.PromptTurnKind
 import com.ai.assistance.operit.data.model.ChatMessage
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.AbstractCoroutineContextElement
@@ -23,8 +25,9 @@ object ContextCompaction {
     private const val KEEP_SHARE = 0.2
     /**
      * Share of the compaction line at which a summary starts in the background. The rest of the
-     * way to the line is the room the chat keeps going in while it is written: it is swapped in
-     * as soon as it is done, and only a chat that reaches the line first waits for it.
+     * way to the line is the room the chat keeps going in while it is written; it is held and
+     * swapped in at the line (earlier would throw away the prompt cache), and only a chat that
+     * reaches the line before it is written waits for it.
      */
     const val PRECOMPUTE_RATIO = 0.85
     /** Background summaries that may fail before none starts again until the next compaction. */
@@ -44,6 +47,22 @@ object ContextCompaction {
     fun keepTokens(ceiling: Int): Int = minOf(KEEP_TOKENS, (ceiling * KEEP_SHARE).toInt()).coerceAtLeast(0)
 
     fun heldTailLimit(ceiling: Int): Int = (ceiling * HELD_TAIL_SHARE).toInt().coerceAtLeast(0)
+
+    /**
+     * Where the latest reply of a request starts: inside a turn, a summary covers everything before
+     * it and the reply stays word for word, with its tool calls and their results (OpenCode keeps
+     * the latest response the same way). Null when there is nothing before it to summarize.
+     */
+    fun stepAnchor(history: List<PromptTurn>): Int? {
+        fun isReply(turn: PromptTurn) = turn.kind == PromptTurnKind.ASSISTANT || turn.kind == PromptTurnKind.TOOL_CALL
+        var anchor = history.indexOfLast(::isReply)
+        if (anchor < 0) return null
+        while (anchor > 0 && isReply(history[anchor - 1])) anchor--
+        val hasConversation = history.subList(0, anchor).any {
+            it.kind != PromptTurnKind.SYSTEM && it.kind != PromptTurnKind.SUMMARY
+        }
+        return anchor.takeIf { hasConversation }
+    }
 
     /** A rough token count: Chinese, Japanese and Korean text runs near 0.6 per character, other text near 0.3. */
     fun estimateTokens(text: String?): Int {
