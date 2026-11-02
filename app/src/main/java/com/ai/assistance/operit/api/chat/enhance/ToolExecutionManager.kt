@@ -70,7 +70,8 @@ object ToolExecutionManager {
     /**
      * Built-in packages whose tools may run side by side within one model turn: each call only
      * sends its own network request and writes a uniquely named file, never touching the screen,
-     * the browser, settings or another call's state.
+     * the browser, settings or another call's state. The web search packages read pages through
+     * visit_web, where each visit opens its own page.
      */
     internal val PARALLEL_SAFE_PACKAGES: Set<String> =
         setOf(
@@ -81,6 +82,8 @@ object ToolExecutionManager {
             "tavily",
             "zhipu_search",
             "crossref",
+            "google_search",
+            "various_search",
             "codex_draw",
             "grok_draw",
             "openai_draw",
@@ -92,18 +95,8 @@ object ToolExecutionManager {
             "zhipu_draw",
         )
 
-    /**
-     * Built-in packages that read pages through visit_web. Each visit opens its own hidden WebView,
-     * so they run side by side only for an Orbit, whose visits show nothing on screen; in the main
-     * app every visit adds a floating button, so they stay serial there.
-     */
-    internal val ORBIT_PARALLEL_WEB_PACKAGES: Set<String> = setOf("google_search", "various_search")
-
-    /** A built-in package [packageName] whose call [tool] may run beside other parallel calls. */
-    internal fun isParallelSafePackage(packageName: String, tool: AITool): Boolean =
-        packageName in PARALLEL_SAFE_PACKAGES ||
-            (packageName in ORBIT_PARALLEL_WEB_PACKAGES &&
-                com.ai.assistance.operit.core.tools.defaultTool.standard.StandardWebVisitTool.isQuietCaller(tool))
+    /** A built-in package [packageName] whose calls may run beside other parallel calls. */
+    internal fun isParallelSafePackage(packageName: String): Boolean = packageName in PARALLEL_SAFE_PACKAGES
     private const val PACKAGE_PROXY_TOOL_NAME = "package_proxy"
     private const val PACKAGE_CALLER_NAME_PARAM = "__operit_package_caller_name"
     private const val PACKAGE_CHAT_ID_PARAM = "__operit_package_chat_id"

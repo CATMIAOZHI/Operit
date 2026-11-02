@@ -1395,8 +1395,8 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                                     emit(ToolGetter.getWebVisitTool(context).invokeSuspend(tool))
                                 }
 
-                        override fun supportsParallelCalls(tool: AITool): Boolean =
-                                StandardWebVisitTool.isQuietCaller(tool)
+                        // Each visit has its own page; up to three load at once.
+                        override fun supportsParallelCalls(tool: AITool): Boolean = true
                     }
     )
 
