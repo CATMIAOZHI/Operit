@@ -2005,8 +2005,8 @@ class MessageCoordinationDelegate(
             _summarizingChatId.value?.let { affectedChatIds.add(it) }
             summaryJob?.let { jobsToCancel.add(it) }
             summaryJob = null
-            _isSummarizing.value = false
-            _summarizingChatId.value = null
+            // The running summary releases its slot in finally; releasing it before join lets
+            // another chat start, then the cancelled summary would clear that chat's slot.
         }
 
         if (shouldCancelAsyncSummary) {

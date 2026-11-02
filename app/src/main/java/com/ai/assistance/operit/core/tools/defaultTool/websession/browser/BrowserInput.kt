@@ -202,7 +202,8 @@ internal fun cdpMouse(
     buttons: Int = 0,
     clickCount: Int = 0,
     deltaX: Double = 0.0,
-    deltaY: Double = 0.0
+    deltaY: Double = 0.0,
+    waitForResponse: Boolean = true
 ) {
     val params =
         JSONObject()
@@ -213,7 +214,8 @@ internal fun cdpMouse(
             .put("buttons", buttons)
             .put("clickCount", clickCount)
     if (type == "mouseWheel") params.put("deltaX", deltaX).put("deltaY", deltaY)
-    connection.send("Input.dispatchMouseEvent", params, 5_000L)
+    if (waitForResponse) connection.send("Input.dispatchMouseEvent", params, 5_000L)
+    else connection.sendWithoutWaiting("Input.dispatchMouseEvent", params)
 }
 
 /**
@@ -223,7 +225,7 @@ internal fun cdpMouse(
 internal fun releaseCdpMouseQuietly(connection: CdpConnection, x: Double, y: Double, button: String, clickCount: Int) {
     val wasInterrupted = Thread.interrupted()
     try {
-        runCatching { cdpMouse(connection, "mouseReleased", x, y, button, 0, clickCount) }
+        runCatching { cdpMouse(connection, "mouseReleased", x, y, button, 0, clickCount, waitForResponse = false) }
     } finally {
         if (wasInterrupted) Thread.currentThread().interrupt()
     }

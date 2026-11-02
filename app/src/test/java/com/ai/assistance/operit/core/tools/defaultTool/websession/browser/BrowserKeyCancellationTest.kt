@@ -10,6 +10,31 @@ import org.mockito.kotlin.any
 
 class BrowserKeyCancellationTest {
     @Test
+    fun stoppedMouseReleaseDoesNotWaitAndPreservesTheInterruptFlag() {
+        val connection = Mockito.mock(CdpConnection::class.java)
+        var released = false
+        Mockito.doAnswer { invocation ->
+            assertEquals("Input.dispatchMouseEvent", invocation.getArgument<String>(0))
+            val params = invocation.getArgument<JSONObject>(1)
+            assertEquals("mouseReleased", params.getString("type"))
+            assertEquals(0, params.getInt("buttons"))
+            assertFalse(Thread.currentThread().isInterrupted)
+            released = true
+            null
+        }.`when`(connection).sendWithoutWaiting(any(), any())
+
+        Thread.currentThread().interrupt()
+        try {
+            releaseCdpMouseQuietly(connection, 12.0, 34.0, "left", 1)
+            org.junit.Assert.assertTrue(released)
+            org.junit.Assert.assertTrue(Thread.currentThread().isInterrupted)
+            Mockito.verify(connection, Mockito.never()).send(any(), any(), any())
+        } finally {
+            Thread.interrupted()
+        }
+    }
+
+    @Test
     fun interruptedKeyDownReleasesEveryAttemptedKeyInReverseOrder() {
         for (interruptAt in 1..3) {
             val connection = Mockito.mock(CdpConnection::class.java)
