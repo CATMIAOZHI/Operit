@@ -90,6 +90,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
@@ -132,6 +133,7 @@ import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import com.ai.assistance.operit.features.orbit.OrbitCompanion
 import com.ai.assistance.operit.data.preferences.canAddSideChat
 import com.ai.assistance.operit.ui.common.dynamicui.CardIcons
+import com.ai.assistance.operit.ui.common.centeredMaxWidth
 import com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook
 import com.ai.assistance.operit.ui.features.settings.components.SettingsCard
 import com.ai.assistance.operit.ui.features.settings.components.SettingsIconBadge
@@ -151,6 +153,11 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 private const val TAG = "OrbitScreen"
+
+/** On a tablet Orbit's chat and its pages keep this width in the middle of the screen. */
+internal val ORBIT_PAGE_MAX_WIDTH = 840.dp
+/** The narrower width of Orbit's forms on a tablet: the quick setup and the list of Orbits. */
+internal val ORBIT_FORM_MAX_WIDTH = 640.dp
 
 private fun lucide(name: String): ImageVector = CardIcons.get("lucide:$name") ?: Icons.Rounded.Person
 
@@ -326,13 +333,17 @@ private fun OrbitScreenContent(
     CompositionLocalProvider(com.ai.assistance.operit.ui.features.chat.components.LocalOrbitName provides orbitName(orbit)) {
         OrbitAppearanceTheme(orbit) {
             Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-                OrbitChatPage(
-                    orbit = orbit,
-                    settings = loadedSettings,
-                    hasBackgroundImage = false,
-                    onManageRoleCards = onManageRoleCards,
-                    chatContent = chatContent,
-                )
+                // On a tablet the chat, the profile and every page over them share one column in the
+                // middle, so the moving picture and the sliding pages keep one origin and stay inside it.
+                Box(Modifier.fillMaxSize().centeredMaxWidth(ORBIT_PAGE_MAX_WIDTH).clipToBounds()) {
+                    OrbitChatPage(
+                        orbit = orbit,
+                        settings = loadedSettings,
+                        hasBackgroundImage = false,
+                        onManageRoleCards = onManageRoleCards,
+                        chatContent = chatContent,
+                    )
+                }
             }
         }
     }
@@ -2199,6 +2210,12 @@ private fun OrbitHome(
     var starting by remember { mutableStateOf(false) }
     var removingId by remember { mutableStateOf<String?>(null) }
     val openDrawer = com.ai.assistance.operit.ui.main.LocalOpenAppDrawer.current
+    // Only this list opens the app's menu inside Orbit; the tablet sidebar closes as soon as it goes.
+    val reportHome = com.ai.assistance.operit.ui.main.LocalOrbitHomeShown.current
+    DisposableEffect(reportHome) {
+        reportHome(true)
+        onDispose { reportHome(false) }
+    }
 
     fun start(action: suspend () -> Unit) {
         if (starting) return
@@ -2222,6 +2239,7 @@ private fun OrbitHome(
             Modifier.fillMaxSize()
                 .statusBarsPadding()
                 .verticalScroll(rememberScrollState())
+                .centeredMaxWidth(ORBIT_FORM_MAX_WIDTH)
                 .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {

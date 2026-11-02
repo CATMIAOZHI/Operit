@@ -21,52 +21,37 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.ai.assistance.operit.ui.common.NavItem
-import com.ai.assistance.operit.ui.main.NavigationTransitionSource
-import com.ai.assistance.operit.ui.main.TopBarTitleContent
 import com.ai.assistance.operit.ui.main.navigation.NavigationEntrySpec
-import com.ai.assistance.operit.ui.main.navigation.RouteEntry
-import com.ai.assistance.operit.ui.main.components.AppContent
 import com.ai.assistance.operit.ui.main.components.CollapsedDrawerContent
 import com.ai.assistance.operit.ui.main.components.DrawerContent
 import com.ai.assistance.operit.ui.main.components.rememberNavigationDrawerAppearance
 import com.ai.assistance.operit.ui.main.screens.Screen
 import com.ai.assistance.operit.ui.theme.waterGlass
 import kotlinx.coroutines.CoroutineScope
-import androidx.compose.foundation.layout.RowScope
 
-/** Layout for tablet devices with a permanent side navigation drawer */
+/**
+ * Layout for tablet devices with a permanent side navigation drawer. [content] is the app's one
+ * page tree, shared with the phone layout; it is called once here.
+ * With [hideWhenCollapsed] (Orbit) the collapsed sidebar is gone at once, with no closing slide
+ * whose items could still be tapped, and [content] takes the whole width.
+ */
 @Composable
 fun TabletLayout(
-        currentRouteEntry: RouteEntry,
-        currentScreen: Screen,
         selectedItem: NavItem?,
         isTabletSidebarExpanded: Boolean,
-        isLoading: Boolean,
         navItems: List<NavItem>,
         pluginSidebarEntries: List<NavigationEntrySpec>,
         selectedRouteId: String,
         isNetworkAvailable: Boolean,
         networkType: String,
-        navController: androidx.navigation.NavController,
         scope: CoroutineScope,
         drawerState: androidx.compose.material3.DrawerState,
-        showFpsCounter: Boolean,
-        enableNavigationAnimation: Boolean,
-        navigationTransitionSource: NavigationTransitionSource,
         tabletSidebarWidth: androidx.compose.ui.unit.Dp,
         collapsedTabletSidebarWidth: androidx.compose.ui.unit.Dp,
-        onScreenChange: (Screen) -> Unit,
+        hideWhenCollapsed: Boolean = false,
         onDrawerItemSelected: (Screen) -> Unit,
         onNavigationEntrySelected: (NavigationEntrySpec) -> Unit,
-        onToggleSidebar: () -> Unit,
-        navigateToTokenConfig: () -> Unit,
-        canGoBack: Boolean,
-        onGoBack: () -> Unit,
-        isNavigatingBack: Boolean = false,
-        topBarActions: @Composable RowScope.() -> Unit = {},
-        topBarTitleContent: TopBarTitleContent? = null,
-        /** 当前导航栈中仍存活的路由 screenKey（路由级 ViewModelStore 清理依据）。 */
-        aliveScreenKeys: Set<String>
+        content: @Composable () -> Unit,
 ) {
         val drawerAppearance = rememberNavigationDrawerAppearance()
         val sidebarWidthAnimationDurationMillis = 280
@@ -97,6 +82,7 @@ fun TabletLayout(
                 )
 
         // 使用Box作为顶层容器，这样可以允许子元素重叠
+        val hidden = hideWhenCollapsed && !isTabletSidebarExpanded
         Box(modifier = Modifier.fillMaxSize()) {
                 // 计算主内容区域的宽度（屏幕宽度减去侧边栏宽度），轻微调整动画时间
                 val contentWidth by
@@ -117,7 +103,8 @@ fun TabletLayout(
                         )
 
                 // 侧边栏区域，使用动画宽度，无圆角以完全遮住背景
-                Surface(
+                // Not drawn at all once it has shrunk to nothing, so nothing hidden can be tapped or read aloud.
+                if (!hidden && animatedSidebarWidth > 0.dp) Surface(
                         modifier =
                                 Modifier.width(animatedSidebarWidth)
                                         .fillMaxHeight()
@@ -170,40 +157,15 @@ fun TabletLayout(
                 }
 
                 // 主内容区域 - 使用width+offset方式，保留稳定的布局
+                val screenWidth = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp.dp
                 Box(
                         modifier =
-                                Modifier.width(contentWidth)
+                                Modifier.width(if (hidden) screenWidth + 1.dp else contentWidth)
                                         .fillMaxHeight()
-                                        .offset(x = animatedSidebarWidth)
+                                        .offset(x = if (hidden) 0.dp else animatedSidebarWidth)
                                         .zIndex(1f)
                 ) {
-                        AppContent(
-                                currentRouteEntry = currentRouteEntry,
-                                currentScreen = currentScreen,
-                                selectedItem = selectedItem,
-                                useTabletLayout = true,
-                                isTabletSidebarExpanded = isTabletSidebarExpanded,
-                                isLoading = isLoading,
-                                navController = navController,
-                                scope = scope,
-                                drawerState = drawerState,
-                                showFpsCounter = showFpsCounter,
-                                enableNavigationAnimation = enableNavigationAnimation,
-                                navigationTransitionSource = navigationTransitionSource,
-                                onScreenChange = onScreenChange,
-                                onToggleSidebar = onToggleSidebar,
-                                navigateToTokenConfig = navigateToTokenConfig,
-                                onGestureConsumed = { consumed ->
-                                        // 当聊天页面的手势被消费时，这里不需要特别处理
-                                        // 因为平板模式不像手机模式那样有侧滑抽屉
-                                },
-                                canGoBack = canGoBack,
-                                onGoBack = onGoBack,
-                                isNavigatingBack = isNavigatingBack,
-                                actions = topBarActions,
-                                titleContent = topBarTitleContent,
-                                aliveScreenKeys = aliveScreenKeys
-                        )
+                        content()
                 }
         }
 }
