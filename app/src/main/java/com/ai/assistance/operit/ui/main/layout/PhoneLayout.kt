@@ -24,7 +24,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -38,11 +37,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.ai.assistance.operit.ui.common.NavItem
-import com.ai.assistance.operit.ui.main.NavigationTransitionSource
-import com.ai.assistance.operit.ui.main.TopBarTitleContent
 import com.ai.assistance.operit.ui.main.navigation.NavigationEntrySpec
-import com.ai.assistance.operit.ui.main.navigation.RouteEntry
-import com.ai.assistance.operit.ui.main.components.AppContent
 import com.ai.assistance.operit.ui.main.components.DrawerContent
 import com.ai.assistance.operit.ui.main.components.NavigationTransform
 import com.ai.assistance.operit.ui.main.components.rememberNavigationDrawerAppearance
@@ -52,36 +47,26 @@ import com.ai.assistance.operit.ui.theme.waterGlass
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
-/** Layout for phone devices with a modal navigation drawer */
+/**
+ * Layout for phone devices with a modal navigation drawer. [content] is the app's one page tree,
+ * shared with the tablet layout; it is called once here.
+ */
 @Composable
 fun PhoneLayout(
-        currentRouteEntry: RouteEntry,
         currentScreen: Screen,
         selectedItem: NavItem?,
-        isLoading: Boolean,
         navItems: List<NavItem>,
         pluginSidebarEntries: List<NavigationEntrySpec>,
         selectedRouteId: String,
         isNetworkAvailable: Boolean,
         networkType: String,
         drawerWidth: Dp,
-        navController: androidx.navigation.NavController,
         scope: CoroutineScope,
         drawerState: androidx.compose.material3.DrawerState,
-        showFpsCounter: Boolean,
         enableNavigationAnimation: Boolean,
-        navigationTransitionSource: NavigationTransitionSource,
-        onScreenChange: (Screen) -> Unit,
         onDrawerItemSelected: (Screen) -> Unit,
         onNavigationEntrySelected: (NavigationEntrySpec) -> Unit,
-        navigateToTokenConfig: () -> Unit,
-        canGoBack: Boolean,
-        onGoBack: () -> Unit,
-        isNavigatingBack: Boolean = false,
-        topBarActions: @Composable RowScope.() -> Unit = {},
-        topBarTitleContent: TopBarTitleContent? = null,
-        /** 当前导航栈中仍存活的路由 screenKey（路由级 ViewModelStore 清理依据）。 */
-        aliveScreenKeys: Set<String>
+        content: @Composable () -> Unit,
 ) {
         // 使用 updateTransition 来创建更复杂的动画
         val transition = updateTransition(drawerState.targetValue, label = "drawer_transition")
@@ -228,29 +213,7 @@ fun PhoneLayout(
                     shadowElevation = contentShadowElevation
                 ) {
                     // 普通调用AppContent，但由于我们的优化，它不会在动画时重组
-                    AppContent(
-                        currentRouteEntry = currentRouteEntry,
-                        currentScreen = currentScreen,
-                        selectedItem = selectedItem,
-                        useTabletLayout = false,
-                        isTabletSidebarExpanded = false,
-                        isLoading = isLoading,
-                        navController = navController,
-                        scope = scope,
-                        drawerState = drawerState,
-                        showFpsCounter = showFpsCounter,
-                        enableNavigationAnimation = enableNavigationAnimation,
-                        navigationTransitionSource = navigationTransitionSource,
-                        onScreenChange = onScreenChange,
-                        onToggleSidebar = { /* Not used in phone layout */},
-                        navigateToTokenConfig = navigateToTokenConfig,
-                        canGoBack = canGoBack,
-                        onGoBack = onGoBack,
-                        isNavigatingBack = isNavigatingBack,
-                        actions = topBarActions,
-                        titleContent = topBarTitleContent,
-                        aliveScreenKeys = aliveScreenKeys
-                    )
+                    content()
                 }
                 }
 

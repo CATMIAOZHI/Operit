@@ -139,7 +139,8 @@ internal fun OrbitBottomBar(selected: OrbitTab, onSelect: (OrbitTab) -> Unit, mo
             color = MaterialTheme.colorScheme.surface,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
             shadowElevation = 3.dp,
-            modifier = Modifier.fillMaxWidth(),
+            // On a tablet the five icons stay a phone-sized pill in the middle.
+            modifier = Modifier.align(Alignment.TopCenter).widthIn(max = 480.dp).fillMaxWidth(),
         ) {
             Row(Modifier.padding(6.dp)) {
                 OrbitTab.entries.forEach { tab ->
