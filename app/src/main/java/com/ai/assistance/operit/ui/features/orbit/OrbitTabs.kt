@@ -61,11 +61,14 @@ import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withLink
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.isSpecified
@@ -535,28 +538,115 @@ private fun BoardEmoji(emoji: String, fallback: String) {
 // balanced brackets like Wikipedia's "Formula_One_(video_game)". A bare address in running Chinese
 // text has no clear end, so it stops at the first character that is not plain URL ASCII.
 private const val BARE_URL = """https?://(?:[A-Za-z0-9\-._~:/?#@!$&'*+,;=%]|\([A-Za-z0-9\-._~:/?#@!$&'*+,;=%]*\))+"""
-private val linkPattern = Regex("""\[([^\]\n]+)]\((https?://(?:[^\s()]|\([^\s()]*\))+)\)|($BARE_URL)""")
+// Inline Markdown, leftmost match wins: `code`, [label](url), a bare address, **bold**, ~~struck~~,
+// *italic*. Italic needs non-space just inside the stars, so "2 * 3 * 4" stays as written. Bold and
+// struck spans are capped in length so a run of unclosed markers cannot make matching slow; a bold
+// span may not end inside "***", which leaves "***both***" and "**bold *italic***" to nest.
+private val inlinePattern = Regex(
+    """`([^`\n]+)`""" +
+        """|\[([^\[\]\n]{1,300})]\((https?://(?:[^\s()]|\([^\s()]*\))+)\)""" +
+        """|($BARE_URL)""" +
+        """|\*\*(?!\s)(.{1,400}?)(?<!\s)\*\*(?!\*)""" +
+        """|~~(?!\s)(.{1,400}?)(?<!\s)~~""" +
+        """|(?<![*\w])\*(?![\s*])([^*\n]+?)(?<!\s)\*(?!\*)""",
+)
+private val bulletLine = Regex("""^(\s*)[-*+]\s+(.*)$""")
+private val numberLine = Regex("""^(\s*)(\d{1,3}[.)])\s+(.*)$""")
+private val quoteLine = Regex("""^\s{0,3}>\s?(.*)$""")
 
-/** Body text with Markdown links and bare web addresses made tappable. */
-private fun linkify(text: String, linkColor: Color): AnnotatedString = buildAnnotatedString {
-    val style = TextLinkStyles(SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline))
-    var last = 0
-    for (match in linkPattern.findAll(text)) {
-        append(text.substring(last, match.range.first))
-        val label = match.groupValues[1]
-        if (label.isNotEmpty()) {
-            withLink(LinkAnnotation.Url(match.groupValues[2], style)) { append(label) }
-        } else {
-            // A bare address keeps the punctuation that ends the sentence as plain text.
-            val raw = match.groupValues[3]
-            val url = raw.trimEnd('.', ',', ';', ':', '!', '?', '\'')
-            withLink(LinkAnnotation.Url(url, style)) { append(url) }
-            append(raw.substring(url.length))
-        }
-        last = match.range.last + 1
-    }
-    append(text.substring(last))
+private fun indentOf(line: String): Int = line.indexOfFirst { it != ' ' }.let { if (it < 0) line.length else it }
+
+/** The text of a "# Title" line, or null. Closing hashes count only after a space, so "# C#" keeps its "#". */
+private fun headingText(line: String): String? {
+    if (indentOf(line) > 3) return null
+    val rest = line.trimStart()
+    val hashes = rest.takeWhile { it == '#' }.length
+    if (hashes !in 1..6 || (rest.length > hashes && !rest[hashes].isWhitespace())) return null
+    var text = rest.substring(hashes).trim()
+    val closing = text.takeLastWhile { it == '#' }.length
+    if (closing == text.length) text = ""
+    else if (closing > 0 && text[text.length - closing - 1].isWhitespace()) text = text.dropLast(closing).trimEnd()
+    return text
 }
+
+/** A "---", "***" or "___" line, spaces allowed between the marks. */
+private fun isRule(line: String): Boolean {
+    if (indentOf(line) > 3) return false
+    val marks = line.filterNot { it.isWhitespace() }
+    return marks.length >= 3 && marks[0] in "-*_" && marks.all { it == marks[0] }
+}
+
+/** The backtick count of a code fence line ("```kotlin" is 3), or 0. */
+private fun fenceOf(line: String): Int = if (indentOf(line) > 3) 0 else line.trimStart().takeWhile { it == '`' }.length.takeIf { it >= 3 } ?: 0
+
+/** An opening fence: its info text after the backticks has none of its own, so "```code```" is not one. */
+private fun opensFence(line: String, ticks: Int): Boolean = ticks > 0 && '`' !in line.trimStart().substring(ticks)
+
+/**
+ * Feed and idea text with its Markdown shown as styling: headings, lists, quotes, code, bold,
+ * italic, struck text and links. It stays one piece of text, so folding to a few lines and
+ * selecting work as before. With [links] off, links show as plain colored words, for rows whose
+ * whole surface is already a tap target.
+ */
+private fun boardMarkdown(
+    text: String, linkColor: Color, codeColor: Color, codeBackground: Color, links: Boolean = true,
+): AnnotatedString =
+    buildAnnotatedString {
+        val linkStyle = TextLinkStyles(SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline))
+        val codeStyle = SpanStyle(fontFamily = FontFamily.Monospace, color = codeColor, background = codeBackground)
+
+        fun link(url: String, label: String) {
+            if (links) withLink(LinkAnnotation.Url(url, linkStyle)) { append(label) }
+            else withStyle(SpanStyle(color = linkColor)) { append(label) }
+        }
+
+        fun inline(part: String) {
+            var last = 0
+            for (match in inlinePattern.findAll(part)) {
+                append(part.substring(last, match.range.first))
+                val g = match.groupValues
+                when {
+                    g[1].isNotEmpty() -> withStyle(codeStyle) { append(g[1]) }
+                    g[2].isNotEmpty() -> link(g[3], g[2])
+                    g[4].isNotEmpty() -> {
+                        // A bare address keeps the punctuation that ends the sentence as plain text.
+                        val url = g[4].trimEnd('.', ',', ';', ':', '!', '?', '\'')
+                        link(url, url)
+                        append(g[4].substring(url.length))
+                    }
+                    g[5].isNotEmpty() -> withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { inline(g[5]) }
+                    g[6].isNotEmpty() -> withStyle(SpanStyle(textDecoration = TextDecoration.LineThrough)) { inline(g[6]) }
+                    else -> withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { inline(g[7]) }
+                }
+                last = match.range.last + 1
+            }
+            append(part.substring(last))
+        }
+
+        // Backticks of the open code fence; a fence closes only on a line of at least as many.
+        var fence = 0
+        var first = true
+        for (line in text.lines()) {
+            val ticks = fenceOf(line)
+            if (fence == 0 && opensFence(line, ticks)) { fence = ticks; continue }
+            if (fence > 0 && ticks >= fence && line.trim().all { it == '`' }) { fence = 0; continue }
+            if (fence == 0 && isRule(line)) continue
+            if (!first) append('\n')
+            first = false
+            if (fence > 0) { withStyle(codeStyle) { append(line) }; continue }
+            val heading = headingText(line)
+            val bullet = bulletLine.matchEntire(line)
+            val number = numberLine.matchEntire(line)
+            val quote = quoteLine.matchEntire(line)
+            when {
+                heading != null -> withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { inline(heading) }
+                bullet != null -> { append(bullet.groupValues[1]); append("• "); inline(bullet.groupValues[2]) }
+                number != null -> { append(number.groupValues[1]); append(number.groupValues[2]); append(' '); inline(number.groupValues[3]) }
+                quote != null -> withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { append("┃ "); inline(quote.groupValues[1]) }
+                else -> inline(line)
+            }
+        }
+    }
 
 private fun ago(time: Long): String = DateUtils.getRelativeTimeSpanString(
     time, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS, DateUtils.FORMAT_ABBREV_RELATIVE,
@@ -931,8 +1021,11 @@ private fun FeedPostRow(
     // the post is opened.
     var cutOff by remember(post.id) { mutableStateOf<Boolean?>(null) }
     // Posts written before card references were moved out of the text still carry the raw fence.
-    val body = remember(post.body, colors.primary) {
-        linkify(com.ai.assistance.operit.features.orbit.OrbitBoardRepository.withoutCardFences(post.body), colors.primary)
+    val body = remember(post.body, colors.primary, colors.onSurface, colors.surfaceVariant) {
+        boardMarkdown(
+            com.ai.assistance.operit.features.orbit.OrbitBoardRepository.withoutCardFences(post.body),
+            colors.primary, colors.onSurface, colors.surfaceVariant,
+        )
     }
     // Folded, the pictures show their first row only; the rest come with the opened post.
     val hiddenImages = if (expanded) 0 else (images.size - feedImageColumns(images.size)).coerceAtLeast(0)
@@ -1598,7 +1691,10 @@ private fun IdeaRow(idea: OrbitBoardRepository.Item, onOpen: () -> Unit, onVote:
                     }
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        idea.body, style = MaterialTheme.typography.bodyLarge, color = colors.onSurfaceVariant,
+                        remember(idea.body, colors.primary, colors.onSurface, colors.surfaceVariant) {
+                            boardMarkdown(idea.body, colors.primary, colors.onSurface, colors.surfaceVariant, links = false)
+                        },
+                        style = MaterialTheme.typography.bodyLarge, color = colors.onSurfaceVariant,
                         maxLines = 5, overflow = TextOverflow.Ellipsis,
                     )
                 }
@@ -1624,7 +1720,9 @@ private fun IdeaSheet(
     val scope = rememberCoroutineScope()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var menu by remember { mutableStateOf(false) }
-    val body = remember(idea.body, colors.primary) { linkify(idea.body, colors.primary) }
+    val body = remember(idea.body, colors.primary, colors.onSurface, colors.surfaceVariant) {
+        boardMarkdown(idea.body, colors.primary, colors.onSurface, colors.surfaceVariant)
+    }
     // The sheet slides down before the next thing happens.
     fun hideThen(block: () -> Unit) {
         scope.launch {
