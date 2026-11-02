@@ -87,6 +87,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.flow.first
 import okhttp3.OkHttpClient
 import org.json.JSONObject
@@ -130,6 +131,19 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
             if (visitKey.isBlank()) return null
             return visitCache[visitKey]
         }
+
+        /** Each visit holds a WebView in memory; parallel calls wait here beyond this many. */
+        private const val MAX_CONCURRENT_VISITS = 3
+        private val visitSlots = kotlinx.coroutines.sync.Semaphore(MAX_CONCURRENT_VISITS)
+
+        /**
+         * The visit works for an Orbit chat: it shows nothing on screen, so several can run at
+         * once. Read in the calling chat's tool context.
+         */
+        fun isQuietCaller(tool: AITool): Boolean =
+            com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.caller(
+                com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserProfiles.callerChatId(tool)
+            ) != null
     }
 
     // 创建OkHttpClient实例，配置超时
@@ -155,7 +169,23 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
     /** The running visit works for an Orbit chat, so no floating button shows for it. */
     @Volatile private var quietVisit = false
 
-    override fun invoke(tool: AITool): ToolResult {
+    /** Blocking entry for callers outside coroutines; tool calls go through [invokeSuspend]. */
+    override fun invoke(tool: AITool): ToolResult =
+        runBlocking(com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager.toolRuntimeContextElement()) {
+            invokeSuspend(tool)
+        }
+
+    override fun invokeAndStream(tool: AITool): kotlinx.coroutines.flow.Flow<ToolResult> =
+        kotlinx.coroutines.flow.flow { emit(invokeSuspend(tool)) }
+
+    /** An Orbit's visits run side by side; the main app's stay one at a time (each shows a button). */
+    override fun supportsParallelCalls(tool: AITool): Boolean = isQuietCaller(tool)
+
+    /**
+     * Visits the page in the caller's coroutine, so stopping the turn closes the page at once
+     * instead of waiting for it to load.
+     */
+    suspend fun invokeSuspend(tool: AITool): ToolResult {
         val url = tool.parameters.find { it.name == "url" }?.value
         val visitKey = tool.parameters.find { it.name == "visit_key" }?.value
         val linkNumberStr = tool.parameters.find { it.name == "link_number" }?.value
@@ -246,11 +276,11 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
 
         return try {
             // An Orbit's visit runs without the floating button: Orbit puts nothing on the screen.
-            val quiet = com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.caller(
-                com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserProfiles.callerChatId(tool)
-            ) != null
+            val quiet = isQuietCaller(tool)
             val pageContent = visitWebPage(targetUrl, headers, resolvedUserAgent, includeImageLinks, quiet)
             ToolResult(toolName = tool.name, success = true, result = pageContent, error = null)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             AppLogger.e(TAG, "Error visiting web page", e)
 
@@ -401,12 +431,12 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
     }
 
     /** Visit web page and extract content */
-    private fun visitWebPage(
+    private suspend fun visitWebPage(
         url: String, headers: Map<String, String>, userAgent: String, includeImageLinks: Boolean, quiet: Boolean = false,
     ): VisitWebResultData {
         // Use WebView to visit the page and extract content. The visit ends itself well before this;
         // the outer limit only catches a main thread that never ran it, so the tool can never hang.
-        val extractedJson = runBlocking {
+        val extractedJson = visitSlots.withPermit {
             // Orbit (a quiet visit) has its own short wait; the main app keeps the display setting.
             val waitSeconds = if (quiet) {
                 com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context).current().webWaitSeconds

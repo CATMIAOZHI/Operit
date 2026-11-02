@@ -796,7 +796,7 @@ open class DebuggerFileSystemTools(context: Context) : AccessibilityFileSystemTo
         AppLogger.d(TAG, "File not directly readable (permission restricted), trying Shell copy for: $path")
         
         // 创建临时文件用于中转
-        val tempFile = File(context.cacheDir, "shell_copy_${System.currentTimeMillis()}.$fileExt")
+        val tempFile = File(context.cacheDir, "shell_copy_${java.util.UUID.randomUUID()}.$fileExt")
         
         return try {
             // 使用cat命令复制文件内容

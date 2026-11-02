@@ -11,6 +11,43 @@ import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.atomic.AtomicLong
 
 object HttpMultiPartDownloader {
+    /**
+     * Stops one download from another thread. Besides marking it stopped (checked between
+     * chunks), it closes every open connection, so a request stuck connecting or reading ends
+     * at once instead of at its 15–30 second timeout.
+     */
+    class Cancellation {
+        @Volatile
+        var isCancelled: Boolean = false
+            private set
+        private val connections = java.util.concurrent.ConcurrentHashMap.newKeySet<HttpURLConnection>()
+        private val children = java.util.concurrent.ConcurrentHashMap.newKeySet<Cancellation>()
+
+        fun cancel() {
+            isCancelled = true
+            connections.forEach { runCatching { it.disconnect() } }
+            children.forEach { it.cancel() }
+        }
+
+        /** A cancellation that also stops when this one does, but can be stopped on its own. */
+        internal fun child(): Cancellation {
+            val child = Cancellation()
+            children.add(child)
+            if (isCancelled) child.cancel()
+            return child
+        }
+
+        internal fun register(connection: HttpURLConnection) {
+            connections.add(connection)
+            // Stopped while this one was being opened: close it right away.
+            if (isCancelled) runCatching { connection.disconnect() }
+        }
+
+        internal fun unregister(connection: HttpURLConnection) {
+            connections.remove(connection)
+        }
+    }
+
     data class ProbeResult(
         val contentLength: Long,
         val acceptRanges: Boolean
@@ -27,23 +64,30 @@ object HttpMultiPartDownloader {
         dest: File,
         headers: Map<String, String> = emptyMap(),
         threadCount: Int = 4,
+        cancellation: Cancellation? = null,
         onProgress: ((downloadedBytes: Long, totalBytes: Long) -> Unit)? = null
     ) {
         val safeThreads = threadCount.coerceIn(1, 8)
+        val isCancelled: (() -> Boolean)? = cancellation?.let { c -> { c.isCancelled } }
 
-        val meta = probeDownload(url, headers)
+        val meta = probeDownload(url, headers, cancellation)
+        if (isCancelled?.invoke() == true) throw InterruptedException("Download cancelled")
         val total = meta.contentLength
         val supportsRanges = meta.acceptRanges
 
         if (total <= 0L || !supportsRanges || safeThreads == 1) {
-            downloadSingle(url, dest, headers, total, onProgress)
+            downloadSingle(url, dest, headers, total, onProgress, isCancelled, cancellation)
             return
         }
 
-        downloadMulti(url, dest, headers, total, safeThreads, onProgress)
+        downloadMulti(url, dest, headers, total, safeThreads, onProgress, isCancelled, cancellation)
     }
 
-    fun probeDownload(url: String, headers: Map<String, String> = emptyMap()): ProbeResult {
+    fun probeDownload(
+        url: String,
+        headers: Map<String, String> = emptyMap(),
+        cancellation: Cancellation? = null,
+    ): ProbeResult {
         // Prefer HEAD, but some servers don't allow it.
         var conn: HttpURLConnection? = null
         try {
@@ -55,6 +99,7 @@ object HttpMultiPartDownloader {
                 connectTimeout = 15000
                 readTimeout = 15000
             }
+            cancellation?.register(conn)
             val code = conn.responseCode
             if (code in 200..399) {
                 val len = conn.getHeaderFieldLong("Content-Length", -1L)
@@ -64,9 +109,10 @@ object HttpMultiPartDownloader {
         } catch (_: Exception) {
             // ignore
         } finally {
-            conn?.disconnect()
+            conn?.let { cancellation?.unregister(it); it.disconnect() }
         }
 
+        if (cancellation?.isCancelled == true) return ProbeResult(-1L, false)
         // Fallback GET with Range 0-0 to detect range support.
         var conn2: HttpURLConnection? = null
         try {
@@ -79,6 +125,7 @@ object HttpMultiPartDownloader {
                 connectTimeout = 15000
                 readTimeout = 15000
             }
+            cancellation?.register(conn2)
             val code = conn2.responseCode
             val acceptRangesHeader = conn2.getHeaderField("Accept-Ranges")
             val acceptRanges = (code == HttpURLConnection.HTTP_PARTIAL) ||
@@ -94,7 +141,7 @@ object HttpMultiPartDownloader {
         } catch (_: Exception) {
             return ProbeResult(-1L, false)
         } finally {
-            conn2?.disconnect()
+            conn2?.let { cancellation?.unregister(it); it.disconnect() }
         }
     }
 
@@ -129,10 +176,12 @@ object HttpMultiPartDownloader {
         endInclusive: Long? = null,
         append: Boolean = false,
         onChunk: ((chunkBytes: Int) -> Unit)? = null,
-        isCancelled: (() -> Boolean)? = null
+        isCancelled: (() -> Boolean)? = null,
+        cancellation: Cancellation? = null
     ) {
         var conn: HttpURLConnection? = null
         try {
+            if (cancellation?.isCancelled == true) throw InterruptedException("Download cancelled")
             conn = (URL(url).openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
                 applyHeaders(this, headers)
@@ -150,6 +199,7 @@ object HttpMultiPartDownloader {
                     setRequestProperty("Range", rangeValue)
                 }
             }
+            cancellation?.register(conn)
 
             val code = conn.responseCode
             val expectedPartial = startInclusive > 0L || endInclusive != null
@@ -178,7 +228,7 @@ object HttpMultiPartDownloader {
                 }
             }
         } finally {
-            conn?.disconnect()
+            conn?.let { cancellation?.unregister(it); it.disconnect() }
         }
     }
 
@@ -195,7 +245,9 @@ object HttpMultiPartDownloader {
         dest: File,
         headers: Map<String, String>,
         totalBytes: Long,
-        onProgress: ((Long, Long) -> Unit)?
+        onProgress: ((Long, Long) -> Unit)?,
+        isCancelled: (() -> Boolean)?,
+        cancellation: Cancellation?
     ) {
         val total = AtomicLong(totalBytes)
         val downloaded = AtomicLong(0L)
@@ -209,7 +261,9 @@ object HttpMultiPartDownloader {
             onChunk = { chunk ->
                 val now = downloaded.addAndGet(chunk.toLong())
                 onProgress?.invoke(now, total.get())
-            }
+            },
+            isCancelled = isCancelled,
+            cancellation = cancellation
         )
     }
 
@@ -219,7 +273,9 @@ object HttpMultiPartDownloader {
         headers: Map<String, String>,
         totalBytes: Long,
         threadCount: Int,
-        onProgress: ((Long, Long) -> Unit)?
+        onProgress: ((Long, Long) -> Unit)?,
+        isCancelled: (() -> Boolean)?,
+        cancellation: Cancellation?
     ) {
         dest.parentFile?.mkdirs()
 
@@ -230,16 +286,32 @@ object HttpMultiPartDownloader {
 
         val downloaded = AtomicLong(0L)
         val firstError = AtomicReference<Throwable?>(null)
+        // Stops every part: when the caller stops, or when one part fails.
+        val parts = cancellation?.child() ?: Cancellation()
+        fun stopped() = firstError.get() != null || parts.isCancelled || isCancelled?.invoke() == true
         val pool = Executors.newFixedThreadPool(threadCount)
-        val latch = CountDownLatch(threadCount)
+        val segments = buildSegmentPlan(totalBytes, threadCount)
+        // One count per real part: a small file can have fewer parts than threads.
+        val latch = CountDownLatch(segments.size)
+        fun partFile(index: Int) = File(dest.parentFile, "${dest.name}.part.$index")
+        fun cleanUpAfterStop() {
+            segments.forEach { runCatching { partFile(it.index).delete() } }
+            runCatching { dest.delete() }
+        }
+        // Parts still running. After a stop, the last one to end removes the files, so nothing
+        // writes a file again after the cleanup, however long a part takes to notice the stop.
+        val running = java.util.concurrent.atomic.AtomicInteger(segments.size)
+        fun partDone() {
+            if (running.decrementAndGet() == 0 && firstError.get() != null) cleanUpAfterStop()
+        }
 
-        for (segment in buildSegmentPlan(totalBytes, threadCount)) {
+        for (segment in segments) {
             val start = segment.startInclusive
             val end = segment.endInclusive
 
             pool.execute {
                 try {
-                    val partFile = File(dest.parentFile, "${dest.name}.part.${segment.index}")
+                    val partFile = partFile(segment.index)
                     partFile.delete()
                     downloadSegment(
                         url = url,
@@ -251,13 +323,17 @@ object HttpMultiPartDownloader {
                         onChunk = { chunk ->
                             val now = downloaded.addAndGet(chunk.toLong())
                             onProgress?.invoke(now, totalBytes)
-                        }
+                        },
+                        // Another part failing stops this one too.
+                        isCancelled = { stopped() },
+                        cancellation = parts
                     )
                     RandomAccessFile(dest, "rw").use { raf ->
                         raf.seek(start)
                         partFile.inputStream().use { input ->
                             val buffer = ByteArray(64 * 1024)
                             while (true) {
+                                if (stopped()) throw InterruptedException("Download cancelled")
                                 val read = input.read(buffer)
                                 if (read <= 0) break
                                 raf.write(buffer, 0, read)
@@ -267,35 +343,41 @@ object HttpMultiPartDownloader {
                     partFile.delete()
                 } catch (t: Throwable) {
                     firstError.compareAndSet(null, t)
+                    parts.cancel()
+                    runCatching { partFile(segment.index).delete() }
                 } finally {
+                    partDone()
                     latch.countDown()
                 }
             }
         }
 
+        var interrupted: InterruptedException? = null
         try {
             latch.await()
         } catch (e: InterruptedException) {
-            Thread.currentThread().interrupt()
+            interrupted = e
             firstError.compareAndSet(null, e)
-            throw e
-        } finally {
-            val err = firstError.get()
-            if (err != null) {
-                pool.shutdownNow()
-            } else {
-                pool.shutdown()
-            }
+            parts.cancel()
         }
 
         val err = firstError.get()
         if (err != null) {
-            try {
-                dest.delete()
-            } catch (_: Exception) {
+            // Parts that never started will not run their own end step.
+            repeat(pool.shutdownNow().size) { partDone() }
+            val allEnded = runCatching {
+                pool.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS)
+            }.getOrDefault(false)
+            // Every part has ended, so nothing writes any more: clean up here too, in case they had
+            // all finished before the stop. Otherwise the last part cleans up when it ends.
+            if (allEnded) cleanUpAfterStop()
+            if (interrupted != null) {
+                Thread.currentThread().interrupt()
+                throw interrupted
             }
             throw RuntimeException("Multi-part download failed", err)
         }
+        pool.shutdown()
 
         onProgress?.invoke(totalBytes, totalBytes)
     }
