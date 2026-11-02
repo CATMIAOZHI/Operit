@@ -191,6 +191,19 @@ internal fun cdpMouse(
 }
 
 /**
+ * Lets a pressed mouse button go after the call was stopped midway, so the page is not left
+ * pressed. Runs even though the stopped thread is marked interrupted, and never throws.
+ */
+internal fun releaseCdpMouseQuietly(connection: CdpConnection, x: Double, y: Double, button: String, clickCount: Int) {
+    val wasInterrupted = Thread.interrupted()
+    try {
+        runCatching { cdpMouse(connection, "mouseReleased", x, y, button, 0, clickCount) }
+    } finally {
+        if (wasInterrupted) Thread.currentThread().interrupt()
+    }
+}
+
+/**
  * Where an element is, in CSS pixels of the top page (iframe offsets included), plus the
  * visible area, so points can be turned into DevTools mouse events or Android touches.
  */
@@ -380,18 +393,41 @@ internal fun StandardBrowserSessionTools.dispatchTouchPath(
             }
         }
     }
-    send(MotionEvent.ACTION_DOWN, points.first(), eventTime)
-    if (holdBeforeMoveMs > 0L) {
-        Thread.sleep(holdBeforeMoveMs)
-        eventTime = SystemClock.uptimeMillis()
+    var last = points.first()
+    var lifted = false
+    try {
+        // Inside the try: a stop while waiting for the press itself must still release it.
+        send(MotionEvent.ACTION_DOWN, points.first(), eventTime)
+        if (holdBeforeMoveMs > 0L) {
+            Thread.sleep(holdBeforeMoveMs)
+            eventTime = SystemClock.uptimeMillis()
+        }
+        points.drop(1).forEach { point ->
+            Thread.sleep(stepDelayMs)
+            eventTime = SystemClock.uptimeMillis()
+            send(MotionEvent.ACTION_MOVE, point, eventTime)
+            last = point
+        }
+        if (points.size > 1) Thread.sleep(stepDelayMs)
+        send(MotionEvent.ACTION_UP, points.last(), SystemClock.uptimeMillis().coerceAtLeast(eventTime))
+        lifted = true
+    } finally {
+        if (!lifted) {
+            // Stopped midway: release the finger, so the page is not left pressed and no long
+            // press fires afterwards. Posted directly, since the stopped call can no longer wait.
+            val at = SystemClock.uptimeMillis().coerceAtLeast(eventTime)
+            val point = last
+            webView.post {
+                val event = MotionEvent.obtain(downTime, at, MotionEvent.ACTION_CANCEL, point.first, point.second, 0)
+                event.source = InputDevice.SOURCE_TOUCHSCREEN
+                try {
+                    webView.dispatchTouchEvent(event)
+                } finally {
+                    event.recycle()
+                }
+            }
+        }
     }
-    points.drop(1).forEach { point ->
-        Thread.sleep(stepDelayMs)
-        eventTime = SystemClock.uptimeMillis()
-        send(MotionEvent.ACTION_MOVE, point, eventTime)
-    }
-    if (points.size > 1) Thread.sleep(stepDelayMs)
-    send(MotionEvent.ACTION_UP, points.last(), SystemClock.uptimeMillis().coerceAtLeast(eventTime))
 }
 
 /** Evenly eased points from start to end, including both ends. */

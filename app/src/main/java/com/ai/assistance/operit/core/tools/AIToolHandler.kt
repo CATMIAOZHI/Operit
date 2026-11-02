@@ -203,6 +203,7 @@ class AIToolHandler private constructor(private val context: Context) {
     fun registerTool(
             name: String,
             descriptionGenerator: ((AITool) -> String)? = null,
+            parallel: (AITool) -> Boolean = { false },
             executor: (AITool) -> ToolResult
     ) {
         registerTool(
@@ -213,6 +214,8 @@ class AIToolHandler private constructor(private val context: Context) {
                             override fun invoke(tool: AITool): ToolResult {
                                 return executor(tool)
                             }
+
+                            override fun supportsParallelCalls(tool: AITool): Boolean = parallel(tool)
                         }
         )
     }
@@ -224,6 +227,7 @@ class AIToolHandler private constructor(private val context: Context) {
     fun registerSuspendTool(
             name: String,
             descriptionGenerator: ((AITool) -> String)? = null,
+            parallel: (AITool) -> Boolean = { false },
             executor: suspend (AITool) -> ToolResult
     ) {
         registerTool(
@@ -238,6 +242,35 @@ class AIToolHandler private constructor(private val context: Context) {
 
                             override fun invokeAndStream(tool: AITool): Flow<ToolResult> =
                                     flow { emit(executor(tool)) }
+
+                            override fun supportsParallelCalls(tool: AITool): Boolean = parallel(tool)
+                        }
+        )
+    }
+
+    /**
+     * Registers a tool whose work blocks a thread (sleeps, latches, futures). It runs on an IO
+     * thread that is interrupted when the turn stops, so those waits end at once instead of running
+     * the action to its end; plain [ToolExecutor.invoke] callers still block as before.
+     */
+    fun registerInterruptibleTool(
+            name: String,
+            descriptionGenerator: ((AITool) -> String)? = null,
+            executor: (AITool) -> ToolResult
+    ) {
+        registerTool(
+                name = name,
+                descriptionGenerator = descriptionGenerator,
+                executor =
+                        object : ToolExecutor {
+                            override fun invoke(tool: AITool): ToolResult = executor(tool)
+
+                            override fun invokeAndStream(tool: AITool): Flow<ToolResult> =
+                                    flow {
+                                        emit(kotlinx.coroutines.runInterruptible(kotlinx.coroutines.Dispatchers.IO) {
+                                            executor(tool)
+                                        })
+                                    }
                         }
         )
     }
@@ -509,8 +542,8 @@ class AIToolHandler private constructor(private val context: Context) {
     }
 
     /**
-     * As [executeToolWithExecutor], but a script package tool runs suspended instead of blocking,
-     * so cancelling the caller (stopping the turn) stops the script too.
+     * As [executeToolWithExecutor], but the tool runs through its suspending entry instead of
+     * blocking, so cancelling the caller (stopping the turn) stops the tool too.
      */
     suspend fun executeToolWithExecutorSuspending(tool: AITool, executor: ToolExecutor): ToolResult {
         notifyToolCallRequested(tool)
@@ -523,8 +556,6 @@ class AIToolHandler private constructor(private val context: Context) {
                 return interceptedResult
             }
         }
-        if (executor !is JsPackageToolExecutorMarker) return executeResolvedTool(tool, executor)
-
         ToolExecutionManager.inspectToolParameters(tool, executor)
         val validationResult = executor.validateParameters(tool)
         if (!validationResult.valid) {
@@ -542,7 +573,7 @@ class AIToolHandler private constructor(private val context: Context) {
 
         notifyToolExecutionStarted(tool)
         return try {
-            // A package executor's stream carries exactly one final result.
+            // The last item of the stream is the final result.
             val result = executor.invokeAndStream(tool).last()
             notifyToolExecutionResult(tool, result)
             result
@@ -623,6 +654,14 @@ interface ToolExecutor {
     fun invoke(tool: AITool): ToolResult
 
     fun invokeAndStream(tool: AITool): Flow<ToolResult> = flowOf(invoke(tool))
+
+    /**
+     * Whether this call may run side by side with the other parallel calls of the same model turn.
+     * Read in the calling chat's tool context, so an answer may depend on who calls. Only calls
+     * that read things or touch nothing but their own state say yes; anything that writes, drives
+     * the screen or a shared browser, or asks the user stays serial (the default).
+     */
+    fun supportsParallelCalls(tool: AITool): Boolean = false
 
     /**
      * Validates the parameters of a tool before execution Default implementation always returns

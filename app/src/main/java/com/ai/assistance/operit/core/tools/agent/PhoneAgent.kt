@@ -565,6 +565,9 @@ class PhoneAgent(
 
             return "Max steps reached"
         } finally {
+          // Runs after a stop too: a cancelled job would make the suspend restores below throw
+          // and leave the floating window hidden and the progress overlay on screen.
+          kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
             AppLogger.d("PhoneAgent", "[$agentId] run: finishing, restoring UI")
             pauseFlow = null
             floatingService?.setFloatingWindowVisible(true)
@@ -589,6 +592,7 @@ class PhoneAgent(
                 } catch (_: Exception) {
                 }
             }
+          }
         }
     }
 
