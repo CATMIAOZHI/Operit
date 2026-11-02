@@ -690,7 +690,7 @@ class CollaborationCoordinator private constructor(context: Context) {
         val holder = ChatRuntimeHolder.getInstance(appContext)
         val cores = listOf(holder.getCore(ChatRuntimeSlot.MAIN), holder.getCore(ChatRuntimeSlot.FLOATING))
         fun quiet() = cores.all {
-            chatId !in it.activeStreamingChatIds.value && !it.isSummarizing.value && !it.isSendTriggeredSummarizing.value
+            chatId !in it.activeStreamingChatIds.value && !it.isSummarizingChat(chatId)
         }
         withTimeoutOrNull(waitMs) { while (!quiet()) delay(1_000) } ?: return
         wakeSendLock.withLock {
