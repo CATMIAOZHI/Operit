@@ -35,6 +35,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.preferences.AppLaunchMode
+import com.ai.assistance.operit.ui.common.centeredMaxWidth
 
 @Composable
 fun LaunchModeSelectionScreen(
@@ -48,6 +49,8 @@ fun LaunchModeSelectionScreen(
             .background(MaterialTheme.colorScheme.background)
             .statusBarsPadding()
             .navigationBarsPadding()
+            // A tablet keeps the choice and its button in one column in the middle.
+            .centeredMaxWidth(640.dp)
             .padding(24.dp),
     ) {
         Column(

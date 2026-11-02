@@ -9,6 +9,7 @@ import com.ai.assistance.operit.core.tools.climode.CliToolModeSupport
 import com.ai.assistance.operit.core.tools.climode.ToolExposureMode
 import com.ai.assistance.operit.core.tools.defaultTool.ToolGetter
 import com.ai.assistance.operit.core.tools.defaultTool.standard.TaskToolExecutor
+import com.ai.assistance.operit.core.tools.defaultTool.standard.StandardWebVisitTool
 import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.model.ToolParameter
 import com.ai.assistance.operit.data.model.ToolResult
@@ -157,12 +158,25 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
             delay(delayMs)
             action(tool)
         } finally {
-            floatingService?.setFloatingWindowVisible(true)
-            floatingService?.setStatusIndicatorVisible(false)
+            // Runs after a stop too: the window must come back even when the turn was cancelled.
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                floatingService?.setFloatingWindowVisible(true)
+                floatingService?.setStatusIndicatorVisible(false)
+            }
         }
     }
 
     fun s(resId: Int, vararg args: Any): String = context.getString(resId, *args)
+
+    /**
+     * A file read on the phone itself, which may run beside other reads. Reads through a Linux
+     * terminal or SSH share one connection, so they stay one at a time.
+     */
+    fun isPhoneFileRead(tool: AITool): Boolean {
+        val environment = tool.parameters.find { it.name == "environment" }?.value?.trim().orEmpty()
+        // Images, audio, video and documents still take turns inside the read itself.
+        return environment.isEmpty() || environment.equals("android", ignoreCase = true)
+    }
 
     fun formatEnvInfo(environment: String?): String {
         return if (!environment.isNullOrBlank() && environment != "android") {
@@ -322,7 +336,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
         )
     }
 
-    fun executeProxyTargetWithPermissionCheck(
+    suspend fun executeProxyTargetWithPermissionCheck(
         targetToolName: String,
         forwardedParameters: List<ToolParameter>,
         useEnglish: Boolean,
@@ -358,7 +372,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
         val permissionDecision =
             if (runtimeContext?.permissionCheckedToolName == targetToolName) {
                 ToolPermissionDecision.Allowed
-            } else runBlocking {
+            } else {
                 handler.getToolPermissionSystem().checkToolPermission(
                 tool = proxiedTool,
                 conversationLabel = conversationLabel ?: runtimeContext?.conversationLabel,
@@ -395,7 +409,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
         // classification above is only valid for the exact executor instance it was made
         // against, and a re-resolution could replace it with an MCP executor between the
         // classification and the invocation.
-        val proxiedResult = handler.executeToolWithExecutor(proxiedTool, executor)
+        val proxiedResult = handler.executeToolWithExecutorSuspending(proxiedTool, executor)
         return ToolResult(
             toolName = targetToolName,
             success = proxiedResult.success,
@@ -406,26 +420,25 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
     }
 
     for (action in listOf("poll", "cancel")) {
-        handler.registerTool(
+        handler.registerSuspendTool(
             name = "${action}_shell_task",
             descriptionGenerator = { tool ->
                 s(if (action == "poll") R.string.shell_task_poll_desc else R.string.shell_task_cancel_desc,
                     tool.parameters.find { it.name == "run_id" }?.value ?: "")
             },
-            executor = { tool -> ToolGetter.getShellToolExecutor(context).task(tool, action) }
+            executor = { tool -> ToolGetter.getShellToolExecutor(context).taskSuspend(tool, action) }
         )
     }
 
     // 不在提示词加入的工具
-    handler.registerTool(
+    handler.registerSuspendTool(
             name = "execute_shell",
             descriptionGenerator = { tool ->
                 val command = tool.parameters.find { it.name == "command" }?.value ?: ""
                 s(R.string.toolreg_execute_shell_desc, command)
             },
             executor = { tool ->
-                val adbTool = ToolGetter.getShellToolExecutor(context)
-                adbTool.invoke(tool)
+                ToolGetter.getShellToolExecutor(context).invokeSuspend(tool)
             }
     )
 
@@ -1172,17 +1185,28 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                     query = query,
                     limit = limit
                 )
+                val searchText = CliToolModeSupport.formatSearchResults(query, results, useEnglish)
+                // Orbit does not use the main app's attached repositories.
+                val inOrbit = runBlocking {
+                    try {
+                        com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context, runtimeContext?.callerChatId) != null
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        true
+                    }
+                }
                 ToolResult(
                     toolName = tool.name,
                     success = true,
                     result = StringResultData(
-                        CliToolModeSupport.formatSearchResults(query, results, useEnglish)
+                        if (inOrbit) com.ai.assistance.operit.core.config.SystemToolPrompts.withoutRepoEnvironment(searchText) else searchText
                     )
                 )
             }
     )
 
-    handler.registerTool(
+    handler.registerSuspendTool(
             name = CliToolModeSupport.PROXY_TOOL_NAME,
             descriptionGenerator = { tool ->
                 val targetToolName = tool.parameters.find { it.name == "tool_name" }?.value ?: ""
@@ -1192,7 +1216,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val useEnglish = isEnglishLanguage()
                 val runtimeContext = ToolExecutionManager.currentToolRuntimeContext()
                 if (runtimeContext?.toolExposureMode != ToolExposureMode.CLI) {
-                    return@registerTool ToolResult(
+                    return@registerSuspendTool ToolResult(
                         toolName = tool.name,
                         success = false,
                         result = StringResultData(""),
@@ -1205,15 +1229,15 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                     requireQualifiedTarget = false
                 )
                 if (parseError != null) {
-                    return@registerTool parseError
+                    return@registerSuspendTool parseError
                 }
-                val resolvedInvocation = parsedInvocation ?: return@registerTool buildToolErrorResult(
+                val resolvedInvocation = parsedInvocation ?: return@registerSuspendTool buildToolErrorResult(
                     tool,
                     "Missing required parameter: tool_name"
                 )
 
                 if (CliToolModeSupport.isReservedProxyTarget(resolvedInvocation.targetToolName)) {
-                    return@registerTool ToolResult(
+                    return@registerSuspendTool ToolResult(
                         toolName = tool.name,
                         success = false,
                         result = StringResultData(""),
@@ -1231,7 +1255,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                         roleCardToolAccess = roleCardToolAccess
                     )
                 ) {
-                    return@registerTool ToolResult(
+                    return@registerSuspendTool ToolResult(
                         toolName = resolvedInvocation.targetToolName,
                         success = false,
                         result = StringResultData(""),
@@ -1248,7 +1272,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
             }
     )
 
-    handler.registerTool(
+    handler.registerSuspendTool(
             name = "package_proxy",
             descriptionGenerator = { tool ->
                 val targetToolName = tool.parameters.find { it.name == "tool_name" }?.value ?: ""
@@ -1260,19 +1284,19 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                     requireQualifiedTarget = true
                 )
                 if (parseError != null) {
-                    return@registerTool parseError
+                    return@registerSuspendTool parseError
                 }
-                val resolvedInvocation = parsedInvocation ?: return@registerTool buildToolErrorResult(
+                val resolvedInvocation = parsedInvocation ?: return@registerSuspendTool buildToolErrorResult(
                     tool,
                     "Missing required parameter: tool_name"
                 )
                 if (resolvedInvocation.targetToolName == CliToolModeSupport.PACKAGE_PROXY_TOOL_NAME) {
-                    return@registerTool buildToolErrorResult(tool, "tool_name cannot be package_proxy")
+                    return@registerSuspendTool buildToolErrorResult(tool, "tool_name cannot be package_proxy")
                 }
 
                 val targetExecutor = handler.getToolExecutorOrActivate(resolvedInvocation.targetToolName)
                 if (targetExecutor == null) {
-                    return@registerTool buildToolErrorResult(
+                    return@registerSuspendTool buildToolErrorResult(
                         tool,
                         CliToolModeSupport.buildProxyTargetUnavailableMessage(
                             resolvedInvocation.targetToolName,
@@ -1302,7 +1326,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 // classification above is only valid for the exact executor instance it was made
                 // against, and a re-resolution could replace it with an MCP executor between the
                 // classification and the invocation.
-                val proxiedResult = handler.executeToolWithExecutor(proxiedTool, targetExecutor)
+                val proxiedResult = handler.executeToolWithExecutorSuspending(proxiedTool, targetExecutor)
                 ToolResult(
                     toolName = resolvedInvocation.targetToolName,
                     success = proxiedResult.success,
@@ -1360,13 +1384,23 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                     else -> s(R.string.toolreg_visit_web_desc)
                 }
             },
-            executor = { tool ->
-                val webVisitTool = ToolGetter.getWebVisitTool(context)
-                webVisitTool.invoke(tool)
-            }
+            // A new visitor per call: each holds its own page and window.
+            executor =
+                    object : ToolExecutor {
+                        override fun invoke(tool: AITool): ToolResult =
+                                ToolGetter.getWebVisitTool(context).invoke(tool)
+
+                        override fun invokeAndStream(tool: AITool): kotlinx.coroutines.flow.Flow<ToolResult> =
+                                kotlinx.coroutines.flow.flow {
+                                    emit(ToolGetter.getWebVisitTool(context).invokeSuspend(tool))
+                                }
+
+                        // Each visit has its own page; up to three load at once.
+                        override fun supportsParallelCalls(tool: AITool): Boolean = true
+                    }
     )
 
-    handler.registerTool(
+    handler.registerInterruptibleTool(
             name = "browser_click",
             descriptionGenerator = { tool ->
                 val ref = tool.parameters.find { it.name == "ref" }?.value ?: ""
@@ -1380,61 +1414,61 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
             executor = { tool -> ToolGetter.getBrowserSessionTools(context).invoke(tool) }
     )
 
-    handler.registerTool(
+    handler.registerInterruptibleTool(
             name = "browser_close",
             descriptionGenerator = { "Close the current browser tab" },
             executor = { tool -> ToolGetter.getBrowserSessionTools(context).invoke(tool) }
     )
 
-    handler.registerTool(
+    handler.registerInterruptibleTool(
             name = "browser_close_all",
             descriptionGenerator = { "Close all browser tabs" },
             executor = { tool -> ToolGetter.getBrowserSessionTools(context).invoke(tool) }
     )
 
-    handler.registerTool(
+    handler.registerInterruptibleTool(
             name = "browser_console_messages",
             descriptionGenerator = { "Read browser console messages" },
             executor = { tool -> ToolGetter.getBrowserSessionTools(context).invoke(tool) }
     )
 
-    handler.registerTool(
+    handler.registerInterruptibleTool(
             name = "browser_drag",
             descriptionGenerator = { "Drag between browser element refs" },
             executor = { tool -> ToolGetter.getBrowserSessionTools(context).invoke(tool) }
     )
 
-    handler.registerTool(
+    handler.registerInterruptibleTool(
             name = "browser_evaluate",
             descriptionGenerator = { "Evaluate JavaScript against the current browser page" },
             executor = { tool -> ToolGetter.getBrowserSessionTools(context).invoke(tool) }
     )
 
-    handler.registerTool(
+    handler.registerInterruptibleTool(
             name = "browser_file_upload",
             descriptionGenerator = { "Resolve the active browser file chooser" },
             executor = { tool -> ToolGetter.getBrowserSessionTools(context).invoke(tool) }
     )
 
-    handler.registerTool(
+    handler.registerInterruptibleTool(
             name = "browser_fill_form",
             descriptionGenerator = { "Fill multiple browser form fields" },
             executor = { tool -> ToolGetter.getBrowserSessionTools(context).invoke(tool) }
     )
 
-    handler.registerTool(
+    handler.registerInterruptibleTool(
             name = "browser_handle_dialog",
             descriptionGenerator = { "Handle the current browser dialog" },
             executor = { tool -> ToolGetter.getBrowserSessionTools(context).invoke(tool) }
     )
 
-    handler.registerTool(
+    handler.registerInterruptibleTool(
             name = "browser_hover",
             descriptionGenerator = { "Hover a browser element by ref" },
             executor = { tool -> ToolGetter.getBrowserSessionTools(context).invoke(tool) }
     )
 
-    handler.registerTool(
+    handler.registerInterruptibleTool(
             name = "browser_navigate",
             descriptionGenerator = { tool ->
                 val url = tool.parameters.find { it.name == "url" }?.value ?: ""
@@ -1443,19 +1477,19 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
             executor = { tool -> ToolGetter.getBrowserSessionTools(context).invoke(tool) }
     )
 
-    handler.registerTool(
+    handler.registerInterruptibleTool(
             name = "browser_navigate_back",
             descriptionGenerator = { "Navigate browser back" },
             executor = { tool -> ToolGetter.getBrowserSessionTools(context).invoke(tool) }
     )
 
-    handler.registerTool(
+    handler.registerInterruptibleTool(
             name = "browser_network_requests",
             descriptionGenerator = { "Read browser network requests" },
             executor = { tool -> ToolGetter.getBrowserSessionTools(context).invoke(tool) }
     )
 
-    handler.registerTool(
+    handler.registerInterruptibleTool(
             name = "browser_press_key",
             descriptionGenerator = { tool ->
                 val key = tool.parameters.find { it.name == "key" }?.value ?: ""
@@ -1464,37 +1498,37 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
             executor = { tool -> ToolGetter.getBrowserSessionTools(context).invoke(tool) }
     )
 
-    handler.registerTool(
+    handler.registerInterruptibleTool(
             name = "browser_resize",
             descriptionGenerator = { "Resize browser viewport" },
             executor = { tool -> ToolGetter.getBrowserSessionTools(context).invoke(tool) }
     )
 
-    handler.registerTool(
+    handler.registerInterruptibleTool(
             name = "browser_run_code",
             descriptionGenerator = { "Run Playwright-like browser code" },
             executor = { tool -> ToolGetter.getBrowserSessionTools(context).invoke(tool) }
     )
 
-    handler.registerTool(
+    handler.registerInterruptibleTool(
             name = "browser_select_option",
             descriptionGenerator = { "Select options in a browser control" },
             executor = { tool -> ToolGetter.getBrowserSessionTools(context).invoke(tool) }
     )
 
-    handler.registerTool(
+    handler.registerInterruptibleTool(
             name = "browser_snapshot",
             descriptionGenerator = { "Capture a browser accessibility snapshot, including same-origin iframe content" },
             executor = { tool -> ToolGetter.getBrowserSessionTools(context).invoke(tool) }
     )
 
-    handler.registerTool(
+    handler.registerInterruptibleTool(
             name = "browser_take_screenshot",
             descriptionGenerator = { "Take a browser screenshot" },
             executor = { tool -> ToolGetter.getBrowserSessionTools(context).invoke(tool) }
     )
 
-    handler.registerTool(
+    handler.registerInterruptibleTool(
             name = "browser_mouse_click_xy",
             descriptionGenerator = { tool ->
                 val x = tool.parameters.find { it.name == "x" }?.value ?: "?"
@@ -1504,7 +1538,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
             executor = { tool -> ToolGetter.getBrowserSessionTools(context).invoke(tool) }
     )
 
-    handler.registerTool(
+    handler.registerInterruptibleTool(
             name = "browser_devtools",
             descriptionGenerator = { tool ->
                 val method = tool.parameters.find { it.name == "method" }?.value ?: ""
@@ -1513,7 +1547,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
             executor = { tool -> ToolGetter.getBrowserSessionTools(context).invoke(tool) }
     )
 
-    handler.registerTool(
+    handler.registerInterruptibleTool(
             name = "browser_downloads",
             descriptionGenerator = { tool ->
                 val action = tool.parameters.find { it.name == "action" }?.value ?: "list"
@@ -1522,7 +1556,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
             executor = { tool -> ToolGetter.getBrowserSessionTools(context).invoke(tool) }
     )
 
-    handler.registerTool(
+    handler.registerInterruptibleTool(
             name = "browser_clipboard",
             descriptionGenerator = { tool ->
                 val action = tool.parameters.find { it.name == "action" }?.value ?: ""
@@ -1531,7 +1565,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
             executor = { tool -> ToolGetter.getBrowserSessionTools(context).invoke(tool) }
     )
 
-    handler.registerTool(
+    handler.registerInterruptibleTool(
             name = "browser_permissions",
             descriptionGenerator = { tool ->
                 val action = tool.parameters.find { it.name == "action" }?.value ?: "list"
@@ -1540,7 +1574,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
             executor = { tool -> ToolGetter.getBrowserSessionTools(context).invoke(tool) }
     )
 
-    handler.registerTool(
+    handler.registerInterruptibleTool(
             name = "browser_tabs",
             descriptionGenerator = { tool ->
                 val action = tool.parameters.find { it.name == "action" }?.value ?: ""
@@ -1549,13 +1583,13 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
             executor = { tool -> ToolGetter.getBrowserSessionTools(context).invoke(tool) }
     )
 
-    handler.registerTool(
+    handler.registerInterruptibleTool(
             name = "browser_type",
             descriptionGenerator = { "Type into a browser element by ref" },
             executor = { tool -> ToolGetter.getBrowserSessionTools(context).invoke(tool) }
     )
 
-    handler.registerTool(
+    handler.registerInterruptibleTool(
             name = "browser_wait_for",
             descriptionGenerator = { "Wait for browser text or time conditions" },
             executor = { tool -> ToolGetter.getBrowserSessionTools(context).invoke(tool) }
@@ -1972,8 +2006,9 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
     val fileSystemTools = ToolGetter.getFileSystemTools(context)
 
     // 列出目录内容
-    handler.registerTool(
+    handler.registerSuspendTool(
             name = "list_files",
+            parallel = { isPhoneFileRead(it) },
             descriptionGenerator = { tool ->
                 val path = tool.parameters.find { it.name == "path" }?.value ?: ""
                 val environment = tool.parameters.find { it.name == "environment" }?.value
@@ -1981,13 +2016,14 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 s(R.string.toolreg_list_files_desc, path, envInfo)
             },
             executor = { tool ->
-                runBlocking(Dispatchers.IO) { fileSystemTools.listFiles(tool) }
+                kotlinx.coroutines.withContext(Dispatchers.IO) { fileSystemTools.listFiles(tool) }
             }
     )
 
     // 读取文件内容
-    handler.registerTool(
+    handler.registerSuspendTool(
             name = "read_file",
+            parallel = { isPhoneFileRead(it) },
             descriptionGenerator = { tool ->
                 val path = tool.parameters.find { it.name == "path" }?.value ?: ""
                 val environment = tool.parameters.find { it.name == "environment" }?.value
@@ -1995,13 +2031,14 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 s(R.string.toolreg_read_file_desc, path, envInfo)
             },
             executor = { tool ->
-                runBlockingIoPreservingToolRuntimeContext { fileSystemTools.readFile(tool) }
+                kotlinx.coroutines.withContext(Dispatchers.IO) { fileSystemTools.readFile(tool) }
             }
     )
 
     // 按行号范围读取文件内容
-    handler.registerTool(
+    handler.registerSuspendTool(
             name = "read_file_part",
+            parallel = { isPhoneFileRead(it) },
             descriptionGenerator = { tool ->
                 val path = tool.parameters.find { it.name == "path" }?.value ?: ""
                 val environment = tool.parameters.find { it.name == "environment" }?.value
@@ -2017,12 +2054,12 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 s(R.string.toolreg_read_file_part_desc, rangeInfo, path, envInfo)
             },
             executor = { tool ->
-                runBlocking(Dispatchers.IO) { fileSystemTools.readFilePart(tool) }
+                kotlinx.coroutines.withContext(Dispatchers.IO) { fileSystemTools.readFilePart(tool) }
             }
     )
 
     // 读取完整文件内容
-    handler.registerTool(
+    handler.registerSuspendTool(
             name = "read_file_full",
             descriptionGenerator = { tool ->
                 val path = tool.parameters.find { it.name == "path" }?.value ?: ""
@@ -2031,12 +2068,12 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 s(R.string.toolreg_read_file_full_desc, path, envInfo)
             },
             executor = { tool ->
-                runBlockingIoPreservingToolRuntimeContext { fileSystemTools.readFileFull(tool) }
+                kotlinx.coroutines.withContext(Dispatchers.IO) { fileSystemTools.readFileFull(tool) }
             }
     )
 
     // 读取二进制文件内容（Base64编码）
-    handler.registerTool(
+    handler.registerSuspendTool(
             name = "read_file_binary",
             descriptionGenerator = { tool ->
                 val path = tool.parameters.find { it.name == "path" }?.value ?: ""
@@ -2044,7 +2081,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val envInfo = formatEnvInfo(environment)
                 s(R.string.toolreg_read_file_binary_desc, path, envInfo)
             },
-            executor = { tool -> runBlocking(Dispatchers.IO) { fileSystemTools.readFileBinary(tool) } }
+            executor = { tool -> kotlinx.coroutines.withContext(Dispatchers.IO) { fileSystemTools.readFileBinary(tool) } }
     )
 
     // 写入文件
@@ -2064,7 +2101,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 s(R.string.toolreg_write_file_desc, operation, path, envInfo)
             },
             executor = { tool ->
-                runBlocking(Dispatchers.IO) {
+                runBlockingIoPreservingToolRuntimeContext {
                     fileSystemTools.writeFile(tool).also { com.ai.assistance.operit.features.orbit.OrbitFolderGuard.afterWrite(context, tool) }
                 }
             }
@@ -2080,7 +2117,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
             s(R.string.toolreg_write_file_binary_desc, path, envInfo)
         },
         executor = { tool ->
-            runBlocking(Dispatchers.IO) { fileSystemTools.writeFileBinary(tool) }
+            runBlockingIoPreservingToolRuntimeContext { fileSystemTools.writeFileBinary(tool) }
         }
     )
 
@@ -2102,7 +2139,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
             },
             // Inside an Orbit's folder only its notes and files/ can go, and the people index stays current.
             executor = { tool ->
-                runBlocking(Dispatchers.IO) {
+                runBlockingIoPreservingToolRuntimeContext {
                     com.ai.assistance.operit.features.orbit.OrbitFolderGuard.deleteFile(context, tool)
                         ?: fileSystemTools.deleteFile(tool)
                 }
@@ -2113,7 +2150,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
     val uiTools = ToolGetter.getUITools(context)
 
     // 点击元素
-    handler.registerTool(
+    handler.registerSuspendTool(
             name = "click_element",
             descriptionGenerator = { tool ->
                 val resourceId = tool.parameters.find { it.name == "resourceId" }?.value
@@ -2137,14 +2174,14 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 }
             },
             executor = { tool ->
-                runBlocking(Dispatchers.IO) {
+                kotlinx.coroutines.withContext(Dispatchers.IO) {
                     executeUiToolWithVisibility(tool) { uiTools.clickElement(it) }
                 }
             }
     )
 
     // 点击屏幕坐标
-    handler.registerTool(
+    handler.registerSuspendTool(
             name = "tap",
             descriptionGenerator = { tool ->
                 val x = tool.parameters.find { it.name == "x" }?.value ?: "?"
@@ -2152,13 +2189,13 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 s(R.string.toolreg_tap_desc, x, y)
             },
             executor = { tool ->
-                runBlocking(Dispatchers.IO) {
+                kotlinx.coroutines.withContext(Dispatchers.IO) {
                     executeUiToolWithVisibility(tool) { uiTools.tap(it) }
                 }
             }
     )
 
-    handler.registerTool(
+    handler.registerSuspendTool(
             name = "long_press",
             descriptionGenerator = { tool ->
                 val x = tool.parameters.find { it.name == "x" }?.value ?: "?"
@@ -2166,7 +2203,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 s(R.string.toolreg_long_press_desc, x, y)
             },
             executor = { tool ->
-                runBlocking(Dispatchers.IO) {
+                kotlinx.coroutines.withContext(Dispatchers.IO) {
                     executeUiToolWithVisibility(tool) { uiTools.longPress(it) }
                 }
             }
@@ -2244,8 +2281,9 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
     )
 
     // 检查文件是否存在
-    handler.registerTool(
+    handler.registerSuspendTool(
             name = "file_exists",
+            parallel = { isPhoneFileRead(it) },
             descriptionGenerator = { tool ->
                 val path = tool.parameters.find { it.name == "path" }?.value ?: ""
                 val environment = tool.parameters.find { it.name == "environment" }?.value
@@ -2253,7 +2291,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 s(R.string.toolreg_file_exists_desc, path, envInfo)
             },
             executor = { tool ->
-                runBlocking(Dispatchers.IO) { fileSystemTools.fileExists(tool) }
+                kotlinx.coroutines.withContext(Dispatchers.IO) { fileSystemTools.fileExists(tool) }
             }
     )
 
@@ -2267,7 +2305,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val envInfo = formatEnvInfo(environment)
                 s(R.string.toolreg_move_file_desc, source, destination, envInfo)
             },
-            executor = { tool -> runBlocking(Dispatchers.IO) { fileSystemTools.moveFile(tool) } }
+            executor = { tool -> runBlockingIoPreservingToolRuntimeContext { fileSystemTools.moveFile(tool) } }
     )
 
     // 复制文件或目录
@@ -2287,7 +2325,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val envInfo = formatEnvArrowInfo(srcEnv, dstEnv)
                 s(R.string.toolreg_copy_file_desc, source, destination, envInfo)
             },
-            executor = { tool -> runBlocking(Dispatchers.IO) { fileSystemTools.copyFile(tool) } }
+            executor = { tool -> runBlockingIoPreservingToolRuntimeContext { fileSystemTools.copyFile(tool) } }
     )
 
     // 创建目录
@@ -2300,13 +2338,14 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 s(R.string.toolreg_make_directory_desc, path, envInfo)
             },
             executor = { tool ->
-                runBlocking(Dispatchers.IO) { fileSystemTools.makeDirectory(tool) }
+                runBlockingIoPreservingToolRuntimeContext { fileSystemTools.makeDirectory(tool) }
             }
     )
 
     // 搜索文件
-    handler.registerTool(
+    handler.registerSuspendTool(
             name = "find_files",
+            parallel = { isPhoneFileRead(it) },
             descriptionGenerator = { tool ->
                 val path = tool.parameters.find { it.name == "path" }?.value ?: ""
                 val pattern = tool.parameters.find { it.name == "pattern" }?.value ?: "*"
@@ -2315,20 +2354,21 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 s(R.string.toolreg_find_files_desc, path, pattern, envInfo)
             },
             executor = { tool ->
-                runBlocking(Dispatchers.IO) { fileSystemTools.findFiles(tool) }
+                kotlinx.coroutines.withContext(Dispatchers.IO) { fileSystemTools.findFiles(tool) }
             }
     )
 
     // 获取文件信息
-    handler.registerTool(
+    handler.registerSuspendTool(
             name = "file_info",
+            parallel = { isPhoneFileRead(it) },
             descriptionGenerator = { tool ->
                 val path = tool.parameters.find { it.name == "path" }?.value ?: ""
                 val environment = tool.parameters.find { it.name == "environment" }?.value
                 val envInfo = formatEnvInfo(environment)
                 s(R.string.toolreg_file_info_desc, path, envInfo)
             },
-            executor = { tool -> runBlocking(Dispatchers.IO) { fileSystemTools.fileInfo(tool) } }
+            executor = { tool -> kotlinx.coroutines.withContext(Dispatchers.IO) { fileSystemTools.fileInfo(tool) } }
     )
 
     // 智能应用文件绑定
@@ -2367,7 +2407,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 "Create file $path$envInfo"
             },
             executor = { tool ->
-                runBlocking(Dispatchers.IO) {
+                runBlockingIoPreservingToolRuntimeContext {
                     fileSystemTools.createFile(tool).also { com.ai.assistance.operit.features.orbit.OrbitFolderGuard.afterWrite(context, tool) }
                 }
             }
@@ -2382,7 +2422,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 "Edit file $path$envInfo"
             },
             executor = { tool ->
-                runBlocking(Dispatchers.IO) {
+                runBlockingIoPreservingToolRuntimeContext {
                     fileSystemTools.editFile(tool).also { com.ai.assistance.operit.features.orbit.OrbitFolderGuard.afterWrite(context, tool) }
                 }
             }
@@ -2398,7 +2438,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val envInfo = formatEnvInfo(environment)
                 s(R.string.toolreg_zip_files_desc, source, destination, envInfo)
             },
-            executor = { tool -> runBlocking(Dispatchers.IO) { fileSystemTools.zipFiles(tool) } }
+            executor = { tool -> runBlockingIoPreservingToolRuntimeContext { fileSystemTools.zipFiles(tool) } }
     )
 
     // 解压缩文件
@@ -2412,7 +2452,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 s(R.string.toolreg_unzip_files_desc, source, destination, envInfo)
             },
             executor = { tool ->
-                runBlocking(Dispatchers.IO) { fileSystemTools.unzipFiles(tool) }
+                runBlockingIoPreservingToolRuntimeContext { fileSystemTools.unzipFiles(tool) }
             }
     )
 
@@ -2425,7 +2465,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val envInfo = formatEnvInfo(environment)
                 s(R.string.toolreg_open_file_desc, path, envInfo)
             },
-            executor = { tool -> runBlocking(Dispatchers.IO) { fileSystemTools.openFile(tool) } }
+            executor = { tool -> runBlockingIoPreservingToolRuntimeContext { fileSystemTools.openFile(tool) } }
     )
 
     // 分享文件
@@ -2438,13 +2478,14 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 s(R.string.toolreg_share_file_desc, path, envInfo)
             },
             executor = { tool ->
-                runBlocking(Dispatchers.IO) { fileSystemTools.shareFile(tool) }
+                runBlockingIoPreservingToolRuntimeContext { fileSystemTools.shareFile(tool) }
             }
     )
 
     // Grep代码搜索
-    handler.registerTool(
+    handler.registerSuspendTool(
             name = "grep_code",
+            parallel = { isPhoneFileRead(it) },
             descriptionGenerator = { tool ->
                 val path = tool.parameters.find { it.name == "path" }?.value ?: ""
                 val pattern = tool.parameters.find { it.name == "pattern" }?.value ?: ""
@@ -2458,12 +2499,12 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 }
             },
             executor = { tool ->
-                runBlocking(Dispatchers.IO) { fileSystemTools.grepCode(tool) }
+                kotlinx.coroutines.withContext(Dispatchers.IO) { fileSystemTools.grepCode(tool) }
             }
     )
 
     // 下载文件
-    handler.registerTool(
+    handler.registerSuspendTool(
             name = "download_file",
             descriptionGenerator = { tool ->
                 val url = tool.parameters.find { it.name == "url" }?.value ?: ""
@@ -2473,7 +2514,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 s(R.string.toolreg_download_file_desc, url, destination, envInfo)
             },
             executor = { tool ->
-                runBlocking(Dispatchers.IO) { fileSystemTools.downloadFile(tool) }
+                kotlinx.coroutines.withContext(Dispatchers.IO) { fileSystemTools.downloadFile(tool) }
             }
     )
 
@@ -2822,21 +2863,21 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
     )
 
     // 获取当前页面/窗口信息
-    handler.registerTool(
+    handler.registerSuspendTool(
             name = "get_page_info",
             descriptionGenerator = { _ -> s(R.string.toolreg_get_page_info_desc) },
             executor = { tool ->
-                runBlocking(Dispatchers.IO) {
+                kotlinx.coroutines.withContext(Dispatchers.IO) {
                     executeUiToolWithVisibility(tool) { uiTools.getPageInfo(it) }
                 }
             }
     )
 
-    handler.registerTool(
+    handler.registerSuspendTool(
             name = "capture_screenshot",
             descriptionGenerator = { _ -> s(R.string.toolreg_capture_screenshot_desc) },
             executor = { tool ->
-                runBlocking(Dispatchers.IO) {
+                kotlinx.coroutines.withContext(Dispatchers.IO) {
                     executeUiToolWithVisibility(
                         tool = tool,
                         showStatusIndicator = false,
@@ -2853,7 +2894,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
             }
     )
 
-    handler.registerTool(
+    handler.registerSuspendTool(
             name = "run_ui_subagent",
             descriptionGenerator = { tool ->
                 val intent = tool.parameters.find { it.name == "intent" }?.value ?: ""
@@ -2869,44 +2910,42 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
             },
             executor = { tool ->
                 // The phone-control subagent's model calls are the calling Orbit's, like its turn's.
-                runBlockingIoPreservingToolRuntimeContext {
-                    kotlinx.coroutines.withContext(
-                        com.ai.assistance.operit.features.orbit.OrbitQuota.toolCallContext(context)
-                    ) { uiTools.runUiSubAgent(tool) }
-                }
+                kotlinx.coroutines.withContext(
+                    Dispatchers.IO + com.ai.assistance.operit.features.orbit.OrbitQuota.toolCallContext(context)
+                ) { uiTools.runUiSubAgent(tool) }
             }
     )
 
     // 在输入框中设置文本
-    handler.registerTool(
+    handler.registerSuspendTool(
             name = "set_input_text",
             descriptionGenerator = { tool ->
                 val text = tool.parameters.find { it.name == "text" }?.value ?: ""
                 s(R.string.toolreg_set_input_text_desc, text)
             },
             executor = { tool ->
-                runBlocking(Dispatchers.IO) {
+                kotlinx.coroutines.withContext(Dispatchers.IO) {
                     executeUiToolWithVisibility(tool) { uiTools.setInputText(it) }
                 }
             }
     )
 
     // 按下特定按键
-    handler.registerTool(
+    handler.registerSuspendTool(
             name = "press_key",
             descriptionGenerator = { tool ->
                 val keyCode = tool.parameters.find { it.name == "key_code" }?.value ?: ""
                 s(R.string.toolreg_press_key_desc, keyCode)
             },
             executor = { tool ->
-                runBlocking(Dispatchers.IO) {
+                kotlinx.coroutines.withContext(Dispatchers.IO) {
                     executeUiToolWithVisibility(tool) { uiTools.pressKey(it) }
                 }
             }
     )
 
     // 执行滑动手势
-    handler.registerTool(
+    handler.registerSuspendTool(
             name = "swipe",
             descriptionGenerator = { tool ->
                 val startX = tool.parameters.find { it.name == "start_x" }?.value ?: "?"
@@ -2916,7 +2955,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 s(R.string.toolreg_swipe_desc, startX, startY, endX, endY)
             },
             executor = { tool ->
-                runBlocking(Dispatchers.IO) {
+                kotlinx.coroutines.withContext(Dispatchers.IO) {
                     executeUiToolWithVisibility(tool) { uiTools.swipe(it) }
                 }
             }

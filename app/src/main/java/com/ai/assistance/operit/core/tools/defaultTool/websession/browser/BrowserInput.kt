@@ -140,20 +140,45 @@ internal object BrowserKeys {
 /** Presses a key the way a hardware keyboard does, so the browser's own default actions happen. */
 internal fun cdpPressKey(connection: CdpConnection, combo: BrowserKeyCombo) {
     var mask = 0
-    combo.modifiers.forEach { modifier ->
-        mask = mask or BrowserKeys.modifierBit(modifier.key)
-        sendCdpKey(connection, "rawKeyDown", modifier, mask, null)
-    }
-    val text = combo.text
-    sendCdpKey(connection, if (text != null) "keyDown" else "rawKeyDown", combo.key, mask, text)
-    sendCdpKey(connection, "keyUp", combo.key, mask, null)
-    combo.modifiers.asReversed().forEach { modifier ->
-        mask = mask and BrowserKeys.modifierBit(modifier.key).inv()
-        sendCdpKey(connection, "keyUp", modifier, mask, null)
+    val pressed = mutableListOf<BrowserKey>()
+    try {
+        combo.modifiers.forEach { modifier ->
+            mask = mask or BrowserKeys.modifierBit(modifier.key)
+            pressed.add(modifier)
+            sendCdpKey(connection, "rawKeyDown", modifier, mask, null)
+        }
+        val text = combo.text
+        // Sending may succeed before its response wait is interrupted.
+        pressed.add(combo.key)
+        sendCdpKey(connection, if (text != null) "keyDown" else "rawKeyDown", combo.key, mask, text)
+        sendCdpKey(connection, "keyUp", combo.key, mask, null)
+        pressed.removeAt(pressed.lastIndex)
+        combo.modifiers.asReversed().forEach { modifier ->
+            mask = mask and BrowserKeys.modifierBit(modifier.key).inv()
+            sendCdpKey(connection, "keyUp", modifier, mask, null)
+            pressed.removeAt(pressed.lastIndex)
+        }
+    } finally {
+        val wasInterrupted = Thread.interrupted()
+        try {
+            pressed.asReversed().forEach { key ->
+                mask = mask and BrowserKeys.modifierBit(key.key).inv()
+                runCatching { sendCdpKey(connection, "keyUp", key, mask, null, waitForResponse = false) }
+            }
+        } finally {
+            if (wasInterrupted) Thread.currentThread().interrupt()
+        }
     }
 }
 
-private fun sendCdpKey(connection: CdpConnection, type: String, key: BrowserKey, mask: Int, text: String?) {
+private fun sendCdpKey(
+    connection: CdpConnection,
+    type: String,
+    key: BrowserKey,
+    mask: Int,
+    text: String?,
+    waitForResponse: Boolean = true
+) {
     val params =
         JSONObject()
             .put("type", type)
@@ -163,7 +188,8 @@ private fun sendCdpKey(connection: CdpConnection, type: String, key: BrowserKey,
             .put("location", key.location)
     if (key.code.isNotEmpty()) params.put("code", key.code)
     if (text != null) params.put("text", text).put("unmodifiedText", text)
-    connection.send("Input.dispatchKeyEvent", params, 5_000L)
+    if (waitForResponse) connection.send("Input.dispatchKeyEvent", params, 5_000L)
+    else connection.sendWithoutWaiting("Input.dispatchKeyEvent", params)
 }
 
 /** One real mouse event at a point in CSS pixels of the page's visible area. */
@@ -176,7 +202,8 @@ internal fun cdpMouse(
     buttons: Int = 0,
     clickCount: Int = 0,
     deltaX: Double = 0.0,
-    deltaY: Double = 0.0
+    deltaY: Double = 0.0,
+    waitForResponse: Boolean = true
 ) {
     val params =
         JSONObject()
@@ -187,7 +214,21 @@ internal fun cdpMouse(
             .put("buttons", buttons)
             .put("clickCount", clickCount)
     if (type == "mouseWheel") params.put("deltaX", deltaX).put("deltaY", deltaY)
-    connection.send("Input.dispatchMouseEvent", params, 5_000L)
+    if (waitForResponse) connection.send("Input.dispatchMouseEvent", params, 5_000L)
+    else connection.sendWithoutWaiting("Input.dispatchMouseEvent", params)
+}
+
+/**
+ * Lets a pressed mouse button go after the call was stopped midway, so the page is not left
+ * pressed. Runs even though the stopped thread is marked interrupted, and never throws.
+ */
+internal fun releaseCdpMouseQuietly(connection: CdpConnection, x: Double, y: Double, button: String, clickCount: Int) {
+    val wasInterrupted = Thread.interrupted()
+    try {
+        runCatching { cdpMouse(connection, "mouseReleased", x, y, button, 0, clickCount, waitForResponse = false) }
+    } finally {
+        if (wasInterrupted) Thread.currentThread().interrupt()
+    }
 }
 
 /**
@@ -380,18 +421,41 @@ internal fun StandardBrowserSessionTools.dispatchTouchPath(
             }
         }
     }
-    send(MotionEvent.ACTION_DOWN, points.first(), eventTime)
-    if (holdBeforeMoveMs > 0L) {
-        Thread.sleep(holdBeforeMoveMs)
-        eventTime = SystemClock.uptimeMillis()
+    var last = points.first()
+    var lifted = false
+    try {
+        // Inside the try: a stop while waiting for the press itself must still release it.
+        send(MotionEvent.ACTION_DOWN, points.first(), eventTime)
+        if (holdBeforeMoveMs > 0L) {
+            Thread.sleep(holdBeforeMoveMs)
+            eventTime = SystemClock.uptimeMillis()
+        }
+        points.drop(1).forEach { point ->
+            Thread.sleep(stepDelayMs)
+            eventTime = SystemClock.uptimeMillis()
+            send(MotionEvent.ACTION_MOVE, point, eventTime)
+            last = point
+        }
+        if (points.size > 1) Thread.sleep(stepDelayMs)
+        send(MotionEvent.ACTION_UP, points.last(), SystemClock.uptimeMillis().coerceAtLeast(eventTime))
+        lifted = true
+    } finally {
+        if (!lifted) {
+            // Stopped midway: release the finger, so the page is not left pressed and no long
+            // press fires afterwards. Posted directly, since the stopped call can no longer wait.
+            val at = SystemClock.uptimeMillis().coerceAtLeast(eventTime)
+            val point = last
+            webView.post {
+                val event = MotionEvent.obtain(downTime, at, MotionEvent.ACTION_CANCEL, point.first, point.second, 0)
+                event.source = InputDevice.SOURCE_TOUCHSCREEN
+                try {
+                    webView.dispatchTouchEvent(event)
+                } finally {
+                    event.recycle()
+                }
+            }
+        }
     }
-    points.drop(1).forEach { point ->
-        Thread.sleep(stepDelayMs)
-        eventTime = SystemClock.uptimeMillis()
-        send(MotionEvent.ACTION_MOVE, point, eventTime)
-    }
-    if (points.size > 1) Thread.sleep(stepDelayMs)
-    send(MotionEvent.ACTION_UP, points.last(), SystemClock.uptimeMillis().coerceAtLeast(eventTime))
 }
 
 /** Evenly eased points from start to end, including both ends. */

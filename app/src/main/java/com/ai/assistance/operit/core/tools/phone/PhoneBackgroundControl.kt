@@ -71,6 +71,8 @@ internal object PhoneBackgroundControl {
     private const val DONE_MS = 5 * 60_000L
     private const val MAX_CARDS = 100
     private const val CARDS_FILE = "orbit_phone_cards.json"
+    /** WindowConfiguration.WINDOWING_MODE_FULLSCREEN: apps on a background screen never float. */
+    private const val FULLSCREEN = 1
 
     enum class Control { AI, WAITING, USER }
 
@@ -82,6 +84,8 @@ internal object PhoneBackgroundControl {
         PACKAGE("phone_control was switched off, so it closed. Do not continue this phone work."),
         GONE("The background screen service stopped, so it closed. Start a new one only if the work still needs it."),
         INPUT("A paste could not be confirmed, so the background screen closed to keep text out of the wrong app. Start a new one only if the work still needs it."),
+        WINDOW("This phone put the app on the background screen into a small floating window, which can spill onto the user's own screen, " +
+            "so the background screen closed. Do not start the background screen again for this work; tell the user it cannot be done on this phone yet."),
     }
 
     data class Screen(
@@ -190,9 +194,18 @@ internal object PhoneBackgroundControl {
                     busy[screen.id]?.withLock { }
                 }
                 observations.remove(screen.id)
-                ok(tool, "Done with background screen session_id=${screen.id}. No more actions go to it. It stays up to ${DONE_MS / 60_000} minutes " +
+                if (args["close_now"]?.trim()?.lowercase() == "true") {
+                    // Closed with its apps right away, so the next start opens a fresh screen (e.g. to restart an app).
+                    close(screen.id, End.AGENT)
+                    val until = System.currentTimeMillis() + 10_000
+                    while (screen.id in _screens.value && System.currentTimeMillis() < until) delay(100)
+                    if (screen.id in _screens.value) ok(tool, "Background screen session_id=${screen.id} is closing with its apps. " +
+                        "Wait a few seconds before start. The user's phone screen was not touched.")
+                    else ok(tool, "Closed background screen session_id=${screen.id} with its apps. " +
+                        "A new start opens a fresh screen, with apps started anew. The user's phone screen was not touched.")
+                } else ok(tool, "Done with background screen session_id=${screen.id}. No more actions go to it. It stays up to ${DONE_MS / 60_000} minutes " +
                     "so the user can still look at it, then closes with its apps (sooner if another task needs a screen). " +
-                    "Calling start again before then reuses it. The user's phone screen was not touched.")
+                    "Calling start again before then reuses it; to restart an app, stop with close_now=true instead. The user's phone screen was not touched.")
             }
             "phone_control:observe", "phone_control:act" -> {
                 val screen = owned(caller, args.required("session_id"))
@@ -362,6 +375,16 @@ internal object PhoneBackgroundControl {
                 ShowerController.shutdown(key)
                 error("The background screen could not be created on this phone. Nothing was controlled.")
             }
+            // Some systems (Android 16 on some phones) make a new screen open apps as floating
+            // windows. This screen only shows apps full screen; openApp asks for it as well.
+            // Until the screen is registered below nothing else would close it, so any failure here does.
+            try {
+                val windowing = shell("cmd window set-display-windowing-mode -d $displayId $FULLSCREEN")
+                if (!windowing.success) AppLogger.d(TAG, "Display windowing mode not set: ${(windowing.stderr + windowing.stdout).take(200)}")
+            } catch (e: Throwable) {
+                withContext(NonCancellable) { runCatching { ShowerController.shutdown(key) } }
+                throw e
+            }
             if (!allowed(context, caller.orbitId)) {
                 ShowerController.shutdown(key)
                 error(End.PACKAGE.text)
@@ -409,36 +432,58 @@ internal object PhoneBackgroundControl {
 
     private val record = Regex("""ActivityRecord\{\S+ u\d+ ([A-Za-z0-9_.]+)/([A-Za-z0-9_.$]+)""")
     private val resumedLine = Regex("""^\s*(top|m)?ResumedActivity\s*[:=]""")
+    private val floatingTask = Regex("""\smode=(freeform|pinned)\b""")
+
+    /** The top activity of each display, and the displays holding a floating (small window) task. */
+    private class Windows(val top: Map<Int, Pair<String, String>>, val floating: Set<Int>)
 
     /** The top activity of each display (package to activity), read from the activity manager. */
-    private suspend fun topActivities(): Map<Int, Pair<String, String>> {
-        val out = shell("dumpsys activity activities | grep -E 'Display #|ResumedActivity|Hist '")
+    private suspend fun topActivities(): Map<Int, Pair<String, String>> = windows().top
+
+    private suspend fun windows(): Windows {
+        val out = shell("dumpsys activity activities | grep -E 'Display #|ResumedActivity|Hist | mode='")
         check(out.success) { "Cannot read which app is on which screen: ${out.stderr.take(200)}" }
         val resumed = mutableMapOf<Int, Pair<String, String>>()
         val first = mutableMapOf<Int, Pair<String, String>>()
+        val floating = mutableSetOf<Int>()
         var display: Int? = null
         out.stdout.lineSequence().forEach { line ->
             Regex("""Display #(\d+)""").find(line)?.let { display = it.groupValues[1].toInt(); return@forEach }
             val current = display ?: return@forEach
+            if (floatingTask.containsMatchIn(line)) { floating += current; return@forEach }
             val match = record.find(line) ?: return@forEach
             val activity = match.groupValues[1] to match.groupValues[2]
             if (resumedLine.containsMatchIn(line)) resumed.putIfAbsent(current, activity)
             else if ("Hist" in line) first.putIfAbsent(current, activity)
         }
-        return first + resumed
+        return Windows(first + resumed, floating)
+    }
+
+    /**
+     * A floating window on a background screen can be moved onto the user's own screen by the
+     * system (seen on Android 16), covering it. The screen is closed at once, with its apps.
+     */
+    private fun closeIfFloating(screen: Screen, windows: Windows) {
+        if (screen.displayId !in windows.floating) return
+        AppLogger.w(TAG, "App on background screen ${screen.id} (display ${screen.displayId}) became a floating window; closing it")
+        close(screen.id, End.WINDOW, cancelCall = false)
+        error(End.WINDOW.text)
     }
 
     /** The app the user has open on the phone screen; null while the screen is off. */
-    private suspend fun userApp(context: Context): String? {
+    private suspend fun userApp(context: Context, windows: Windows? = null): String? {
         val power = context.getSystemService(PowerManager::class.java)
         if (power?.isInteractive == false) return null
-        return topActivities()[0]?.first
+        return (windows?.top ?: topActivities())[0]?.first
     }
 
     private suspend fun openApp(context: Context, id: String, packageName: String): String {
         checkPackage(context, packageName)
         val screen = checkNotNull(_screens.value[id]) { "Background screen closed." }
-        check(userApp(context) != packageName) {
+        // A screen that already floats is closed before anything is started on it.
+        val before = windows()
+        closeIfFloating(screen, before)
+        check(userApp(context, before) != packageName) {
             "The user is using $packageName on their phone screen right now. Do not open it on the background screen " +
                 "(that would pull it away from them). Tell the user, or do another part of the work first."
         }
@@ -446,8 +491,12 @@ internal object PhoneBackgroundControl {
             "$packageName has no launcher screen."
         }.flattenToString()
         check(Regex("[A-Za-z0-9_.$/]+").matches(component)) { "Unexpected launcher activity name." }
-        // A new task of its own, so the user's own task of that app is left alone where possible.
-        val out = shell("am start --display ${screen.displayId} -W -f 0x18000000 -n '$component'")
+        // A new task of its own, so the user's own task of that app is left alone where possible;
+        // full screen, since some phones would otherwise open it as a floating window.
+        var out = shell("am start --display ${screen.displayId} --windowingMode $FULLSCREEN -W -f 0x18000000 -n '$component'")
+        if (Regex("(?i)unknown option").containsMatchIn(out.stdout + out.stderr)) {
+            out = shell("am start --display ${screen.displayId} -W -f 0x18000000 -n '$component'")
+        }
         val text = (out.stdout + "\n" + out.stderr).trim()
         if (Regex("(?m)^Error").containsMatchIn(text) || text.contains("Exception")) {
             error("The app did not open on the background screen: ${text.take(300)}")
@@ -455,7 +504,9 @@ internal object PhoneBackgroundControl {
         var top: Pair<String, String>? = null
         repeat(10) {
             delay(400)
-            top = topActivities()[screen.displayId]
+            val windows = windows()
+            closeIfFloating(screen, windows)
+            top = windows.top[screen.displayId]
             if (top?.first == packageName) {
                 val label = runCatching {
                     context.packageManager.getApplicationLabel(context.packageManager.getApplicationInfo(packageName, 0)).toString()
@@ -515,19 +566,24 @@ internal object PhoneBackgroundControl {
         check(mode == "accessibility" || vision) { "This model cannot view images. Use mode=accessibility." }
         val screen = checkNotNull(_screens.value[id]) { "Background screen closed." }
         observations.remove(id)
-        val page = topActivities()[screen.displayId]
+        val windows = windows()
+        closeIfFloating(screen, windows)
+        val page = windows.top[screen.displayId]
         var elements = emptyList<PhoneControlElement>()
         var accessibilityError: String? = null
+        var shoot = mode != "accessibility"
         if (mode != "screenshot") {
             try { elements = readElements(screen) }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (e: Exception) {
-                if (mode == "accessibility" || !vision) throw e
+                if (!vision) throw e
+                // Controls cannot be read right now; a picture lets the work go on.
+                shoot = true
                 accessibilityError = e.message
             }
         }
         var imageLink: String? = null
-        if (mode != "accessibility") {
+        if (shoot) {
             val directory = File(context.cacheDir, "phone-control").apply { mkdirs() }
             val image = File(directory, "phone-bg-${UUID.randomUUID()}.png")
             val modelImage = File(directory, image.nameWithoutExtension + ".jpg")
@@ -635,8 +691,10 @@ internal object PhoneBackgroundControl {
             }
             check(allowed(context, screen.orbitId)) { End.PACKAGE.text }
             val step = steps[index]
+            val windows = windows()
+            closeIfFloating(screen, windows)
             if (step.action != "open_app" && step.action != "wait") {
-                val now = topActivities()[screen.displayId]
+                val now = windows.top[screen.displayId]
                 check(now == page) {
                     if (now == null && prior.page != null && userApp(context) == prior.page.first)
                         "The user opened ${prior.page.first} on their phone screen, so it left the background screen. Do not take it back; tell the user."
@@ -681,19 +739,20 @@ internal object PhoneBackgroundControl {
                     "auto" -> if (prior.elements.isEmpty() && vision) "screenshot" else "accessibility"
                     else -> postMode
                 }
-                val after = withTimeoutOrNull(15_000) {
-                    try { observe(context, tool, id, mode) }
-                    catch (cancelled: CancellationException) { throw cancelled }
-                    catch (e: Exception) {
-                        if (postMode != "auto" || mode != "accessibility" || !vision) throw e
-                        observe(context, tool, id, "screenshot")
-                    }
-                } ?: error("it took longer than 15 seconds")
+                // observe itself turns to a screenshot when controls cannot be read and the model can see images.
+                val after = withTimeoutOrNull(15_000) { observe(context, tool, id, mode) }
+                    ?: error("it took longer than 15 seconds")
                 return after.copy(success = failure == null, error = failure,
                     result = StringResultData("${if (failure == null) summary else ""}\n${after.result}"))
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (e: Exception) {
+                // The screen closed meanwhile (e.g. it floated): say why, and do not ask for another observe.
+                if (_screens.value[id]?.stopping != false) {
+                    val why = synchronized(ended) { ended[id] }?.text ?: e.message
+                    return ToolResult(toolName = tool.name, success = false, result = StringResultData(""),
+                        error = "${failure ?: summary}\n$why")
+                }
                 return ToolResult(toolName = tool.name, success = false,
                     result = StringResultData("Do not repeat attempted inputs; call observe or stop."),
                     error = "${failure ?: summary}\nFinal observation failed: ${e.message}")

@@ -35,6 +35,9 @@ class TaskToolExecutor(context: Context) : ToolExecutor {
         emit(execute(tool, runtime))
     }
 
+    /** The coordinator runs several child tasks of one parent at once. */
+    override fun supportsParallelCalls(tool: AITool): Boolean = true
+
     private suspend fun execute(
         tool: AITool,
         runtime: ToolExecutionManager.ToolRuntimeContext?,

@@ -9,6 +9,9 @@ import org.json.JSONObject
  * way. Only what the service sent back is filled in: no made-up snippets, dates or links.
  */
 internal object SearchResults {
+    /** One search hit as the service gave it; null fields were not sent. */
+    data class Source(val url: String, val title: String? = null, val snippet: String? = null)
+
     /** The queries from `queries` (an array) or `query` (one string). */
     fun queries(params: JSONObject, max: Int, maxChars: Int): List<String> {
         val list = params.optJSONArray("queries")?.let { array ->
@@ -24,20 +27,23 @@ internal object SearchResults {
         return list.distinct()
     }
 
-    fun entry(query: String, summary: String, citations: Map<String, String?>, searched: List<String>): JSONObject {
+    fun entry(query: String, summary: String, citations: Map<String, String?>, searched: List<String>): JSONObject =
+        entry(query, summary, citations.map { (url, title) -> Source(url, title) }, searched)
+
+    fun entry(query: String, summary: String, sources: List<Source>, searched: List<String>): JSONObject {
         val results = JSONArray()
-        citations.forEach { (url, title) ->
+        sources.forEach { source ->
             results.put(JSONObject()
-                .put("title", title ?: JSONObject.NULL)
-                .put("url", url)
-                .put("snippet", JSONObject.NULL)
+                .put("title", source.title ?: JSONObject.NULL)
+                .put("url", source.url)
+                .put("snippet", source.snippet ?: JSONObject.NULL)
                 .put("published_at", JSONObject.NULL))
         }
         return JSONObject()
             .put("query", query)
             .put("summary", summary)
             .put("results", results)
-            .put("citations", JSONArray(citations.keys.toList()))
+            .put("citations", JSONArray(sources.map { it.url }.distinct()))
             .put("searched_queries", JSONArray(searched.distinct()))
     }
 

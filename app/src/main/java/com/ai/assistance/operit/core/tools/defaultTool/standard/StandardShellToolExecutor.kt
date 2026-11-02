@@ -24,7 +24,17 @@ open class StandardShellToolExecutor(private val context: Context) {
         private val tasks = ShellTaskRegistry(CoroutineScope(SupervisorJob() + Dispatchers.IO))
     }
 
-    fun task(tool: AITool, action: String): ToolResult {
+    /** Blocking entry for callers outside coroutines; tool calls go through [taskSuspend]. */
+    fun task(tool: AITool, action: String): ToolResult =
+        runBlocking(com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager.toolRuntimeContextElement()) {
+            taskSuspend(tool, action)
+        }
+
+    /**
+     * Starts, polls or cancels a managed shell run. A poll waits in the caller's coroutine, so
+     * stopping the turn ends the wait at once; the run itself keeps going until cancelled.
+     */
+    suspend fun taskSuspend(tool: AITool, action: String): ToolResult {
         val owner = com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
             .currentToolRuntimeContext()?.callerChatId
         val inbox = owner?.let {
@@ -32,8 +42,7 @@ open class StandardShellToolExecutor(private val context: Context) {
                 .getCore(com.ai.assistance.operit.api.chat.ChatRuntimeSlot.MAIN)
                 .getMessageProcessingDelegate().turnInputInbox(it)
         }
-        return runBlocking {
-            try {
+        return try {
                 fun param(name: String) = tool.parameters.find { it.name == name }?.value
                 fun number(name: String, default: Long, range: LongRange): Long =
                     (param(name)?.let { it.toLongOrNull() ?: error("$name must be an integer.") } ?: default)
@@ -54,11 +63,20 @@ open class StandardShellToolExecutor(private val context: Context) {
             } catch (e: Exception) {
                 ToolResult(tool.name, false, StringResultData(""), e.message)
             }
-        }
     }
 
-    fun invoke(tool: AITool): ToolResult {
-        if (tool.parameters.any { it.name == "managed" && it.value == "true" }) return task(tool, "start")
+    /** Blocking entry for callers outside coroutines; tool calls go through [invokeSuspend]. */
+    fun invoke(tool: AITool): ToolResult =
+        runBlocking(com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager.toolRuntimeContextElement()) {
+            invokeSuspend(tool)
+        }
+
+    /**
+     * Runs one command. Stopping the turn stops waiting for it at once; a command already handed
+     * to the shell still runs to its end in the background, as the shell gives no way to kill it.
+     */
+    suspend fun invokeSuspend(tool: AITool): ToolResult {
+        if (tool.parameters.any { it.name == "managed" && it.value == "true" }) return taskSuspend(tool, "start")
         // Validate parameters
         val validationResult = validateParameters(tool)
         if (!validationResult.valid) {
@@ -75,7 +93,9 @@ open class StandardShellToolExecutor(private val context: Context) {
 
         return try {
             // Use AdbCommandExecutor to execute the command
-            val result = runBlocking { AndroidShellExecutor.executeShellCommand(command) }
+            val result = runInterruptible(Dispatchers.IO) {
+                runBlocking { AndroidShellExecutor.executeShellCommand(command) }
+            }
 
             if (result.success) {
                 ToolResult(
@@ -105,6 +125,8 @@ open class StandardShellToolExecutor(private val context: Context) {
                                 "ADB command execution failed (exit code: ${result.exitCode}): $errorOutput"
                 )
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             AppLogger.e(TAG, "Error executing ADB command", e)
             ToolResult(

@@ -133,7 +133,8 @@ class JsEngine(private val context: Context) {
         val toolRuntimeContext: ToolExecutionManager.ToolRuntimeContext?,
         val toolPkgApiVersion: ToolPkgApiVersion?,
         val toolPkgLogSnapshot: JsToolPkgExecutionContext.LogSnapshot,
-        val executionListener: JsExecutionListener?
+        val executionListener: JsExecutionListener?,
+        val nativeToolJob: Job = SupervisorJob()
     )
 
     private data class PendingJsBridgeCallback(
@@ -327,6 +328,7 @@ class JsEngine(private val context: Context) {
                     if (!canScheduleQuickJsWork()) {
                         return@launch
                     }
+                    if (owner != null && resolveExecutionSession(owner) == null) return@launch
                     engine.evaluate<Any?>(script, fileName, owner)
                 } catch (e: Exception) {
                     if (onError != null) {
@@ -429,11 +431,15 @@ class JsEngine(private val context: Context) {
     private fun buildToolPkgApiContextJson(apiVersion: ToolPkgApiVersion?): Any =
         apiVersion?.let { JSONObject().put("apiVersion", it.toString()) } ?: JSONObject.NULL
 
-    private fun removeExecutionSession(callId: String): ExecutionSession? {
+    private fun removeExecutionSession(callId: String, keepTimers: Boolean = false): ExecutionSession? {
         val normalizedCallId = callId.trim()
-        readingCompanionBridgeJobs.remove(normalizedCallId)?.cancel()
-        drawBridgeJobs.remove(normalizedCallId)?.cancel()
         return activeExecutionSessions.remove(normalizedCallId)?.also { ended ->
+            // Removing the session arbitrates completion versus cancellation.
+            if (keepTimers) quickJs?.detachTimerOwner(normalizedCallId)
+            readingCompanionBridgeJobs.remove(normalizedCallId)?.cancel()
+            drawBridgeJobs.remove(normalizedCallId)?.cancel()
+            ended.nativeToolJob.cancel()
+            clearToolCallbacks(normalizedCallId)
             // A script can still log after it finished; its keys stay masked for those late lines.
             val values = ended.envOverrides.values.filter { it.length >= 4 }
             if (values.isNotEmpty()) synchronized(endedEnv) {
@@ -533,11 +539,8 @@ class JsEngine(private val context: Context) {
     }
 
     private fun drainExecutionSessions(reason: String): List<ExecutionSession> {
-        val sessions = activeExecutionSessions.values.toList()
-        activeExecutionSessions.clear()
+        val sessions = activeExecutionSessions.values.toList().mapNotNull { removeExecutionSession(it.callId) }
         sessions.forEach { session ->
-            readingCompanionBridgeJobs.remove(session.callId)?.cancel()
-            drawBridgeJobs.remove(session.callId)?.cancel()
             if (!session.future.isDone) {
                 session.future.complete(buildJsExecutionErrorPayload(reason))
             }
@@ -552,6 +555,25 @@ class JsEngine(private val context: Context) {
                 reason = reason
             )
         }
+    }
+
+    private fun clearToolCallbacks(callId: String) {
+        val callbacks = toolCallbackOwners.entries
+            .filter { it.value == callId }
+            .map { it.key }
+        callbacks.forEach { toolCallbackOwners.remove(it, callId) }
+        if (callbacks.isEmpty() || !canScheduleQuickJsWork()) return
+        val ids = JSONArray(callbacks).toString()
+        launchQuickJsEvaluation(
+            script = """
+                (function() {
+                    var root = typeof globalThis !== 'undefined' ? globalThis : window;
+                    $ids.forEach(function(id) { delete root[id]; });
+                })();
+            """.trimIndent(),
+            fileName = "quickjs/runtime/cleanup-tool-callbacks.js",
+            onError = { e -> AppLogger.e(TAG, "Error clearing ended tool callbacks", e) }
+        )
     }
 
     private fun cancelExecutionSessionInJs(callId: String, reason: String) {
@@ -1510,7 +1532,7 @@ class JsEngine(private val context: Context) {
         }
 
         matchingSessions.forEach { session ->
-            removeExecutionSession(session.callId)
+            if (removeExecutionSession(session.callId) == null) return@forEach
             if (!session.future.isDone) {
                 session.future.complete(buildJsExecutionErrorPayload(reason))
             }
@@ -3007,6 +3029,7 @@ class JsEngine(private val context: Context) {
             if (owner != null) toolCallbackOwners[callbackId] = owner
             JsNativeInterfaceDelegates.callToolAsync(
                 toolHandler = toolHandler,
+                scope = ownerToolScope(owner),
                 callbackId = callbackId,
                 toolType = toolType,
                 toolName = toolName,
@@ -3016,7 +3039,7 @@ class JsEngine(private val context: Context) {
                 binaryHandlePrefix = BINARY_HANDLE_PREFIX,
                 binaryDataThreshold = BINARY_DATA_THRESHOLD,
                 sendToolResult = { callback, result, isError ->
-                    sendToolResult(callback, result, isError, toolCallbackOwners.remove(callback))
+                    sendToolResult(callback, result, isError, owner)
                 }
             )
         }
@@ -3036,6 +3059,7 @@ class JsEngine(private val context: Context) {
             }
             JsNativeInterfaceDelegates.callToolAsyncStreaming(
                 toolHandler = toolHandler,
+                scope = ownerToolScope(owner),
                 callbackId = callbackId,
                 intermediateCallbackId = intermediateCallbackId,
                 toolType = toolType,
@@ -3046,11 +3070,10 @@ class JsEngine(private val context: Context) {
                 binaryHandlePrefix = BINARY_HANDLE_PREFIX,
                 binaryDataThreshold = BINARY_DATA_THRESHOLD,
                 sendToolResult = { callback, result, isError ->
-                    toolCallbackOwners.remove(intermediateCallbackId)
-                    sendToolResult(callback, result, isError, toolCallbackOwners.remove(callback))
+                    sendToolResult(callback, result, isError, owner)
                 },
                 sendIntermediateResult = { callback, result, isError ->
-                    sendToolResult(callback, result, isError, toolCallbackOwners[callback])
+                    sendToolResult(callback, result, isError, owner)
                 }
             )
         }
@@ -3065,6 +3088,16 @@ class JsEngine(private val context: Context) {
          */
         private fun ownerRuntimeContext(owner: String?): ToolExecutionManager.ToolRuntimeContext? =
             owner?.let { resolveExecutionSession(it)?.toolRuntimeContext }
+
+        private fun ownerToolScope(owner: String?): CoroutineScope {
+            if (owner == null) return nativeBridgeScope
+            // A late callback from an ended call must never start fresh work.
+            val job = resolveExecutionSession(owner)?.nativeToolJob ?: run {
+                clearToolCallbacks(owner)
+                Job().apply { cancel() }
+            }
+            return CoroutineScope(nativeBridgeScope.coroutineContext + job)
+        }
 
         /** 向JavaScript发送工具调用结果 */
         private fun sendToolResult(callbackId: String, result: String, isError: Boolean, owner: String? = null) {
@@ -3132,7 +3165,8 @@ class JsEngine(private val context: Context) {
                 completeCallFuture(
                     session = session,
                     value = result,
-                    failureMessage = "Error completing result callback"
+                    failureMessage = "Error completing result callback",
+                    keepTimers = true
                 )
             } catch (e: Exception) {
                 AppLogger.e(TAG, "Error setting result: callId=$callId, reason=${e.message}", e)
@@ -3176,12 +3210,14 @@ class JsEngine(private val context: Context) {
         private fun completeCallFuture(
             session: ExecutionSession,
             value: String,
-            failureMessage: String
+            failureMessage: String,
+            keepTimers: Boolean = false
         ) {
             try {
                 if (!session.future.isDone) {
-                    removeExecutionSession(session.callId)
-                    session.future.complete(value)
+                    if (removeExecutionSession(session.callId, keepTimers) != null) {
+                        session.future.complete(value)
+                    }
                 } else {
                     AppLogger.w(TAG, "Callback became complete between check and execution: callId=${session.callId}")
                 }

@@ -7270,6 +7270,7 @@
     <string name="chat_summarizing_please_wait">Summarizing, please wait</string>
     <string name="chat_conversation_summary_generated">Conversation summary generated</string>
     <string name="chat_compressing_history">Compressing history records...</string>
+    <string name="chat_turn_over_compaction_line">Even after compacting, this turn is over the context compaction line, so it was not sent. Raise the line or send the content in parts.</string>
     <string name="chat_ai_service_unavailable_summarize">AI service unavailable, cannot summarize</string>
     <string name="chat_summarize_failed_no_valid_summary">Summarization failed: unable to generate valid summary</string>
     <string name="chat_summarize_generation_failed">Summary generation failed: %1$s</string>

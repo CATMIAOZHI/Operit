@@ -1435,15 +1435,26 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
                 val cdp = connection ?: throw BrowserInputException("DevTools is unavailable for a mouse drag. Use mode=touch.")
                 val scaled = cdpHoverElement(cdp, webView, startRef, start) ?: true
                 val jitter = java.util.Random()
-                cdpMouse(cdp, "mousePressed", start.cdpX(start.centerX, scaled), start.cdpY(start.centerY, scaled), "left", 1, 1)
-                Thread.sleep(80L)
-                path.drop(1).forEachIndexed { index, (x, y) ->
-                    val wobble = if (index in 1 until steps - 1) jitter.nextGaussian() * 0.6 else 0.0
-                    cdpMouse(cdp, "mouseMoved", start.cdpX(x, scaled), start.cdpY(y + wobble, scaled), "left", 1)
-                    Thread.sleep(16L + jitter.nextInt(10))
+                var lastX = start.cdpX(start.centerX, scaled)
+                var lastY = start.cdpY(start.centerY, scaled)
+                var released = false
+                try {
+                    // Inside the try: a stop while waiting for the press itself must still release it.
+                    cdpMouse(cdp, "mousePressed", lastX, lastY, "left", 1, 1)
+                    Thread.sleep(80L)
+                    path.drop(1).forEachIndexed { index, (x, y) ->
+                        val wobble = if (index in 1 until steps - 1) jitter.nextGaussian() * 0.6 else 0.0
+                        lastX = start.cdpX(x, scaled)
+                        lastY = start.cdpY(y + wobble, scaled)
+                        cdpMouse(cdp, "mouseMoved", lastX, lastY, "left", 1)
+                        Thread.sleep(16L + jitter.nextInt(10))
+                    }
+                    Thread.sleep(60L)
+                    cdpMouse(cdp, "mouseReleased", start.cdpX(end.centerX, scaled), start.cdpY(end.centerY, scaled), "left", 0, 1)
+                    released = true
+                } finally {
+                    if (!released) releaseCdpMouseQuietly(cdp, lastX, lastY, "left", 1)
                 }
-                Thread.sleep(60L)
-                cdpMouse(cdp, "mouseReleased", start.cdpX(end.centerX, scaled), start.cdpY(end.centerY, scaled), "left", 0, 1)
             }
             else -> {
                 val viewSize = runOnMainSync { webView.width to webView.height }
@@ -2089,9 +2100,15 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
             val buttonsMask = if (button == "right") 2 else 4
             cdpMouse(connection, "mouseMoved", cx, cy)
             repeat(if (doubleClick) 2 else 1) { index ->
-                cdpMouse(connection, "mousePressed", cx, cy, button, buttonsMask, index + 1)
-                if (holdMs > 0L) Thread.sleep(holdMs)
-                cdpMouse(connection, "mouseReleased", cx, cy, button, 0, index + 1)
+                var released = false
+                try {
+                    cdpMouse(connection, "mousePressed", cx, cy, button, buttonsMask, index + 1)
+                    if (holdMs > 0L) Thread.sleep(holdMs)
+                    cdpMouse(connection, "mouseReleased", cx, cy, button, 0, index + 1)
+                    released = true
+                } finally {
+                    if (!released) releaseCdpMouseQuietly(connection, cx, cy, button, index + 1)
+                }
             }
             result = "Clicked the $button mouse button at (${x.toInt()}, ${y.toInt()})${if (doubleClick) " twice" else ""}."
         } else if (endX != null && endY != null) {

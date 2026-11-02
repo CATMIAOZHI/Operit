@@ -139,7 +139,7 @@ const xaiDraw = (function () {
         }
         const shortPrompt = prompt.length > 40 ? `${prompt.substring(0, 40)}...` : prompt;
         const base = sanitizeFileName(shortPrompt || fallbackPrefix, fallbackPrefix);
-        return `${base}_${Date.now()}`;
+        return `${base}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     }
     function guessExtensionFromUrl(url, fallback) {
         const match = String(url || "").match(/\.(png|jpg|jpeg|webp|gif|mp4|mov|webm|mkv)(?:\?|#|$)/i);

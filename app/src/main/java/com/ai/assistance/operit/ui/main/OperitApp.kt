@@ -4,12 +4,15 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.DrawerState
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.movableContentOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -20,6 +23,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
+import androidx.navigation.NavController
 import androidx.navigation.compose.rememberNavController
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.ai.assistance.operit.core.tools.AIToolHandler
@@ -31,6 +35,7 @@ import com.ai.assistance.operit.data.preferences.ApiPreferences
 import com.ai.assistance.operit.data.preferences.DisplayPreferencesManager
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import com.ai.assistance.operit.ui.common.NavItem
+import com.ai.assistance.operit.ui.main.components.AppContent
 import com.ai.assistance.operit.ui.main.layout.PhoneLayout
 import com.ai.assistance.operit.ui.main.layout.TabletLayout
 import com.ai.assistance.operit.ui.main.navigation.AppNavigationModel
@@ -45,7 +50,9 @@ import com.ai.assistance.operit.ui.main.navigation.NavigationSurface
 import com.ai.assistance.operit.ui.main.navigation.RouteEntrySource
 import com.ai.assistance.operit.ui.main.navigation.LocalRouteBackGuardRegistry
 import com.ai.assistance.operit.ui.main.navigation.RouteBackGuardRegistry
+import com.ai.assistance.operit.ui.main.navigation.RouteEntry
 import com.ai.assistance.operit.util.NetworkUtils
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
@@ -70,6 +77,12 @@ val LocalOpenAppDrawer = compositionLocalOf<() -> Unit> { {} }
 /** Leaves the Orbit page for Operit's main chat, the same way picking it in the drawer does. */
 val LocalLeaveOrbit = compositionLocalOf<() -> Unit> { {} }
 
+/**
+ * Told true when Orbit's list of Orbits (none running) comes on screen and false when it goes.
+ * Inside Orbit it is the only page whose menu opens the app's sidebar on a tablet.
+ */
+val LocalOrbitHomeShown = compositionLocalOf<(Boolean) -> Unit> { {} }
+
 class TopBarTitleContent(val content: @Composable () -> Unit)
 
 val LocalTopBarTitleContent = compositionLocalOf<(TopBarTitleContent?) -> Unit> { {} }
@@ -89,6 +102,34 @@ internal fun shouldHandleSystemBack(canPop: Boolean, currentScreen: Screen): Boo
 private data class NetworkStateSnapshot(
     val isAvailable: Boolean,
     val type: String
+)
+
+/**
+ * What the one shared [AppContent] shows. Made again on every composition and passed in, so the
+ * content moved between the phone and tablet layouts never keeps a value from an earlier frame.
+ */
+private class AppContentInputs(
+    val currentRouteEntry: RouteEntry,
+    val currentScreen: Screen,
+    val selectedItem: NavItem?,
+    val useTabletLayout: Boolean,
+    val isTabletSidebarExpanded: Boolean,
+    val isLoading: Boolean,
+    val navController: NavController,
+    val scope: CoroutineScope,
+    val drawerState: DrawerState,
+    val showFpsCounter: Boolean,
+    val enableNavigationAnimation: Boolean,
+    val navigationTransitionSource: NavigationTransitionSource,
+    val onScreenChange: (Screen) -> Unit,
+    val onToggleSidebar: () -> Unit,
+    val navigateToTokenConfig: () -> Unit,
+    val canGoBack: Boolean,
+    val onGoBack: () -> Unit,
+    val isNavigatingBack: Boolean,
+    val actions: @Composable RowScope.() -> Unit,
+    val titleContent: TopBarTitleContent?,
+    val aliveScreenKeys: Set<String>,
 )
 
 @Composable
@@ -372,6 +413,30 @@ fun OperitApp(
     // - 600dp and above: tablet
     val useTabletLayout = screenWidthDp >= 600
 
+    // Orbit fills the screen: on a tablet the sidebar shrinks to nothing there, so a first-run
+    // setup or a chat has no way out to the main app's pages beside it. Only Orbit's list of
+    // Orbits keeps its menu, which opens the sidebar until the user leaves that list.
+    // A count, since a list sliding out can overlap one sliding in.
+    var orbitHomeCount by remember { mutableIntStateOf(0) }
+    // Its own flag, so the main app's expanded or collapsed sidebar is as the user left it after Orbit.
+    var orbitSidebarOpen by remember { mutableStateOf(false) }
+    val reportOrbitHome = remember {
+        { shown: Boolean ->
+            orbitHomeCount += if (shown) 1 else -1
+            // Closed in the same step the list goes, before anything else can be tapped.
+            if (orbitHomeCount <= 0) orbitSidebarOpen = false
+        }
+    }
+    val inOrbit = currentScreen is Screen.Orbit
+    val orbitHomeShown = orbitHomeCount > 0
+    val sidebarExpanded = if (inOrbit) orbitSidebarOpen && orbitHomeShown else isTabletSidebarExpanded
+    // Back closes an open menu in Orbit first; there is nothing else on Orbit's list to go back to.
+    BackHandler(
+        enabled = inOrbit && if (useTabletLayout) sidebarExpanded else drawerState.isOpen,
+    ) {
+        if (useTabletLayout) orbitSidebarOpen = false else scope.launch { drawerState.close() }
+    }
+
     val navItems = listOf(
         NavItem.AiChat,
         NavItem.AssistantConfig,
@@ -435,6 +500,65 @@ fun OperitApp(
     // Calculate drawer width for phone mode
     val drawerWidth = (screenWidthDp * 0.75).dp // Drawer width is 3/4 of screen width
 
+    // One page tree for both layouts. Moving it between them, rather than building it again, keeps
+    // what is on screen (a half-typed key in Orbit's setup, a running step, the open page) when the
+    // window crosses 600dp, as split screen and folding phones do.
+    val appContent = remember {
+        movableContentOf { inputs: AppContentInputs ->
+            AppContent(
+                currentRouteEntry = inputs.currentRouteEntry,
+                currentScreen = inputs.currentScreen,
+                selectedItem = inputs.selectedItem,
+                useTabletLayout = inputs.useTabletLayout,
+                isTabletSidebarExpanded = inputs.isTabletSidebarExpanded,
+                isLoading = inputs.isLoading,
+                navController = inputs.navController,
+                scope = inputs.scope,
+                drawerState = inputs.drawerState,
+                showFpsCounter = inputs.showFpsCounter,
+                enableNavigationAnimation = inputs.enableNavigationAnimation,
+                navigationTransitionSource = inputs.navigationTransitionSource,
+                onScreenChange = inputs.onScreenChange,
+                onToggleSidebar = inputs.onToggleSidebar,
+                navigateToTokenConfig = inputs.navigateToTokenConfig,
+                canGoBack = inputs.canGoBack,
+                onGoBack = inputs.onGoBack,
+                isNavigatingBack = inputs.isNavigatingBack,
+                actions = inputs.actions,
+                titleContent = inputs.titleContent,
+                aliveScreenKeys = inputs.aliveScreenKeys,
+            )
+        }
+    }
+    val appContentInputs =
+        AppContentInputs(
+            currentRouteEntry = currentRouteEntry,
+            currentScreen = currentScreen,
+            selectedItem = selectedItem,
+            useTabletLayout = useTabletLayout,
+            isTabletSidebarExpanded = useTabletLayout && sidebarExpanded,
+            isLoading = isLoading,
+            navController = navController,
+            scope = scope,
+            drawerState = drawerState,
+            showFpsCounter = showFpsCounter,
+            enableNavigationAnimation = enableNavigationAnimation,
+            navigationTransitionSource = navigationTransitionSource,
+            onScreenChange = { screen -> navigateTo(screen) },
+            // In Orbit only its list may open the sidebar.
+            onToggleSidebar = {
+                if (!inOrbit) isTabletSidebarExpanded = !isTabletSidebarExpanded
+                else if (orbitHomeCount > 0) orbitSidebarOpen = !orbitSidebarOpen
+            },
+            navigateToTokenConfig = ::navigateToTokenConfig,
+            canGoBack = canGoBack,
+            onGoBack = ::requestGoBack,
+            isNavigatingBack = isNavigatingBack,
+            actions = { topBarActions() },
+            titleContent = topBarTitleContent,
+            aliveScreenKeys = aliveScreenKeys,
+        )
+
     // Main app container
     Box(modifier = Modifier.fillMaxSize().background(Color.Transparent)) {
         DisposableEffect(packageManager) {
@@ -489,75 +613,48 @@ fun OperitApp(
                 topBarTitleContent = titleContent
             },
             LocalLeaveOrbit provides { navigateTo(Screen.AiChat, fromDrawer = true) },
+            LocalOrbitHomeShown provides reportOrbitHome,
         ) {
             if (useTabletLayout) {
                 // Tablet layout
                 TabletLayout(
-                    currentRouteEntry = currentRouteEntry,
-                    currentScreen = currentScreen,
                     selectedItem = selectedItem,
-                    isTabletSidebarExpanded = isTabletSidebarExpanded,
-                    isLoading = isLoading,
+                    isTabletSidebarExpanded = sidebarExpanded,
                     navItems = navItems,
                     pluginSidebarEntries = pluginSidebarEntries,
                     selectedRouteId = currentRouteEntry.routeId,
                     isNetworkAvailable = isNetworkAvailable,
                     networkType = networkType,
-                    navController = navController,
                     scope = scope,
                     drawerState = drawerState,
-                    showFpsCounter = showFpsCounter,
-                    enableNavigationAnimation = enableNavigationAnimation,
-                    navigationTransitionSource = navigationTransitionSource,
                     tabletSidebarWidth = tabletSidebarWidth,
-                    collapsedTabletSidebarWidth = collapsedTabletSidebarWidth,
-                    onScreenChange = { screen -> navigateTo(screen) },
+                    collapsedTabletSidebarWidth = if (inOrbit) 0.dp else collapsedTabletSidebarWidth,
+                    hideWhenCollapsed = inOrbit,
                     onDrawerItemSelected = { screen ->
                         navigateTo(screen, fromDrawer = true)
                     },
                     onNavigationEntrySelected = ::navigateToNavigationEntry,
-                    onToggleSidebar = {
-                        isTabletSidebarExpanded = !isTabletSidebarExpanded
-                    },
-                    navigateToTokenConfig = ::navigateToTokenConfig,
-                    canGoBack = canGoBack,
-                    onGoBack = ::requestGoBack,
-                    isNavigatingBack = isNavigatingBack,
-                    topBarActions = { topBarActions() },
-                    topBarTitleContent = topBarTitleContent,
-                    aliveScreenKeys = aliveScreenKeys
+                    content = { appContent(appContentInputs) },
                 )
             } else {
                 // Phone layout
                 PhoneLayout(
-                    currentRouteEntry = currentRouteEntry,
                     currentScreen = currentScreen,
                     selectedItem = selectedItem,
-                    isLoading = isLoading,
                     navItems = navItems,
                     pluginSidebarEntries = pluginSidebarEntries,
                     selectedRouteId = currentRouteEntry.routeId,
                     isNetworkAvailable = isNetworkAvailable,
                     networkType = networkType,
                     drawerWidth = drawerWidth,
-                    navController = navController,
                     scope = scope,
                     drawerState = drawerState,
-                    showFpsCounter = showFpsCounter,
                     enableNavigationAnimation = enableNavigationAnimation,
-                    navigationTransitionSource = navigationTransitionSource,
-                    onScreenChange = { screen -> navigateTo(screen) },
                     onDrawerItemSelected = { screen ->
                         navigateTo(screen, fromDrawer = true)
                     },
                     onNavigationEntrySelected = ::navigateToNavigationEntry,
-                    navigateToTokenConfig = ::navigateToTokenConfig,
-                    canGoBack = canGoBack,
-                    onGoBack = ::requestGoBack,
-                    isNavigatingBack = isNavigatingBack,
-                    topBarActions = { topBarActions() },
-                    topBarTitleContent = topBarTitleContent,
-                    aliveScreenKeys = aliveScreenKeys
+                    content = { appContent(appContentInputs) },
                 )
             }
         }

@@ -796,7 +796,7 @@ open class DebuggerFileSystemTools(context: Context) : AccessibilityFileSystemTo
         AppLogger.d(TAG, "File not directly readable (permission restricted), trying Shell copy for: $path")
         
         // 创建临时文件用于中转
-        val tempFile = File(context.cacheDir, "shell_copy_${System.currentTimeMillis()}.$fileExt")
+        val tempFile = File(context.cacheDir, "shell_copy_${java.util.UUID.randomUUID()}.$fileExt")
         
         return try {
             // 使用cat命令复制文件内容
@@ -1395,7 +1395,8 @@ open class DebuggerFileSystemTools(context: Context) : AccessibilityFileSystemTo
         val dstEnv = destEnvironment ?: environment ?: "android"
         
         // 如果是 Linux 环境或跨环境操作，委托给父类处理
-        if (srcEnv.lowercase() == "linux" || dstEnv.lowercase() == "linux") {
+        if (srcEnv.lowercase() == "linux" || dstEnv.lowercase() == "linux" ||
+            isSafEnvironment(srcEnv) || isSafEnvironment(dstEnv)) {
             return super.copyFile(tool)
         }
         

@@ -18,6 +18,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.text.HtmlCompat
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.preferences.AgreementPreferences
+import com.ai.assistance.operit.ui.common.centeredMaxWidth
 import kotlinx.coroutines.delay
 
 @Composable
@@ -38,49 +39,37 @@ fun AgreementScreen(onAgreementAccepted: () -> Unit) {
         Column(
                 modifier =
                         Modifier.fillMaxSize()
-                                .padding(16.dp)
-                                .background(MaterialTheme.colorScheme.background),
+                                .background(MaterialTheme.colorScheme.background)
+                                .statusBarsPadding()
+                                .navigationBarsPadding()
+                                // A tablet keeps the agreement in a readable column in the middle.
+                                .centeredMaxWidth(720.dp)
+                                .padding(16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
         ) {
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // The very first screen: pick the language before reading the agreement.
-                com.ai.assistance.operit.ui.features.startup.components.FirstLaunchLanguagePicker(
-                    onSwitchingChange = { languageSwitching = it },
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                Text(
-                        text = stringResource(R.string.agreement_title),
-                        style = MaterialTheme.typography.headlineMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Bold
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                Text(
-                        text = stringResource(R.string.agreement_subtitle),
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onBackground
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Text(
-                        text = stringResource(
-                                R.string.agreement_version,
-                                AgreementPreferences.CURRENT_AGREEMENT_VERSION
-                        ),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f)
-                )
-
-                Spacer(modifier = Modifier.height(24.dp))
-
-                // Agreement text content
-                AgreementDocument(Modifier.weight(1f).fillMaxWidth())
+                // Everything above the button. A short window (a phone turned sideways) scrolls the
+                // heading and the agreement together, so the text never shrinks to nothing; the
+                // agreement box then keeps the whole height of that area for itself.
+                BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+                        val documentHeight = maxHeight
+                        if (maxHeight < 440.dp) {
+                                Column(
+                                        Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                        AgreementHeading(onLanguageSwitching = { languageSwitching = it })
+                                        AgreementDocument(Modifier.height(documentHeight).fillMaxWidth())
+                                }
+                        } else {
+                                Column(
+                                        Modifier.fillMaxSize(),
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                        AgreementHeading(onLanguageSwitching = { languageSwitching = it })
+                                        AgreementDocument(Modifier.weight(1f).fillMaxWidth())
+                                }
+                        }
+                }
 
                 Spacer(modifier = Modifier.height(24.dp))
 
@@ -115,6 +104,49 @@ fun AgreementScreen(onAgreementAccepted: () -> Unit) {
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
+        }
+}
+
+/** The language picker, the title and the version line above the agreement text. */
+@Composable
+private fun AgreementHeading(onLanguageSwitching: (Boolean) -> Unit) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // The very first screen: pick the language before reading the agreement.
+                com.ai.assistance.operit.ui.features.startup.components.FirstLaunchLanguagePicker(
+                    onSwitchingChange = onLanguageSwitching,
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Text(
+                        text = stringResource(R.string.agreement_title),
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Bold
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Text(
+                        text = stringResource(R.string.agreement_subtitle),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onBackground
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Text(
+                        text = stringResource(
+                                R.string.agreement_version,
+                                AgreementPreferences.CURRENT_AGREEMENT_VERSION
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f)
+                )
+
+                Spacer(modifier = Modifier.height(24.dp))
         }
 }
 

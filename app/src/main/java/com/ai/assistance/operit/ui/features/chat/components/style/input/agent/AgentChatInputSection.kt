@@ -512,7 +512,9 @@ fun AgentChatInputSection(
     val orbitSettings by orbitPreferences.settingsFlow.collectAsState(initial = orbitPreferences.snapshot)
     val isOrbitChat = orbitSettings.orbitForChat(currentChatId) != null
     val userWaitingChatIds by actualViewModel.userWaitingChatIds.collectAsState()
-    val showCancelAction = isProcessing && !showQueueAction && (!isOrbitChat || currentChatId in userWaitingChatIds)
+    // In Orbit a compressing chat can be stopped too, also when no reply of the user's is waiting.
+    val showCancelAction = isProcessing && !showQueueAction &&
+        (!isOrbitChat || currentChatId in userWaitingChatIds || inputState is InputProcessingState.Summarizing)
     val hideVoiceEntry = isOrbitChat && !showCancelAction && !showQueueAction && !canSendMessage
     val actionSlot by androidx.compose.animation.core.animateFloatAsState(
         targetValue = if (hideVoiceEntry) 0f else 1f,

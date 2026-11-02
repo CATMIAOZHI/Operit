@@ -1734,8 +1734,13 @@ private fun ChatInputBottomBar(
     val attachmentPanelState by actualViewModel.attachmentPanelState.collectAsState()
     val replyToMessage by actualViewModel.replyToMessage.collectAsState()
     val permissionStop by actualViewModel.masterPermissionStop.collectAsState()
-    val isSummarizing by actualViewModel.isSummarizing.collectAsState()
-    val isSendTriggeredSummarizing by actualViewModel.isSendTriggeredSummarizing.collectAsState()
+    // Only a summary of this chat holds its queue; another chat's summary leaves it alone.
+    val anySummarizing by actualViewModel.isSummarizing.collectAsState()
+    val summarizingChatId by actualViewModel.summarizingChatId.collectAsState()
+    val anySendTriggeredSummarizing by actualViewModel.isSendTriggeredSummarizing.collectAsState()
+    val sendTriggeredSummarizingChatId by actualViewModel.sendTriggeredSummarizingChatId.collectAsState()
+    val isSummarizing = anySummarizing && summarizingChatId == currentChatId
+    val isSendTriggeredSummarizing = anySendTriggeredSummarizing && sendTriggeredSummarizingChatId == currentChatId
     val waifuModeSetting by waifuPreferences.enableWaifuModeFlow.collectAsState(initial = false)
     // The main app's waifu merge-send does not apply in an Orbit chat, including its developer view
     // (which draws with the normal look), so ask which chats belong to an Orbit.

@@ -1,5 +1,7 @@
 package com.ai.assistance.operit.api.chat.compaction
 
+import com.ai.assistance.operit.core.chat.hooks.PromptTurn
+import com.ai.assistance.operit.core.chat.hooks.PromptTurnKind
 import com.ai.assistance.operit.data.model.ChatMessage
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -76,5 +78,21 @@ class ContextCompactionTest {
         assertTrue(ContextCompaction.isOverflowError(null, "This model's maximum context length is 128000 tokens"))
         assertFalse(ContextCompaction.isOverflowError("rate_limit_exceeded", "Request too large: tokens per min limit"))
         assertTrue(ContextCompaction.isContextOverflow(java.io.IOException("x", ContextOverflowException("too long"))))
+    }
+
+    @Test
+    fun aTurnsSummaryStopsAtItsLatestReply() {
+        fun turn(kind: PromptTurnKind) = PromptTurn(kind, kind.name)
+        // The latest reply (its text and its tool call) stays with its results; everything before is summarized.
+        val steps = listOf(
+            turn(PromptTurnKind.SYSTEM), turn(PromptTurnKind.SUMMARY), turn(PromptTurnKind.USER),
+            turn(PromptTurnKind.ASSISTANT), turn(PromptTurnKind.TOOL_RESULT),
+            turn(PromptTurnKind.ASSISTANT), turn(PromptTurnKind.TOOL_CALL), turn(PromptTurnKind.TOOL_RESULT),
+        )
+        assertEquals(5, ContextCompaction.stepAnchor(steps))
+        // Nothing but the system prompt and an earlier summary before the reply: nothing to summarize.
+        assertEquals(null, ContextCompaction.stepAnchor(listOf(turn(PromptTurnKind.SYSTEM), turn(PromptTurnKind.SUMMARY), turn(PromptTurnKind.ASSISTANT), turn(PromptTurnKind.TOOL_RESULT))))
+        // No reply yet.
+        assertEquals(null, ContextCompaction.stepAnchor(listOf(turn(PromptTurnKind.SYSTEM), turn(PromptTurnKind.USER))))
     }
 }

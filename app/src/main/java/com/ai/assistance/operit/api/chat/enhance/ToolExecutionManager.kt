@@ -66,6 +66,37 @@ import org.json.JSONObject
 /** Utility class for managing tool executions */
 object ToolExecutionManager {
     private const val TAG = "ToolExecutionManager"
+
+    /**
+     * Built-in packages whose tools may run side by side within one model turn: each call only
+     * sends its own network request and writes a uniquely named file, never touching the screen,
+     * the browser, settings or another call's state. The web search packages read pages through
+     * visit_web, where each visit opens its own page.
+     */
+    internal val PARALLEL_SAFE_PACKAGES: Set<String> =
+        setOf(
+            "codex_search",
+            "grok_search",
+            "deepseek_search",
+            "ollama_search",
+            "tavily",
+            "zhipu_search",
+            "crossref",
+            "google_search",
+            "various_search",
+            "codex_draw",
+            "grok_draw",
+            "openai_draw",
+            "qwen_draw",
+            "nanobanana_draw",
+            "minimax_draw",
+            "siliconflow_draw",
+            "xai_draw",
+            "zhipu_draw",
+        )
+
+    /** A built-in package [packageName] whose calls may run beside other parallel calls. */
+    internal fun isParallelSafePackage(packageName: String): Boolean = packageName in PARALLEL_SAFE_PACKAGES
     private const val PACKAGE_PROXY_TOOL_NAME = "package_proxy"
     private const val PACKAGE_CALLER_NAME_PARAM = "__operit_package_caller_name"
     private const val PACKAGE_CHAT_ID_PARAM = "__operit_package_chat_id"
@@ -266,12 +297,29 @@ object ToolExecutionManager {
             toolName = displayToolName,
             success = false,
             result = StringResultData(partialResultText),
-            error = "Tool execution cancelled.",
+            error = cancelledMessage(invocation.tool),
         ).withExecutionMetadata(
             invocation = invocation,
             state = ToolExecutionState.COMPLETED,
             durationMs = durationMs,
         )
+
+    /**
+     * What a stop leaves behind. A shell command already handed to the shell is not killed by a
+     * stop, so the model must not assume it ended and run it again blindly.
+     */
+    private fun cancelledMessage(tool: AITool): String =
+        when (tool.name) {
+            "execute_shell" ->
+                "Tool execution cancelled. Stopped waiting for the command; it may still be running " +
+                    "in the background, so check its effect before running it again."
+            "poll_shell_task" -> {
+                val runId = tool.parameters.find { it.name == "run_id" }?.value?.trim().orEmpty()
+                "Tool execution cancelled. Stopped waiting; run ${runId.ifEmpty { "(unknown)" }} keeps " +
+                    "running. Poll or cancel it by its run_id."
+            }
+            else -> "Tool execution cancelled."
+        }
 
     internal fun reserveToolInvocationIndices(
         nextInvocationIndex: AtomicInteger,
@@ -1524,12 +1572,13 @@ object ToolExecutionManager {
         // 4. 所有权限结果齐备后，严格按模型原始调用顺序返回或执行。
         // A rejected item occupies its original slot; a later rejection can no longer be emitted
         // before an earlier allowed tool has finished.
-        // Subagent task invocations run in parallel: the coordinator already supports concurrent
-        // child runs per parent, so a sequential loop would needlessly serialize independent
-        // agents. Contiguous task runs form one parallel group; non-task tools stay serial and
-        // act as ordering barriers. Results are published strictly in the model's original call
-        // order from the single driver coroutine, so the shared collector and round manager are
-        // never written concurrently and the transcript cannot reorder tool results.
+        // Independent calls run in parallel. Each tool says whether a call may
+        // (ToolExecutor.supportsParallelCalls): reads, subagent `task` runs and built-in
+        // search/draw packages do; anything that writes or drives the screen does not. Contiguous
+        // parallel calls form one group; every other call stays serial and acts as an ordering
+        // barrier. Results are published strictly in the model's original call order from the
+        // single driver coroutine, so the shared collector and round manager are never written
+        // concurrently and the transcript cannot reorder results.
         fun key(callId: String?, invocationIndex: Int?): String =
             callId?.takeIf(String::isNotBlank) ?: "index:${invocationIndex ?: -1}"
 
@@ -1545,6 +1594,34 @@ object ToolExecutionManager {
                 key(invocation.callId, invocation.invocationIndex.takeIf { it >= 0 })
             }
         val orderedResults = mutableListOf<ToolResult>()
+
+        // Decided when the walk reaches the call, in call order: looking the executor up may
+        // activate the package, which must not happen ahead of earlier calls in the batch.
+        suspend fun isParallelCall(invocation: ToolInvocation): Boolean {
+            // A package_proxy call runs its target, so judge by the target tool.
+            val target = resolveToolTarget(invocation.tool).tool
+            // Look it up and ask as the calling chat, like the run itself: an Orbit has its own
+            // package switches and keys, and some tools answer by who calls.
+            return withContext(
+                toolRuntimeContextElement(
+                    toolRuntimeContext.copy(
+                        callId = invocation.callId,
+                        invocationIndex = invocation.invocationIndex.takeIf { it >= 0 },
+                    )
+                )
+            ) {
+                val executor = toolHandler.getToolExecutorOrActivate(target.name)
+                    ?: return@withContext false
+                try {
+                    executor.supportsParallelCalls(target)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    AppLogger.w(TAG, "Parallel check failed for ${target.name}; running it alone", e)
+                    false
+                }
+            }
+        }
 
         suspend fun runTool(
             invocation: ToolInvocation,
@@ -1610,14 +1687,14 @@ object ToolExecutionManager {
                 index += 1
                 continue
             }
-            if (invocation.tool.name != "task") {
+            if (!isParallelCall(invocation)) {
                 val result = runTool(invocation)
                 orderedResults += result
                 index += 1
                 continue
             }
-            // A contiguous run of executable task calls: launch them concurrently, then publish
-            // their results in call order once the whole group has finished.
+            // A contiguous run of executable parallel calls: launch them concurrently, then
+            // publish their results in call order once the whole group has finished.
             var groupEnd = index + 1
             while (groupEnd < boundInvocations.size) {
                 val candidateKey =
@@ -1626,7 +1703,7 @@ object ToolExecutionManager {
                         boundInvocations[groupEnd].invocationIndex.takeIf { it >= 0 },
                     )
                 val candidate = executableByInvocation[candidateKey]
-                if (candidate == null || candidate.tool.name != "task") break
+                if (candidate == null || !isParallelCall(candidate)) break
                 groupEnd += 1
             }
             val groupInvocations =
@@ -1638,16 +1715,30 @@ object ToolExecutionManager {
                         )
                     executableByInvocation[slotKey]
                 }
+            if (groupInvocations.size == 1) {
+                orderedResults += runTool(groupInvocations.single())
+                index = groupEnd
+                continue
+            }
             val executionResults =
                 java.util.concurrent.ConcurrentHashMap<ToolInvocation, ToolResult>()
             runParallelGroupWithOrderedPublishing(
                 items = groupInvocations,
                 executionResults = executionResults,
-                execute = { taskInvocation ->
-                    runTool(taskInvocation, deferredResultSink = executionResults)
+                execute = { groupInvocation ->
+                    if (groupInvocation.tool.name != "task") {
+                        // Blocking reads and package scripts wait on IO threads, off the
+                        // caller's thread. Package scripts share the JS engine pool (4 engines)
+                        // and web visits allow 3 pages at once, which caps how many really run.
+                        withContext(Dispatchers.IO) {
+                            runTool(groupInvocation, deferredResultSink = executionResults)
+                        }
+                    } else {
+                        runTool(groupInvocation, deferredResultSink = executionResults)
+                    }
                 },
-                publish = { taskInvocation, result ->
-                    publishResult(taskInvocation, result, sendFinished = true)
+                publish = { groupInvocation, result ->
+                    publishResult(groupInvocation, result, sendFinished = true)
                 },
                 record = { result -> orderedResults += result },
             )

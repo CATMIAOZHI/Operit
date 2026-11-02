@@ -3503,23 +3503,45 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
                         override fun parameterNames(tool: AITool): Set<String> =
                             packageTool.parameters.map { it.name }.toSet()
 
+                        override fun supportsParallelCalls(tool: AITool): Boolean =
+                            toolPackage.isBuiltIn && !isPhoneControlPackage &&
+                                // A caller-chosen output name may be shared by another draw.
+                                tool.parameters.none { it.name == "file_name" && it.value.isNotBlank() } &&
+                                com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
+                                    .isParallelSafePackage(toolPackage.name)
+
                         override fun invoke(tool: AITool): ToolResult {
                             if (isPhoneControlPackage) {
-                                // Native execution retains the host's turn identity; the legacy
-                                // JavaScript bridge cannot securely supply it.
-                                // An Orbit chat follows its own package list, any other chat the main app's.
-                                val callerChatId = com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
-                                    .currentToolRuntimeContext()?.callerChatId
-                                if (!isPackageOnForChat(toolPackage.name, callerChatId)) {
-                                    return ToolResult(toolName = tool.name, success = false,
-                                        result = StringResultData(""), error = "Phone control package is disabled.")
-                                }
                                 return com.ai.assistance.operit.core.tools.runBlockingIoPreservingToolRuntimeContext {
-                                    com.ai.assistance.operit.core.tools.phone.PhoneControlTools.execute(context, tool)
+                                    runPhoneControl(tool)
                                 }
                             }
                             return packageToolExecutor.invoke(tool)
                         }
+
+                        // Native execution retains the host's turn identity; the legacy
+                        // JavaScript bridge cannot securely supply it.
+                        private suspend fun runPhoneControl(tool: AITool): ToolResult {
+                            // An Orbit chat follows its own package list, any other chat the main app's.
+                            val callerChatId = com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
+                                .currentToolRuntimeContext()?.callerChatId
+                            if (!isPackageOnForChat(toolPackage.name, callerChatId)) {
+                                return ToolResult(toolName = tool.name, success = false,
+                                    result = StringResultData(""), error = "Phone control package is disabled.")
+                            }
+                            return com.ai.assistance.operit.core.tools.phone.PhoneControlTools.execute(context, tool)
+                        }
+
+                        // Script tools suspend here instead of blocking a thread in invoke(), so
+                        // stopping the turn cancels them and parallel calls do not tie up threads.
+                        override fun invokeAndStream(tool: AITool): kotlinx.coroutines.flow.Flow<ToolResult> =
+                            if (isPhoneControlPackage) {
+                                kotlinx.coroutines.flow.flow {
+                                    emit(kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { runPhoneControl(tool) })
+                                }
+                            } else {
+                                packageToolExecutor.invokeAndStream(tool)
+                            }
                     }
             )
         }

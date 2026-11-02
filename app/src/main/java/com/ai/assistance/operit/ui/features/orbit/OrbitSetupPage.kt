@@ -56,6 +56,7 @@ import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.features.orbit.OrbitSetup
+import com.ai.assistance.operit.ui.common.centeredMaxWidth
 import com.ai.assistance.operit.ui.features.settings.sections.getBuiltInProviderDisplayName
 import kotlinx.coroutines.launch
 
@@ -203,6 +204,7 @@ internal fun OrbitSetupPage(onSkip: () -> Unit) {
     Box(Modifier.fillMaxSize().background(colors.background)) {
         Column(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState()).statusBarsPadding().navigationBarsPadding().imePadding()
+                .centeredMaxWidth(ORBIT_FORM_MAX_WIDTH)
                 .padding(horizontal = 24.dp, vertical = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {

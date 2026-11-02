@@ -41,6 +41,8 @@ import com.ai.assistance.operit.util.MediaPoolManager
 import com.ai.assistance.operit.util.HttpMultiPartDownloader
 import com.ai.assistance.operit.util.FFmpegUtil
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.flow
@@ -126,6 +128,10 @@ open class StandardFileSystemTools(protected val context: Context) {
                     "mp3", "wav", "m4a", "aac", "flac", "ogg", "opus",
                     "mp4", "mkv", "mov", "webm", "avi", "m4v",
                 )
+
+        // Images, audio, video and documents go through recognition or conversion that share one
+        // client. Plain reads may run side by side; these take turns, whatever the file is named.
+        private val SPECIAL_READ_LOCK = kotlinx.coroutines.sync.Mutex()
     }
 
     // ApiPreferences 实例，用于动态获取配置
@@ -174,6 +180,35 @@ open class StandardFileSystemTools(protected val context: Context) {
 
     private val safTools: SafFileSystemTools by lazy {
         SafFileSystemTools(context, apiPreferences)
+    }
+
+    /**
+     * Runs a repo:... operation. Orbit and its subagents do not use the main app's attached
+     * repositories; when the calling chat cannot be placed, it is treated as Orbit's.
+     */
+    private suspend fun saf(tool: AITool, op: suspend SafFileSystemTools.(AITool) -> ToolResult): ToolResult =
+        orbitRepoRefusal(tool) ?: safTools.op(tool)
+
+    /** The refusal for a repo:... call made by Orbit or its subagents; null for the main app. */
+    private suspend fun orbitRepoRefusal(tool: AITool): ToolResult? {
+        val callerChatId = ToolExecutionManager.currentToolRuntimeContext()?.callerChatId
+        val inOrbit = callerChatId != null && try {
+            com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context, callerChatId) != null
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            true
+        }
+        if (!inOrbit) return null
+        return ToolResult(
+            toolName = tool.name,
+            success = false,
+            result = StringResultData(""),
+            error = "Not run: Orbit does not use attached repositories (environment=repo:...). " +
+                "For Android files use environment=android with a known full path. For Linux files use " +
+                "environment=linux with the file tools, or run a terminal command (it takes no environment). " +
+                "Read GitHub repositories through GitHub."
+        )
     }
 
     protected fun isSafEnvironment(environment: String?): Boolean {
@@ -423,7 +458,7 @@ open class StandardFileSystemTools(protected val context: Context) {
             return linuxTools.listFiles(tool)
         }
         if (isSafEnvironment(environment)) {
-            return safTools.listFiles(tool)
+            return saf(tool) { listFiles(it) }
         }
         PathValidator.validateAndroidPath(path, tool.name)?.let { return it }
 
@@ -518,6 +553,12 @@ open class StandardFileSystemTools(protected val context: Context) {
         tool: AITool,
         path: String,
         fileExt: String
+    ): ToolResult? = SPECIAL_READ_LOCK.withLock { handleSpecialFileReadLocked(tool, path, fileExt) }
+
+    private suspend fun handleSpecialFileReadLocked(
+        tool: AITool,
+        path: String,
+        fileExt: String
     ): ToolResult? {
         return when (fileExt) {
             "doc", "docx" -> {
@@ -526,7 +567,7 @@ open class StandardFileSystemTools(protected val context: Context) {
                     "Detected Word document, attempting to extract text"
                 )
                 val tempFilePath =
-                    "${path}_converted_${System.currentTimeMillis()}.txt"
+                    "${path}_converted_${java.util.UUID.randomUUID()}.txt"
                 try {
                     val sourceFile = File(path)
                     val tempFile = File(tempFilePath)
@@ -580,7 +621,7 @@ open class StandardFileSystemTools(protected val context: Context) {
                     "Detected PDF document, attempting to extract text"
                 )
                 val tempFilePath =
-                    "${path}_converted_${System.currentTimeMillis()}.txt"
+                    "${path}_converted_${java.util.UUID.randomUUID()}.txt"
                 try {
                     val sourceFile = File(path)
                     val tempFile = File(tempFilePath)
@@ -710,7 +751,7 @@ open class StandardFileSystemTools(protected val context: Context) {
                     }
                     if (bitmap != null) {
                         val ocrText =
-                            kotlinx.coroutines.runBlocking {
+                            run {
                                 com.ai.assistance.operit.util
                                     .OCRUtils.recognizeText(
                                         context,
@@ -832,7 +873,7 @@ open class StandardFileSystemTools(protected val context: Context) {
                 if (!intent.isNullOrBlank()) {
                     try {
                         val enhancedService = com.ai.assistance.operit.api.chat.EnhancedAIService.getInstance(context)
-                        val analysisResult = kotlinx.coroutines.runBlocking {
+                        val analysisResult = run {
                             enhancedService.analyzeAudioWithIntent(path, intent)
                         }
 
@@ -918,7 +959,7 @@ open class StandardFileSystemTools(protected val context: Context) {
                 if (!intent.isNullOrBlank()) {
                     try {
                         val enhancedService = com.ai.assistance.operit.api.chat.EnhancedAIService.getInstance(context)
-                        val analysisResult = kotlinx.coroutines.runBlocking {
+                        val analysisResult = run {
                             enhancedService.analyzeVideoWithIntent(path, intent)
                         }
 
@@ -989,7 +1030,7 @@ open class StandardFileSystemTools(protected val context: Context) {
         }
 
         if (isSafEnvironment(environment)) {
-            return safTools.readFileFull(tool)
+            return saf(tool) { readFileFull(it) }
         }
         PathValidator.validateAndroidPath(path, tool.name)?.let { return it }
 
@@ -1089,7 +1130,7 @@ open class StandardFileSystemTools(protected val context: Context) {
         }
 
         if (isSafEnvironment(environment)) {
-            return safTools.readFileBinary(tool)
+            return saf(tool) { readFileBinary(it) }
         }
         PathValidator.validateAndroidPath(path, tool.name)?.let { return it }
 
@@ -1150,7 +1191,7 @@ open class StandardFileSystemTools(protected val context: Context) {
         }
 
         if (isSafEnvironment(environment)) {
-            return safTools.readFile(tool)
+            return saf(tool) { readFile(it) }
         }
         PathValidator.validateAndroidPath(path, tool.name)?.let { return it }
 
@@ -1266,7 +1307,7 @@ open class StandardFileSystemTools(protected val context: Context) {
         }
 
         if (isSafEnvironment(environment)) {
-            return safTools.readFilePart(tool)
+            return saf(tool) { readFilePart(it) }
         }
         PathValidator.validateAndroidPath(path, tool.name)?.let { return it }
 
@@ -1390,7 +1431,7 @@ open class StandardFileSystemTools(protected val context: Context) {
             return linuxTools.writeFile(tool)
         }
         if (isSafEnvironment(environment)) {
-            return safTools.writeFile(tool)
+            return saf(tool) { writeFile(it) }
         }
         PathValidator.validateAndroidPath(path, tool.name)?.let { return it }
 
@@ -1527,7 +1568,7 @@ open class StandardFileSystemTools(protected val context: Context) {
             return linuxTools.writeFileBinary(tool)
         }
         if (isSafEnvironment(environment)) {
-            return safTools.writeFileBinary(tool)
+            return saf(tool) { writeFileBinary(it) }
         }
         PathValidator.validateAndroidPath(path, tool.name)?.let { return it }
 
@@ -1643,7 +1684,7 @@ open class StandardFileSystemTools(protected val context: Context) {
             return linuxTools.deleteFile(tool)
         }
         if (isSafEnvironment(environment)) {
-            return safTools.deleteFile(tool)
+            return saf(tool) { deleteFile(it) }
         }
         PathValidator.validateAndroidPath(path, tool.name)?.let { return it }
 
@@ -1768,7 +1809,7 @@ open class StandardFileSystemTools(protected val context: Context) {
             return linuxTools.fileExists(tool)
         }
         if (isSafEnvironment(environment)) {
-            return safTools.fileExists(tool)
+            return saf(tool) { fileExists(it) }
         }
         PathValidator.validateAndroidPath(path, tool.name)?.let { return it }
 
@@ -1838,7 +1879,7 @@ open class StandardFileSystemTools(protected val context: Context) {
         }
 
         if (isSafEnvironment(environment)) {
-            return safTools.moveFile(tool)
+            return saf(tool) { moveFile(it) }
         }
         PathValidator.validateAndroidPath(sourcePath, tool.name, "source")?.let { return it }
         PathValidator.validateAndroidPath(destPath, tool.name, "destination")?.let { return it }
@@ -2349,6 +2390,10 @@ open class StandardFileSystemTools(protected val context: Context) {
         val srcEnv = sourceEnvironment ?: environment ?: "android"
         val dstEnv = destEnvironment ?: environment ?: "android"
 
+        if (isSafEnvironment(srcEnv) || isSafEnvironment(dstEnv) || isSafEnvironment(environment)) {
+            orbitRepoRefusal(tool)?.let { return it }
+        }
+
         if ((isSafEnvironment(srcEnv) || isSafEnvironment(dstEnv)) &&
             (isLinuxEnvironment(srcEnv) || isLinuxEnvironment(dstEnv))) {
             return ToolResult(
@@ -2394,6 +2439,7 @@ open class StandardFileSystemTools(protected val context: Context) {
         }
 
         if (isSafEnvironment(srcEnv) || isSafEnvironment(dstEnv) || isSafEnvironment(environment)) {
+            // Orbit's repo calls were already refused before the environment split above.
             return safTools.copyFile(tool)
         }
         PathValidator.validateAndroidPath(sourcePath, tool.name, "source")?.let { return it }
@@ -2546,7 +2592,7 @@ open class StandardFileSystemTools(protected val context: Context) {
             return linuxTools.makeDirectory(tool)
         }
         if (isSafEnvironment(environment)) {
-            return safTools.makeDirectory(tool)
+            return saf(tool) { makeDirectory(it) }
         }
         PathValidator.validateAndroidPath(path, tool.name)?.let { return it }
 
@@ -2667,7 +2713,7 @@ open class StandardFileSystemTools(protected val context: Context) {
             return linuxTools.findFiles(tool)
         }
         if (isSafEnvironment(environment)) {
-            return safTools.findFiles(tool)
+            return saf(tool) { findFiles(it) }
         }
         PathValidator.validateAndroidPath(path, tool.name)?.let { return it }
 
@@ -2955,7 +3001,7 @@ open class StandardFileSystemTools(protected val context: Context) {
         }
 
         if (isSafEnvironment(environment)) {
-            return safTools.fileInfo(tool)
+            return saf(tool) { fileInfo(it) }
         }
         PathValidator.validateAndroidPath(path, tool.name)?.let { return it }
 
@@ -3994,8 +4040,11 @@ open class StandardFileSystemTools(protected val context: Context) {
             )
         }
 
+        val destFile = File(actualDestPath)
+        // Download into a private file next to the target and swap it in only once complete, so a
+        // stopped or failed download never touches a file already at the destination.
+        val partialFile = File(destFile.parentFile, ".${destFile.name}.${java.util.UUID.randomUUID()}.download")
         return try {
-            val destFile = File(actualDestPath)
 
             fun formatSize(bytes: Long): String {
                 return when {
@@ -4014,7 +4063,26 @@ open class StandardFileSystemTools(protected val context: Context) {
 
                 val lastEmitMs = java.util.concurrent.atomic.AtomicLong(0L)
                 val headers = parseHeaders(headersParam)
-                HttpMultiPartDownloader.download(resolvedUrl, destFile, headers = headers, threadCount = 4) { downloaded, total ->
+                // Stopping the turn closes the open connections at once, so a stalled download ends
+                // right away instead of at its network timeout.
+                val callJob = kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]
+                val cancellation = HttpMultiPartDownloader.Cancellation()
+                kotlinx.coroutines.coroutineScope {
+                    // Started in place so its cleanup always runs. Closing connections after a
+                    // finished download is harmless: none are open any more.
+                    val watcher = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                        try {
+                            kotlinx.coroutines.awaitCancellation()
+                        } finally {
+                            cancellation.cancel()
+                        }
+                    }
+                    try {
+                        kotlinx.coroutines.runInterruptible(kotlinx.coroutines.Dispatchers.IO) {
+                HttpMultiPartDownloader.download(
+                    resolvedUrl, partialFile, headers = headers, threadCount = 4,
+                    cancellation = cancellation,
+                ) { downloaded, total ->
                     val now = System.currentTimeMillis()
                     val last = lastEmitMs.get()
                     if (now - last < 200L) return@download
@@ -4029,6 +4097,17 @@ open class StandardFileSystemTools(protected val context: Context) {
                             "Downloading... ${formatSize(downloaded)}"
                         }
                     ToolProgressBus.update(tool.name, p, msg)
+                }
+                        }
+                    } finally {
+                        watcher.cancel()
+                    }
+                }
+                if (callJob?.isActive == false) throw InterruptedException("Download cancelled")
+                if (partialFile.exists() && !partialFile.renameTo(destFile)) {
+                    // Some file systems refuse to rename over an existing file.
+                    partialFile.copyTo(destFile, overwrite = true)
+                    partialFile.delete()
                 }
                 ToolProgressBus.update(tool.name, 1f, "Completed")
 
@@ -4065,8 +4144,13 @@ open class StandardFileSystemTools(protected val context: Context) {
                 }
             } finally {
                 ToolProgressBus.clear()
+                runCatching { partialFile.delete() }
             }
         } catch (e: Exception) {
+            if (kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]?.isActive == false) {
+                // Stopped by the user: end as a stop, not an error. The destination is untouched.
+                throw kotlinx.coroutines.CancellationException("Download stopped")
+            }
             AppLogger.e(TAG, "Error downloading file", e)
             return ToolResult(
                 toolName = tool.name,
