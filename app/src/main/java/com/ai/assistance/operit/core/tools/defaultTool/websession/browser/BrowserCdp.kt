@@ -288,6 +288,12 @@ internal class CdpConnection private constructor(
         }
     }
 
+    /** Cleanup events need delivery, but must not wait for an unresponsive page to acknowledge them. */
+    fun sendWithoutWaiting(method: String, params: JSONObject) {
+        if (closed) throw CdpException("DevTools connection closed")
+        writeText(JSONObject().put("id", nextId.getAndIncrement()).put("method", method).put("params", params).toString())
+    }
+
     /**
      * Safe on the main thread: never waits for a write in progress. Closing the socket wakes a
      * blocked reader or writer, and DevTools treats a dropped socket as a normal disconnect.

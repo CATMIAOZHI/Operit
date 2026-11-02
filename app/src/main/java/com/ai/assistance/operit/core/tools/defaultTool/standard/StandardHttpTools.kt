@@ -19,8 +19,16 @@ import java.util.concurrent.TimeUnit
 import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import okhttp3.Call
 import okhttp3.Cookie
 import okhttp3.CookieJar
 import okhttp3.FormBody
@@ -311,32 +319,53 @@ class StandardHttpTools(private val context: Context) {
         )
     }
 
+    /** Close the actual socket on cancellation, including while execute/read is blocked. */
+    private suspend fun <T> withCancellableCall(call: Call, block: suspend (Call) -> T): T = coroutineScope {
+        val cancellation = launch(Dispatchers.Unconfined, start = CoroutineStart.UNDISPATCHED) {
+            try {
+                awaitCancellation()
+            } finally {
+                call.cancel()
+            }
+        }
+        try {
+            block(call)
+        } finally {
+            cancellation.cancel()
+        }
+    }
+
     /** 发送HTTP请求 支持GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS方法，并可自定义请求头、请求体、超时、代理和Cookie设置 */
     suspend fun httpRequest(tool: AITool): ToolResult {
         return try {
             val spec = prepareHttpRequest(tool)
-            val response = spec.client.newCall(spec.request).execute()
-            val responseBody = response.body ?: return errorResult(tool.name, "Response body is empty")
-            val bodyBytes = responseBody.bytes()
-            val contentType = response.header("Content-Type") ?: ""
-            val responseBodyString =
-                    try {
-                        val charset = response.body?.contentType()?.charset(Charsets.UTF_8) ?: Charsets.UTF_8
-                        String(bodyBytes, charset)
-                    } catch (e: Exception) {
-                        AppLogger.w(TAG, "Failed to decode response body as text for content-type $contentType", e)
-                        "[Binary Content, decoding failed]"
-                    }
-            val httpResponseData =
-                    buildHttpResponseData(
+            withCancellableCall(spec.client.newCall(spec.request)) { call ->
+                call.execute().use { response ->
+                    val responseBody = response.body
+                        ?: return@withCancellableCall errorResult(tool.name, "Response body is empty")
+                    val bodyBytes = responseBody.bytes()
+                    val contentType = response.header("Content-Type") ?: ""
+                    val responseBodyString =
+                        try {
+                            val charset = responseBody.contentType()?.charset(Charsets.UTF_8) ?: Charsets.UTF_8
+                            String(bodyBytes, charset)
+                        } catch (e: Exception) {
+                            AppLogger.w(TAG, "Failed to decode response body as text for content-type $contentType", e)
+                            "[Binary Content, decoding failed]"
+                        }
+                    val httpResponseData =
+                        buildHttpResponseData(
                             url = spec.url,
                             response = response,
                             content = responseBodyString,
                             contentBase64 = android.util.Base64.encodeToString(bodyBytes, android.util.Base64.NO_WRAP),
                             size = bodyBytes.size
-                    )
-            ToolResult(toolName = tool.name, success = true, result = httpResponseData, error = "")
+                        )
+                    ToolResult(toolName = tool.name, success = true, result = httpResponseData, error = "")
+                }
+            }
         } catch (e: Exception) {
+            currentCoroutineContext().ensureActive()
             AppLogger.e(TAG, "执行HTTP请求时出错", e)
             errorResult(tool.name, "Error executing HTTP request: ${e.message}")
         }
@@ -345,79 +374,79 @@ class StandardHttpTools(private val context: Context) {
     suspend fun httpRequestStream(tool: AITool): Flow<ToolResult> = flow {
         try {
             val spec = prepareHttpRequest(tool)
-            val response = spec.client.newCall(spec.request).execute()
-            val responseBody = response.body
-                    ?: run {
-                        emit(errorResult(tool.name, "Response body is empty"))
-                        return@flow
-                    }
-
-            val responseHeadersMap =
-                    response.headers.names().associateWith { name ->
-                        response.headers.get(name) ?: ""
-                    }
-            val contentType = response.header("Content-Type") ?: ""
-            emit(
-                    ToolResult(
+            withCancellableCall(spec.client.newCall(spec.request)) { call ->
+                call.execute().use { response ->
+                    val responseBody = response.body
+                        ?: run {
+                            emit(errorResult(tool.name, "Response body is empty"))
+                            return@withCancellableCall
+                        }
+                    val responseHeadersMap =
+                        response.headers.names().associateWith { name ->
+                            response.headers.get(name) ?: ""
+                        }
+                    val contentType = response.header("Content-Type") ?: ""
+                    emit(
+                        ToolResult(
                             toolName = tool.name,
                             success = true,
                             result =
-                                    HttpStreamEventData(
-                                            type = "response_started",
-                                            url = spec.url,
-                                            statusCode = response.code,
-                                            statusMessage = response.message,
-                                            headers = responseHeadersMap,
-                                            contentType = contentType,
-                                            receivedBytes = 0
-                                    )
+                                HttpStreamEventData(
+                                    type = "response_started",
+                                    url = spec.url,
+                                    statusCode = response.code,
+                                    statusMessage = response.message,
+                                    headers = responseHeadersMap,
+                                    contentType = contentType,
+                                    receivedBytes = 0
+                                )
+                        )
                     )
-            )
 
-            val charset = response.body?.contentType()?.charset(Charsets.UTF_8) ?: Charsets.UTF_8
-            val reader = responseBody.charStream()
-            val buffer = CharArray(1024)
-            val aggregatedText = StringBuilder()
-            var chunkIndex = 0
+                    val charset = responseBody.contentType()?.charset(Charsets.UTF_8) ?: Charsets.UTF_8
+                    val reader = responseBody.charStream()
+                    val buffer = CharArray(1024)
+                    val aggregatedText = StringBuilder()
+                    var chunkIndex = 0
 
-            while (true) {
-                val readCount = reader.read(buffer)
-                if (readCount <= 0) {
-                    break
-                }
-                val chunk = String(buffer, 0, readCount)
-                aggregatedText.append(chunk)
-                emit(
-                        ToolResult(
+                    while (true) {
+                        val readCount = reader.read(buffer)
+                        if (readCount <= 0) break
+                        val chunk = String(buffer, 0, readCount)
+                        aggregatedText.append(chunk)
+                        emit(
+                            ToolResult(
                                 toolName = tool.name,
                                 success = true,
                                 result =
-                                        HttpStreamEventData(
-                                                type = "chunk",
-                                                url = spec.url,
-                                                contentType = contentType,
-                                                chunk = chunk,
-                                                chunkIndex = chunkIndex,
-                                                receivedBytes = aggregatedText.toString().toByteArray(charset).size.toLong()
-                                        )
+                                    HttpStreamEventData(
+                                        type = "chunk",
+                                        url = spec.url,
+                                        contentType = contentType,
+                                        chunk = chunk,
+                                        chunkIndex = chunkIndex,
+                                        receivedBytes = aggregatedText.toString().toByteArray(charset).size.toLong()
+                                    )
+                            )
                         )
-                )
-                chunkIndex += 1
-            }
-            reader.close()
+                        chunkIndex += 1
+                    }
+                    reader.close()
 
-            val finalText = aggregatedText.toString()
-            val finalBytes = finalText.toByteArray(charset)
-            val finalResponseData =
-                    buildHttpResponseData(
+                    val finalText = aggregatedText.toString()
+                    val finalBytes = finalText.toByteArray(charset)
+                    val finalResponseData = buildHttpResponseData(
                             url = spec.url,
                             response = response,
                             content = finalText,
                             contentBase64 = android.util.Base64.encodeToString(finalBytes, android.util.Base64.NO_WRAP),
                             size = finalBytes.size
                     )
-            emit(ToolResult(toolName = tool.name, success = true, result = finalResponseData, error = ""))
+                    emit(ToolResult(toolName = tool.name, success = true, result = finalResponseData, error = ""))
+                }
+            }
         } catch (e: Exception) {
+            currentCoroutineContext().ensureActive()
             AppLogger.e(TAG, "执行流式HTTP请求时出错", e)
             emit(errorResult(tool.name, "Error executing streaming HTTP request: ${e.message}"))
         }
@@ -765,61 +794,31 @@ class StandardHttpTools(private val context: Context) {
 
             // 执行请求
             val request = requestBuilder.build()
-            val response = client.newCall(request).execute()
-
-            // 检查响应类型
-            val contentType = response.header("Content-Type") ?: ""
-
-            // 处理响应
-            val responseHeadersMap =
-                    response.headers.names().associateWith { name ->
-                        response.headers.get(name) ?: ""
-                    }
-
-            // 提取响应的Cookie
-            val responseCookieUrl =
-                    url.toHttpUrlOrNull() ?: throw IllegalArgumentException("Invalid URL: $url")
-            val responseCookies = cookieJar.loadForRequest(responseCookieUrl)
-            val cookiesMap = responseCookies.associate { it.name to it.value }
-
-            val responseBody =
-                    response.body
-                            ?: return ToolResult(
-                                    toolName = tool.name,
-                                    success = false,
-                                    result = StringResultData(""),
-                                    error = "Response body is empty"
-                            )
-
-            var responseBodyString: String? = null
-            var responseBodyBase64: String?
-
-            val bodyBytes = responseBody.bytes()
-            responseBodyBase64 = android.util.Base64.encodeToString(bodyBytes, android.util.Base64.NO_WRAP)
-            try {
-                val charset = response.body?.contentType()?.charset(Charsets.UTF_8) ?: Charsets.UTF_8
-                responseBodyString = String(bodyBytes, charset)
-            } catch (e: Exception) {
-                AppLogger.w(TAG, "Failed to decode response body as text for content-type $contentType", e)
-                responseBodyString = "[Binary Content, decoding failed]"
-            }
-            
-            // 返回原始内容
-            val httpResponseData =
-                    HttpResponseData(
-                            url = url,
-                            statusCode = response.code,
-                            statusMessage = response.message,
-                            headers = responseHeadersMap,
-                            contentType = contentType,
-                            content = responseBodyString ?: "[Binary Content]",
-                            contentBase64 = responseBodyBase64,
-                            size = bodyBytes.size,
-                            cookies = cookiesMap
+            withCancellableCall(client.newCall(request)) { call ->
+                call.execute().use { response ->
+                    val responseBody = response.body
+                        ?: return@withCancellableCall errorResult(tool.name, "Response body is empty")
+                    val bodyBytes = responseBody.bytes()
+                    val contentType = response.header("Content-Type") ?: ""
+                    val content =
+                        try {
+                            String(bodyBytes, responseBody.contentType()?.charset(Charsets.UTF_8) ?: Charsets.UTF_8)
+                        } catch (e: Exception) {
+                            AppLogger.w(TAG, "Failed to decode response body as text for content-type $contentType", e)
+                            "[Binary Content, decoding failed]"
+                        }
+                    val httpResponseData = buildHttpResponseData(
+                        url = url,
+                        response = response,
+                        content = content,
+                        contentBase64 = android.util.Base64.encodeToString(bodyBytes, android.util.Base64.NO_WRAP),
+                        size = bodyBytes.size
                     )
-
-            ToolResult(toolName = tool.name, success = true, result = httpResponseData, error = "")
+                    ToolResult(toolName = tool.name, success = true, result = httpResponseData, error = "")
+                }
+            }
         } catch (e: Exception) {
+            currentCoroutineContext().ensureActive()
             AppLogger.e(TAG, "执行多部分表单请求时出错", e)
             ToolResult(
                     toolName = tool.name,

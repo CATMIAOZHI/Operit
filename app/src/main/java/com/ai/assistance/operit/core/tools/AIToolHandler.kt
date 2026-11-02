@@ -653,7 +653,9 @@ interface ToolExecutor {
 
     fun invoke(tool: AITool): ToolResult
 
-    fun invokeAndStream(tool: AITool): Flow<ToolResult> = flowOf(invoke(tool))
+    fun invokeAndStream(tool: AITool): Flow<ToolResult> = flow {
+        emit(kotlinx.coroutines.runInterruptible(kotlinx.coroutines.Dispatchers.IO) { invoke(tool) })
+    }
 
     /**
      * Whether this call may run side by side with the other parallel calls of the same model turn.

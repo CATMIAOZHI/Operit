@@ -36,6 +36,13 @@ import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.encodeToString
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.collect
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -706,6 +713,7 @@ internal object JsNativeInterfaceDelegates {
 
     fun callToolAsync(
         toolHandler: AIToolHandler,
+        scope: CoroutineScope,
         callbackId: String,
         toolType: String,
         toolName: String,
@@ -729,12 +737,12 @@ internal object JsNativeInterfaceDelegates {
                 return
             }
 
-        Thread {
+        scope.launch(
+            com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager.toolRuntimeContextElement(runtimeContext)
+        ) {
             try {
                 // Runs as the chat whose script made the call, so chat-scoped tools see its space.
-                val result = runBlocking(
-                    com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager.toolRuntimeContextElement(runtimeContext)
-                ) { toolHandler.executeTool(parsed.aiTool) }
+                val result = runInterruptible(Dispatchers.IO) { toolHandler.executeTool(parsed.aiTool) }
 
                 if (!result.success) {
                     AppLogger.e(TAG, "[Async] Tool execution failed: ${result.error}")
@@ -748,6 +756,10 @@ internal object JsNativeInterfaceDelegates {
                         binaryDataThreshold = binaryDataThreshold
                     )
                 sendToolResult(callbackId, resultJson, !result.success)
+            } catch (e: CancellationException) {
+                // A tool's own timeout must settle the JS promise; an ended script must stay silent.
+                currentCoroutineContext().ensureActive()
+                sendToolResult(callbackId, buildToolErrorJson(e.message ?: "Tool was cancelled"), true)
             } catch (e: Exception) {
                 AppLogger.e(TAG, "[Async] Error in async tool execution: ${e.message}", e)
                 sendToolResult(
@@ -756,11 +768,12 @@ internal object JsNativeInterfaceDelegates {
                     true
                 )
             }
-        }.start()
+        }
     }
 
     fun callToolAsyncStreaming(
         toolHandler: AIToolHandler,
+        scope: CoroutineScope,
         callbackId: String,
         intermediateCallbackId: String,
         toolType: String,
@@ -786,25 +799,23 @@ internal object JsNativeInterfaceDelegates {
                 return
             }
 
-        Thread {
+        scope.launch(
+            com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager.toolRuntimeContextElement(runtimeContext)
+        ) {
             try {
                 var pendingFinalResult: ToolResult? = null
-                runBlocking(
-                    com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager.toolRuntimeContextElement(runtimeContext)
-                ) {
-                    toolHandler.executeToolAndStream(parsed.aiTool).collect { result ->
-                        val previous = pendingFinalResult
-                        pendingFinalResult = result
-                        if (previous != null) {
-                            val intermediateJson =
-                                serializeToolExecutionResult(
-                                    result = previous,
-                                    binaryDataRegistry = binaryDataRegistry,
-                                    binaryHandlePrefix = binaryHandlePrefix,
-                                    binaryDataThreshold = binaryDataThreshold
-                                )
-                            sendIntermediateResult(intermediateCallbackId, intermediateJson, !previous.success)
-                        }
+                toolHandler.executeToolAndStream(parsed.aiTool).collect { result ->
+                    val previous = pendingFinalResult
+                    pendingFinalResult = result
+                    if (previous != null) {
+                        val intermediateJson =
+                            serializeToolExecutionResult(
+                                result = previous,
+                                binaryDataRegistry = binaryDataRegistry,
+                                binaryHandlePrefix = binaryHandlePrefix,
+                                binaryDataThreshold = binaryDataThreshold
+                            )
+                        sendIntermediateResult(intermediateCallbackId, intermediateJson, !previous.success)
                     }
                 }
 
@@ -825,6 +836,9 @@ internal object JsNativeInterfaceDelegates {
                         binaryDataThreshold = binaryDataThreshold
                     )
                 sendToolResult(callbackId, finalJson, !finalResult.success)
+            } catch (e: CancellationException) {
+                currentCoroutineContext().ensureActive()
+                sendToolResult(callbackId, buildToolErrorJson(e.message ?: "Tool was cancelled"), true)
             } catch (e: Exception) {
                 AppLogger.e(TAG, "[AsyncStream] Error in async streaming tool execution: ${e.message}", e)
                 sendToolResult(
@@ -833,7 +847,7 @@ internal object JsNativeInterfaceDelegates {
                     true
                 )
             }
-        }.start()
+        }
     }
 
     fun buildToolResultCallbackScript(callbackId: String, result: String, isError: Boolean): String {

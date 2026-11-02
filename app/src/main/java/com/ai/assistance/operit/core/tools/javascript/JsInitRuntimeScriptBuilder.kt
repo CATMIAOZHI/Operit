@@ -171,6 +171,11 @@ private fun buildRuntimeCallRegistryScript(): String {
                 }
                 callState.completed = true;
                 clearCallTimers(callState);
+                if (typeof callState.finalizeCall === 'function') {
+                    callState.finalizeCall();
+                } else {
+                    cleanupCallSession(callId);
+                }
                 return true;
             }
 

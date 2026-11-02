@@ -472,14 +472,18 @@ internal fun buildExecutionRuntimeBridgeScript(): String {
 
                 function finalizeCall() {
                     clearExecutionTimeouts();
+                    callState.finalizeCall = null;
+                    var previousState = getCallState(previousCallId);
+                    var previousActive = previousState && !previousState.completed;
                     if (root.__operitCurrentCallId === callId) {
                         root.__operitCurrentCallId =
-                            typeof previousCallId === 'string' ? previousCallId : '';
+                            previousActive ? previousCallId : '';
                     }
                     if (root.__operit_call_runtime_ref === callRuntime) {
                         if (
                             previousCallRuntime &&
-                            typeof previousCallRuntime === 'object'
+                            typeof previousCallRuntime === 'object' &&
+                            previousActive
                         ) {
                             root.__operit_call_runtime_ref = previousCallRuntime;
                         } else {
@@ -499,6 +503,8 @@ internal fun buildExecutionRuntimeBridgeScript(): String {
                     var state = getCallState(callId);
                     return !!(state && !state.completed);
                 }
+
+                callState.finalizeCall = finalizeCall;
 
                 function emitSerializedResult(resultText) {
                     var state = getCallState(callId);
