@@ -7748,6 +7748,7 @@
     <string name="chat_summarizing_please_wait">正在总结中，请稍候</string>
     <string name="chat_conversation_summary_generated">对话总结已生成</string>
     <string name="chat_compressing_history">正在压缩历史记录...</string>
+    <string name="chat_turn_over_compaction_line">这一轮的内容压缩后仍超过上下文压缩线，没有发送。可以调高压缩线，或把内容分几次发。</string>
     <string name="chat_ai_service_unavailable_summarize">AI服务不可用，无法进行总结</string>
     <string name="chat_summarize_failed_no_valid_summary">总结失败: 未能生成有效总结</string>
     <string name="chat_summarize_generation_failed">总结生成失败: %1$s</string>

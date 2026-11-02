@@ -698,11 +698,11 @@ internal object OrbitWeixin {
     }
 
     private fun quietNow(context: Context, chatId: String) = cores(context).all {
-        chatId !in it.activeStreamingChatIds.value && !it.isSummarizing.value && !it.isSendTriggeredSummarizing.value
+        chatId !in it.activeStreamingChatIds.value && !it.isSummarizingChat(chatId)
     }
 
     private fun quietFlow(context: Context, chatId: String) = cores(context).map { c ->
-        combine(c.activeStreamingChatIds, c.isSummarizing, c.isSendTriggeredSummarizing) { active, a, b -> chatId !in active && !a && !b }
+        combine(c.activeStreamingChatIds, c.summarizingChatFlow(chatId)) { active, summarizing -> chatId !in active && !summarizing }
     }.let { (a, b) -> combine(a, b) { x, y -> x && y } }
 
     private suspend fun deliverLoop(context: Context, orbitId: String) {

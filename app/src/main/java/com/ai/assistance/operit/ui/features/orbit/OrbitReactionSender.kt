@@ -53,13 +53,13 @@ internal object OrbitReactionSender {
             try {
                 val core = ChatRuntimeHolder.getInstance(app).getCore(ChatRuntimeSlot.MAIN)
                 // Never cut into a reply being written; Orbit hears about it once that reply ends.
-                // A running summary is waited out too: a send during it is refused, and the wait for
-                // the refused turn would end by cancelling that summary.
+                // A running summary of this chat is waited out too: a send during it is refused, and
+                // the wait for the refused turn would end by cancelling that summary.
                 withTimeoutOrNull(WAIT_FOR_IDLE_MS) {
-                    // All three at the same moment: no reply on this chat and no summary of any kind.
+                    // Both at the same moment: no reply and no summary on this chat.
                     kotlinx.coroutines.flow.combine(
-                        core.activeStreamingChatIds, core.isSummarizing, core.isSendTriggeredSummarizing,
-                    ) { active, summarizing, sendSummarizing -> chatId !in active && !summarizing && !sendSummarizing }
+                        core.activeStreamingChatIds, core.summarizingChatFlow(chatId),
+                    ) { active, summarizing -> chatId !in active && !summarizing }
                         .first { it }
                 }
                     ?: error("The chat stayed busy")

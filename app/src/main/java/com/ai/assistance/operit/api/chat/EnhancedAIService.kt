@@ -384,6 +384,8 @@ class EnhancedAIService private constructor(
         var enableMemoryAutoUpdate: Boolean = true,
         var onNonFatalError: suspend (error: String) -> Unit = {},
         var onTokenLimitExceeded: (suspend () -> Unit)? = null,
+        /** Compacts the chat inside this turn instead of stopping it; see [com.ai.assistance.operit.api.chat.compaction.TurnCompactor]. */
+        var turnCompactor: com.ai.assistance.operit.api.chat.compaction.TurnCompactor? = null,
         var customSystemPromptTemplate: String? = null,
         var additionalSystemPrompt: String? = null,
         var isSubTask: Boolean = false,
@@ -515,6 +517,13 @@ class EnhancedAIService private constructor(
         val subagentToolLoopGuard: ToolExecutionManager.SubagentToolLoopGuard =
             ToolExecutionManager.SubagentToolLoopGuard(),
         var modelExecutionSnapshot: ModelExecutionSnapshot? = null,
+        val turnCompactor: com.ai.assistance.operit.api.chat.compaction.TurnCompactor? = null,
+        /**
+         * Where this turn's own part of [conversationHistory] starts: its user message, or what it
+         * added when it has none. Everything before it, after the system prompt, is the conversation
+         * before the turn, which a [turnCompactor] summary replaces. -1 when not known.
+         */
+        var turnStart: Int = -1,
         var composerPredictionAllowed: Boolean = true,
         var samplingInterrupted: Boolean = false,
         var samplingSavepoint: String = "",
@@ -1045,6 +1054,49 @@ class EnhancedAIService private constructor(
 
     private fun bypassPromptHooks(context: PromptHookContext): PromptHookContext = context
 
+    /** The first request of a turn would go past the compaction line; the turn is handed to the summary. */
+    private class TurnOverCompactionLine : Exception("The request is over the compaction line")
+
+    /**
+     * Swaps the conversation before this turn for its summary, keeping the system prompt and the
+     * turn's own part word for word. Waits for the summary only when [waitForSummary]; null when no
+     * summary is ready (or it failed), leaving the history as it was.
+     */
+    private suspend fun compactWithinTurn(
+        execution: MessageExecutionContext,
+        compactor: com.ai.assistance.operit.api.chat.compaction.TurnCompactor,
+        history: List<PromptTurn>,
+        waitForSummary: Boolean,
+    ): List<PromptTurn>? {
+        val start = execution.turnStart
+        if (start < 0 || start > history.size) return null
+        val leading = history.subList(0, start).takeWhile { it.kind == PromptTurnKind.SYSTEM }
+        if (leading.size >= start) return null
+        compactor.prepare()
+        val summary = compactor.takeReady() ?: if (waitForSummary) {
+            withContext(Dispatchers.Main) {
+                _inputProcessingState.value = InputProcessingState.Summarizing(context.getString(R.string.chat_compressing_history))
+            }
+            try {
+                compactor.await()
+            } finally {
+                withContext(Dispatchers.Main + NonCancellable) {
+                    if (_inputProcessingState.value is InputProcessingState.Summarizing) {
+                        _inputProcessingState.value = InputProcessingState.Processing(context.getString(R.string.enhanced_processing_message))
+                    }
+                }
+            }
+        } else {
+            null
+        }
+        if (summary.isNullOrBlank()) return null
+        val compacted = leading + PromptTurn(PromptTurnKind.SUMMARY, summary) + history.subList(start, history.size)
+        execution.turnStart = leading.size + 1
+        execution.conversationHistory.clear()
+        execution.conversationHistory.addAll(compacted)
+        return compacted
+    }
+
     /**
      * The provider rejected the request as too long. Where this turn would run the normal summary,
      * the turn is handed to it, the way an over-threshold turn is: it compacts and sends again. Only
@@ -1374,6 +1426,7 @@ class EnhancedAIService private constructor(
                     terminalToolNames = terminalToolNames,
                     promptHooksEnabled = promptHooksEnabled,
                     chatReasoningLevel = options.chatReasoningLevelOverride,
+                    turnCompactor = options.turnCompactor,
                 )
             registerExecutionContext(execContext)
             var hadFatalError = false
@@ -1555,14 +1608,19 @@ class EnhancedAIService private constructor(
                         finalProcessedInput = ChatUtils.stripOpenAiResponsesReasoningMeta(finalProcessedInput)
                         finalPreparedHistory = ChatUtils.stripOpenAiResponsesReasoningMetaTurns(finalPreparedHistory)
                     }
-                    var requestHistory =
+                    val finalizedHistory =
                         applyFinalizedCurrentUserTurn(
                             preparedHistory = finalPreparedHistory,
                             originalCurrentMessage = message,
                             finalizedCurrentMessage = finalProcessedInput
-                        ).mergeAdjacentTurns { previous, current ->
+                        )
+                    var requestHistory =
+                        finalizedHistory.mergeAdjacentTurns { previous, current ->
                             com.ai.assistance.operit.core.agent.collaboration.CollaborationPromptHistory.canMergeUserTurns(previous, current)
                         }
+                    // A user message left unanswered before this one merges into it, so the turn has no
+                    // clean start of its own and compacts the old way.
+                    val currentMergedWithEarlier = requestHistory.lastOrNull() != finalizedHistory.lastOrNull()
                     if (options.collaborationInput && requestHistory.lastOrNull()?.kind == PromptTurnKind.USER) {
                         val last = requestHistory.last()
                         requestHistory = requestHistory.dropLast(1) + last.copy(metadata = last.metadata + mapOf(
@@ -1581,6 +1639,15 @@ class EnhancedAIService private constructor(
                     execContext.conversationHistory.clear()
                     execContext.conversationHistory.addAll(requestHistory)
                     perf.lap("插件改写")
+                    // The current message ends the prepared request; a turn without one adds only what follows.
+                    execContext.turnStart =
+                        if (currentMergedWithEarlier) {
+                            -1
+                        } else if (message.isNotBlank() && requestHistory.lastOrNull()?.kind == PromptTurnKind.USER) {
+                            requestHistory.lastIndex
+                        } else {
+                            requestHistory.size
+                        }
                     val initialWindow = estimatePreparedRequestWindow(
                         serviceForFunction = serviceForFunction,
                         preparedHistory = requestHistory,
@@ -1588,7 +1655,37 @@ class EnhancedAIService private constructor(
                         publishEstimate = true
                     )
                     perf.lap("估算token")
-                    if (maxTokens > 0 && initialWindow.toDouble() / maxTokens >= tokenUsageThreshold &&
+                    val initialCompactor = execContext.turnCompactor?.takeIf {
+                        onTokenLimitExceeded != null && !isSubTask &&
+                            !com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(context).isAgent(chatId) &&
+                            !com.ai.assistance.operit.api.chat.enhance.InPlaceCompaction.contains(chatId)
+                    }
+                    val initialRatio = if (maxTokens > 0) initialWindow.toDouble() / maxTokens else 0.0
+                    if (initialCompactor != null &&
+                        initialRatio >= tokenUsageThreshold * com.ai.assistance.operit.api.chat.compaction.ContextCompaction.PRECOMPUTE_RATIO
+                    ) {
+                        // Same as between tool calls: a ready summary goes in now, the line itself waits for one.
+                        val finalWindow = compactWithinTurn(
+                            execContext, initialCompactor, requestHistory, waitForSummary = initialRatio >= tokenUsageThreshold,
+                        )?.let { compacted ->
+                            requestHistory = compacted
+                            estimatePreparedRequestWindow(
+                                serviceForFunction = serviceForFunction,
+                                preparedHistory = requestHistory,
+                                availableTools = availableTools,
+                                publishEstimate = true
+                            )
+                        } ?: initialWindow
+                        // Still over the line (no summary, or the turn alone is that big): the request is
+                        // never sent past it. Once the chat is summarized whole and the turn sent again;
+                        // over it after that, the turn fails and says why.
+                        if (finalWindow.toDouble() / maxTokens >= tokenUsageThreshold) {
+                            if (com.ai.assistance.operit.api.chat.compaction.ContextOverflowRecovery.begin(requireNotNull(chatId))) {
+                                throw TurnOverCompactionLine()
+                            }
+                            throw IllegalStateException(context.getString(R.string.chat_turn_over_compaction_line))
+                        }
+                    } else if (maxTokens > 0 && initialWindow.toDouble() / maxTokens >= tokenUsageThreshold &&
                         com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(context).isAgent(chatId)
                     ) {
                         requestHistory = compactCollaborationHistory(
@@ -1788,7 +1885,15 @@ class EnhancedAIService private constructor(
             } catch (e: Exception) {
                 execContext.composerPredictionAllowed = false
                 val handedToCompaction =
-                    handOverflowToCompaction(e, execContext, chatId, isSubTask, onTokenLimitExceeded, tokenUsageThreshold)
+                    if (e is TurnOverCompactionLine) {
+                        AppLogger.w(TAG, "The first request stays over the compaction line; summarizing the chat")
+                        execContext.turnInputInbox?.sealForSummary()
+                        onTokenLimitExceeded?.invoke()
+                        execContext.isConversationActive.set(false)
+                        true
+                    } else {
+                        handOverflowToCompaction(e, execContext, chatId, isSubTask, onTokenLimitExceeded, tokenUsageThreshold)
+                    }
                 // 用户取消导致的 Socket closed 是预期行为，不应作为错误处理
                 if (handedToCompaction) {
                     // Compaction sends the turn again; nothing more of this request is processed.
@@ -2850,11 +2955,25 @@ class EnhancedAIService private constructor(
                 }
             }
 
+            val historyBeforeNormalizing = context.conversationHistory.toList()
             val normalizedChatHistory =
                 conversationService.normalizeConversationHistoryForModel(context.conversationHistory)
                     .mergeAdjacentTurns { previous, current ->
                         com.ai.assistance.operit.core.agent.collaboration.CollaborationPromptHistory.canMergeUserTurns(previous, current)
                     }
+            // Merging that reaches the turn's start moves it; the turn then compacts the old way.
+            // Normalizing rewrites tool markup in place, so only the order of kinds and the turn's
+            // own first entry are compared.
+            context.turnStart.takeIf { it >= 0 }?.let { start ->
+                val end = minOf(start + 1, historyBeforeNormalizing.size)
+                if (normalizedChatHistory.size < end ||
+                    normalizedChatHistory.subList(0, end).map { it.kind } != historyBeforeNormalizing.subList(0, end).map { it.kind } ||
+                    (start < historyBeforeNormalizing.size && historyBeforeNormalizing[start].kind == PromptTurnKind.USER &&
+                        normalizedChatHistory[start] != historyBeforeNormalizing[start])
+                ) {
+                    context.turnStart = -1
+                }
+            }
             context.conversationHistory.clear()
             context.conversationHistory.addAll(normalizedChatHistory)
 
@@ -2919,7 +3038,33 @@ class EnhancedAIService private constructor(
 
             // After a tool call, check if token usage exceeds the threshold
             if (maxTokens > 0) {
-                val usageRatio = currentTokens.toDouble() / maxTokens.toDouble()
+                var usageRatio = currentTokens.toDouble() / maxTokens.toDouble()
+
+                // A main chat compacts within the turn: a summary of what came before the turn is
+                // written in the background from the precompute share of the line on, swapped in
+                // as soon as it is done, and waited for only once the line itself is reached.
+                val turnCompactor = context.turnCompactor?.takeIf {
+                    onTokenLimitExceeded != null && !isSubTask &&
+                        !com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(this@EnhancedAIService.context).isAgent(chatId) &&
+                        !com.ai.assistance.operit.api.chat.enhance.InPlaceCompaction.contains(chatId)
+                }
+                if (turnCompactor != null &&
+                    usageRatio >= tokenUsageThreshold * com.ai.assistance.operit.api.chat.compaction.ContextCompaction.PRECOMPUTE_RATIO
+                ) {
+                    val compacted = compactWithinTurn(
+                        context, turnCompactor, currentChatHistory, waitForSummary = usageRatio >= tokenUsageThreshold,
+                    )
+                    if (compacted != null) {
+                        currentChatHistory = compacted
+                        usageRatio = estimatePreparedRequestWindow(
+                            serviceForFunction = serviceForFunction,
+                            preparedHistory = currentChatHistory,
+                            availableTools = availableTools,
+                            publishEstimate = true
+                        ).toDouble() / maxTokens.toDouble()
+                        AppLogger.d(TAG, "Compacted within the turn: chatId=$chatId, usage now $usageRatio")
+                    }
+                }
 
                 if (usageRatio >= tokenUsageThreshold) {
                     if (com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(this@EnhancedAIService.context).isAgent(chatId)) {

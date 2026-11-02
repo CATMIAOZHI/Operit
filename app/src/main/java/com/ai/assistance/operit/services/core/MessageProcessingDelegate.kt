@@ -117,6 +117,9 @@ class MessageProcessingDelegate(
             isGroupOrchestrationTurn: Boolean,
             groupParticipantNamesText: String?
         ) -> Unit,
+        /** Compacts a chat inside a running turn; null where the chat is compacted by stopping the turn. */
+        private val turnCompactorFor: (chatId: String, turnStartTimestamp: Long) -> com.ai.assistance.operit.api.chat.compaction.TurnCompactor? =
+            { _, _ -> null },
         // 添加自动朗读相关的回调
         private val getIsAutoReadEnabled: () -> Boolean,
         private var speakMessageHandler: (String, Boolean) -> Unit
@@ -1381,6 +1384,14 @@ class MessageProcessingDelegate(
                         _nonFatalErrorEvent.emit(error)
                     },
                     onTokenLimitExceeded = effectiveOnTokenLimitExceeded,
+                    // Everything this turn adds starts at its user message, or at its reply when it has none.
+                    turnCompactor = if (effectiveOnTokenLimitExceeded != null && activeChatId != null &&
+                        !isGroupOrchestrationTurn && !turnOptions.isCollaborationAgent
+                    ) {
+                        turnCompactorFor(activeChatId, if (userMessageAdded) userMessage.timestamp else aiMessageTimestamp)
+                    } else {
+                        null
+                    },
                     characterName = characterName,
                     avatarUri = avatarUri,
                     roleCardId = effectiveRoleCardId,

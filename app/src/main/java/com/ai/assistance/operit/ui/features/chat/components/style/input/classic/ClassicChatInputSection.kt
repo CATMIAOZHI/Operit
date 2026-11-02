@@ -284,7 +284,9 @@ fun ClassicChatInputSection(
     val isPreparingModel = currentChatIdForPermission in modelPreparingChatIds
     val showQueueAction = isProcessing && canSendMessage && !isPreparingModel
     val userWaitingChatIds by actualViewModel.userWaitingChatIds.collectAsState()
-    val showCancelAction = isProcessing && !showQueueAction && (!isOrbitChat || currentChatIdForPermission in userWaitingChatIds)
+    // In Orbit a compressing chat can be stopped too, also when no reply of the user's is waiting.
+    val showCancelAction = isProcessing && !showQueueAction &&
+        (!isOrbitChat || currentChatIdForPermission in userWaitingChatIds || inputState is InputProcessingState.Summarizing)
     // Orbit has no voice conversation (it would open the floating window and show its tool calls).
     // With nothing to send, its round button slides away and only the microphone stays.
     val hideVoiceEntry = isOrbitChat && !showCancelAction && !showQueueAction && !canSendMessage

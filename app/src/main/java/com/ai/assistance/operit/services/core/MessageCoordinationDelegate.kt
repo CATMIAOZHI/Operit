@@ -144,9 +144,19 @@ class MessageCoordinationDelegate(
             }.getOrNull() == null)
     }
     private val heldSummaries = ConcurrentHashMap<String, HeldSummary>()
+    /** Summaries a running turn writes of the chat before it (see [turnCompactor]); they save themselves when done. */
+    private val turnSummaries = ConcurrentHashMap<String, kotlinx.coroutines.Deferred<String?>>()
+    /** Per chat: checking for a turn's summary and starting one happen as one step across turns. */
+    private val turnSummaryLocks = ConcurrentHashMap<String, kotlinx.coroutines.sync.Mutex>()
+    /** Per chat: a summary a stopped turn waits to run while another chat is summarized. */
+    private val queuedSummaries = ConcurrentHashMap<String, Job>()
     private val precomputeMutex = kotlinx.coroutines.sync.Mutex()
     private val summaryHandoffLock = Any()
-    private val summaryGeneration = java.util.concurrent.atomic.AtomicLong()
+    /** Per chat: rises whenever its background summaries are taken or dropped, so stale ones are not used. */
+    private val summaryGenerations = ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong>()
+    private fun summaryGenerationOf(chatId: String): Long = summaryGenerations[chatId]?.get() ?: 0L
+    private fun bumpSummaryGeneration(chatId: String): Long =
+        summaryGenerations.getOrPut(chatId) { java.util.concurrent.atomic.AtomicLong() }.incrementAndGet()
 
     // A core serves foreground chats and Orbit task chats concurrently.
     private data class LastSendRoute(
@@ -625,7 +635,6 @@ class MessageCoordinationDelegate(
         turnOptions: ChatTurnOptions = ChatTurnOptions(),
         replyToMessageOverride: ChatMessage? = null,
     ): Boolean {
-        if (_isSendTriggeredSummarizing.value || _isSummarizing.value) return false
         val isBackgroundSend =
             !chatIdOverride.isNullOrBlank() && chatIdOverride != chatHistoryDelegate.currentChatId.value
         // A turn that disables the summary keeps its chat intact: a later turn may continue that
@@ -642,6 +651,18 @@ class MessageCoordinationDelegate(
             uiStateDelegate.showErrorMessage(context.getString(R.string.chat_no_active_conversation))
             return false
         }
+        // Only the chat being summarized waits; other chats (an Orbit task, a reply from WeChat) go on.
+        if (isSummarizingChat(chatId)) return false
+        // A new message in a chat whose stopped turn still waits to be summarized replaces that turn:
+        // the waiting summary ends first, and this turn compacts by itself.
+        if (!isAutoContinuation) {
+            queuedSummaries[chatId]?.takeIf { it !== summaryJob }?.cancel()
+        }
+        // Another chat holds the one summary-before-send there is. This chat skips its own and
+        // compacts inside its turn instead; a group chat, which cannot, waits as before.
+        val otherChatSendSummarizing =
+            _isSendTriggeredSummarizing.value && _sendTriggeredSummarizingChatId.value != chatId
+        if (otherChatSendSummarizing && (isGroupOrchestrationTurn || isGroupChatSession(chatId))) return false
         // A new message may again be compacted once if the provider rejects it as too long.
         if (!isContinuation && !isAutoContinuation) {
             com.ai.assistance.operit.api.chat.compaction.ContextOverflowRecovery.reset(chatId)
@@ -890,7 +911,8 @@ class MessageCoordinationDelegate(
 
             // 如果不是续写，检查是否需要总结
             if (!turnOptions.isCollaborationAgent && !summaryDisabled && turnOptions.persistTurn && !isBackgroundSend &&
-                chatHistoryDelegate.currentChatId.value == chatId && !isContinuation && !skipSummaryCheck) {
+                chatHistoryDelegate.currentChatId.value == chatId && !isContinuation && !skipSummaryCheck &&
+                !otherChatSendSummarizing) {
                 val currentMessages = chatHistoryDelegate.getRuntimeChatHistory(chatId)
                 val currentTokens = pendingWindowSize
 
@@ -903,13 +925,41 @@ class MessageCoordinationDelegate(
                     enableSummaryByMessageCount = chatContextSettings.enableSummaryByMessageCount,
                     summaryMessageCountThreshold = chatContextSettings.summaryMessageCountThreshold
                 )
+                val ceiling = (maxTokensForSend.toDouble() * tokenUsageThresholdForSend)
+                    .coerceIn(0.0, Int.MAX_VALUE.toDouble()).toInt()
+                // Below the line, a summary the background has already written goes in now, without waiting.
+                val readyHeldSummary =
+                    if (chatContextSettings.enableSummary && !isShouldGenerateSummary &&
+                        !isGroupOrchestrationTurn && !isGroupChatSession(chatId)
+                    ) {
+                        takeReadyHeldSummary(
+                            chatId, currentMessages, readSummaryConfig(chatId), ceiling,
+                            ContextCompaction.estimateTokens(pendingText),
+                        )
+                    } else {
+                        null
+                    }
 
-                if (isShouldGenerateSummary && chatHistoryDelegate.currentChatId.value == chatId) {
+                val wantsSendSummary =
+                    (isShouldGenerateSummary || readyHeldSummary != null) && chatHistoryDelegate.currentChatId.value == chatId
+                // The one summary-before-send slot is taken here in one step: another chat may have
+                // taken it while this send was being prepared.
+                val ownsSendSummary = wantsSendSummary &&
+                    _isSendTriggeredSummarizing.compareAndSet(false, true).also { taken ->
+                        if (taken) _sendTriggeredSummarizingChatId.value = chatId
+                    }
+                if (wantsSendSummary && !ownsSendSummary) {
+                    // Kept for this chat's turn, which compacts by itself; a group chat cannot and waits.
+                    readyHeldSummary?.let { heldSummaries.putIfAbsent(chatId, it) }
+                    if (isGroupOrchestrationTurn || isGroupChatSession(chatId)) return false
+                }
+                if (ownsSendSummary) {
+                    // Until the summary job takes the slot over, leaving this block gives it back.
+                    var slotHandedOver = false
+                    try {
                     val snapshotMessages = currentMessages.toList()
-                    val ceiling = (maxTokensForSend.toDouble() * tokenUsageThresholdForSend)
-                        .coerceIn(0.0, Int.MAX_VALUE.toDouble()).toInt()
                     // A summary already written in the background is swapped in when it still fits.
-                    val heldSummary = if (isGroupOrchestrationTurn || isGroupChatSession(chatId)) {
+                    val heldSummary = readyHeldSummary ?: if (isGroupOrchestrationTurn || isGroupChatSession(chatId)) {
                         discardHeldSummary(chatId)
                         null
                     } else {
@@ -990,12 +1040,15 @@ class MessageCoordinationDelegate(
 
                     // 总结完成并保存后才发送；协程等待不会阻塞 UI 线程。
                     var sentAfterSummary = false
+                    slotHandedOver = true
                     launchSummaryBeforeSend(
                         snapshotMessages = snapshotMessages,
                         beforeTimestamp = beforeTimestamp,
                         afterTimestamp = afterTimestamp,
                         originalChatId = chatId,
                         heldSummary = heldSummary?.job,
+                        // Already written: saving it takes a moment, nothing to show as compressing.
+                        quiet = heldSummary != null && heldSummary.job.isCompleted && !heldSummary.failed,
                         roleCardId = roleCardId,
                         chatModelConfigIdOverride = resolvedChatModelConfigIdOverride,
                         chatModelIndexOverride = resolvedChatModelIndexOverride,
@@ -1039,6 +1092,12 @@ class MessageCoordinationDelegate(
                     )
 
                     return true
+                    } finally {
+                        if (!slotHandedOver && _sendTriggeredSummarizingChatId.value == chatId) {
+                            _sendTriggeredSummarizingChatId.value = null
+                            _isSendTriggeredSummarizing.value = false
+                        }
+                    }
                 }
             }
 
@@ -1873,16 +1932,26 @@ class MessageCoordinationDelegate(
         groupParticipantNamesText: String?
     ) {
         AppLogger.d(TAG, "接收到Token超限信号，开始执行总结并继续...")
-        summaryJob = coroutineScope.launch {
-            summarizeHistory(
-                autoContinue = true,
-                chatIdOverride = chatId,
-                roleCardIdOverride = roleCardId,
-                isGroupChat = isGroupChatSession(chatId),
-                isGroupOrchestrationTurn = isGroupOrchestrationTurn,
-                groupParticipantNamesText = groupParticipantNamesText
-            )
-            summaryJob = null
+        // The job takes the one summary slot only once it holds the summary (see summarizeHistory),
+        // so another chat's running summary keeps its own job.
+        coroutineScope.launch {
+            val self = coroutineContext[Job]
+            // A stop of this chat or a new message in it cancels the summary while it waits.
+            if (chatId != null && self != null) queuedSummaries.put(chatId, self)?.cancel()
+            try {
+                summarizeHistory(
+                    autoContinue = true,
+                    chatIdOverride = chatId,
+                    roleCardIdOverride = roleCardId,
+                    isGroupChat = isGroupChatSession(chatId),
+                    isGroupOrchestrationTurn = isGroupOrchestrationTurn,
+                    groupParticipantNamesText = groupParticipantNamesText,
+                    queueBehindOtherChat = true,
+                )
+            } finally {
+                if (chatId != null && self != null) queuedSummaries.remove(chatId, self)
+                if (summaryJob === self) summaryJob = null
+            }
         }
     }
 
@@ -1902,6 +1971,11 @@ class MessageCoordinationDelegate(
      */
     private suspend fun cancelSummaryInternal(targetChatId: String? = null) {
         val currentChatId = targetChatId ?: chatHistoryDelegate.currentChatId.value
+        // A summary still waiting for another chat's ends with its own waiting state.
+        currentChatId?.let { queuedSummaries[it] }?.takeIf { it !== summaryJob }?.let { waiting ->
+            waiting.cancel()
+            try { waiting.join() } catch (_: CancellationException) {}
+        }
         currentChatId?.let { pendingModelPreparationByChatId[it] }?.let { preparation ->
             preparation.cancel()
             preparation.join()
@@ -2084,7 +2158,7 @@ class MessageCoordinationDelegate(
      */
     fun onTurnCompleted(chatId: String?, windowSize: Long) {
         if (chatId.isNullOrBlank()) return
-        val generation = summaryGeneration.get()
+        val generation = summaryGenerationOf(chatId)
         // Hashing and measuring the whole history stays off the main thread.
         coroutineScope.launch(Dispatchers.Default) {
             try {
@@ -2098,15 +2172,17 @@ class MessageCoordinationDelegate(
     }
 
     private suspend fun precomputeSummary(chatId: String, windowSize: Long, generation: Long) {
-        if (summaryGeneration.get() != generation) return
-        if (chatHistoryDelegate.currentChatId.value != chatId) return
-        if (_isSummarizing.value || _isSendTriggeredSummarizing.value) return
+        if (summaryGenerationOf(chatId) != generation) return
+        // Any chat may get one ahead of time, also one not on screen (an Orbit task, a WeChat reply).
+        if (isSummarizingChat(chatId)) return
         if (isGroupChatSession(chatId)) return
+        // A summary the last turn started is still being written; it saves itself when done.
+        if (turnSummaries[chatId]?.isActive == true) return
         val settings = resolveChatContextSettingsForRequest(lastSendRoutes[chatId]?.modelConfigId, chatId)
         if (!settings.enableSummary) return
         val ceiling = compactionCeiling(settings.effectiveContextLength, settings.summaryTokenThreshold.toDouble())
         if (ceiling <= 0) return
-        if (windowSize < ceiling * ContextCompaction.PRECOMPUTE_RATIO || windowSize < ContextCompaction.PRECOMPUTE_MIN_TOKENS) return
+        if (windowSize < ceiling * ContextCompaction.PRECOMPUTE_RATIO) return
 
         val messages = chatHistoryDelegate.getRuntimeChatHistory(chatId)
         if (messages.lastOrNull()?.sender != "ai") return
@@ -2117,8 +2193,7 @@ class MessageCoordinationDelegate(
         // A send or edit can invalidate this preparation while the history/config loads.
         // Register and start only while taking/discarding a held summary cannot interleave.
         synchronized(summaryHandoffLock) {
-            if (summaryGeneration.get() != generation || chatHistoryDelegate.currentChatId.value != chatId ||
-                _isSummarizing.value || _isSendTriggeredSummarizing.value) return
+            if (summaryGenerationOf(chatId) != generation || isSummarizingChat(chatId)) return
             val existing = heldSummaries[chatId]
             val failures = existing?.let { it.failures + if (it.failed) 1 else 0 } ?: 0
             if (existing != null) {
@@ -2152,6 +2227,11 @@ class MessageCoordinationDelegate(
         AppLogger.d(TAG, "Background summary started: chatId=$chatId, window=$windowSize, ceiling=$ceiling")
     }
 
+    /** A summary that holds up sends is being written for [chatId]. */
+    private fun isSummarizingChat(chatId: String): Boolean =
+        (_isSendTriggeredSummarizing.value && _sendTriggeredSummarizingChatId.value == chatId) ||
+            (_isSummarizing.value && _summarizingChatId.value == chatId)
+
     /** The held summary still describes [messages], and what follows it fits beside it. */
     private fun heldStillFits(
         held: HeldSummary,
@@ -2175,24 +2255,181 @@ class MessageCoordinationDelegate(
         pendingTokens: Int,
     ): HeldSummary? {
         val held = synchronized(summaryHandoffLock) {
-            summaryGeneration.incrementAndGet()
+            bumpSummaryGeneration(chatId)
             heldSummaries.remove(chatId)
         } ?: return null
+        turnSummaries.remove(chatId)?.cancel()
         if (!held.failed && heldStillFits(held, messages, summaryConfig, ceiling, pendingTokens)) return held
         held.job.cancel()
         return null
+    }
+
+    /**
+     * The chat's held summary when it is already written and can be swapped in now, so a send
+     * below the compaction line uses it without waiting. Anything else stays as it is.
+     */
+    private fun takeReadyHeldSummary(
+        chatId: String,
+        messages: List<ChatMessage>,
+        summaryConfig: ConversationSummaryConfig,
+        ceiling: Int,
+        pendingTokens: Int,
+    ): HeldSummary? = synchronized(summaryHandoffLock) {
+        val held = heldSummaries[chatId] ?: return null
+        if (!held.job.isCompleted || held.failed || !heldStillFits(held, messages, summaryConfig, ceiling, pendingTokens)) {
+            return null
+        }
+        bumpSummaryGeneration(chatId)
+        heldSummaries.remove(chatId)
     }
 
     /** Stops the chat's background summary; a compaction or an edit makes it useless. */
     private suspend fun discardHeldSummary(chatId: String?) {
         if (chatId == null) return
         val discarded = synchronized(summaryHandoffLock) {
-            summaryGeneration.incrementAndGet()
+            bumpSummaryGeneration(chatId)
             heldSummaries.remove(chatId)
+        }
+        turnSummaries.remove(chatId)?.let { job ->
+            job.cancel()
+            try { job.join() } catch (_: CancellationException) {}
         }
         discarded?.job?.let { job ->
             job.cancel()
             try { job.join() } catch (_: CancellationException) {}
+        }
+    }
+
+    /**
+     * Compaction inside a running turn of [chatId] (see [com.ai.assistance.operit.api.chat.compaction.TurnCompactor]).
+     * The summary covers the chat before [turnStartTimestamp] and is saved right before it as soon
+     * as it is written, even after the turn ended, so the next turn starts from it as well.
+     */
+    fun turnCompactor(chatId: String, turnStartTimestamp: Long): com.ai.assistance.operit.api.chat.compaction.TurnCompactor? =
+        if (isGroupChatSession(chatId)) null else InTurnCompactor(chatId, turnStartTimestamp)
+
+    private inner class InTurnCompactor(
+        private val chatId: String,
+        private val turnStart: Long,
+    ) : com.ai.assistance.operit.api.chat.compaction.TurnCompactor {
+        private val mutex = turnSummaryLocks.getOrPut(chatId) { kotlinx.coroutines.sync.Mutex() }
+        @Volatile private var job: kotlinx.coroutines.Deferred<String?>? = null
+        /** One summary per turn: once it is handed out, failed or not needed, the turn compacts the old way. */
+        @Volatile private var settled = false
+
+        override fun prepare() {
+            if (settled || job != null) return
+            coroutineScope.launch(Dispatchers.Default) {
+                try {
+                    mutex.withLock { start(waitForEarlier = false) }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    AppLogger.w(TAG, "Summary inside the turn not started: ${e.message}")
+                }
+            }
+        }
+
+        override suspend fun takeReady(): String? {
+            if (settled) return null
+            val current = job ?: return null
+            if (!current.isCompleted) return null
+            return finish(current)
+        }
+
+        override suspend fun await(): String? {
+            if (settled) return null
+            mutex.withLock { start(waitForEarlier = true) }
+            if (settled) return null
+            val current = job ?: return null
+            // Stopping the turn leaves the summary running; it saves itself when done.
+            current.join()
+            return finish(current)
+        }
+
+        /** Hands the summary out once; a second call gets nothing. */
+        private fun finish(done: kotlinx.coroutines.Deferred<String?>): String? = synchronized(this) {
+            if (settled) return null
+            settled = true
+            if (done.isCancelled) null else runCatching {
+                @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class) done.getCompleted()
+            }.getOrNull()
+        }
+
+        /**
+         * Starts this turn's summary. One an earlier turn started is still being written and saves
+         * itself before that turn: it is left to finish, and only a turn at the line waits for it
+         * and then summarizes from it.
+         */
+        private suspend fun start(waitForEarlier: Boolean) {
+            if (settled || job != null) return
+            turnSummaries[chatId]?.takeIf { it.isActive }?.let { earlier ->
+                if (!waitForEarlier) return
+                earlier.join()
+            }
+            val messages = chatHistoryDelegate.getRuntimeChatHistoryUpTo(chatId, turnStart - 1)
+            if (messages.none { it.sender == "user" || it.sender == "ai" } || messages.last().sender == "summary") {
+                settled = true
+                return
+            }
+            val service = getEnhancedAiService() ?: run { settled = true; return }
+            val summaryConfig = readSummaryConfig(chatId)
+            val fingerprint = ContextCompaction.fingerprint(messages)
+            // A summary written after the last turn covers exactly this conversation: it is used as it is.
+            val (generation, held) = synchronized(summaryHandoffLock) {
+                bumpSummaryGeneration(chatId) to heldSummaries.remove(chatId)
+            }
+            val reused = held?.job?.takeIf {
+                !held.failed && held.config == summaryConfig && held.coveredCount == messages.size &&
+                    held.coveredFingerprint == fingerprint
+            }
+            if (held != null && reused == null) held.job.cancel()
+            val summary = coroutineScope.async(
+                Dispatchers.Default + com.ai.assistance.operit.api.chat.compaction.QuietSummary(),
+                start = CoroutineStart.LAZY,
+            ) {
+                try {
+                    val written = reused?.await()
+                        ?: writeSummary(service, messages, chatId, autoContinue = false, isGroupChat = false, summaryConfig = summaryConfig)
+                        ?: return@async null
+                    saveBeforeTurn(written, messages, fingerprint, generation)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    AppLogger.w(TAG, "Summary inside the turn failed: ${e.message}")
+                    null
+                }
+            }
+            job = summary
+            turnSummaries[chatId] = summary
+            // Done, it is only this turn's: nothing else keeps it.
+            summary.invokeOnCompletion { turnSummaries.remove(chatId, summary) }
+            summary.start()
+            AppLogger.d(TAG, "Summary inside the turn started: chatId=$chatId, messages=${messages.size}, reused=${reused != null}")
+        }
+
+        /** Saves the summary right before the turn while the conversation it covers is unchanged. */
+        private suspend fun saveBeforeTurn(
+            summary: ChatMessage,
+            covered: List<ChatMessage>,
+            fingerprint: Long,
+            generation: Long,
+        ): String? = withContext(kotlinx.coroutines.NonCancellable) {
+            if (summaryGenerationOf(chatId) != generation) return@withContext null
+            val now = chatHistoryDelegate.getRuntimeChatHistoryUpTo(chatId, turnStart - 1)
+            if (ContextCompaction.fingerprint(now) != fingerprint) {
+                AppLogger.d(TAG, "Summary inside the turn dropped: the conversation before it changed, chatId=$chatId")
+                return@withContext null
+            }
+            val saved = chatHistoryDelegate.addSummaryMessage(
+                summaryMessage = summary,
+                beforeTimestamp = covered.last().timestamp,
+                afterTimestamp = null,
+                chatIdOverride = chatId,
+            )
+            if (!saved) return@withContext null
+            AppLogger.d(TAG, "Summary inside the turn saved: chatId=$chatId")
+            summary.content
         }
     }
 
@@ -2262,6 +2499,8 @@ class MessageCoordinationDelegate(
         originalChatId: String?,
         /** A summary written ahead in the background for exactly these messages, awaited instead of a new one. */
         heldSummary: kotlinx.coroutines.Deferred<ChatMessage?>? = null,
+        /** Shows no compressing state: the summary is already written. */
+        quiet: Boolean = false,
         roleCardId: String?,
         chatModelConfigIdOverride: String? = null,
         chatModelIndexOverride: Int? = null,
@@ -2274,6 +2513,11 @@ class MessageCoordinationDelegate(
     ) {
         if (snapshotMessages.isEmpty() || originalChatId == null) {
             heldSummary?.cancel()
+            // A send that took the slot for this summary gives it back.
+            if (originalChatId != null && _sendTriggeredSummarizingChatId.value == originalChatId) {
+                _sendTriggeredSummarizingChatId.value = null
+                _isSendTriggeredSummarizing.value = false
+            }
             onSettled(null)
             return
         }
@@ -2281,12 +2525,14 @@ class MessageCoordinationDelegate(
         // 标记：有一次发送触发的异步总结正在进行
         _isSendTriggeredSummarizing.value = true
         _sendTriggeredSummarizingChatId.value = originalChatId
-        messageProcessingDelegate.setPendingAsyncSummaryUiForChat(originalChatId, true)
-        messageProcessingDelegate.setSuppressIdleCompletedStateForChat(originalChatId, true)
-        messageProcessingDelegate.setInputProcessingStateForChat(
-            originalChatId,
-            InputProcessingState.Summarizing(context.getString(R.string.chat_compressing_history))
-        )
+        if (!quiet) {
+            messageProcessingDelegate.setPendingAsyncSummaryUiForChat(originalChatId, true)
+            messageProcessingDelegate.setSuppressIdleCompletedStateForChat(originalChatId, true)
+            messageProcessingDelegate.setInputProcessingStateForChat(
+                originalChatId,
+                InputProcessingState.Summarizing(context.getString(R.string.chat_compressing_history))
+            )
+        }
 
         val asyncSummaryJob =
             coroutineScope.launch {
@@ -2395,15 +2641,52 @@ class MessageCoordinationDelegate(
         roleCardIdOverride: String? = null,
         isGroupChat: Boolean = false,
         isGroupOrchestrationTurn: Boolean = false,
-        groupParticipantNamesText: String? = null
+        groupParticipantNamesText: String? = null,
+        /**
+         * A turn stopped for this summary: when another chat is being summarized it waits its turn
+         * instead of being dropped, and becomes the job a cancel of this chat stops.
+         */
+        queueBehindOtherChat: Boolean = false,
     ): Boolean {
-        if (_isSummarizing.value) {
-            AppLogger.d(TAG, "已在总结中，忽略本次请求")
-            return false
-        }
-        _isSummarizing.value = true
         val currentChatId = chatIdOverride ?: chatHistoryDelegate.currentChatId.value
+        var waited = false
+        try {
+            while (!_isSummarizing.compareAndSet(false, true)) {
+                if (!queueBehindOtherChat || _summarizingChatId.value == currentChatId) {
+                    AppLogger.d(TAG, "已在总结中，忽略本次请求")
+                    return false
+                }
+                if (!waited && currentChatId != null) {
+                    // Shown as compressing while it waits, so the chat does not look finished.
+                    messageProcessingDelegate.setSuppressIdleCompletedStateForChat(currentChatId, true)
+                    messageProcessingDelegate.setInputProcessingStateForChat(
+                        currentChatId,
+                        InputProcessingState.Summarizing(context.getString(R.string.chat_compressing_history))
+                    )
+                }
+                waited = true
+                _isSummarizing.first { !it }
+            }
+        } catch (e: CancellationException) {
+            if (waited && currentChatId != null) {
+                // Only what is still its own: a newer waiting summary or a summary now running on the
+                // chat keeps the flag; a new turn keeps the state it shows.
+                val self = kotlinx.coroutines.currentCoroutineContext()[Job]
+                if (queuedSummaries[currentChatId] === self && !isSummarizingChat(currentChatId)) {
+                    messageProcessingDelegate.setSuppressIdleCompletedStateForChat(currentChatId, false)
+                    if (messageProcessingDelegate.inputProcessingStateByChatId.value[currentChatId] is InputProcessingState.Summarizing &&
+                        !messageProcessingDelegate.isChatLoading(currentChatId)
+                    ) {
+                        messageProcessingDelegate.setInputProcessingStateForChat(currentChatId, InputProcessingState.Idle)
+                    }
+                }
+            }
+            throw e
+        }
         _summarizingChatId.value = currentChatId
+        if (queueBehindOtherChat) {
+            summaryJob = kotlinx.coroutines.currentCoroutineContext()[Job]
+        }
         if (currentChatId != null) {
             messageProcessingDelegate.setSuppressIdleCompletedStateForChat(currentChatId, true)
             messageProcessingDelegate.setInputProcessingStateForChat(

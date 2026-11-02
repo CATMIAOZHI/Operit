@@ -21,19 +21,21 @@ object ContextCompaction {
     private const val KEEP_TOKENS = 15_000
     /** The kept part never takes more than this share of the compaction line. */
     private const val KEEP_SHARE = 0.2
-    /** Share of the compaction line at which a summary starts in the background. */
+    /**
+     * Share of the compaction line at which a summary starts in the background. The rest of the
+     * way to the line is the room the chat keeps going in while it is written: it is swapped in
+     * as soon as it is done, and only a chat that reaches the line first waits for it.
+     */
     const val PRECOMPUTE_RATIO = 0.85
-    /** Below this context size a background summary is not worth what it costs. */
-    const val PRECOMPUTE_MIN_TOKENS = 32_000
     /** Background summaries that may fail before none starts again until the next compaction. */
     const val PRECOMPUTE_MAX_FAILURES = 2
     /**
-     * The most conversation a summary written ahead of time may leave beside it: twice the usual
-     * kept part, at least 30k, at most a quarter of the compaction line. With more, the context
-     * would stay near the line, so compaction summarizes from scratch instead.
+     * The most conversation a summary written ahead of time may leave beside it: half the
+     * compaction line. The chat grows from the precompute share to the line while the summary is
+     * written and waits, so its tail is usually far below this; with more, the context would stay
+     * near the line, so a new summary is written instead.
      */
-    private const val HELD_TAIL_MIN = 30_000
-    private const val HELD_TAIL_SHARE = 0.25
+    private const val HELD_TAIL_SHARE = 0.5
     /** After each "too long" rejection a summary request aims at this share of its first size. */
     val SHRINK_STEPS = listOf(0.85, 0.7, 0.5, 0.35)
     /** Characters kept, from the start and from the end, of one message in a shortened transcript. */
@@ -41,8 +43,7 @@ object ContextCompaction {
 
     fun keepTokens(ceiling: Int): Int = minOf(KEEP_TOKENS, (ceiling * KEEP_SHARE).toInt()).coerceAtLeast(0)
 
-    fun heldTailLimit(ceiling: Int): Int =
-        minOf(maxOf(2 * keepTokens(ceiling), HELD_TAIL_MIN), (ceiling * HELD_TAIL_SHARE).toInt()).coerceAtLeast(0)
+    fun heldTailLimit(ceiling: Int): Int = (ceiling * HELD_TAIL_SHARE).toInt().coerceAtLeast(0)
 
     /** A rough token count: Chinese, Japanese and Korean text runs near 0.6 per character, other text near 0.3. */
     fun estimateTokens(text: String?): Int {

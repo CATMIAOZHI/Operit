@@ -231,12 +231,12 @@ object OrbitWake {
         val dao = AppDatabase.getDatabase(app).orbitTaskDao()
         // Never cut into a reply or a summary; Orbit hears about it once the chat is quiet.
         fun quietIn(c: com.ai.assistance.operit.services.ChatServiceCore) =
-            combine(c.activeStreamingChatIds, c.isSummarizing, c.isSendTriggeredSummarizing) { active, a, b ->
-                chatId !in active && !a && !b
+            combine(c.activeStreamingChatIds, c.summarizingChatFlow(chatId)) { active, summarizing ->
+                chatId !in active && !summarizing
             }
         val quiet = combine(quietIn(core), quietIn(floating)) { a, b -> a && b }
         fun quietNow() = listOf(core, floating).all {
-            chatId !in it.activeStreamingChatIds.value && !it.isSummarizing.value && !it.isSendTriggeredSummarizing.value
+            chatId !in it.activeStreamingChatIds.value && !it.isSummarizingChat(chatId)
         }
         // Waiting for a quiet chat holds no lock, so a busy chat never holds up another chat.
         withTimeoutOrNull(minOf(idleWaitMs, totalWaitMs)) { quiet.first { it } } ?: return Told.BUSY

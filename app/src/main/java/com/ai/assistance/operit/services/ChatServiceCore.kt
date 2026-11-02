@@ -227,6 +227,9 @@ class ChatServiceCore(
                     isGroupOrchestrationTurn = isGroupOrchestrationTurn,
                     groupParticipantNamesText = groupParticipantNamesText
                 )
+            },
+            turnCompactorFor = { chatId, turnStartTimestamp ->
+                messageCoordinationDelegate.turnCompactor(chatId, turnStartTimestamp)
             }
         )
         messageProcessingDelegate.setActiveDraftChat(chatHistoryDelegate.currentChatId.value)
@@ -284,10 +287,11 @@ class ChatServiceCore(
 
     /** 取消当前消息 */
     fun cancelCurrentMessage() {
-        // 先取消总结（如果正在进行）
-        messageCoordinationDelegate.cancelSummary()
-        // 然后取消“当前聊天”的消息处理
         val chatId = chatHistoryDelegate.currentChatId.value
+        // 先取消这个聊天的总结（如果正在进行）；别的聊天的总结不受影响
+        if (chatId != null) messageCoordinationDelegate.cancelSummaryForChat(chatId)
+        else messageCoordinationDelegate.cancelSummary()
+        // 然后取消“当前聊天”的消息处理
         if (chatId != null) {
             messageProcessingDelegate.cancelMessage(chatId)
         }
@@ -501,14 +505,29 @@ class ChatServiceCore(
     val isSendTriggeredSummarizing: StateFlow<Boolean>
         get() = messageCoordinationDelegate.isSendTriggeredSummarizing
 
+    /** A summary that holds up sends is being written for [chatId]; other chats go on meanwhile. */
+    fun isSummarizingChat(chatId: String): Boolean =
+        (messageCoordinationDelegate.isSummarizing.value &&
+            messageCoordinationDelegate.summarizingChatId.value == chatId) ||
+            (messageCoordinationDelegate.isSendTriggeredSummarizing.value &&
+                messageCoordinationDelegate.sendTriggeredSummarizingChatId.value == chatId)
+
+    /** [isSummarizingChat] as it changes. */
+    fun summarizingChatFlow(chatId: String): kotlinx.coroutines.flow.Flow<Boolean> =
+        kotlinx.coroutines.flow.combine(
+            messageCoordinationDelegate.isSummarizing,
+            messageCoordinationDelegate.summarizingChatId,
+            messageCoordinationDelegate.isSendTriggeredSummarizing,
+            messageCoordinationDelegate.sendTriggeredSummarizingChatId,
+        ) { summarizing, summarizingId, sendSummarizing, sendSummarizingId ->
+            (summarizing && summarizingId == chatId) || (sendSummarizing && sendSummarizingId == chatId)
+        }
+
     /** [chatId] cannot take a new message yet: it is replying, preparing its model, or summarizing. */
     fun isChatBusy(chatId: String): Boolean =
         messageProcessingDelegate.isChatLoading(chatId) ||
             messageCoordinationDelegate.isPreparingModel(chatId) ||
-            (messageCoordinationDelegate.isSummarizing.value &&
-                messageCoordinationDelegate.summarizingChatId.value == chatId) ||
-            (messageCoordinationDelegate.isSendTriggeredSummarizing.value &&
-                messageCoordinationDelegate.sendTriggeredSummarizingChatId.value == chatId)
+            isSummarizingChat(chatId)
 
     /** A send to [chatId] is still choosing and loading its model; its user row is not in yet. */
     fun isPreparingModel(chatId: String): Boolean = messageCoordinationDelegate.isPreparingModel(chatId)

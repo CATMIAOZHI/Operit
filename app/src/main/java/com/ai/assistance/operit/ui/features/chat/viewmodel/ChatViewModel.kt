@@ -529,6 +529,21 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             MutableStateFlow(false)
         }
     }
+    /** Which chat [isSummarizing] and [isSendTriggeredSummarizing] are about; other chats are not held up. */
+    val summarizingChatId: StateFlow<String?> by lazy {
+        if (::messageCoordinationDelegate.isInitialized) {
+            messageCoordinationDelegate.summarizingChatId
+        } else {
+            MutableStateFlow(null)
+        }
+    }
+    val sendTriggeredSummarizingChatId: StateFlow<String?> by lazy {
+        if (::messageCoordinationDelegate.isInitialized) {
+            messageCoordinationDelegate.sendTriggeredSummarizingChatId
+        } else {
+            MutableStateFlow(null)
+        }
+    }
     /** Messages the user sent that wait for their chat's history summary, by chat. */
     val summaryHeldSends: StateFlow<Map<String, com.ai.assistance.operit.services.core.MessageCoordinationDelegate.SummaryHeldSend>> by lazy {
         if (::messageCoordinationDelegate.isInitialized) {
