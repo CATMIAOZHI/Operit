@@ -2061,7 +2061,6 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
     // 读取完整文件内容
     handler.registerSuspendTool(
             name = "read_file_full",
-            parallel = { isPhoneFileRead(it) },
             descriptionGenerator = { tool ->
                 val path = tool.parameters.find { it.name == "path" }?.value ?: ""
                 val environment = tool.parameters.find { it.name == "environment" }?.value
@@ -2076,7 +2075,6 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
     // 读取二进制文件内容（Base64编码）
     handler.registerSuspendTool(
             name = "read_file_binary",
-            parallel = { isPhoneFileRead(it) },
             descriptionGenerator = { tool ->
                 val path = tool.parameters.find { it.name == "path" }?.value ?: ""
                 val environment = tool.parameters.find { it.name == "environment" }?.value

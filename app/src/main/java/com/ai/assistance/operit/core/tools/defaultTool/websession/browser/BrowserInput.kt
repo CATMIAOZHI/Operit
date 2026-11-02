@@ -140,20 +140,45 @@ internal object BrowserKeys {
 /** Presses a key the way a hardware keyboard does, so the browser's own default actions happen. */
 internal fun cdpPressKey(connection: CdpConnection, combo: BrowserKeyCombo) {
     var mask = 0
-    combo.modifiers.forEach { modifier ->
-        mask = mask or BrowserKeys.modifierBit(modifier.key)
-        sendCdpKey(connection, "rawKeyDown", modifier, mask, null)
-    }
-    val text = combo.text
-    sendCdpKey(connection, if (text != null) "keyDown" else "rawKeyDown", combo.key, mask, text)
-    sendCdpKey(connection, "keyUp", combo.key, mask, null)
-    combo.modifiers.asReversed().forEach { modifier ->
-        mask = mask and BrowserKeys.modifierBit(modifier.key).inv()
-        sendCdpKey(connection, "keyUp", modifier, mask, null)
+    val pressed = mutableListOf<BrowserKey>()
+    try {
+        combo.modifiers.forEach { modifier ->
+            mask = mask or BrowserKeys.modifierBit(modifier.key)
+            pressed.add(modifier)
+            sendCdpKey(connection, "rawKeyDown", modifier, mask, null)
+        }
+        val text = combo.text
+        // Sending may succeed before its response wait is interrupted.
+        pressed.add(combo.key)
+        sendCdpKey(connection, if (text != null) "keyDown" else "rawKeyDown", combo.key, mask, text)
+        sendCdpKey(connection, "keyUp", combo.key, mask, null)
+        pressed.removeAt(pressed.lastIndex)
+        combo.modifiers.asReversed().forEach { modifier ->
+            mask = mask and BrowserKeys.modifierBit(modifier.key).inv()
+            sendCdpKey(connection, "keyUp", modifier, mask, null)
+            pressed.removeAt(pressed.lastIndex)
+        }
+    } finally {
+        val wasInterrupted = Thread.interrupted()
+        try {
+            pressed.asReversed().forEach { key ->
+                mask = mask and BrowserKeys.modifierBit(key.key).inv()
+                runCatching { sendCdpKey(connection, "keyUp", key, mask, null, waitForResponse = false) }
+            }
+        } finally {
+            if (wasInterrupted) Thread.currentThread().interrupt()
+        }
     }
 }
 
-private fun sendCdpKey(connection: CdpConnection, type: String, key: BrowserKey, mask: Int, text: String?) {
+private fun sendCdpKey(
+    connection: CdpConnection,
+    type: String,
+    key: BrowserKey,
+    mask: Int,
+    text: String?,
+    waitForResponse: Boolean = true
+) {
     val params =
         JSONObject()
             .put("type", type)
@@ -163,7 +188,8 @@ private fun sendCdpKey(connection: CdpConnection, type: String, key: BrowserKey,
             .put("location", key.location)
     if (key.code.isNotEmpty()) params.put("code", key.code)
     if (text != null) params.put("text", text).put("unmodifiedText", text)
-    connection.send("Input.dispatchKeyEvent", params, 5_000L)
+    if (waitForResponse) connection.send("Input.dispatchKeyEvent", params, 5_000L)
+    else connection.sendWithoutWaiting("Input.dispatchKeyEvent", params)
 }
 
 /** One real mouse event at a point in CSS pixels of the page's visible area. */

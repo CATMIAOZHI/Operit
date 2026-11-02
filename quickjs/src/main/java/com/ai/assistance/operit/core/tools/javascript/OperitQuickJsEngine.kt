@@ -56,6 +56,11 @@ class OperitQuickJsEngine : Closeable {
     /** The owner of the entry now running; meaningful only on the runtime thread (native calls). */
     fun currentEntryOwner(): String? = entryOwner
 
+    /** A successfully started package service may keep its timers after the initiating call ends. */
+    fun detachTimerOwner(owner: String) {
+        timerOwners.entries.removeIf { it.value.first == owner }
+    }
+
     /** True once leftover microtasks could not be cleared; the host must close and recreate it. */
     val isUnusable: Boolean
         get() = runtime.unusable

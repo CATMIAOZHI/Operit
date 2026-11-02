@@ -3505,6 +3505,8 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
 
                         override fun supportsParallelCalls(tool: AITool): Boolean =
                             toolPackage.isBuiltIn && !isPhoneControlPackage &&
+                                // A caller-chosen output name may be shared by another draw.
+                                tool.parameters.none { it.name == "file_name" && it.value.isNotBlank() } &&
                                 com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
                                     .isParallelSafePackage(toolPackage.name)
 
