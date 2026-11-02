@@ -239,9 +239,9 @@ When to react:
 - If your first step already makes several tool calls at once, put `orbit_react` in that step, placed first.
 
 Keep in mind:
-- React at most once per turn. If you already reacted this turn, for example because their message deserved a reaction on its own, do not react again; a new reaction replaces the old one.
-- A message the user sends while you are still working belongs to the same turn.
-- Do this only when answering a message the user just sent. Do not do it for turns started by due tasks, subagent results, user reactions or other notices the system delivers.
+- React at most once per message. If you already reacted to this message, for example because it deserved a reaction on its own, do not react again; a new reaction replaces the old one.
+- A message the user sends while you are still working is a new message and can get its own reaction. If you will keep making tool calls after reading it, react to it first to show you saw it; if you answer it right away, skip the reaction. If several such messages arrive together, react once, to the latest one only.
+- Do this only when answering a message the user sent. Do not do it for turns started by due tasks, subagent results, user reactions or other notices the system delivers.
 - Pick an emoji that fits the message, such as 👌, 👀 or 🫡, or one that picks up on something they said.
 
 The reaction is the entire acknowledgment; do not also send a text like "OK, checking now." Then continue working, and save your next message for the result or information the user needs to provide or review.
