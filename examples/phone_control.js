@@ -50,7 +50,8 @@
       "name": "stop",
       "description": {"zh": "普通聊天必须调用：任务完成、失败放弃或需要向用户提问时，先调用stop再回复，本轮不能重新启动。Orbit：手机上的事做完再 stop，后台屏最多再留 5 分钟再关（期间不能再操作，重新 start 会接着用这块屏；别的任务要用屏时会提前关）；需要用户输密码或过验证时可以先不 stop，请用户从卡片接手（后台任务用 orbit_wait_for_user 提出，普通回复不会显示），交还后会通知你。没 stop 的屏闲置 10 分钟会自动关闭。", "en": "Ordinary chats: MANDATORY before the final reply, abandoning a failed task, or asking the user any question; restart requires a new user turn. Orbit: stop once the phone work is done; the background screen stays up to 5 minutes and then closes (no actions meanwhile; calling start again picks it back up; it closes sooner when another task needs a screen). When the user must type a password or pass a check, keep it open and ask them to take over from the card (as a background task, ask with orbit_wait_for_user: its replies are not shown); you are told when they hand it back. A screen that was not stopped closes after 10 idle minutes."},
       "parameters": [
-        {"name": "session_id", "type": "string", "required": true, "description": {"zh": "控制会话 ID", "en": "Control session ID"}}
+        {"name": "session_id", "type": "string", "required": true, "description": {"zh": "控制会话 ID", "en": "Control session ID"}},
+        {"name": "close_now", "type": "boolean", "required": false, "description": {"zh": "仅 Orbit：true 时立刻连同应用关闭后台屏，下次 start 会开新屏、应用重新启动。用来重启应用，不要用终端强制停止", "en": "Orbit only: true closes the background screen with its apps right away, so the next start opens a fresh screen and the app starts anew. Use it to restart an app instead of force-stopping it from the shell"}}
       ]
     }
   ]
