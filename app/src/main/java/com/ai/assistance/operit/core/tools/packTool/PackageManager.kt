@@ -3506,7 +3506,7 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
                         override fun supportsParallelCalls(tool: AITool): Boolean =
                             toolPackage.isBuiltIn && !isPhoneControlPackage &&
                                 com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
-                                    .isParallelSafePackage(toolPackage.name, tool)
+                                    .isParallelSafePackage(toolPackage.name)
 
                         override fun invoke(tool: AITool): ToolResult {
                             if (isPhoneControlPackage) {

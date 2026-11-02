@@ -48,6 +48,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -137,8 +139,30 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
         private val visitSlots = kotlinx.coroutines.sync.Semaphore(MAX_CONCURRENT_VISITS)
 
         /**
-         * The visit works for an Orbit chat: it shows nothing on screen, so several can run at
-         * once. Read in the calling chat's tool context.
+         * Places taken by the floating buttons of visits running at once in the main app, so
+         * side-by-side visits show their buttons one under another instead of on top of each other.
+         */
+        private val indicatorSlots = java.util.concurrent.ConcurrentHashMap.newKeySet<Int>()
+
+        private fun takeIndicatorSlot(): Int {
+            var slot = 0
+            while (!indicatorSlots.add(slot)) slot++
+            return slot
+        }
+
+        /**
+         * Main-app visits with a floating button, and the one whose page is open full screen.
+         * Only one page opens full screen at a time; the other buttons hide while it is open.
+         * Touched on the main thread only.
+         */
+        private val liveVisits = LinkedHashSet<StandardWebVisitTool>()
+        private var expandedVisit: StandardWebVisitTool? = null
+        /** How many buttons show at once, so each can mark its page when there are several. */
+        private val liveVisitCount = mutableIntStateOf(0)
+
+        /**
+         * The visit works for an Orbit chat, so it shows no floating button and uses Orbit's
+         * short wait. Read in the calling chat's tool context.
          */
         fun isQuietCaller(tool: AITool): Boolean =
             com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.caller(
@@ -163,6 +187,24 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
 
     private var indicatorComposeView: ComposeView? = null
     private var indicatorLayoutParams: WindowManager.LayoutParams? = null
+    /** This visit's place in the column of floating buttons; -1 when it holds none. */
+    private var indicatorSlot = -1
+    /** The page's short site name, shown on the button when several visits run at once. */
+    private var indicatorHost = ""
+    /** The full address, read out by screen readers. */
+    private var indicatorUrl = ""
+
+    private fun releaseIndicatorSlot() {
+        if (indicatorSlot >= 0) indicatorSlots.remove(indicatorSlot)
+        indicatorSlot = -1
+    }
+
+    /** Shows this visit's button again after another page left full screen. */
+    private fun restoreIndicator() {
+        if (quietVisit || overlayComposeView == null || isExpandedState.value) return
+        showIndicatorWindow()
+        syncWebOverlayToIndicator()
+    }
 
     private val isExpandedState = mutableStateOf(false)
     private val isExpandedByUserState = mutableStateOf(false)
@@ -178,8 +220,8 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
     override fun invokeAndStream(tool: AITool): kotlinx.coroutines.flow.Flow<ToolResult> =
         kotlinx.coroutines.flow.flow { emit(invokeSuspend(tool)) }
 
-    /** An Orbit's visits run side by side; the main app's stay one at a time (each shows a button). */
-    override fun supportsParallelCalls(tool: AITool): Boolean = isQuietCaller(tool)
+    /** Each visit has its own page, so visits run side by side (up to three load at once). */
+    override fun supportsParallelCalls(tool: AITool): Boolean = true
 
     /**
      * Visits the page in the caller's coroutine, so stopping the turn closes the page at once
@@ -295,6 +337,9 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
 
     @Composable
     private fun SearchingIndicator(
+            host: String,
+            url: String,
+            number: Int,
             onToggleFullscreen: () -> Unit,
             onDragBy: (dx: Int, dy: Int) -> Unit
     ) {
@@ -346,6 +391,7 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
                         Modifier
                                 .fillMaxSize()
                                 .clip(CircleShape)
+                                .semantics { if (url.isNotBlank()) contentDescription = url }
                                 .pointerInput(Unit) {
                                     detectDragGestures { change, dragAmount ->
                                         onDragBy(dragAmount.x.roundToInt(), dragAmount.y.roundToInt())
@@ -401,16 +447,29 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
                                     ),
                     contentAlignment = Alignment.Center
             ) {
-                Icon(
-                        imageVector = Icons.Filled.Search,
-                        contentDescription = null,
-                        tint = primaryColor,
-                        modifier =
-                                Modifier
-                                        .size(22.dp)
-                                        .offset(y = bobbingDp.value.dp)
-                                        .rotate(wiggleDeg.value)
-                )
+                if (liveVisitCount.intValue > 1 && host.isNotBlank()) {
+                    // Several pages load at once: mark each button with its site's first letter.
+                    Text(
+                            // The number is the button's place in the column, top first, so two
+                            // pages of the same site still read apart (G1, G2).
+                            text = "${host.first().uppercase()}$number",
+                            color = primaryColor,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            modifier = Modifier.offset(y = bobbingDp.value.dp)
+                    )
+                } else {
+                    Icon(
+                            imageVector = Icons.Filled.Search,
+                            contentDescription = null,
+                            tint = primaryColor,
+                            modifier =
+                                    Modifier
+                                            .size(22.dp)
+                                            .offset(y = bobbingDp.value.dp)
+                                            .rotate(wiggleDeg.value)
+                    )
+                }
             }
         }
     }
@@ -648,6 +707,10 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
                     isExpandedState.value = false
                     isExpandedByUserState.value = false
                     quietVisit = quiet
+                    indicatorHost = runCatching { android.net.Uri.parse(url).host.orEmpty() }
+                        .getOrDefault("")
+                        .removePrefix("www.")
+                    indicatorUrl = url
 
                     if (indicatorLayoutParams == null) {
                         indicatorLayoutParams = createIndicatorLayoutParams()
@@ -769,7 +832,12 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
                                     lifecycleOwner.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
 
                                     // 清理WebView资源
-                                    cleanupWebView(webViewReference)
+                                    // A failing cleanup must not keep the button and its place.
+                                    try {
+                                        cleanupWebView(webViewReference)
+                                    } catch (e: Exception) {
+                                        AppLogger.w(TAG, "Error cleaning up WebView on cancellation: ${e.message}")
+                                    }
 
                                     removeIndicatorWindow()
 
@@ -791,11 +859,13 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
                     } catch (e: Exception) {
                         AppLogger.e(TAG, "Error showing web browser: ${e.message}")
                         visit.stop()
+                        removeIndicatorWindow()
                         if (continuation.isActive) continuation.resume(errorJson("Error displaying web browser: ${e.message}"))
                     }
                 } catch (e: Exception) {
                     AppLogger.e(TAG, "Error in loadWebPageAndExtractContent: ${e.message}")
                     run?.stop()
+                    removeIndicatorWindow()
                     if (continuation.isActive) continuation.resume(errorJson("General error: ${e.message}"))
                 }
             }
@@ -843,6 +913,9 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
         val displayMetrics = context.resources.displayMetrics
         val density = displayMetrics.density
         val sizePx = (density * 40f).roundToInt().coerceAtLeast(1)
+        // An Orbit visit shows no button, so it takes no place in the column.
+        if (indicatorSlot < 0 && !quietVisit) indicatorSlot = takeIndicatorSlot()
+        val slot = indicatorSlot.coerceAtLeast(0)
 
         return WindowManager.LayoutParams(
                 sizePx,
@@ -860,7 +933,8 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
             gravity = Gravity.TOP or Gravity.START
             val safeMargin = (density * 16f).roundToInt()
             x = safeMargin
-            y = safeMargin
+            // Visits running at the same time stack their buttons downward.
+            y = safeMargin + slot * (sizePx + (density * 8f).roundToInt())
         }
     }
 
@@ -868,6 +942,11 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
         val windowManager = overlayWindowManager ?: return
         val lifecycleOwner = overlayLifecycleOwner ?: return
         if (indicatorComposeView != null) return
+        // Registered first, so a visit started while another page is full screen gets its button
+        // back when that page closes.
+        if (liveVisits.add(this)) liveVisitCount.intValue = liveVisits.size
+        // Another page is open full screen: this button comes back when it closes.
+        if (expandedVisit != null && expandedVisit !== this) return
 
         val params = indicatorLayoutParams ?: createIndicatorLayoutParams().also { indicatorLayoutParams = it }
 
@@ -885,6 +964,9 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
                     setContent {
                         MaterialTheme {
                             SearchingIndicator(
+                                    host = indicatorHost,
+                                    url = indicatorUrl,
+                                    number = indicatorSlot.coerceAtLeast(0) + 1,
                                     onToggleFullscreen = { setExpanded(true) },
                                     onDragBy = { dx, dy -> moveIndicatorBy(dx, dy) }
                             )
@@ -921,6 +1003,12 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
         }
         indicatorComposeView = null
         indicatorLayoutParams = null
+        releaseIndicatorSlot()
+        if (liveVisits.remove(this)) liveVisitCount.intValue = liveVisits.size
+        if (expandedVisit === this) {
+            expandedVisit = null
+            liveVisits.toList().forEach { it.restoreIndicator() }
+        }
     }
 
     private fun moveIndicatorBy(dx: Int, dy: Int) {
@@ -956,9 +1044,19 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
     }
 
     private fun setExpanded(expanded: Boolean) {
+        if (expanded) {
+            // One page full screen at a time: close the one already open, hide the other buttons.
+            val previous = expandedVisit
+            if (previous != null && previous !== this) previous.setExpanded(false)
+            expandedVisit = this
+            liveVisits.filter { it !== this }.forEach { it.hideIndicatorWindow() }
+        } else if (expandedVisit === this) {
+            expandedVisit = null
+        }
         isExpandedState.value = expanded
         isExpandedByUserState.value = expanded
         updateOverlayWindowLayout()
+        if (!expanded) liveVisits.filter { it !== this }.forEach { it.restoreIndicator() }
     }
 
     private fun updateOverlayWindowLayout() {
