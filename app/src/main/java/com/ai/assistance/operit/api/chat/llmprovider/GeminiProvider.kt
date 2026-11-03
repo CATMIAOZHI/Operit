@@ -1369,6 +1369,10 @@ open class GeminiProvider(
 
         val newRetryCount = retryCount + 1
         if (newRetryCount > maxRetries) {
+            com.ai.assistance.operit.core.chat.currentLlmPerf()?.devEvent(
+                com.ai.assistance.operit.core.chat.OrbitDevRecorder.EVENT_RETRY,
+                context.getString(R.string.orbit_dev_event_retry_gave_up, maxRetries, errorText),
+            )
             logError("$errorText 且达到最大重试次数($maxRetries)", exception)
             throw IOException(
                 context.getString(R.string.gemini_error_connection_timeout, maxRetries, errorText),
@@ -1377,6 +1381,10 @@ open class GeminiProvider(
         }
 
         val retryDelayMs = LlmRetryPolicy.nextDelayMs(newRetryCount)
+        com.ai.assistance.operit.core.chat.currentLlmPerf()?.devEvent(
+            com.ai.assistance.operit.core.chat.OrbitDevRecorder.EVENT_RETRY,
+            context.getString(R.string.orbit_dev_event_retry, newRetryCount, maxRetries, retryDelayMs, errorText),
+        )
         AppLogger.w(TAG, "$errorText，将在 ${retryDelayMs}ms 后进行第 $newRetryCount 次重试...", exception)
         if (!shouldSuppressKeyPoolRateLimitNotice(apiKeyProvider, exception, TAG)) {
             onNonFatalError(buildRetryMessage(errorText, newRetryCount))
@@ -1474,6 +1482,8 @@ open class GeminiProvider(
                         tokenCacheManager.outputTokenCount
                 )
                 val request = createRequest(context, requestBody, stream, requestId) // 根据stream参数决定使用流式还是非流式
+                // What really goes out: an account route (Antigravity) rewrites and wraps the body.
+                perf?.captured(providerModel, request.body ?: requestBody)
 
                 val call = client.newCall(request.withPerf(perf))
                 activeCall = call

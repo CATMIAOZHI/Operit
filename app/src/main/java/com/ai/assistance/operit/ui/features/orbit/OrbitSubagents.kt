@@ -167,6 +167,17 @@ internal object OrbitSubagents {
 
     private const val MAX_DEPTH = 6
 
+    /** The automatic permission reviews run for [chatIds], newest first, at most [limit]. */
+    suspend fun reviewsUnder(context: Context, chatIds: List<String>, limit: Int = 50): List<SubagentRunEntity> =
+        withContext(Dispatchers.IO) {
+            val dao = AppDatabase.getDatabase(context).subagentRunDao()
+            chatIds.distinct().flatMap { parent ->
+                dao.getByParentChatId(parent).filter {
+                    it.agentProfileId == com.ai.assistance.operit.core.agent.AgentProfileRepository.PERMISSION_REVIEWER_ID
+                }
+            }.sortedByDescending { it.createdAt }.take(limit)
+        }
+
     /** The words of an agent message (a task handed over) without its envelope. */
     fun payload(content: String): String =
         envelope.find(content)?.let { content.substring(it.range.last + 1) } ?: content

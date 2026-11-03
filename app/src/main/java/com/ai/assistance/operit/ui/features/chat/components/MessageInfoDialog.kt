@@ -17,6 +17,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -29,8 +31,43 @@ import java.util.Locale
 @Composable
 fun MessageInfoDialog(
     message: ChatMessage,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    /** The chat the message is in; the developer view shows the request behind a reply with it. */
+    chatId: String? = null,
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    // Developer view: the requests this reply's turn really sent, the last one's parameters shown.
+    val devRequests = LocalShowHiddenChatRows.current && message.sender == "ai" && !chatId.isNullOrBlank()
+    val turnRequests by androidx.compose.runtime.produceState<DevTurnRequests?>(null, devRequests, chatId, message.timestamp) {
+        if (!devRequests || chatId == null) return@produceState
+        value = try {
+            // From when the turn's first request was sent to when its reply finished, nothing more:
+            // a next turn started right after must not count here.
+            val recorder = com.ai.assistance.operit.core.chat.OrbitDevRecorder
+            val from = message.sentAt.takeIf { it > 0L } ?: message.timestamp
+            val until = message.completedAt.takeIf { it > 0L } ?: System.currentTimeMillis()
+            val sent = recorder.sentTimes(context, chatId).filter { it in from..until }
+            // Only the turn's last send itself: an earlier body is not passed off as the last one.
+            val last = sent.maxOrNull()?.let { lastAt -> recorder.requests(context, chatId).firstOrNull { it.at == lastAt } }
+            val params = last?.let { request ->
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                    (recorder.read(request).opt("body") as? org.json.JSONObject)
+                        ?.let { com.ai.assistance.operit.ui.features.orbit.requestParams(it) }.orEmpty()
+                }
+            }.orEmpty()
+            DevTurnRequests(sent.size, last?.file?.name, params)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            DevTurnRequests(0, null, emptyList())
+        }
+    }
+    var openRequest by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
+    openRequest?.let { name ->
+        if (chatId != null) {
+            com.ai.assistance.operit.ui.features.orbit.OrbitDevRequestSheet(chatId, onDismiss = { openRequest = null }, initial = name)
+        }
+    }
     val unavailable = stringResource(R.string.message_info_unavailable)
     val dateFormatter = remember {
         SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault())
@@ -106,6 +143,41 @@ fun MessageInfoDialog(
                         outputTokens = message.outputTokens,
                         cachedInputTokens = message.cachedInputTokens
                     )
+                }
+
+                turnRequests?.let { turn ->
+                    MessageInfoCard {
+                        Text(
+                            text = stringResource(R.string.orbit_dev_info_request),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        if (turn.lastFile == null) {
+                            Text(
+                                text = if (turn.count > 0) stringResource(R.string.orbit_dev_info_request_count_only, turn.count)
+                                else stringResource(R.string.orbit_dev_info_request_none),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        } else {
+                            Text(
+                                text = stringResource(R.string.orbit_dev_info_request_count, turn.count),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            turn.params.forEach { (key, value) ->
+                                Text(
+                                    text = "$key: $value",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                            TextButton(onClick = { openRequest = turn.lastFile }) {
+                                Text(text = stringResource(R.string.orbit_dev_info_open_request))
+                            }
+                        }
+                    }
                 }
             }
         },
@@ -211,3 +283,6 @@ private fun MessageInfoTokenRow(
         )
     }
 }
+
+/** The requests one reply's turn sent, as the developer view keeps them. */
+private class DevTurnRequests(val count: Int, val lastFile: String?, val params: List<Pair<String, String>>)

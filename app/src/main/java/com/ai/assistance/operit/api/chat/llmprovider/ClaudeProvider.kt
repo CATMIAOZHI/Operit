@@ -1377,6 +1377,10 @@ class ClaudeProvider(
 
         val newRetryCount = retryCount + 1
         if (newRetryCount > maxRetries) {
+            com.ai.assistance.operit.core.chat.currentLlmPerf()?.devEvent(
+                com.ai.assistance.operit.core.chat.OrbitDevRecorder.EVENT_RETRY,
+                context.getString(R.string.orbit_dev_event_retry_gave_up, maxRetries, errorText),
+            )
             AppLogger.e("AIService", "【Claude】$errorText 且达到最大重试次数($maxRetries)", exception)
             throw IOException(
                 context.getString(R.string.openai_error_connection_timeout, maxRetries, errorText),
@@ -1385,6 +1389,10 @@ class ClaudeProvider(
         }
 
         val retryDelayMs = LlmRetryPolicy.nextDelayMs(newRetryCount)
+        com.ai.assistance.operit.core.chat.currentLlmPerf()?.devEvent(
+            com.ai.assistance.operit.core.chat.OrbitDevRecorder.EVENT_RETRY,
+            context.getString(R.string.orbit_dev_event_retry, newRetryCount, maxRetries, retryDelayMs, errorText),
+        )
         AppLogger.w("AIService", "【Claude】$errorText，将在 ${retryDelayMs}ms 后进行第 $newRetryCount 次重试...", exception)
         if (!shouldSuppressKeyPoolRateLimitNotice(apiKeyProvider, exception, "AIService")) {
             onNonFatalError(buildRetryMessage(errorText, newRetryCount))
@@ -1520,6 +1528,7 @@ class ClaudeProvider(
                     availableTools,
                     preserveThinkInHistory
                 ) } }
+                perf?.captured(providerModel, builtRequestBody.body)
                 attemptedThinkingFormat = builtRequestBody.thinkingFormat
                 onTokensUpdated(
                     tokenCacheManager.totalInputTokenCount,
