@@ -301,7 +301,11 @@ internal fun OrbitSearchPage(
     }
 
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-        Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()) {
+        // On a tablet the results keep a readable width in the middle of the screen.
+        Column(
+            Modifier.fillMaxSize().then(readableWidth)
+                .statusBarsPadding().navigationBarsPadding().imePadding(),
+        ) {
             Row(
                 Modifier.fillMaxWidth().padding(start = 24.dp, end = 16.dp, top = 12.dp, bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,

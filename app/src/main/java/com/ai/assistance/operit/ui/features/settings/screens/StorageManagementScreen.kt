@@ -51,7 +51,9 @@ fun StorageManagementScreen(
     onManageComponents: () -> Unit,
     /** Orbit has no page for the app's chats, so it leaves this out and the button is hidden. */
     onManageChats: (() -> Unit)?,
-    onBackup: () -> Unit
+    onBackup: () -> Unit,
+    /** Shown above the app's totals; Orbit puts its own files and Library settings here. */
+    leadingContent: (@Composable () -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -136,6 +138,7 @@ fun StorageManagementScreen(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        leadingContent?.invoke()
         SettingsCard(backgroundColor = cardColor, contentPadding = PaddingValues(16.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {

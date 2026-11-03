@@ -125,7 +125,7 @@ internal object OrbitTextPreview {
             onDismissRequest = onDismiss,
             properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
         ) {
-            Column(Modifier.fillMaxSize().background(colors.background)) {
+            Column(Modifier.fillMaxSize().background(colors.background).then(readableWidth)) {
                 Row(
                     Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,

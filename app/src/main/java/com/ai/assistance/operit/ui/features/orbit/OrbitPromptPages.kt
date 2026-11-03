@@ -157,6 +157,14 @@ internal fun OrbitFilePage(
         }
     }
     OrbitPageBack { back() }
+    // A sidebar pick or a tap outside the settings card asks first, like back does.
+    OrbitLeaveCheck {
+        when {
+            busy -> false
+            editing && draft != content -> { confirmDiscard = true; false }
+            else -> true
+        }
+    }
     val editorBack = rememberOrbitBackMotion()
     OrbitBackHandler(editorBack, enabled = editing || interceptBack || busy, canDismiss = !busy) { back() }
 

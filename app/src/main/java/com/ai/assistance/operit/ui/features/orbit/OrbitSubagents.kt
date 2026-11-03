@@ -53,13 +53,15 @@ internal object OrbitSubagents {
             val dao = AppDatabase.getDatabase(context).subagentRunDao()
             val parentChatId = when (process) {
                 is OrbitProcess.ChatTurn -> process.chatId
+                is OrbitProcess.LiveTurn -> process.chatId
                 is OrbitProcess.TaskRun -> process.chatId
                 is OrbitProcess.Subagent -> process.chatId
                 is OrbitProcess.Learning -> return@withContext emptyList()
             }
             val runs = dao.getByParentChatId(parentChatId).filter(::isWorker)
             if (runs.isEmpty()) return@withContext emptyList()
-            val owned = if (process is OrbitProcess.ChatTurn) {
+            // A turn in a chat owns only the agents its own calls started.
+            val owned = if (process is OrbitProcess.ChatTurn || process is OrbitProcess.LiveTurn) {
                 val calls = messages.asSequence().filter { it.sender == "ai" }
                     .flatMap { parsePersistedToolExecutions(it.content).values }
                     .mapNotNull { it.callId?.takeIf(String::isNotBlank) }.toSet()
