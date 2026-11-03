@@ -47,9 +47,13 @@ import java.text.DateFormat
 import java.util.Date
 import kotlinx.coroutines.launch
 
-/** One chat the developer view can show. */
+/** One chat the developer view can show. [withTime] shows the hour too, for runs that come often. */
 @Immutable
-private class DevChat(val id: String, val title: String, val icon: String, val time: Long)
+private class DevChat(val id: String, val title: String, val icon: String, val time: Long, val withTime: Boolean = false)
+
+/** A hidden chat the developer view can open: an automatic review or a background task run. */
+@Immutable
+internal class OrbitDevChatEntry(val chatId: String, val title: String, val time: Long)
 
 /** The chats in the sheet, by group: the main chat, pinned and other side chats, then archived ones. */
 private class DevChatGroups(val main: DevChat, val side: List<DevChat>, val archived: List<DevChat>)
@@ -75,6 +79,10 @@ internal fun OrbitDevChatSheet(
     currentChatId: String,
     /** Subagents working under Orbit's chats, newest first. */
     subagents: List<com.ai.assistance.operit.data.model.SubagentRunEntity>,
+    /** Automatic permission reviews, newest first. */
+    reviews: List<OrbitDevChatEntry>,
+    /** Background task runs, newest first. */
+    tasks: List<OrbitDevChatEntry>,
     onSelect: (String) -> Unit,
     onSelectSubagent: (String) -> Unit,
     onDismiss: () -> Unit,
@@ -86,12 +94,16 @@ internal fun OrbitDevChatSheet(
     val agents = remember(subagents) {
         subagents.map { DevChat(it.childChatId, OrbitSubagents.nameOf(it), "bot", it.createdAt) }
     }
+    val reviewChats = remember(reviews) { reviews.map { DevChat(it.chatId, it.title, "shield-check", it.time, withTime = true) } }
+    val taskChats = remember(tasks) { tasks.map { DevChat(it.chatId, it.title, "calendar-clock", it.time, withTime = true) } }
     var query by remember { mutableStateOf("") }
     val needle = query.trim().lowercase()
     fun List<DevChat>.match() = if (needle.isEmpty()) this else filter { it.title.lowercase().contains(needle) }
     val side = all.side.match()
     val archived = all.archived.match()
     val agentsShown = agents.match()
+    val reviewsShown = reviewChats.match()
+    val tasksShown = taskChats.match()
     val showMain = needle.isEmpty() || all.main.title.lowercase().contains(needle)
     fun pick(id: String, subagent: Boolean = false) {
         // The sheet slides down first, then the chat changes under it.
@@ -112,7 +124,7 @@ internal fun OrbitDevChatSheet(
                 modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 12.dp),
             )
             // A search box only helps once there are enough chats to look for one.
-            if (orbit.sideChats.size + agents.size > 5) {
+            if (orbit.sideChats.size + agents.size + reviewChats.size + taskChats.size > 5) {
                 Box(Modifier.padding(horizontal = 20.dp).padding(bottom = 8.dp)) {
                     SearchPill(query, { query = it }, placeholder = stringResource(R.string.orbit_dev_chats_search))
                 }
@@ -136,7 +148,20 @@ internal fun OrbitDevChatSheet(
                         DevChatRow(chat, chat.id == currentChatId) { pick(chat.id, subagent = true) }
                     }
                 }
-                if (!showMain && side.isEmpty() && archived.isEmpty() && agentsShown.isEmpty()) {
+                if (tasksShown.isNotEmpty()) {
+                    item(key = "tasks-title") { DevChatSection(stringResource(R.string.orbit_dev_chats_tasks)) }
+                    items(tasksShown, key = { "task:" + it.id }) { chat ->
+                        DevChatRow(chat, chat.id == currentChatId) { pick(chat.id, subagent = true) }
+                    }
+                }
+                if (reviewsShown.isNotEmpty()) {
+                    item(key = "reviews-title") { DevChatSection(stringResource(R.string.orbit_dev_chats_reviews)) }
+                    items(reviewsShown, key = { "review:" + it.id }) { chat ->
+                        DevChatRow(chat, chat.id == currentChatId) { pick(chat.id, subagent = true) }
+                    }
+                }
+                if (!showMain && side.isEmpty() && archived.isEmpty() && agentsShown.isEmpty() &&
+                    tasksShown.isEmpty() && reviewsShown.isEmpty()) {
                     item(key = "none") {
                         Text(
                             stringResource(R.string.orbit_dev_chats_none),
@@ -162,10 +187,13 @@ private fun DevChatSection(title: String) {
 }
 
 private val dateFormat: DateFormat = DateFormat.getDateInstance(DateFormat.MEDIUM)
+private val dateTimeFormat: DateFormat = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
 
 @Composable
 private fun DevChatRow(chat: DevChat, current: Boolean, onClick: () -> Unit) {
-    val date = remember(chat.time) { if (chat.time > 0) dateFormat.format(Date(chat.time)) else null }
+    val date = remember(chat.time, chat.withTime) {
+        if (chat.time > 0) (if (chat.withTime) dateTimeFormat else dateFormat).format(Date(chat.time)) else null
+    }
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
             .then(if (current) Modifier.background(MaterialTheme.colorScheme.surfaceVariant) else Modifier)

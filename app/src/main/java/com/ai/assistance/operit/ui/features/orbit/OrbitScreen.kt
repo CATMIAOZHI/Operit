@@ -1514,20 +1514,37 @@ private fun OrbitDevHeader(
     var pickerOpen by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val resources = LocalResources.current
-    // Subagents under Orbit's chats, read again each time the list opens.
-    val subagents by androidx.compose.runtime.produceState(
-        emptyList<com.ai.assistance.operit.data.model.SubagentRunEntity>(), orbit.talkChatIds, pickerOpen,
-    ) {
+    var menuOpen by remember { mutableStateOf(false) }
+    var devSheet by remember { mutableStateOf<OrbitDevSheet?>(null) }
+    val untitledTask = stringResource(R.string.orbit_turn_untitled, orbit.name.ifBlank { stringResource(R.string.nav_orbit) })
+    // The hidden chats behind Orbit's chats (subagents, automatic reviews, background task runs),
+    // read again each time the list opens.
+    val sources by androidx.compose.runtime.produceState(OrbitDevSources(), orbit.talkChatIds, pickerOpen) {
         value = try {
-            OrbitSubagents.underChats(context, orbit.talkChatIds)
+            val tasks = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                com.ai.assistance.operit.features.orbit.OrbitTaskRepository(context).dao.observeActivity(orbit.id).first().take(DEV_TASK_RUNS)
+            }.map { run ->
+                OrbitDevChatEntry(
+                    OrbitProcess.TaskRun(run.id, run.generation, run.taskId, "", run.startedAt).chatId,
+                    OrbitWork.listLine(run.title).ifBlank { untitledTask }, run.startedAt,
+                )
+            }
+            // Background task runs start subagents and reviews too, so they are roots as well.
+            val roots = orbit.talkChatIds + tasks.map { it.chatId }
+            val workers = OrbitSubagents.underChats(context, roots)
+            val reviews = OrbitSubagents.reviewsUnder(context, roots + workers.map { it.childChatId })
+                .map { OrbitDevChatEntry(it.childChatId, OrbitSubagents.nameOf(it), it.createdAt) }
+            OrbitDevSources(workers, reviews, tasks)
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
             value
         }
     }
+    val subagents = sources.subagents
     val currentTitle = orbit.sideChats.firstOrNull { it.chatId == currentChatId }?.title
         ?: subagents.firstOrNull { it.childChatId == currentChatId }?.let { OrbitSubagents.nameOf(it) }
+        ?: (sources.reviews + sources.tasks).firstOrNull { it.chatId == currentChatId }?.title
         ?: if (currentChatId in orbit.talkChatIds) mainTitle else stringResource(R.string.orbit_dev_chats_subagents)
     // Always open: subagents may start after this header showed, and the list reloads on open.
     val canSwitch = true
@@ -1550,7 +1567,35 @@ private fun OrbitDevHeader(
             onClick = onExit,
             modifier = Modifier.align(Alignment.TopStart),
         )
-        Box(Modifier.align(Alignment.TopCenter).padding(top = 4.dp)) {
+        // What the chat itself does not show: the requests sent, a raw search, retries and repairs.
+        Box(Modifier.align(Alignment.TopEnd)) {
+            OrbitCircleButton(
+                icon = orbitIcon("ellipsis"),
+                contentDescription = stringResource(R.string.orbit_dev_more),
+                onClick = { menuOpen = true },
+            )
+            OrbitDropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                listOf(
+                    Triple(OrbitDevSheet.REQUESTS, "send", R.string.orbit_dev_requests),
+                    Triple(OrbitDevSheet.SEARCH, "search", R.string.orbit_dev_raw_search),
+                    Triple(OrbitDevSheet.EVENTS, "history", R.string.orbit_dev_events),
+                ).forEach { (sheet, icon, label) ->
+                    androidx.compose.material3.DropdownMenuItem(
+                        text = { Text(stringResource(label)) },
+                        leadingIcon = { Icon(orbitIcon(icon), contentDescription = null, modifier = Modifier.size(20.dp)) },
+                        onClick = {
+                            menuOpen = false
+                            devSheet = sheet
+                        },
+                    )
+                }
+            }
+        }
+        // Between the two round buttons (52dp each plus a gap), so a long title never covers them.
+        Box(
+            Modifier.align(Alignment.TopCenter).fillMaxWidth().padding(start = 60.dp, end = 60.dp, top = 4.dp),
+            contentAlignment = Alignment.TopCenter,
+        ) {
             val switchLabel = stringResource(R.string.orbit_dev_view_switch_chat)
             Surface(
                 shape = RoundedCornerShape(50),
@@ -1558,7 +1603,7 @@ private fun OrbitDevHeader(
                 border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
                 shadowElevation = 3.dp,
                 modifier =
-                    Modifier.widthIn(max = 240.dp)
+                    Modifier.widthIn(max = 220.dp)
                         .clip(RoundedCornerShape(50))
                         .clickable(enabled = canSwitch, onClickLabel = switchLabel,
                             role = androidx.compose.ui.semantics.Role.DropdownList) { pickerOpen = true },
@@ -1595,10 +1640,29 @@ private fun OrbitDevHeader(
         }
     }
     if (pickerOpen) {
-        OrbitDevChatSheet(orbit, currentChatId, subagents, onSelect = onSelectChat, onSelectSubagent = onSelectSubagent,
-            onDismiss = { pickerOpen = false })
+        OrbitDevChatSheet(orbit, currentChatId, subagents, sources.reviews, sources.tasks,
+            onSelect = onSelectChat, onSelectSubagent = onSelectSubagent, onDismiss = { pickerOpen = false })
+    }
+    when (devSheet) {
+        OrbitDevSheet.REQUESTS -> OrbitDevRequestSheet(currentChatId, onDismiss = { devSheet = null })
+        OrbitDevSheet.SEARCH -> OrbitDevSearchSheet(currentChatId, onDismiss = { devSheet = null })
+        OrbitDevSheet.EVENTS -> OrbitDevEventsSheet(currentChatId, onDismiss = { devSheet = null })
+        null -> Unit
     }
 }
+
+/** The developer view's tool sheets. */
+private enum class OrbitDevSheet { REQUESTS, SEARCH, EVENTS }
+
+/** How many background task runs the developer view lists. */
+private const val DEV_TASK_RUNS = 30
+
+/** The hidden chats behind Orbit's chats that the developer view can open. */
+private class OrbitDevSources(
+    val subagents: List<com.ai.assistance.operit.data.model.SubagentRunEntity> = emptyList(),
+    val reviews: List<OrbitDevChatEntry> = emptyList(),
+    val tasks: List<OrbitDevChatEntry> = emptyList(),
+)
 
 /**
  * The picture an Orbit shows: only its own. Without one it shows the Orbit logo, never the

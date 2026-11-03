@@ -120,6 +120,10 @@ abstract class ChatContentDao {
     @Query("SELECT messageId FROM messages WHERE chatId=:chatId AND timestamp=:timestamp LIMIT 1")
     abstract suspend fun learningMessageId(chatId: String, timestamp: Long): Long?
 
+    /** When the newest summary of [chatId] was saved; the model reads the chat from it on. */
+    @Query("SELECT MAX(timestamp) FROM messages WHERE chatId=:chatId AND sender='summary'")
+    abstract suspend fun latestSummaryAt(chatId: String): Long?
+
     @Query("""
         SELECT SUBSTR(CAST(COALESCE(v.content,m.content) AS BLOB),:byteOffset+1,32768)
         FROM messages m JOIN chats c ON c.id=m.chatId

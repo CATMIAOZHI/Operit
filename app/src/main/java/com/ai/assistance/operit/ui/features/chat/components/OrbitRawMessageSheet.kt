@@ -102,7 +102,7 @@ internal fun OrbitRawMessageSheet(message: ChatMessage, onDismiss: () -> Unit) {
 }
 
 /** The text in slices of about 40 lines, with a very long line cut every 4000 characters. */
-private fun rawChunks(text: String): List<String> {
+internal fun rawChunks(text: String): List<String> {
     if (text.isEmpty()) return listOf("")
     val out = ArrayList<String>()
     // Walks the text once by index, so even one huge line is copied only once.

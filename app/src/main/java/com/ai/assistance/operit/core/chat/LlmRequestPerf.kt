@@ -35,6 +35,10 @@ internal class LlmRequestPerf(
     private val kind: String,
     start: LlmPerfStart? = null,
     streaming: Boolean = true,
+    /** The chat this request is for; the developer view keeps its body and retries under it. */
+    private val chatId: String? = null,
+    /** Whether it sends tool results back (else a new message), for the developer view. */
+    private val toolResult: Boolean = false,
 ) : AbstractCoroutineContextElement(Key) {
     companion object Key : CoroutineContext.Key<LlmRequestPerf> {
         const val TAG = "LlmPerf"
@@ -102,6 +106,16 @@ internal class LlmRequestPerf(
         val t = now()
         laps[stage] = (laps[stage] ?: 0L) + (t - lastLap)
         lastLap = t
+    }
+
+    /** The provider built [body] for [label] (provider and model): kept for the developer view. */
+    fun captured(label: String, body: okhttp3.RequestBody, keepBody: Boolean = true) {
+        OrbitDevRecorder.request(chatId, if (toolResult) OrbitDevRecorder.KIND_TOOL else OrbitDevRecorder.KIND_SEND, label, body, keepBody)
+    }
+
+    /** Notes [text] (a retry and why) for the developer view of this request's chat. */
+    fun devEvent(kind: String, text: String) {
+        OrbitDevRecorder.event(chatId, kind, text)
     }
 
     /** 本地准备结束、开始交给服务商发请求。 */

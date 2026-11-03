@@ -385,6 +385,23 @@ fun ChatArea(
     ) {
         value = if (devOrbitMarks) com.ai.assistance.operit.features.orbit.OrbitMessageTime.zoneLog(context) else null
     }
+    // Developer view: where the newest summary is, with the chat it is for. The model reads from it
+    // on, so the rows before it are no longer sent. Read again when a summary or a new row comes in.
+    val devView = LocalShowHiddenChatRows.current
+    val shownSummaryAt = remember(chatHistory) { chatHistory.lastOrNull { it.sender == "summary" }?.timestamp }
+    val devSummary by androidx.compose.runtime.produceState<Pair<String, Long?>?>(
+        null, devView, currentChatId, shownSummaryAt, chatHistory.lastOrNull()?.timestamp,
+    ) {
+        val chatId = currentChatId?.takeIf { devView && it.isNotBlank() } ?: run { value = null; return@produceState }
+        value = try {
+            chatId to com.ai.assistance.operit.data.db.AppDatabase.getDatabase(context).chatContentDao().latestSummaryAt(chatId)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            value?.takeIf { it.first == chatId }
+        }
+    }
+    val devSummaryAt = devSummary?.takeIf { it.first == currentChatId }?.second
     VirtualTranscript(
         chatId = currentChatId.orEmpty(),
         messages = chatHistory,
@@ -420,9 +437,17 @@ fun ChatArea(
                     }
                 }
             }
-                        val devMark = if (devOrbitMarks &&
+                        val devMark = if (devView &&
                             com.ai.assistance.operit.ui.common.markdown.LocalTranscriptMarkdownSlice.current?.first != false) {
+                            val sender = renderedMessage.sender
                             when {
+                                devSummaryAt != null && sender == "summary" -> stringResource(
+                                    if (renderedMessage.timestamp == devSummaryAt) R.string.orbit_dev_mark_summary_latest
+                                    else R.string.orbit_dev_mark_summary_old,
+                                )
+                                devSummaryAt != null && renderedMessage.timestamp < devSummaryAt &&
+                                    (sender == "user" || sender == "ai") -> stringResource(R.string.orbit_dev_mark_summarized)
+                                !devOrbitMarks -> null
                                 com.ai.assistance.operit.features.orbit.OrbitMessageTime.stampsRow(
                                     renderedMessage.sender, renderedMessage.displayMode, renderedMessage.content) ->
                                     devZoneLog?.let { log ->
@@ -1634,6 +1659,7 @@ private fun MessageItem(
         if (showMessageInfoDialog) {
             MessageInfoDialog(
                 message = message,
+                chatId = currentChatId,
                 onDismiss = { showMessageInfoDialog = false }
             )
         }
