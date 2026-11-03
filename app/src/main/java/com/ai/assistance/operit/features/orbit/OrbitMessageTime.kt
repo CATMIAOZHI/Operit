@@ -41,11 +41,7 @@ object OrbitMessageTime {
     private fun zones(context: Context, since: Long, current: String = ZoneId.systemDefault().id):
         List<Pair<Long, String>> = synchronized(lock) {
         val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val known = zoneLog ?: prefs.getString(KEY_LOG, null).orEmpty().split(';').mapNotNull { entry ->
-            val parts = entry.split('|', limit = 2)
-            val at = parts.firstOrNull()?.toLongOrNull()
-            if (parts.size == 2 && at != null && parts[1].isNotBlank()) at to parts[1] else null
-        }
+        val known = readLog(context)
         val last = known.lastOrNull()
         val updated = if (last?.second == current) known else {
             // Kept whole: dropping the oldest zones would relabel the oldest messages. A few dozen
@@ -58,6 +54,29 @@ object OrbitMessageTime {
         zoneLog = updated
         updated
     }
+
+    private fun readLog(context: Context): List<Pair<Long, String>> = synchronized(lock) {
+        zoneLog ?: context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_LOG, null).orEmpty().split(';').mapNotNull { entry ->
+            val parts = entry.split('|', limit = 2)
+            val at = parts.firstOrNull()?.toLongOrNull()
+            if (parts.size == 2 && at != null && parts[1].isNotBlank()) at to parts[1] else null
+        }.also { zoneLog = it }
+    }
+
+    /**
+     * The zone log as it is now, read off the main thread, for [labelFor]. Only reads it: a zone
+     * not recorded yet is the phone's current one, as the next request would record it.
+     */
+    suspend fun zoneLog(context: Context): List<Pair<Long, String>> =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { readLog(context) }
+
+    /** The label the model reads before a user message sent at [at], for the developer view. */
+    fun labelFor(log: List<Pair<Long, String>>, at: Long): String = label(at, zoneAt(log, at))
+
+    /** A user row whose text reaches the model with its send time in front. */
+    fun stampsRow(sender: String, displayMode: com.ai.assistance.operit.data.model.ChatMessageDisplayMode,
+        content: String): Boolean = sender == "user" && !displayMode.isCollaborationEvent && content.isNotBlank()
 
     /**
      * The system switched to [zoneId] at [at]. Recorded right away, so a message sent in the new

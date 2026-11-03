@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -370,6 +371,20 @@ fun ChatArea(
             showLoadingIndicator &&
             chatStyle == ChatStyle.BUBBLE &&
             lastMessage?.sender == "ai"
+    // Developer view of an Orbit chat: mark what the model reads but the chat never shows, the
+    // send time before each user message and the break between the parts of a split reply.
+    val devOrbitMarks = LocalShowHiddenChatRows.current && remember(currentChatId) {
+        val chatId = currentChatId ?: return@remember false
+        val prefs = com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context)
+        prefs.loadedSnapshot()?.orbitForChat(chatId)?.talkChatIds?.contains(chatId) == true
+    }
+    // Read off the main thread; times show once it is in. A new message reads it again, in case
+    // the phone changed zone meanwhile.
+    val devZoneLog by androidx.compose.runtime.produceState<List<Pair<Long, String>>?>(
+        null, devOrbitMarks, chatHistory.lastOrNull()?.timestamp,
+    ) {
+        value = if (devOrbitMarks) com.ai.assistance.operit.features.orbit.OrbitMessageTime.zoneLog(context) else null
+    }
     VirtualTranscript(
         chatId = currentChatId.orEmpty(),
         messages = chatHistory,
@@ -405,10 +420,27 @@ fun ChatArea(
                     }
                 }
             }
+                        val devMark = if (devOrbitMarks &&
+                            com.ai.assistance.operit.ui.common.markdown.LocalTranscriptMarkdownSlice.current?.first != false) {
+                            when {
+                                com.ai.assistance.operit.features.orbit.OrbitMessageTime.stampsRow(
+                                    renderedMessage.sender, renderedMessage.displayMode, renderedMessage.content) ->
+                                    devZoneLog?.let { log ->
+                                        remember(renderedMessage.timestamp, log) {
+                                            com.ai.assistance.operit.features.orbit.OrbitMessageTime.labelFor(log, renderedMessage.timestamp)
+                                        }
+                                    }
+                                renderIndex > 0 && com.ai.assistance.operit.services.core.OrbitMessageBreaks.isPartOf(
+                                    renderedMessage, chatHistory[renderIndex - 1]) ->
+                                    com.ai.assistance.operit.services.core.OrbitMessageBreaks.BREAK
+                                else -> null
+                            }
+                        } else null
                         MessageItem(
                             index = renderIndex,
                             currentChatId = currentChatId,
                             message = renderedMessage,
+                            devMark = devMark,
                             showAssistantHeader = !isAssistantContinuation(chatHistory, renderIndex) &&
                                 com.ai.assistance.operit.ui.common.markdown.LocalTranscriptMarkdownSlice.current?.first != false,
                             enableDialogs = enableDialogs,
@@ -624,6 +656,8 @@ private fun MessageItem(
     index: Int,
     currentChatId: String,
     message: ChatMessage,
+    /** Developer view of an Orbit chat: text the model reads before this message, shown above it. */
+    devMark: String? = null,
     showAssistantHeader: Boolean,
     enableDialogs: Boolean,
     allowTranscriptMutation: Boolean,
@@ -848,6 +882,14 @@ private fun MessageItem(
         ) {
             if (quietOrbitReply) {
                 OrbitHiddenInChatBadge(Modifier.padding(start = 12.dp, top = 4.dp, bottom = 2.dp))
+            }
+            devMark?.let { mark ->
+                OrbitDevMark(
+                    mark,
+                    Modifier.fillMaxWidth()
+                        .wrapContentWidth(if (message.sender == "user") Alignment.End else Alignment.Start)
+                        .padding(horizontal = 12.dp, vertical = 2.dp),
+                )
             }
             if (showHiddenRows && isHiddenUserMessage) {
                 OrbitHiddenUserRow(message.content)
