@@ -120,6 +120,8 @@ object OrbitTaskScheduler {
 class OrbitTimeZoneReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_TIMEZONE_CHANGED) return
+        // Messages sent from now on carry the new zone when they reach the model.
+        OrbitMessageTime.recordZoneChange(context, intent.getStringExtra(Intent.EXTRA_TIMEZONE), System.currentTimeMillis())
         WorkManager.getInstance(context).enqueueUniqueWork("orbit_calendar_timezone", ExistingWorkPolicy.REPLACE,
             OneTimeWorkRequestBuilder<OrbitTimeZoneWorker>().build())
     }

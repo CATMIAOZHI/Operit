@@ -1543,20 +1543,25 @@ object AIMessageManager {
             )
         }
 
+        // An Orbit chat puts this time before the message when it builds the request.
+        val sentAt = if (message.timestamp > 0L) {
+            mapOf(com.ai.assistance.operit.features.orbit.OrbitMessageTime.SENT_AT to message.timestamp)
+        } else emptyMap()
+
         // 群组编排模式 + 角色隔离模式：给用户消息添加 [From user] 前缀
         if (groupOrchestrationMode && isRoleScopedMode) {
             val trimmed = baseContent.trim()
             return when {
                 trimmed.isBlank() ->
-                    PromptTurn(kind = PromptTurnKind.USER, content = baseContent)
+                    PromptTurn(kind = PromptTurnKind.USER, content = baseContent, metadata = sentAt)
                 trimmed.startsWith("[From user]") ->
-                    PromptTurn(kind = PromptTurnKind.USER, content = trimmed)
+                    PromptTurn(kind = PromptTurnKind.USER, content = trimmed, metadata = sentAt)
                 else ->
-                    PromptTurn(kind = PromptTurnKind.USER, content = "[From user]\n$trimmed")
+                    PromptTurn(kind = PromptTurnKind.USER, content = "[From user]\n$trimmed", metadata = sentAt)
             }
         }
 
         // 其他模式：直接返回
-        return PromptTurn(kind = PromptTurnKind.USER, content = baseContent)
+        return PromptTurn(kind = PromptTurnKind.USER, content = baseContent, metadata = sentAt)
     }
 }

@@ -543,6 +543,8 @@ class EnhancedAIService private constructor(
         var composerPredictionParameters: List<ModelParameter<*>>? = null,
         /** Whether the most recent request ran with thinking enabled. */
         var composerPredictionEnableThinking: Boolean = false,
+        /** An Orbit chat: user messages, including ones sent mid-turn, start with their send time. */
+        var stampUserTime: Boolean = false,
     )
 
     @Volatile
@@ -1365,12 +1367,20 @@ class EnhancedAIService private constructor(
             finalPreparedHistory = ChatUtils.stripOpenAiResponsesReasoningMetaTurns(finalPreparedHistory)
         }
 
-        val requestHistory =
+        val finalizedHistory =
             applyFinalizedCurrentUserTurn(
                 preparedHistory = finalPreparedHistory,
                 originalCurrentMessage = message,
                 finalizedCurrentMessage = finalProcessedInput
-            ).mergeAdjacentTurns { previous, current ->
+            )
+        val requestHistory =
+            (if (com.ai.assistance.operit.features.orbit.OrbitMessageTime.appliesTo(context, chatId)) {
+                // Estimates can be asked for from the main thread; labels for a long chat and the
+                // first read of the zone log stay off it.
+                withContext(Dispatchers.IO) {
+                    com.ai.assistance.operit.features.orbit.OrbitMessageTime.stamp(context, finalizedHistory, System.currentTimeMillis())
+                }
+            } else finalizedHistory).mergeAdjacentTurns { previous, current ->
                 com.ai.assistance.operit.core.agent.collaboration.CollaborationPromptHistory.canMergeUserTurns(previous, current)
             }
 
@@ -1685,7 +1695,13 @@ class EnhancedAIService private constructor(
                             preparedHistory = finalPreparedHistory,
                             originalCurrentMessage = message,
                             finalizedCurrentMessage = finalProcessedInput
-                        )
+                        ).let { history ->
+                            execContext.stampUserTime =
+                                com.ai.assistance.operit.features.orbit.OrbitMessageTime.appliesTo(context, chatId)
+                            if (execContext.stampUserTime) {
+                                com.ai.assistance.operit.features.orbit.OrbitMessageTime.stamp(context, history, System.currentTimeMillis())
+                            } else history
+                        }
                     var requestHistory =
                         finalizedHistory.mergeAdjacentTurns { previous, current ->
                             com.ai.assistance.operit.core.agent.collaboration.CollaborationPromptHistory.canMergeUserTurns(previous, current)
@@ -3005,8 +3021,13 @@ class EnhancedAIService private constructor(
                 // Once durable user rows are written, cancellation must not return those same
                 // messages to the queue. Complete the history handoff and acknowledgement together.
                 withContext(NonCancellable) {
+                    // Each input's chat row is written inside onTurnInput; its time labels the input below.
+                    val rowTimes = java.util.concurrent.ConcurrentHashMap<Int, Long>()
+                    val trackedInputs = turnInputs.mapIndexed { index, input ->
+                        input.copy(saved = { at -> rowTimes[index] = at; input.saved(at) })
+                    }
                     val nextAssistantScope = context.onTurnInput?.invoke(
-                        turnInputs,
+                        trackedInputs,
                         ToolExecutionBoundarySnapshot(
                             context.roundManager.getDisplaySnapshot(), context.emittedReplayCharCount.get(),
                             context.eventChannel.replayCache.size,
@@ -3019,14 +3040,18 @@ class EnhancedAIService private constructor(
                         context.toolSequence.startMessage(nextAssistantScope)
                         com.ai.assistance.operit.core.tools.phone.PhoneControlTools.registerTurn(nextAssistantScope)
                     }
-                    turnInputs.forEach { input ->
-                        val inputTurn = PromptTurn(
+                    turnInputs.forEachIndexed { index, input ->
+                        val rawInputTurn = PromptTurn(
                             kind = PromptTurnKind.USER, content = input.text,
                             metadata = if (input.agentPath != null) mapOf(
                                 com.ai.assistance.operit.core.agent.collaboration.CollaborationPromptHistory.EVENT_METADATA to true,
                                 com.ai.assistance.operit.core.agent.collaboration.CollaborationPromptHistory.TASK_METADATA to input.startsAgentTurn,
                             ) else emptyMap(),
                         )
+                        val inputTurn = if (context.stampUserTime) {
+                            com.ai.assistance.operit.features.orbit.OrbitMessageTime.stamp(
+                                this@EnhancedAIService.context, rawInputTurn, rowTimes[index] ?: System.currentTimeMillis())
+                        } else rawInputTurn
                         context.conversationHistory.add(inputTurn)
                         if (context.collaborationInputs.isNotEmpty()) {
                             context.collaborationInputs.add(inputTurn)
