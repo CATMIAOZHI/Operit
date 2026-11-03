@@ -208,6 +208,27 @@ fun OrbitHiddenInChatBadge(modifier: Modifier = Modifier) {
 }
 
 /**
+ * Text the model reads with a message but the chat never shows, such as `<message_break/>` or
+ * the send time, as the developer view writes it above the message.
+ */
+@Composable
+fun OrbitDevMark(text: String, modifier: Modifier = Modifier) {
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.6f),
+        modifier = modifier,
+    ) {
+        Text(
+            text,
+            style = MaterialTheme.typography.labelSmall,
+            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+        )
+    }
+}
+
+/**
  * A user row the chat hides (such as a tapback notice), as the developer view draws it: the label
  * and the first lines of what was sent. A tap shows all of it; a long press opens the menu.
  */

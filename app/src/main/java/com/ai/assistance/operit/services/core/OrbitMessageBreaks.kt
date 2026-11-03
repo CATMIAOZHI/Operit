@@ -112,10 +112,13 @@ internal object OrbitMessageBreaks {
         return out
     }
 
-    private const val BREAK = "<message_break/>"
+    const val BREAK = "<message_break/>"
 
-    /** [part] is the next saved part of the reply [before] belongs to. */
-    private fun isPartOf(part: ChatMessage, before: ChatMessage): Boolean =
+    /**
+     * [part] is the next saved part of the reply [before] belongs to; the model reads a
+     * `<message_break/>` between them. The developer view marks the place.
+     */
+    fun isPartOf(part: ChatMessage, before: ChatMessage): Boolean =
         part.sender == "ai" && before.sender == "ai" &&
             part.displayMode == ChatMessageDisplayMode.NORMAL && before.displayMode == ChatMessageDisplayMode.NORMAL &&
             part.contentStream == null && before.contentStream == null &&
