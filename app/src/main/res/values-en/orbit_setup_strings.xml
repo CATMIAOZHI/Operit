@@ -17,6 +17,7 @@
     <string name="orbit_setup_main_note">Used for chatting. It doesn\'t have to be the smartest; pick the one that suits you best. We recommend DeepSeek Flash.</string>
     <string name="orbit_setup_assistant">Helper model</string>
     <string name="orbit_setup_assistant_note">Used for titles, memory and other background work. Pick a cheap, fast one. We recommend DeepSeek Flash.</string>
+    <string name="orbit_setup_cost_note">What it costs: with DeepSeek Flash, 500 million tokens a week is about 3 US dollars (around 20 yuan), and less use costs less. Later, Usage in Settings shows each week\'s estimate.</string>
     <string name="orbit_setup_pick_model">Choose a model</string>
     <string name="orbit_setup_check">Check and load models</string>
     <string name="orbit_setup_testing">Testing…</string>

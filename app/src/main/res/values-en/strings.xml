@@ -9243,6 +9243,10 @@
     <string name="orbit_usage_other">Other</string>
     <string name="orbit_usage_other_orbits">Other Orbits</string>
     <string name="orbit_usage_summary_line">This week %1$s / %2$s · extra %3$s / %4$s</string>
+    <string name="orbit_usage_cost_title">About what this week cost</string>
+    <string name="orbit_usage_cost_week">About $%1$s (about ¥%2$s)</string>
+    <string name="orbit_usage_cost_week_tiny">Less than $0.01</string>
+    <string name="orbit_usage_cost_note">Estimated at DeepSeek Flash\'s average price: 500 million tokens a week is about 3 US dollars (around 20 yuan). Only a guide; your provider\'s bill is what counts, and other models cost differently.</string>
     <string name="orbit_usage_input">Input</string>
     <string name="orbit_usage_active_days">Active days</string>
     <string name="orbit_usage_calls">%1$d calls</string>

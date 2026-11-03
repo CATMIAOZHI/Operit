@@ -364,6 +364,12 @@ internal fun OrbitSetupPage(onSkip: () -> Unit) {
                 Text(stringResource(R.string.orbit_setup_assistant_note), style = MaterialTheme.typography.bodySmall,
                     color = colors.onSurfaceVariant, modifier = Modifier.fillMaxWidth().padding(start = 6.dp, top = 4.dp))
             }
+            // What running Orbit roughly costs, next to where the models are picked.
+            if (list != null || manual) {
+                Spacer(Modifier.height(14.dp))
+                Text(stringResource(R.string.orbit_setup_cost_note), style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant, modifier = Modifier.fillMaxWidth().padding(start = 6.dp))
+            }
 
             error?.let {
                 Spacer(Modifier.height(14.dp))

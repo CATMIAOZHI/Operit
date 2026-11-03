@@ -9220,6 +9220,10 @@
     <string name="orbit_usage_other">其他</string>
     <string name="orbit_usage_other_orbits">其他 Orbit</string>
     <string name="orbit_usage_summary_line">本周 %1$s / %2$s · 额外 %3$s / %4$s</string>
+    <string name="orbit_usage_cost_title">本周大概花了多少钱</string>
+    <string name="orbit_usage_cost_week">约 $%1$s（约 ¥%2$s）</string>
+    <string name="orbit_usage_cost_week_tiny">不到 $0.01</string>
+    <string name="orbit_usage_cost_note">按 DeepSeek Flash 的平均价估算：一周用 5 亿 token，大约 3 美元（20 元左右）。只是参考，实际以服务商账单为准，用别的模型会不一样。</string>
     <string name="orbit_usage_input">输入</string>
     <string name="orbit_usage_active_days">活跃天数</string>
     <string name="orbit_usage_calls">%1$d 次调用</string>

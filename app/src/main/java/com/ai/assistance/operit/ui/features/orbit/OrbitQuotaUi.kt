@@ -736,6 +736,17 @@ internal fun OrbitUsagePage(orbit: OrbitProfile, onBack: () -> Unit, onOpenTrend
                 }
             }
             UsageInsightsCard(view, ready, range, cardColor, onRange = { range = it })
+            // Everything spent since this week's Monday, the extra allowance's share included.
+            val weekTokens by androidx.compose.runtime.produceState<Long?>(null, usage, loaded?.weekStart, today) {
+                val data = usage ?: return@produceState
+                val weekStart = loaded?.weekStart ?: return@produceState
+                value = withContext(Dispatchers.Default) {
+                    val from = usageWeekStart(weekStart, zone).toString()
+                    val to = today.date.toString()
+                    data.totals.entries.sumOf { (day, tokens) -> if (day in from..to) tokens else 0L }
+                }
+            }
+            UsageCostCard(weekTokens, cardColor)
             UsageHeatmapCard(heatmap, today.zone, cardColor, onMode = { heatmapMode = it })
             UsageTrendsRow(cardColor, onOpenTrends, onOpenAppCosts)
             Text(stringResource(R.string.orbit_usage_by_purpose), style = MaterialTheme.typography.titleSmall,
@@ -781,6 +792,39 @@ internal fun OrbitUsagePage(orbit: OrbitProfile, onBack: () -> Unit, onOpenTrend
         }
     }
 }
+
+/**
+ * About what this week's tokens would cost on DeepSeek Flash, at its average price with most of
+ * the input read from cache: some 3 US dollars (about 20 yuan) per 500 million tokens. Only a
+ * guide for what running Orbit costs; [weekTokens] is null until the allowances are read.
+ */
+@Composable
+private fun UsageCostCard(weekTokens: Long?, cardColor: androidx.compose.ui.graphics.Color) {
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    SettingsCard(backgroundColor = cardColor, contentPadding = PaddingValues(16.dp)) {
+        Text(stringResource(R.string.orbit_usage_cost_title), style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(6.dp))
+        Text(
+            // Blank (keeping its line) until read, so no made-up cost shows.
+            weekTokens?.let { tokens ->
+                val usd = tokens * USD_PER_REFERENCE / REFERENCE_TOKENS
+                val cny = tokens * CNY_PER_REFERENCE / REFERENCE_TOKENS
+                if (usd < 0.01) stringResource(R.string.orbit_usage_cost_week_tiny)
+                else stringResource(R.string.orbit_usage_cost_week, String.format(java.util.Locale.US, "%.2f", usd),
+                    String.format(java.util.Locale.US, "%.1f", cny))
+            } ?: " ",
+            style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold,
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(stringResource(R.string.orbit_usage_cost_note), style = MaterialTheme.typography.bodySmall, color = muted)
+    }
+}
+
+/** The reference price behind [UsageCostCard]: 500 million tokens on DeepSeek Flash. */
+private const val REFERENCE_TOKENS = 500_000_000.0
+private const val USD_PER_REFERENCE = 3.0
+private const val CNY_PER_REFERENCE = 20.0
 
 /**
  * The main app's activity insights for the chosen range: total requests, the busiest hours, then
