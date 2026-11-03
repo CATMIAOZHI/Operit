@@ -17,6 +17,7 @@
     <string name="orbit_setup_main_note">用来聊天。不一定要选最聪明的，选你觉得最合适的就行，推荐 DeepSeek Flash。</string>
     <string name="orbit_setup_assistant">辅助模型</string>
     <string name="orbit_setup_assistant_note">用来起标题、整理记忆等后台小事，选便宜、快的，推荐 DeepSeek Flash。</string>
+    <string name="orbit_setup_cost_note">大概花多少钱：用 DeepSeek Flash 的话，一周用 5 亿 token 大约 3 美元（20 元左右），用得少会更便宜。之后可以在设置的用量统计里看到每周的估算。</string>
     <string name="orbit_setup_pick_model">选择模型</string>
     <string name="orbit_setup_check">验证并获取模型</string>
     <string name="orbit_setup_testing">正在测试…</string>
