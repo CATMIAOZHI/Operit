@@ -205,9 +205,25 @@ private fun CropArea(bitmap: Bitmap, saving: Boolean, onDone: (OrbitAvatarCropPl
     val fit = if (ready) OrbitAvatarCropMath.fitScale(w, h, frame) else 0f
     val fill = if (ready) OrbitAvatarCropMath.fillScale(w, h, frame) else 0f
     // Opens filled, like the avatar shows a picture by default; zooming out shows more of it.
-    var scale by remember(bitmap, frame) { mutableFloatStateOf(fill) }
-    var offsetX by remember(bitmap, frame) { mutableFloatStateOf(0f) }
-    var offsetY by remember(bitmap, frame) { mutableFloatStateOf(0f) }
+    var scale by remember(bitmap) { mutableFloatStateOf(0f) }
+    var offsetX by remember(bitmap) { mutableFloatStateOf(0f) }
+    var offsetY by remember(bitmap) { mutableFloatStateOf(0f) }
+    // The circle's size the placement was made for. When the window changes size (turned, split
+    // screen) the placement grows or shrinks with the circle, so the chosen part stays chosen.
+    var placedFrame by remember(bitmap) { mutableFloatStateOf(0f) }
+    if (ready && placedFrame != frame) {
+        if (placedFrame <= 0f) {
+            scale = fill
+            offsetX = 0f
+            offsetY = 0f
+        } else {
+            val k = frame / placedFrame
+            scale *= k
+            offsetX *= k
+            offsetY *= k
+        }
+        placedFrame = frame
+    }
     val showingWhole = scale <= fit * 1.001f
     fun place(target: Float) {
         scale = target

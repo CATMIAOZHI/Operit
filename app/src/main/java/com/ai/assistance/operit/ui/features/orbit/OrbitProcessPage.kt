@@ -126,6 +126,9 @@ private fun ProcessRecordPage(
                         .getByChildChatId(process.chatId)?.status in OrbitSubagents.LIVE
                 }
                 is OrbitProcess.ChatTurn -> false
+                // Stopped, answered, or a later turn begun: this one is over.
+                is OrbitProcess.LiveTurn -> process.chatId in OrbitWork.streamingChats(context) &&
+                    !OrbitWork.liveTurnFinished(context, process)
             }
         } catch (e: CancellationException) {
             throw e
@@ -137,6 +140,7 @@ private fun ProcessRecordPage(
             is OrbitProcess.Learning -> process.running
             is OrbitProcess.Subagent -> process.running
             is OrbitProcess.ChatTurn -> false
+            is OrbitProcess.LiveTurn -> true
         }
         var readMessages = true
         while (true) {
@@ -239,6 +243,7 @@ private fun ProcessRecordPage(
 /** The chat a piece of work ran in, which its subagent rows belong to. */
 private fun processChatId(process: OrbitProcess): String? = when (process) {
     is OrbitProcess.ChatTurn -> process.chatId
+    is OrbitProcess.LiveTurn -> process.chatId
     is OrbitProcess.TaskRun -> process.chatId
     is OrbitProcess.Subagent -> process.chatId
     is OrbitProcess.Learning -> null

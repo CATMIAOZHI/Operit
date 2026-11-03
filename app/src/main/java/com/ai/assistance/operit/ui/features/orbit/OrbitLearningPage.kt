@@ -164,11 +164,19 @@ private fun OrbitLearningHome(listState: LazyListState, onBack: () -> Unit, onOp
     }
 }
 
+/** True for the first page of a card over the screen (settings on a tablet): its button closes the card. */
+internal val LocalOrbitModalRoot = androidx.compose.runtime.compositionLocalOf { false }
+
 /** The round back button and the page title, as on Orbit's other pages. */
 @Composable
 internal fun OrbitPageHeader(title: String, onBack: () -> Unit, modifier: Modifier = Modifier) {
+    val closes = LocalOrbitModalRoot.current
     Row(verticalAlignment = Alignment.CenterVertically, modifier = modifier.padding(bottom = 8.dp)) {
-        OrbitCircleButton(orbitIcon("chevron-left"), stringResource(R.string.back), onBack)
+        OrbitCircleButton(
+            orbitIcon(if (closes) "x" else "chevron-left"),
+            stringResource(if (closes) R.string.close else R.string.back),
+            onBack,
+        )
         Spacer(Modifier.width(14.dp))
         Text(title, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }

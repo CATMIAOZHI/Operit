@@ -51,6 +51,35 @@ internal val LocalOrbitHostedBack = staticCompositionLocalOf { false }
 internal val LocalOrbitPageActive = compositionLocalOf { true }
 
 /**
+ * Pages that must not just vanish (an unsaved edit, a save in progress). Navigation that closes
+ * several pages at once, such as a sidebar pick or a tap outside the settings card, asks [tryLeave]
+ * first; a page that says no shows its own question (keep or discard) and the navigation stops.
+ */
+internal class OrbitLeaveGuard {
+    private val checks = mutableListOf<() -> Boolean>()
+
+    fun add(check: () -> Boolean) { checks += check }
+    fun remove(check: () -> Boolean) { checks -= check }
+
+    /** True when every page agrees to close. */
+    fun tryLeave(): Boolean = checks.toList().all { it() }
+}
+
+internal val LocalOrbitLeaveGuard = staticCompositionLocalOf { OrbitLeaveGuard() }
+
+/** Lets [canLeave] stop navigation that would close this page; it shows its own question when it says no. */
+@Composable
+internal fun OrbitLeaveCheck(canLeave: () -> Boolean) {
+    val guard = LocalOrbitLeaveGuard.current
+    val latest by rememberUpdatedState(canLeave)
+    androidx.compose.runtime.DisposableEffect(guard) {
+        val check = { latest() }
+        guard.add(check)
+        onDispose { guard.remove(check) }
+    }
+}
+
+/**
  * Runs [onReturn] each time this page is on top again after a page opened over it has closed. A
  * page under another one stays as it was (scrolled where it was), so one that shows what a page
  * above can change (a file, a restored version) reads it again here.
@@ -124,6 +153,7 @@ internal fun <T : Any> OrbitPushHost(
     page: @Composable (T) -> Unit,
 ) {
     val holder = rememberSaveableStateHolder()
+    val parentActive = LocalOrbitPageActive.current
     val scope = rememberCoroutineScope()
     // The stack as drawn, and a page still sliding out after a back (with its depth).
     var drawn by remember { mutableStateOf(entries) }
@@ -287,7 +317,8 @@ internal fun <T : Any> OrbitPushHost(
                     CompositionLocalProvider(
                         LocalOnBackPressedDispatcherOwner provides (if (onTop) realOwner ?: inert else inert),
                         LocalOrbitHostedBack provides (if (level < 0) hosted else true),
-                        LocalOrbitPageActive provides (level == activeLevel),
+                        // A host that is itself covered keeps all its pages inactive.
+                        LocalOrbitPageActive provides (parentActive && level == activeLevel),
                     ) {
                         holder.SaveableStateProvider(stateKey) {
                             if (level < 0) base?.invoke() else entry?.let { page(it) }

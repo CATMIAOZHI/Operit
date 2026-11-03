@@ -257,6 +257,8 @@ internal fun OrbitTabPage(
      * same place as the chat's, so only one picture of Orbit ever shows.
      */
     contentLayer: Modifier = Modifier,
+    /** Opens the record of a piece of work over the tabs; a task's run going on now uses it. */
+    onOpenProcess: ((OrbitProcess) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val data = key(orbit.id) {
@@ -270,6 +272,14 @@ internal fun OrbitTabPage(
     LaunchedEffect(openTaskId) { openTaskId?.let { shownTaskId = it } }
     // Leaving for the chat closes an open task, as leaving the tab always did.
     LaunchedEffect(visible) { if (!visible) openTaskId = null }
+    // So does moving to another tab: a task stays with the tab it was opened from.
+    var taskTab by rememberSaveable(orbit.id) { mutableStateOf(tab.name) }
+    LaunchedEffect(tab) {
+        if (taskTab != tab.name) {
+            taskTab = tab.name
+            openTaskId = null
+        }
+    }
     val header = LocalOrbitTabHeader.current
     val density = LocalDensity.current
     // Measured after the first frame; the guess is the header's usual size so nothing jumps.
@@ -304,7 +314,7 @@ internal fun OrbitTabPage(
             (openTaskId ?: shownTaskId)?.let { taskId ->
                 key(taskId) {
                     OrbitTasksPage(orbit.id, onBack = { openTaskId = null }, initialTaskId = taskId,
-                        onDraft = { text -> openTaskId = null; onDraft(text) })
+                        onDraft = { text -> openTaskId = null; onDraft(text) }, onOpenProcess = onOpenProcess)
                 }
             }
         }
@@ -2455,7 +2465,11 @@ private fun BuildSections(selected: Int, onSelect: (Int) -> Unit) {
 private fun UploadsUsage(who: String, used: Long) {
     val context = LocalContext.current
     val resources = LocalResources.current
-    val limit = com.ai.assistance.operit.features.orbit.OrbitUploads.LIMIT_BYTES
+    val preferences = remember { com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context) }
+    val settings by preferences.settingsFlow.collectAsState(initial = preferences.loadedSnapshot())
+    val limit = (settings?.libraryLimitGb ?: com.ai.assistance.operit.data.preferences.OrbitSettings.DEFAULT_LIBRARY_LIMIT_GB) *
+        1024L * 1024 * 1024
+    val autoDelete = settings?.libraryAutoDelete ?: true
     SoftCard {
         Text(
             stringResource(
@@ -2467,7 +2481,8 @@ private fun UploadsUsage(who: String, used: Long) {
         )
         LinearProgressIndicator(progress = { (used.toDouble() / limit).toFloat().coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
         Text(
-            stringResource(R.string.orbit_uploads_hint, who), style = MaterialTheme.typography.bodySmall,
+            stringResource(if (autoDelete) R.string.orbit_uploads_hint else R.string.orbit_uploads_hint_kept, who),
+            style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }

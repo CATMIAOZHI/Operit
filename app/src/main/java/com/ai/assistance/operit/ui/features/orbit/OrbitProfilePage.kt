@@ -162,7 +162,9 @@ internal fun OrbitProfilePage(
     // Work done while chatting. Read when the profile comes into view, then now and then while open.
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
     val showingActivity = visible && tab == OrbitProfileTab.ACTIVITY
-    val chatTurns by produceState<OrbitChatTurns?>(null, orbit.talkChatIds, showingActivity, lifecycle) {
+    // Counts replies that just ended, so the list of finished turns is read again at once.
+    var liveEnded by remember(orbit.id) { mutableIntStateOf(0) }
+    val chatTurns by produceState<OrbitChatTurns?>(null, orbit.talkChatIds, showingActivity, lifecycle, liveEnded) {
         if (!showingActivity) return@produceState
         lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
         while (showingActivity) {
@@ -170,6 +172,18 @@ internal fun OrbitProfilePage(
                 OrbitWork.chatTurns(context, orbit.talkChatIds)
             }
             kotlinx.coroutines.delay(15_000)
+        }
+        }
+    }
+    // Replies Orbit is writing right now, in any of its chats; read every few seconds while shown.
+    val liveTurns by produceState(emptyList<OrbitProcess.LiveTurn>(), orbit.talkChatIds, showingActivity, lifecycle) {
+        if (!showingActivity) return@produceState
+        lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
+        while (showingActivity) {
+            value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                OrbitWork.liveTurns(context, orbit.talkChatIds)
+            }.also { now -> if (!now.map { it.chatId }.containsAll(value.map { it.chatId })) liveEnded++ }
+            kotlinx.coroutines.delay(3_000)
         }
         }
     }
@@ -232,7 +246,7 @@ internal fun OrbitProfilePage(
                         onClick = onOpenRawChat,
                     )
                 }
-                activitySection(who, activity, chatTurns, onOpenProcess)
+                activitySection(who, activity, chatTurns, liveTurns, onOpenProcess)
             }
             OrbitProfileTab.APPROVALS -> approvalsSection(tasks, approvals, onOpenTask) { openApproval = it }
             OrbitProfileTab.BROWSER -> browserSection(who, pages, apps, onOpenApp = { screen ->
@@ -855,52 +869,52 @@ private fun LazyListScope.activitySection(
     who: String,
     runs: List<OrbitActivityRow>?,
     chat: OrbitChatTurns?,
+    live: List<OrbitProcess.LiveTurn>,
     onOpenProcess: (OrbitProcess) -> Unit,
 ) {
     if (runs == null) return loading()
+    // What Orbit is doing right now goes first: background runs still going and replies being written.
+    val runningRuns = runs.filter { it.state == "RUNNING" }
+    if (runningRuns.isNotEmpty() || live.isNotEmpty()) {
+        item(key = "running-title") { SectionTitle(stringResource(R.string.orbit_profile_running)) }
+        items(live, key = { "live-${it.chatId}" }) { turn ->
+            Box(Modifier.animateItem()) {
+            OrbitListRow(
+                icon = orbitIcon("loader"),
+                title = turn.title,
+                detail = stringResource(R.string.orbit_profile_running_chat),
+                meta = clockTime(turn.time),
+                showChevron = true,
+                onClick = { onOpenProcess(turn) },
+            )
+            }
+        }
+        items(runningRuns, key = { "running-${it.id}" }) { run ->
+            Box(Modifier.animateItem()) { RunRow(run, who, onOpenProcess) }
+        }
+    }
     // Background runs show at once; the chat turns, read from every chat, join them when ready.
     if (chat == null) loading()
     if (chat?.failed == true) {
         item(key = "turns-failed") { EmptyHint(stringResource(R.string.orbit_activity_load_failed)) }
     }
-    val rows = (runs.map { OrbitWorkRow.Run(it) } + chat?.turns.orEmpty().map { OrbitWorkRow.Turn(it) })
+    val rows = (runs.filter { it.state != "RUNNING" }.map { OrbitWorkRow.Run(it) } +
+        chat?.turns.orEmpty().map { OrbitWorkRow.Turn(it) })
         .distinctBy { it.key }
         .sortedByDescending { it.time }
         .take(200)
     if (chat == null && rows.isEmpty()) return
     if (rows.isEmpty() && chat?.failed != true) {
-        item(key = "empty") { EmptyHint(stringResource(R.string.orbit_profile_activity_empty)) }
+        if (runningRuns.isEmpty() && live.isEmpty()) {
+            item(key = "empty") { EmptyHint(stringResource(R.string.orbit_profile_activity_empty)) }
+        }
         return
     }
     groupTalk(rows).groupBy { startOfDay(it.time) }.forEach { (day, dayRows) ->
         item(key = "day-$day") { SectionTitle(dayLabel(day)) }
         items(dayRows, key = { it.key }) { row ->
             when (row) {
-                is OrbitWorkRow.Run -> {
-                    val run = row.run
-                    val failed = run.state == "FAILED" || run.state == "INTERRUPTED"
-                    OrbitListRow(
-                        icon = orbitIcon(
-                            when {
-                                run.state == "RUNNING" -> "loader"
-                                failed -> "circle-alert"
-                                run.kind == "DAILY" -> "heart-handshake"
-                                run.kind == "URL_CHANGE" -> "eye"
-                                run.kind == com.ai.assistance.operit.features.orbit.OrbitWatchSources.KIND -> "radar"
-                                else -> "sparkles"
-                            }
-                        ),
-                        title = OrbitWork.listLine(run.title).ifBlank { stringResource(R.string.orbit_turn_untitled, who) },
-                        detail = runDetail(run),
-                        meta = clockTime(run.startedAt),
-                        iconTint = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                        showChevron = true,
-                        onClick = {
-                            onOpenProcess(OrbitProcess.TaskRun(run.id, run.generation, run.taskId, OrbitWork.listLine(run.title),
-                                run.startedAt, running = run.state == "RUNNING"))
-                        },
-                    )
-                }
+                is OrbitWorkRow.Run -> RunRow(row.run, who, onOpenProcess)
                 is OrbitWorkRow.Turn -> {
                     val turn = row.turn
                     OrbitListRow(
@@ -938,6 +952,33 @@ private fun LazyListScope.activitySection(
             }
         }
     }
+}
+
+/** One background run in the activity list. */
+@Composable
+private fun RunRow(run: OrbitActivityRow, who: String, onOpenProcess: (OrbitProcess) -> Unit) {
+    val failed = run.state == "FAILED" || run.state == "INTERRUPTED"
+    OrbitListRow(
+        icon = orbitIcon(
+            when {
+                run.state == "RUNNING" -> "loader"
+                failed -> "circle-alert"
+                run.kind == "DAILY" -> "heart-handshake"
+                run.kind == "URL_CHANGE" -> "eye"
+                run.kind == com.ai.assistance.operit.features.orbit.OrbitWatchSources.KIND -> "radar"
+                else -> "sparkles"
+            }
+        ),
+        title = OrbitWork.listLine(run.title).ifBlank { stringResource(R.string.orbit_turn_untitled, who) },
+        detail = runDetail(run),
+        meta = clockTime(run.startedAt),
+        iconTint = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+        showChevron = true,
+        onClick = {
+            onOpenProcess(OrbitProcess.TaskRun(run.id, run.generation, run.taskId, OrbitWork.listLine(run.title),
+                run.startedAt, running = run.state == "RUNNING"))
+        },
+    )
 }
 
 @Composable

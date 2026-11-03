@@ -93,7 +93,8 @@ internal object OrbitFileTools {
                         if (cut) " The line was longer than ${OrbitFiles.MAX_DAILY_LINE} characters and was cut; write the rest as another line." else ""
                 }
                 "send" -> {
-                    check(OrbitPreferences.getInstance(context).current().orbitForChat(runtime?.callerChatId) != null) {
+                    val settings = OrbitPreferences.getInstance(context).current()
+                    check(settings.orbitForChat(runtime?.callerChatId) != null) {
                         "send only works in a chat with the user"
                     }
                     val path = arg("path").trim().removePrefix("/")
@@ -106,7 +107,7 @@ internal object OrbitFileTools {
                         runCatching { android.graphics.BitmapFactory.decodeFile(file.path, bounds) }
                     }
                     // The chat keeps its own copy, so later edits to the file do not change what was sent.
-                    val copy = files.snapshotForChat(path)
+                    val copy = files.snapshotForChat(path, com.ai.assistance.operit.features.orbit.OrbitUploads.cleanup(settings))
                     JSONObject().put("sent", true).put("path", path)
                         .put("note", "The file is in the chat now as an attachment. The chat keeps a copy of it as it is now; " +
                             "later changes to $path do not change it. Do not paste its path.")

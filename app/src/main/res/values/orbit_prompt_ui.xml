@@ -126,7 +126,7 @@
     <string name="orbit_web_wait_title">网页等待时间</string>
     <string name="orbit_web_wait_desc">Orbit 打开网页后，等多久再读内容。Orbit 读网页不用你接管，默认 1 秒就够。主应用的设置不受影响。</string>
     <string name="orbit_language_row">切换 App 显示的语言</string>
-    <string name="orbit_storage_row">看看占了多少空间，清理缓存</string>
+    <string name="orbit_storage_row">文件库大小、自动删除，看看占了多少空间</string>
     <string name="orbit_components_row">离线语音模型等可选组件</string>
     <string name="orbit_help_row">常见问题和使用说明</string>
     <string name="orbit_agreement_row">用户协议和隐私说明</string>

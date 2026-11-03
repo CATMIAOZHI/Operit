@@ -324,10 +324,11 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
     /**
      * Copies a file under files/ into sent/<stamp>/ so what was sent in the chat never changes,
      * the way a sent message stays as it was. Returns the copy's path, kept out of the Library.
-     * The copy is made beside the folder and moved in whole; all copies together stay under
-     * [SENT_LIMIT_BYTES], the oldest going first (their chat cards then show the file as gone).
+     * The copy is made beside the folder and moved in whole. Old copies go by the same rules as
+     * the Library ([cleanup]): only with automatic deleting on, and never the newest 100, so a few
+     * big videos sent one after another all stay in the chat.
      */
-    suspend fun snapshotForChat(path: String): String = io {
+    suspend fun snapshotForChat(path: String, cleanup: OrbitUploads.Cleanup): String = io {
         val p = normalize(path)
         require(p.startsWith("files/") && FILES.matches(p)) { "Only files under files/ can be sent" }
         val source = inside(File(root, p))
@@ -353,22 +354,22 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         } finally {
             deleteTree(incoming)
         }
-        trimSent(sentRoot, keep = folder.name)
+        trimSent(sentRoot, keep = folder.name, cleanup)
         copy
     }
 
-    /** Keeps the sent copies under [SENT_LIMIT_BYTES], oldest first; [keep] (the newest) always stays. */
-    private fun trimSent(sentRoot: File, keep: String) {
+    /** Deletes the oldest sent copies [cleanup] lets go; [keep] (the newest) always stays. */
+    private fun trimSent(sentRoot: File, keep: String, cleanup: OrbitUploads.Cleanup) {
+        // Folder names start with the second they were made; within one second the folder's own
+        // time tells which came first.
         val folders = sentRoot.listFiles()
             ?.filter { SENT_FOLDER.matches(it.name) && !Files.isSymbolicLink(it.toPath()) }
-            ?.sortedBy { it.name }.orEmpty()
-        var total = folders.sumOf { folder -> folder.listFiles()?.filter { it.isFile }?.sumOf { it.length() } ?: 0L }
-        for (folder in folders) {
-            if (total <= SENT_LIMIT_BYTES) break
-            if (folder.name == keep) continue
-            total -= folder.listFiles()?.filter { it.isFile }?.sumOf { it.length() } ?: 0L
-            deleteTree(folder)
-        }
+            ?.sortedWith(compareBy<File>({ it.name.take(SECOND_PREFIX) }, { it.lastModified() }, { it.name })).orEmpty()
+        val sizes = folders.associateWith { folder -> folder.listFiles()?.filter { it.isFile }?.sumOf { it.length() } ?: 0L }
+        val doomed = cleanup.toDelete(folders) { sizes.getValue(it) }
+        // Copies made in the same second as the oldest one kept are kept too, in case their order is off.
+        val boundary = folders.getOrNull(doomed.size)?.name?.take(SECOND_PREFIX)
+        doomed.filter { it.name != keep && it.name.take(SECOND_PREFIX) != boundary }.forEach { deleteTree(it) }
     }
 
     /** A file a chat card points at: one in files/ (older cards) or a sent copy in sent/. */
@@ -379,7 +380,32 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
             p.startsWith("files/") -> fileFor(p)
             else -> null
         }?.takeIf { it.isFile }
-    }.getOrNull()
+    }.onFailure { com.ai.assistance.operit.util.AppLogger.w("OrbitFiles", "Chat file not readable: ${it.javaClass.simpleName}") }
+        .getOrNull()
+
+    /** How many files and bytes are under files/ (what Orbit made) and sent/ (copies sent in the chat). */
+    data class Usage(val madeFiles: Int, val madeBytes: Long, val sentFiles: Int, val sentBytes: Long)
+
+    suspend fun usage(): Usage = io {
+        fun count(dir: File): Pair<Int, Long> {
+            if (!Files.isDirectory(dir.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)) return 0 to 0L
+            var files = 0
+            var bytes = 0L
+            // Links are counted as themselves, never followed.
+            Files.walkFileTree(dir.toPath(), object : java.nio.file.SimpleFileVisitor<java.nio.file.Path>() {
+                override fun visitFile(file: java.nio.file.Path, attrs: java.nio.file.attribute.BasicFileAttributes) =
+                    java.nio.file.FileVisitResult.CONTINUE.also {
+                        if (attrs.isRegularFile && !file.fileName.toString().startsWith(".")) { files++; bytes += attrs.size() }
+                    }
+                override fun visitFileFailed(file: java.nio.file.Path, exc: java.io.IOException) =
+                    java.nio.file.FileVisitResult.CONTINUE
+            })
+            return files to bytes
+        }
+        val made = count(File(root, "files"))
+        val sent = count(File(root, SENT))
+        Usage(made.first, made.second, sent.first, sent.second)
+    }
 
     /** Saves a binary file under files/, keeping an existing one by adding a number to the name. */
     suspend fun saveBytes(path: String, input: InputStream, maxBytes: Long = MAX_FILE_BYTES): Entry = io {
@@ -533,10 +559,10 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         /** Copies of files sent in the chat; see [snapshotForChat]. */
         private const val SENT = "sent"
         private val SENT_FOLDER = Regex("\\d{8}-\\d{6}-[0-9a-f]{8}")
+        /** The "yyyyMMdd-HHmmss" start of a sent folder's name. */
+        private const val SECOND_PREFIX = 15
         private val SENT_PATH = Regex("$SENT/\\d{8}-\\d{6}-[0-9a-f]{8}/[^/]{1,120}")
-        /** All sent copies of one Orbit together: 2 GB. */
-        const val SENT_LIMIT_BYTES = 2L * 1024 * 1024 * 1024
-        /** One file sent in the chat: 1 GB, so a single copy never fills the sent copies' room alone. */
+        /** One file sent in the chat: 1 GB. */
         const val MAX_SEND_BYTES = 1L * 1024 * 1024 * 1024
         private val PEOPLE = Regex("memory/(people|groups)/[^/]{1,80}\\.md")
         private val DAILY = Regex("memory/\\d{4}-\\d{2}-\\d{2}\\.md")

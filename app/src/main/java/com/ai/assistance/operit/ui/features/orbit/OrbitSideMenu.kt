@@ -99,6 +99,10 @@ import java.util.Locale
  * rename, pin, archive or delete it; the archive button by "Side chats" lists the archived ones.
  * The search box opens a full-screen search of everything said in the main chat and side chats.
  * Tapping outside, Back, or a swipe to the left closes it.
+ *
+ * [docked] is the tablet sidebar, like Muse's: always at the left beside the page, with the tabs
+ * listed above the side chats ([selectedTab], [onSelectTab]). Picking something keeps it open;
+ * only the page's menu button folds it away ([visible] false), at once and without a dim.
  */
 @Composable
 internal fun OrbitSideMenu(
@@ -110,6 +114,13 @@ internal fun OrbitSideMenu(
     onDismiss: () -> Unit,
     onOpenSettings: () -> Unit,
     onLeaveOrbit: () -> Unit,
+    docked: Boolean = false,
+    selectedTab: OrbitTab? = null,
+    onSelectTab: (OrbitTab) -> Unit = {},
+    /** Told when the full-screen search covers the page, so the chat under it counts as unseen. */
+    onSearchShown: (Boolean) -> Unit = {},
+    /** True while something modal (the tablet settings card) is over the sidebar: it is not read out then. */
+    blocked: Boolean = false,
 ) {
     val context = LocalContext.current
     val resources = LocalResources.current
@@ -121,6 +132,10 @@ internal fun OrbitSideMenu(
     var busy by remember { mutableStateOf(false) }
     var searching by remember { mutableStateOf(false) }
     var archiveOpen by remember { mutableStateOf(false) }
+    val searchShown = searching && visible
+    val latestSearchShown by androidx.compose.runtime.rememberUpdatedState(onSearchShown)
+    LaunchedEffect(searchShown) { latestSearchShown(searchShown) }
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { latestSearchShown(false) } }
     var query by rememberSaveable { mutableStateOf("") }
     // How far the panel was dragged to the left, in pixels (0 or less).
     var dragOffset by remember { mutableFloatStateOf(0f) }
@@ -128,17 +143,21 @@ internal fun OrbitSideMenu(
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     LaunchedEffect(visible) {
+        // The docked sidebar sits beside the chat; folding it must not take the chat's typing away.
+        if (docked) return@LaunchedEffect
         // The chat's text box sits under the menu: drop its focus so typing never goes there.
         focusManager.clearFocus(force = true)
         keyboard?.hide()
         if (visible) dragOffset = 0f
     }
 
-    val progress by animateFloatAsState(
+    val sliding by animateFloatAsState(
         targetValue = if (visible) 1f else 0f,
         animationSpec = tween(if (visible) OrbitMotion.PUSH_MS else OrbitMotion.DISMISS_MS, easing = OrbitMotion.Easing),
         label = "orbitSideMenu",
     )
+    // The sidebar moves with the page beside it, which changes width at once, so it does not slide.
+    val progress = if (docked) (if (visible) 1f else 0f) else sliding
     // Search and the archive list start fresh only once the panel is fully gone, so nothing moves
     // while it slides out.
     val gone = progress == 0f
@@ -151,7 +170,7 @@ internal fun OrbitSideMenu(
     }
     // The back swipe slides the panel away under the finger, like a drag; let go early and it returns.
     // The search page and the archive list take back first while they are open.
-    PredictiveBackHandler(enabled = visible && !searching && !archiveOpen) { events ->
+    PredictiveBackHandler(enabled = !docked && visible && !searching && !archiveOpen) { events ->
         try {
             events.collect { event -> dragOffset = -panelPx * event.progress }
             val rest = (OrbitMotion.DISMISS_MS * (1f + dragOffset / panelPx.coerceAtLeast(1f))).toInt().coerceAtLeast(90)
@@ -169,9 +188,18 @@ internal fun OrbitSideMenu(
         }
     }
 
+    // The overlay menu closes once something is picked; the sidebar stays, but its search page and
+    // archive list close so what was picked shows.
+    fun closeMenu() {
+        if (!docked) onDismiss() else {
+            searching = false
+            archiveOpen = false
+        }
+    }
+
     fun open(chatId: String) {
         onSelect(chatId)
-        onDismiss()
+        closeMenu()
     }
 
     fun act(block: suspend () -> Unit) {
@@ -231,7 +259,61 @@ internal fun OrbitSideMenu(
         act { OrbitCompanion.setSideChatArchived(context, orbit.id, side.chatId, archived) }
     }
 
-    if (progress > 0f) {
+    // The menu's rows and its archive list, the same in the overlay and the sidebar.
+    val panelContent: @Composable () -> Unit = {
+        // Under the archive list or the search page, the menu is not read out.
+        Box(Modifier.fillMaxSize().then(if (archiveOpen || searching) Modifier.clearAndSetSemantics { } else Modifier)) {
+            MenuContent(
+                orbit = orbit, currentChatId = currentChatId, unread = unread, busy = busy,
+                selectedTab = if (docked) selectedTab else null,
+                onSelectTab = onSelectTab,
+                onOpen = ::open,
+                onRename = { renaming = it },
+                onTogglePin = { side -> act { OrbitCompanion.setSideChatPinned(context, orbit.id, side.chatId, !side.pinned) } },
+                onArchive = { setArchived(it, true) },
+                onDelete = ::askDelete,
+                onNew = ::newSideChat,
+                onSearch = { searching = true },
+                onOpenArchive = { archiveOpen = true },
+                onOpenSettings = {
+                    closeMenu()
+                    onOpenSettings()
+                },
+                onLeaveOrbit = {
+                    closeMenu()
+                    onLeaveOrbit()
+                },
+            )
+        }
+        // The archived side chats slide in over the menu, inside the panel.
+        OrbitCoverPage(visible = archiveOpen && visible, onDismiss = { archiveOpen = false }) {
+            ArchivePage(
+                sides = orbit.sideChats.filter { it.archived }.sortedByDescending { it.createdAt },
+                currentChatId = currentChatId, unread = unread,
+                onBack = { archiveOpen = false },
+                onOpen = ::open,
+                onUnarchive = { setArchived(it, false) },
+                onDelete = ::askDelete,
+            )
+        }
+    }
+
+    if (docked && progress > 0f) {
+        val menuTitle = stringResource(R.string.menu)
+        // A card at the left, inside the system bars, like Muse's sidebar; the page sits beside it.
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            shape = RoundedCornerShape(28.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)),
+            modifier = Modifier.width(ORBIT_SIDEBAR_WIDTH).fillMaxHeight()
+                .then(if (searching || blocked) Modifier.clearAndSetSemantics { } else Modifier)
+                .statusBarsPadding().navigationBarsPadding()
+                .padding(start = 12.dp, top = 8.dp, bottom = 12.dp)
+                .semantics { paneTitle = menuTitle; isTraversalGroup = true },
+        ) {
+            Box(Modifier.fillMaxSize()) { panelContent() }
+        }
+    } else if (progress > 0f) {
         // Under the full-screen search, neither the menu nor its close scrim is read out or reachable.
         BoxWithConstraints(Modifier.fillMaxSize().then(if (searching) Modifier.clearAndSetSemantics { } else Modifier)) {
             val panelWidth = min(maxWidth * 0.84f, 380.dp)
@@ -277,39 +359,7 @@ internal fun OrbitSideMenu(
                         },
                     ),
             ) {
-                // Under the archive list or the search page, the menu is not read out.
-                Box(Modifier.fillMaxSize().then(if (archiveOpen || searching) Modifier.clearAndSetSemantics { } else Modifier)) {
-                    MenuContent(
-                        orbit = orbit, currentChatId = currentChatId, unread = unread, busy = busy,
-                        onOpen = ::open,
-                        onRename = { renaming = it },
-                        onTogglePin = { side -> act { OrbitCompanion.setSideChatPinned(context, orbit.id, side.chatId, !side.pinned) } },
-                        onArchive = { setArchived(it, true) },
-                        onDelete = ::askDelete,
-                        onNew = ::newSideChat,
-                        onSearch = { searching = true },
-                        onOpenArchive = { archiveOpen = true },
-                        onOpenSettings = {
-                            onDismiss()
-                            onOpenSettings()
-                        },
-                        onLeaveOrbit = {
-                            onDismiss()
-                            onLeaveOrbit()
-                        },
-                    )
-                }
-                // The archived side chats slide in over the menu, inside the panel.
-                OrbitCoverPage(visible = archiveOpen && visible, onDismiss = { archiveOpen = false }) {
-                    ArchivePage(
-                        sides = orbit.sideChats.filter { it.archived }.sortedByDescending { it.createdAt },
-                        currentChatId = currentChatId, unread = unread,
-                        onBack = { archiveOpen = false },
-                        onOpen = ::open,
-                        onUnarchive = { setArchived(it, false) },
-                        onDelete = ::askDelete,
-                    )
-                }
+                panelContent()
             }
         }
     }
@@ -322,11 +372,11 @@ internal fun OrbitSideMenu(
                 open(hit.chatId)
             },
             onOpenSettings = {
-                onDismiss()
+                closeMenu()
                 onOpenSettings()
             },
             onLeaveOrbit = {
-                onDismiss()
+                closeMenu()
                 onLeaveOrbit()
             },
             onClose = { searching = false },
@@ -370,7 +420,7 @@ internal fun OrbitSideMenu(
             confirmButton = {
                 OrbitDialogAction(onClick = {
                     weixinLinked = null
-                    onDismiss()
+                    closeMenu()
                     onOpenSettings()
                 }) { Text(stringResource(R.string.orbit_chats_delete_weixin_settings)) }
             },
@@ -388,6 +438,9 @@ private fun MenuContent(
     currentChatId: String,
     unread: Set<String>,
     busy: Boolean,
+    /** On the tablet sidebar: the tab showing, with every tab listed above the side chats. */
+    selectedTab: OrbitTab?,
+    onSelectTab: (OrbitTab) -> Unit,
     onOpen: (String) -> Unit,
     onRename: (OrbitSideChat) -> Unit,
     onTogglePin: (OrbitSideChat) -> Unit,
@@ -416,62 +469,106 @@ private fun MenuContent(
             OrbitBackToOperitPill(onLeaveOrbit)
         }
         Spacer(Modifier.height(20.dp))
-        ChatRow(
-            icon = "house", title = stringResource(R.string.orbit_chats_main),
-            selected = currentChatId == orbit.chatId, unread = orbit.chatId in unread,
-            onClick = { onOpen(orbit.chatId) },
-        )
-        // "Side chats", with the archive button on the right, like Muse's.
-        Row(Modifier.fillMaxWidth().padding(start = 12.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                stringResource(R.string.orbit_chats_side_section),
-                style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.weight(1f),
-            )
-            val archiveLabel = stringResource(R.string.orbit_chats_archived_open)
-            Box(
-                Modifier.size(48.dp).clip(CircleShape)
-                    .clickable(role = Role.Button, onClickLabel = archiveLabel, onClick = onOpenArchive)
-                    .semantics { contentDescription = archiveLabel },
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(orbitIcon("archive"), null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        // A chat counts as shown only while the chat tab is.
+        val onChat = selectedTab == null || selectedTab == OrbitTab.CHAT
+        val tabRows: @Composable () -> Unit = {
+            // "Tabs": the main chat and the other pages, like the top of Muse's sidebar.
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    stringResource(R.string.orbit_sidebar_tabs),
+                    style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 12.dp, bottom = 6.dp),
+                )
+                OrbitTab.entries.forEach { tab ->
+                    ChatRow(
+                        icon = tab.icon,
+                        title = stringResource(if (tab == OrbitTab.CHAT) R.string.orbit_chats_main else tab.label),
+                        selected = selectedTab == tab && (tab != OrbitTab.CHAT || currentChatId == orbit.chatId),
+                        unread = tab == OrbitTab.CHAT && orbit.chatId in unread,
+                        onClick = { onSelectTab(tab) },
+                    )
+                }
+                androidx.compose.material3.HorizontalDivider(
+                    Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
+                )
             }
         }
-        if (sides.isNotEmpty()) {
-            Text(
-                stringResource(R.string.orbit_chats_long_press), style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
-                modifier = Modifier.padding(start = 12.dp, bottom = 6.dp),
-            )
-        }
-        Box(Modifier.weight(1f).fillMaxWidth()) {
-            if (sides.isEmpty()) {
-                EmptySideChats(onNew = onNew, enabled = !busy)
-            } else {
-                LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    items(sides, key = { it.chatId }) { side ->
-                        var menu by remember(side.chatId) { mutableStateOf(false) }
-                        Box(Modifier.animateItem(fadeInSpec = tween(220), placementSpec = tween(320, easing = OrbitMotion.Easing), fadeOutSpec = tween(180))) {
-                            ChatRow(
-                                icon = "message-circle", title = side.title, selected = currentChatId == side.chatId,
-                                unread = side.chatId in unread, pinned = side.pinned, highlighted = menu,
-                                onClick = { onOpen(side.chatId) }, onLongClick = { menu = true },
-                                longClickLabel = stringResource(R.string.orbit_library_more_actions),
-                            )
-                            SideChatActions(
-                                expanded = menu, createdAt = side.createdAt, onDismiss = { menu = false },
-                                actions = listOf(
-                                    MenuAction("pencil", stringResource(R.string.rename)) { onRename(side) },
-                                    if (side.pinned) MenuAction("pin-off", stringResource(R.string.orbit_chats_unpin)) { onTogglePin(side) }
-                                    else MenuAction("pin", stringResource(R.string.orbit_chats_pin)) { onTogglePin(side) },
-                                    MenuAction("archive", stringResource(R.string.orbit_chats_archive)) { onArchive(side) },
-                                    MenuAction("trash-2", stringResource(R.string.delete), danger = true) { onDelete(side) },
-                                ),
-                            )
-                        }
+        // "Side chats", with the archive button on the right, like Muse's.
+        val sideHeader: @Composable () -> Unit = {
+            Column {
+                Row(Modifier.fillMaxWidth().padding(start = 12.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        stringResource(R.string.orbit_chats_side_section),
+                        style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                    val archiveLabel = stringResource(R.string.orbit_chats_archived_open)
+                    Box(
+                        Modifier.size(48.dp).clip(CircleShape)
+                            .clickable(role = Role.Button, onClickLabel = archiveLabel, onClick = onOpenArchive)
+                            .semantics { contentDescription = archiveLabel },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(orbitIcon("archive"), null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
+                if (sides.isNotEmpty()) {
+                    Text(
+                        stringResource(R.string.orbit_chats_long_press), style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                        modifier = Modifier.padding(start = 12.dp, bottom = 6.dp),
+                    )
+                }
+            }
+        }
+        val sideRows: androidx.compose.foundation.lazy.LazyListScope.() -> Unit = {
+            items(sides, key = { it.chatId }) { side ->
+                var menu by remember(side.chatId) { mutableStateOf(false) }
+                Box(Modifier.animateItem(fadeInSpec = tween(220), placementSpec = tween(320, easing = OrbitMotion.Easing), fadeOutSpec = tween(180))) {
+                    ChatRow(
+                        icon = "message-circle", title = side.title, selected = onChat && currentChatId == side.chatId,
+                        unread = side.chatId in unread, pinned = side.pinned, highlighted = menu,
+                        onClick = { onOpen(side.chatId) }, onLongClick = { menu = true },
+                        longClickLabel = stringResource(R.string.orbit_library_more_actions),
+                    )
+                    SideChatActions(
+                        expanded = menu, createdAt = side.createdAt, onDismiss = { menu = false },
+                        actions = listOf(
+                            MenuAction("pencil", stringResource(R.string.rename)) { onRename(side) },
+                            if (side.pinned) MenuAction("pin-off", stringResource(R.string.orbit_chats_unpin)) { onTogglePin(side) }
+                            else MenuAction("pin", stringResource(R.string.orbit_chats_pin)) { onTogglePin(side) },
+                            MenuAction("archive", stringResource(R.string.orbit_chats_archive)) { onArchive(side) },
+                            MenuAction("trash-2", stringResource(R.string.delete), danger = true) { onDelete(side) },
+                        ),
+                    )
+                }
+            }
+        }
+        if (selectedTab == null) {
+            ChatRow(
+                icon = "house", title = stringResource(R.string.orbit_chats_main),
+                selected = currentChatId == orbit.chatId, unread = orbit.chatId in unread,
+                onClick = { onOpen(orbit.chatId) },
+            )
+            sideHeader()
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                if (sides.isEmpty()) {
+                    EmptySideChats(onNew = onNew, enabled = !busy)
+                } else {
+                    LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(2.dp)) { sideRows() }
+                }
+            }
+        } else {
+            // On the sidebar the tabs scroll with the side chats, so a short window still shows them all.
+            LazyColumn(Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                item(key = "tabs") { tabRows() }
+                item(key = "side-header") { sideHeader() }
+                if (sides.isEmpty()) {
+                    item(key = "side-empty") {
+                        Box(Modifier.fillMaxWidth().padding(vertical = 24.dp)) { EmptySideChats(onNew = onNew, enabled = !busy) }
+                    }
+                } else sideRows()
             }
         }
         // Settings, search and new side chat, like the bottom of Muse's menu.

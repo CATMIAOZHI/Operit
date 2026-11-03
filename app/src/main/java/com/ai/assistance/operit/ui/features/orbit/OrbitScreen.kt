@@ -48,6 +48,10 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -112,6 +116,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.isTraversalGroup
+import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.stateDescription
@@ -156,8 +162,15 @@ private const val TAG = "OrbitScreen"
 
 /** On a tablet Orbit's chat and its pages keep this width in the middle of the screen. */
 internal val ORBIT_PAGE_MAX_WIDTH = 840.dp
+
+/** Keeps a full-screen page's text at a readable width in the middle of a tablet; a phone is unchanged. */
+internal val readableWidth: Modifier = Modifier.centeredMaxWidth(ORBIT_PAGE_MAX_WIDTH)
 /** The narrower width of Orbit's forms on a tablet: the quick setup and the list of Orbits. */
 internal val ORBIT_FORM_MAX_WIDTH = 640.dp
+/** From this window width Orbit keeps its menu open at the left as a sidebar, like Muse on a tablet. */
+internal val ORBIT_SIDEBAR_MIN_WINDOW = 720.dp
+/** The sidebar's width, its outer margin included; the page sits to the right of it. */
+internal val ORBIT_SIDEBAR_WIDTH = 300.dp
 
 private fun lucide(name: String): ImageVector = CardIcons.get("lucide:$name") ?: Icons.Rounded.Person
 
@@ -333,13 +346,18 @@ private fun OrbitScreenContent(
     CompositionLocalProvider(com.ai.assistance.operit.ui.features.chat.components.LocalOrbitName provides orbitName(orbit)) {
         OrbitAppearanceTheme(orbit) {
             Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-                // On a tablet the chat, the profile and every page over them share one column in the
-                // middle, so the moving picture and the sliding pages keep one origin and stay inside it.
-                Box(Modifier.fillMaxSize().centeredMaxWidth(ORBIT_PAGE_MAX_WIDTH).clipToBounds()) {
+                // On a tablet the menu stays open at the left and the chat, the profile and every page
+                // over them share one column to its right, so the moving picture and the sliding pages
+                // keep one origin and stay inside it. On a phone that column is the whole screen.
+                androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
+                    // Only on a tablet: a phone turned sideways is wide but too short for the sidebar.
+                    val tablet = androidx.compose.ui.platform.LocalConfiguration.current.smallestScreenWidthDp >= 600
+                    val wide = tablet && maxWidth >= ORBIT_SIDEBAR_MIN_WINDOW
                     OrbitChatPage(
                         orbit = orbit,
                         settings = loadedSettings,
                         hasBackgroundImage = false,
+                        wide = wide,
                         onManageRoleCards = onManageRoleCards,
                         chatContent = chatContent,
                     )
@@ -354,6 +372,7 @@ private fun OrbitChatPage(
     orbit: OrbitProfile,
     settings: OrbitSettings,
     hasBackgroundImage: Boolean,
+    wide: Boolean,
     onManageRoleCards: () -> Unit,
     chatContent: @Composable (chatId: String, header: @Composable () -> Unit) -> Unit,
 ) {
@@ -415,6 +434,19 @@ private fun OrbitChatPage(
     val currentChatId = talkChatId.takeIf { it in orbit.talkChatIds || it == justCreatedChatId } ?: orbit.chatId
     val currentSide = orbit.sideChats.firstOrNull { it.chatId == currentChatId }
     var showChats by remember { mutableStateOf(false) }
+    // On a tablet the menu is a sidebar kept open at the left; the menu button folds it away and back.
+    var sidebarOpen by rememberSaveable(orbit.id) { mutableStateOf(true) }
+    val wideNow by rememberUpdatedState(wide)
+    fun openMenu() {
+        if (wideNow) sidebarOpen = !sidebarOpen else showChats = true
+    }
+    // Widened while the phone menu was open: the sidebar takes over, so the overlay menu closes.
+    LaunchedEffect(wide) { if (wide) showChats = false }
+    // The tablet sidebar's search covers the whole page, chat included.
+    var sidebarSearch by remember(orbit.id) { mutableStateOf(false) }
+    // Pages that must not just vanish (an unsaved edit) are asked before a sidebar pick closes them.
+    val leaveGuard = remember(orbit.id) { OrbitLeaveGuard() }
+    val cardLeaveGuard = remember(orbit.id) { OrbitLeaveGuard() }
     // The search inside the chat on screen, opened from the round button at the top right.
     var chatSearchOpen by remember(orbit.id) { mutableStateOf(false) }
     // Outlives a message's menu, so keeping a message finishes after the menu closes.
@@ -595,7 +627,7 @@ private fun OrbitChatPage(
     // Covered by the menu, the profile or a full page over it, the chat is not being read.
     // The profile is revealed under the back preview without changing the selected chat.
     val profileShown = showProfile && (!devView || devPicture != null)
-    val chatOnScreen = tab == OrbitTab.CHAT && !showChats && !profileShown &&
+    val chatOnScreen = tab == OrbitTab.CHAT && !showChats && !profileShown && !sidebarSearch &&
         subPage == null && !showImport && !chatSearchOpen &&
         lifecycleState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
     LaunchedEffect(currentChatId, unreadChats, chatOnScreen) {
@@ -645,8 +677,189 @@ private fun OrbitChatPage(
         LocalOrbitActivity provides rememberOrbitActivity(orbit, currentChatId),
         LocalOrbitSharedAvatar provides sharedAvatar,
     ) {
+    // Every page that opens over the chat, shared by the page stack and, on a tablet, the settings card.
+    val renderPage: @Composable (OrbitSubPage) -> Unit = { page ->
+        val back = { pop() }
+        when (page) {
+            OrbitSubPage.SETTINGS -> OrbitSettingsPage(
+                orbit = orbit,
+                settings = settings,
+                hasBackgroundImage = false,
+                onBack = back,
+                onOpenPrompts = { push(OrbitSubPage.PROMPTS) },
+                onOpenPackages = { push(OrbitSubPage.PACKAGES) },
+                onOpenToolPermissions = { push(OrbitSubPage.TOOL_PERMISSIONS) },
+                onOpenToolAccess = { push(OrbitSubPage.TOOL_ACCESS) },
+                onOpenVault = { push(OrbitSubPage.VAULT) },
+                onOpenImport = { showImport = true },
+                onOpenUsage = { push(OrbitSubPage.USAGE) },
+                onOpenAppearance = { push(OrbitSubPage.APPEARANCE) },
+                onOpenPet = { push(OrbitSubPage.PET) },
+                onOpenModels = { push(OrbitSubPage.MODELS) },
+                onOpenContext = { push(OrbitSubPage.CONTEXT) },
+                onOpenPhonePermissions = { push(OrbitSubPage.PHONE_PERMISSIONS) },
+                onOpenNotificationSettings = { push(OrbitSubPage.NOTIFICATION_SETTINGS) },
+                onOpenSpeech = { push(OrbitSubPage.SPEECH_SETTINGS) },
+                onOpenChannels = { push(OrbitSubPage.CHANNELS) },
+                onOpenText = { push(OrbitSubPage.TEXT_SETTINGS) },
+                onOpenAutomation = { push(OrbitSubPage.AUTOMATION_SETTINGS) },
+                onOpenBackup = { push(OrbitSubPage.BACKUP) },
+                onOpenAbout = { push(OrbitSubPage.ABOUT) },
+                onOpenLanguage = { push(OrbitSubPage.LANGUAGE) },
+                onOpenStorage = { push(OrbitSubPage.STORAGE) },
+                onOpenComponents = { push(OrbitSubPage.COMPONENTS) },
+                onOpenMcp = { push(OrbitSubPage.MCP_CONFIG) },
+                onOpenHelp = { push(OrbitSubPage.HELP) },
+                onOpenAgreement = { push(OrbitSubPage.AGREEMENT) },
+                onPause = back,
+            )
+            OrbitSubPage.CHANNELS -> OrbitChannelsPage(orbit, onBack = back,
+                onOpenWeixin = { push(OrbitSubPage.WEIXIN) })
+            OrbitSubPage.WEIXIN -> OrbitWeixinPage(orbit, onBack = back, onOpenChat = { chat ->
+                talkChatId = chat
+                tab = OrbitTab.CHAT
+                showProfile = false
+                stackNames = ""
+            })
+            OrbitSubPage.APPEARANCE -> OrbitAppearancePage(orbit, onBack = back)
+            OrbitSubPage.PET -> OrbitPetSettingsPage(onBack = back)
+            OrbitSubPage.MODELS -> OrbitModelsPage(orbit, onBack = back,
+                onOpenModelConfig = { push(OrbitSubPage.MODEL_CONFIG) })
+            OrbitSubPage.CONTEXT -> OrbitContextPage(orbit, onBack = back)
+            OrbitSubPage.MODEL_CONFIG -> OrbitModelConfigPage(onBack = back)
+            OrbitSubPage.SPEECH_SETTINGS -> OrbitSpeechSettingsPage(orbit.id, onBack = back)
+            OrbitSubPage.TEXT_SETTINGS -> OrbitTextSettingsPage(onBack = back)
+            OrbitSubPage.AUTOMATION_SETTINGS -> OrbitAutomationSettingsPage(onBack = back)
+            OrbitSubPage.BACKUP -> OrbitBackupSettingsPage(onBack = back)
+            OrbitSubPage.ABOUT -> OrbitAboutPage(onBack = back,
+                onOpenUpdateHistory = { push(OrbitSubPage.UPDATE_HISTORY) })
+            OrbitSubPage.UPDATE_HISTORY -> OrbitUpdateHistoryPage(onBack = back)
+            OrbitSubPage.LANGUAGE -> OrbitLanguagePage(onBack = back)
+            OrbitSubPage.STORAGE -> OrbitStoragePage(onBack = back,
+                onOpenComponents = { push(OrbitSubPage.COMPONENTS) }, onOpenBackup = { push(OrbitSubPage.BACKUP) })
+            OrbitSubPage.COMPONENTS -> OrbitComponentsPage(onBack = back)
+            OrbitSubPage.MCP_CONFIG -> OrbitMcpConfigPage(onBack = back,
+                onOpenStartupServices = { push(OrbitSubPage.TERMINAL_STARTUP) })
+            OrbitSubPage.TERMINAL_STARTUP -> OrbitTerminalStartupPage(onBack = back)
+            OrbitSubPage.HELP -> OrbitHelpPage(onBack = back)
+            OrbitSubPage.AGREEMENT -> OrbitAgreementPage(onBack = back)
+            OrbitSubPage.APP_COSTS -> OrbitAppCostsPage(onBack = back,
+                onOpenPricing = { push(OrbitSubPage.APP_PRICING) }, onOpenGroups = { push(OrbitSubPage.APP_GROUPS) })
+            OrbitSubPage.APP_PRICING -> OrbitAppPricingPage(pricing = true, onBack = back)
+            OrbitSubPage.APP_GROUPS -> OrbitAppPricingPage(pricing = false, onBack = back)
+            OrbitSubPage.PHONE_PERMISSIONS -> OrbitPhonePermissionsPage(onBack = back,
+                onOpenDeviceAccess = { push(OrbitSubPage.DEVICE_ACCESS) })
+            OrbitSubPage.DEVICE_ACCESS -> OrbitDeviceAccessPage(orbitName(orbit), onBack = back, onDraft = ::draftToChat)
+            OrbitSubPage.NOTIFICATION_SETTINGS -> OrbitNotificationSettingsPage(orbit, onBack = back,
+                onOpenDelivery = { push(OrbitSubPage.NOTIFICATIONS) })
+            OrbitSubPage.USAGE -> OrbitUsagePage(orbit, onBack = back,
+                onOpenTrends = { push(OrbitSubPage.USAGE_TRENDS) },
+                onOpenAppCosts = { push(OrbitSubPage.APP_COSTS) })
+            OrbitSubPage.USAGE_TRENDS -> OrbitUsageTrendsPage(orbit, onBack = back)
+            OrbitSubPage.SOUL -> OrbitSoulFilePage(orbit.id, onBack = back)
+            OrbitSubPage.IDENTITY -> OrbitIdentityFilePage(orbit.id, onBack = back)
+            OrbitSubPage.USER -> OrbitUserFilePage(orbit, onBack = back)
+            OrbitSubPage.MEMORY -> OrbitMemoryFilePage(orbit, onBack = back)
+            OrbitSubPage.PROMPT -> OrbitPromptFilePage(orbit.id, onBack = back)
+            OrbitSubPage.ALIGNMENT -> OrbitAlignmentFilePage(orbit.id, onBack = back)
+            OrbitSubPage.PROMPTS -> OrbitPromptLayersPage(
+                orbit = orbit,
+                onBack = back,
+                onOpenPrompt = { push(OrbitSubPage.PROMPT) },
+                onOpenSoul = { push(OrbitSubPage.SOUL) },
+                onOpenIdentity = { push(OrbitSubPage.IDENTITY) },
+                onOpenAlignment = { push(OrbitSubPage.ALIGNMENT) },
+                onOpenMemory = { push(OrbitSubPage.MEMORY) },
+                onOpenUser = { push(OrbitSubPage.USER) },
+            )
+            OrbitSubPage.PACKAGES -> OrbitPackagesPage(orbit, onBack = back)
+            OrbitSubPage.VAULT -> OrbitVaultPage(orbit, onBack = back, onOpenEntry = { id ->
+                openVaultEntryId = id
+                push(OrbitSubPage.VAULT_ENTRY)
+            })
+            OrbitSubPage.VAULT_ENTRY -> {
+                val id = openVaultEntryId
+                // Leaves only while this page is still on top, read when it is asked:
+                // a delete that finishes after the user went back must not pop the list.
+                if (id != null) OrbitVaultEntryPage(orbit, id, onBack = {
+                    val now = stackNames.split(',').filter { it.isNotEmpty() }
+                    if (now.lastOrNull() == OrbitSubPage.VAULT_ENTRY.name) {
+                        stackNames = now.dropLast(1).joinToString(",")
+                    }
+                }, onDraft = { draftToChat(it) })
+                else LaunchedEffect(Unit) { pop() }
+            }
+            OrbitSubPage.TOOL_PERMISSIONS -> {
+                if (settings.developerMode) OrbitToolPermissionsPage(onBack = back)
+                else LaunchedEffect(Unit) { back() }
+            }
+            OrbitSubPage.TOOL_ACCESS -> OrbitToolAccessPage(onBack = back)
+            OrbitSubPage.NOTIFICATIONS -> OrbitNotificationsPage(orbit.id, onBack = back)
+            OrbitSubPage.FILES -> OrbitFilesPage(orbit.id, onBack = back, onDraft = ::draftToChat)
+            // No id opens the grouped list of every task.
+            OrbitSubPage.TASK -> OrbitTasksPage(orbit.id, onBack = back, initialTaskId = openTaskId,
+                openSystem = openSystemTasks, onDraft = ::draftToChat,
+                onOpenProcess = { openProcess = it; push(OrbitSubPage.PROCESS) })
+            OrbitSubPage.PROCESS -> {
+                val process = openProcess
+                if (process != null) {
+                    OrbitProcessPage(process, onBack = back, onOpenTask = { taskId ->
+                        openTaskId = taskId
+                        openSystemTasks = false
+                        push(OrbitSubPage.TASK)
+                    }, developer = settings.developerMode)
+                } else {
+                    LaunchedEffect(Unit) { pop() }
+                }
+            }
+            OrbitSubPage.MEMORY_LIBRARY -> {
+                val id = memoryResult?.getOrNull()
+                if (id != null) {
+                    OrbitLearningPage(id, orbit.chatId, back, onDraft = ::draftToChat)
+                } else {
+                    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                        Column(Modifier.fillMaxSize().statusBarsPadding().padding(24.dp),
+                            verticalArrangement = Arrangement.Center,
+                            horizontalAlignment = Alignment.CenterHorizontally) {
+                            if (memoryResult == null) CircularProgressIndicator()
+                            else {
+                                Text(stringResource(R.string.orbit_memory_unavailable))
+                                TextButton(onClick = { memoryRetry++ }) { Text(stringResource(R.string.orbit_memory_retry)) }
+                            }
+                            TextButton(onClick = back) { Text(stringResource(R.string.back)) }
+                        }
+                    }
+                }
+            }
+        }
+    }
     androidx.compose.runtime.SideEffect { sharedAvatar.onTab = tab != OrbitTab.CHAT }
+    // The developer view keeps the whole width. Leaving it, the sidebar is back as soon as the
+    // recording that slides away covers the page, so nothing jumps when it is gone.
+    val docked = wide && sidebarOpen && (!devView || devPicture != null)
+    // Settings opened on a tablet show as a card in the middle of the screen, like Muse's, over
+    // whatever page was open. Whether it is a card is decided when it opens and kept until it
+    // closes, so resizing the window never moves its pages (and an edit in them) to another place.
+    val settingsAt = stack.indexOf(OrbitSubPage.SETTINGS)
+    var settingsCard by rememberSaveable(orbit.id) { mutableStateOf(wide) }
+    androidx.compose.runtime.SideEffect { if (settingsAt < 0 && settingsCard != wide) settingsCard = wide }
+    val settingsModal = settingsCard && settingsAt >= 0
+    val pageStack = if (settingsModal) stack.take(settingsAt) else stack
+    val cardStack = if (settingsModal) stack.drop(settingsAt) else emptyList()
+    // Closing the card leaves the pages under it as they were.
+    fun closeSettingsCard() {
+        if (cardLeaveGuard.tryLeave()) stackNames = pageStack.joinToString(",") { it.name }
+    }
+    // The chat's text box sits under the card: drop its focus so typing never goes there.
+    val pageFocus = androidx.compose.ui.platform.LocalFocusManager.current
+    LaunchedEffect(settingsModal) { if (settingsModal) pageFocus.clearFocus(force = true) }
     Box(Modifier.fillMaxSize()) {
+    Box(
+        Modifier.fillMaxSize()
+            .padding(start = if (docked) ORBIT_SIDEBAR_WIDTH else 0.dp)
+            .then(if (wide) Modifier.centeredMaxWidth(ORBIT_PAGE_MAX_WIDTH) else Modifier)
+            .clipToBounds()
+    ) {
         val tabBack = rememberOrbitBackMotion()
         OrbitBackHandler(tabBack, enabled = tab != OrbitTab.CHAT && !showProfile && !devView && stack.isEmpty()) {
             tab = OrbitTab.CHAT
@@ -778,7 +991,7 @@ private fun OrbitChatPage(
                                     orbit = orbit, sideTitle = currentSide?.title, hasUnread = hasUnread,
                                     activity = orbitActivity(),
                                     avatarAnimated = chatOnScreen,
-                                    onOpenProfile = { showProfile = true }, onOpenMenu = { showChats = true },
+                                    onOpenProfile = { showProfile = true }, onOpenMenu = { openMenu() },
                                     onOpenSearch = { chatSearchOpen = true },
                                 )
                                 currentSide?.forkOrigin?.let { origin ->
@@ -806,7 +1019,7 @@ private fun OrbitChatPage(
                                 activity = orbitActivity(),
                                 avatarAnimated = tab != OrbitTab.CHAT && !showProfile && !showChats &&
                                     stackNames.isEmpty() && editingFile == null && !showImport,
-                                onOpenProfile = { showProfile = true }, onOpenMenu = { showChats = true },
+                                onOpenProfile = { showProfile = true }, onOpenMenu = { openMenu() },
                                 onTabLayer = true,
                             )
                         }
@@ -814,6 +1027,7 @@ private fun OrbitChatPage(
                     CompositionLocalProvider(LocalOrbitTabHeader provides tabHeader) {
                         OrbitTabPage(orbit, pageTab, visible = onTab,
                             contentLayer = Modifier.orbitDismissLayer(tabBack),
+                            onOpenProcess = { openProcess = it; push(OrbitSubPage.PROCESS) },
                             onDraft = { text ->
                                 // The prompt waits in the main chat's input box for the user to finish.
                                 draftToOrbit(context, orbit, text)
@@ -874,7 +1088,9 @@ private fun OrbitChatPage(
         ) {
             (editingFile ?: shownFile)?.let { path ->
                 val files = remember(orbit.id) { com.ai.assistance.operit.features.orbit.OrbitFiles.of(context, orbit.id) }
-                OrbitMadeFilePage(files, path, orbitName(orbit), onBack = { editingFile = null; filesVersion++ })
+                CompositionLocalProvider(LocalOrbitLeaveGuard provides leaveGuard) {
+                    OrbitMadeFilePage(files, path, orbitName(orbit), onBack = { editingFile = null; filesVersion++ })
+                }
             }
         }
         // The profile grows out of Orbit's picture while the picture itself moves on top into the
@@ -919,7 +1135,7 @@ private fun OrbitChatPage(
                 ) {
                     OrbitProfilePage(
                         orbit = orbit,
-                        visible = profileShown && subPage == null,
+                        visible = profileShown && subPage == null && !sidebarSearch,
                         onClose = { showProfile = false },
                         onOpenSettings = { push(OrbitSubPage.SETTINGS) },
                         onOpenTask = {
@@ -971,170 +1187,65 @@ private fun OrbitChatPage(
         }
         }
         // Pages opened from the profile or the settings slide in over whatever is showing, so
-        // opening one from the settings never shows the profile on the way.
-        OrbitPushHost(
-            entries = stack,
-            onPop = { pop() },
-            state = pushState,
-        ) { page ->
-            val back = { pop() }
-            when (page) {
-                OrbitSubPage.SETTINGS -> OrbitSettingsPage(
-                    orbit = orbit,
-                    settings = settings,
-                    hasBackgroundImage = false,
-                    onBack = back,
-                    onOpenPrompts = { push(OrbitSubPage.PROMPTS) },
-                    onOpenPackages = { push(OrbitSubPage.PACKAGES) },
-                    onOpenToolPermissions = { push(OrbitSubPage.TOOL_PERMISSIONS) },
-                    onOpenToolAccess = { push(OrbitSubPage.TOOL_ACCESS) },
-                    onOpenVault = { push(OrbitSubPage.VAULT) },
-                    onOpenImport = { showImport = true },
-                    onOpenUsage = { push(OrbitSubPage.USAGE) },
-                    onOpenAppearance = { push(OrbitSubPage.APPEARANCE) },
-                    onOpenPet = { push(OrbitSubPage.PET) },
-                    onOpenModels = { push(OrbitSubPage.MODELS) },
-                    onOpenContext = { push(OrbitSubPage.CONTEXT) },
-                    onOpenPhonePermissions = { push(OrbitSubPage.PHONE_PERMISSIONS) },
-                    onOpenNotificationSettings = { push(OrbitSubPage.NOTIFICATION_SETTINGS) },
-                    onOpenSpeech = { push(OrbitSubPage.SPEECH_SETTINGS) },
-                    onOpenChannels = { push(OrbitSubPage.CHANNELS) },
-                    onOpenText = { push(OrbitSubPage.TEXT_SETTINGS) },
-                    onOpenAutomation = { push(OrbitSubPage.AUTOMATION_SETTINGS) },
-                    onOpenBackup = { push(OrbitSubPage.BACKUP) },
-                    onOpenAbout = { push(OrbitSubPage.ABOUT) },
-                    onOpenLanguage = { push(OrbitSubPage.LANGUAGE) },
-                    onOpenStorage = { push(OrbitSubPage.STORAGE) },
-                    onOpenComponents = { push(OrbitSubPage.COMPONENTS) },
-                    onOpenMcp = { push(OrbitSubPage.MCP_CONFIG) },
-                    onOpenHelp = { push(OrbitSubPage.HELP) },
-                    onOpenAgreement = { push(OrbitSubPage.AGREEMENT) },
-                    onPause = back,
-                )
-                OrbitSubPage.CHANNELS -> OrbitChannelsPage(orbit, onBack = back,
-                    onOpenWeixin = { push(OrbitSubPage.WEIXIN) })
-                OrbitSubPage.WEIXIN -> OrbitWeixinPage(orbit, onBack = back, onOpenChat = { chat ->
-                    talkChatId = chat
-                    tab = OrbitTab.CHAT
-                    showProfile = false
-                    stackNames = ""
-                })
-                OrbitSubPage.APPEARANCE -> OrbitAppearancePage(orbit, onBack = back)
-                OrbitSubPage.PET -> OrbitPetSettingsPage(onBack = back)
-                OrbitSubPage.MODELS -> OrbitModelsPage(orbit, onBack = back,
-                    onOpenModelConfig = { push(OrbitSubPage.MODEL_CONFIG) })
-                OrbitSubPage.CONTEXT -> OrbitContextPage(orbit, onBack = back)
-                OrbitSubPage.MODEL_CONFIG -> OrbitModelConfigPage(onBack = back)
-                OrbitSubPage.SPEECH_SETTINGS -> OrbitSpeechSettingsPage(orbit.id, onBack = back)
-                OrbitSubPage.TEXT_SETTINGS -> OrbitTextSettingsPage(onBack = back)
-                OrbitSubPage.AUTOMATION_SETTINGS -> OrbitAutomationSettingsPage(onBack = back)
-                OrbitSubPage.BACKUP -> OrbitBackupSettingsPage(onBack = back)
-                OrbitSubPage.ABOUT -> OrbitAboutPage(onBack = back,
-                    onOpenUpdateHistory = { push(OrbitSubPage.UPDATE_HISTORY) })
-                OrbitSubPage.UPDATE_HISTORY -> OrbitUpdateHistoryPage(onBack = back)
-                OrbitSubPage.LANGUAGE -> OrbitLanguagePage(onBack = back)
-                OrbitSubPage.STORAGE -> OrbitStoragePage(onBack = back,
-                    onOpenComponents = { push(OrbitSubPage.COMPONENTS) }, onOpenBackup = { push(OrbitSubPage.BACKUP) })
-                OrbitSubPage.COMPONENTS -> OrbitComponentsPage(onBack = back)
-                OrbitSubPage.MCP_CONFIG -> OrbitMcpConfigPage(onBack = back,
-                    onOpenStartupServices = { push(OrbitSubPage.TERMINAL_STARTUP) })
-                OrbitSubPage.TERMINAL_STARTUP -> OrbitTerminalStartupPage(onBack = back)
-                OrbitSubPage.HELP -> OrbitHelpPage(onBack = back)
-                OrbitSubPage.AGREEMENT -> OrbitAgreementPage(onBack = back)
-                OrbitSubPage.APP_COSTS -> OrbitAppCostsPage(onBack = back,
-                    onOpenPricing = { push(OrbitSubPage.APP_PRICING) }, onOpenGroups = { push(OrbitSubPage.APP_GROUPS) })
-                OrbitSubPage.APP_PRICING -> OrbitAppPricingPage(pricing = true, onBack = back)
-                OrbitSubPage.APP_GROUPS -> OrbitAppPricingPage(pricing = false, onBack = back)
-                OrbitSubPage.PHONE_PERMISSIONS -> OrbitPhonePermissionsPage(onBack = back,
-                    onOpenDeviceAccess = { push(OrbitSubPage.DEVICE_ACCESS) })
-                OrbitSubPage.DEVICE_ACCESS -> OrbitDeviceAccessPage(orbitName(orbit), onBack = back, onDraft = ::draftToChat)
-                OrbitSubPage.NOTIFICATION_SETTINGS -> OrbitNotificationSettingsPage(orbit, onBack = back,
-                    onOpenDelivery = { push(OrbitSubPage.NOTIFICATIONS) })
-                OrbitSubPage.USAGE -> OrbitUsagePage(orbit, onBack = back,
-                    onOpenTrends = { push(OrbitSubPage.USAGE_TRENDS) },
-                    onOpenAppCosts = { push(OrbitSubPage.APP_COSTS) })
-                OrbitSubPage.USAGE_TRENDS -> OrbitUsageTrendsPage(orbit, onBack = back)
-                OrbitSubPage.SOUL -> OrbitSoulFilePage(orbit.id, onBack = back)
-                OrbitSubPage.IDENTITY -> OrbitIdentityFilePage(orbit.id, onBack = back)
-                OrbitSubPage.USER -> OrbitUserFilePage(orbit, onBack = back)
-                OrbitSubPage.MEMORY -> OrbitMemoryFilePage(orbit, onBack = back)
-                OrbitSubPage.PROMPT -> OrbitPromptFilePage(orbit.id, onBack = back)
-                OrbitSubPage.ALIGNMENT -> OrbitAlignmentFilePage(orbit.id, onBack = back)
-                OrbitSubPage.PROMPTS -> OrbitPromptLayersPage(
-                    orbit = orbit,
-                    onBack = back,
-                    onOpenPrompt = { push(OrbitSubPage.PROMPT) },
-                    onOpenSoul = { push(OrbitSubPage.SOUL) },
-                    onOpenIdentity = { push(OrbitSubPage.IDENTITY) },
-                    onOpenAlignment = { push(OrbitSubPage.ALIGNMENT) },
-                    onOpenMemory = { push(OrbitSubPage.MEMORY) },
-                    onOpenUser = { push(OrbitSubPage.USER) },
-                )
-                OrbitSubPage.PACKAGES -> OrbitPackagesPage(orbit, onBack = back)
-                OrbitSubPage.VAULT -> OrbitVaultPage(orbit, onBack = back, onOpenEntry = { id ->
-                    openVaultEntryId = id
-                    push(OrbitSubPage.VAULT_ENTRY)
-                })
-                OrbitSubPage.VAULT_ENTRY -> {
-                    val id = openVaultEntryId
-                    // Leaves only while this page is still on top, read when it is asked:
-                    // a delete that finishes after the user went back must not pop the list.
-                    if (id != null) OrbitVaultEntryPage(orbit, id, onBack = {
-                        val now = stackNames.split(',').filter { it.isNotEmpty() }
-                        if (now.lastOrNull() == OrbitSubPage.VAULT_ENTRY.name) {
-                            stackNames = now.dropLast(1).joinToString(",")
-                        }
-                    }, onDraft = { draftToChat(it) })
-                    else LaunchedEffect(Unit) { pop() }
-                }
-                OrbitSubPage.TOOL_PERMISSIONS -> {
-                    if (settings.developerMode) OrbitToolPermissionsPage(onBack = back)
-                    else LaunchedEffect(Unit) { back() }
-                }
-                OrbitSubPage.TOOL_ACCESS -> OrbitToolAccessPage(onBack = back)
-                OrbitSubPage.NOTIFICATIONS -> OrbitNotificationsPage(orbit.id, onBack = back)
-                OrbitSubPage.FILES -> OrbitFilesPage(orbit.id, onBack = back, onDraft = ::draftToChat)
-                // No id opens the grouped list of every task.
-                OrbitSubPage.TASK -> OrbitTasksPage(orbit.id, onBack = back, initialTaskId = openTaskId,
-                    openSystem = openSystemTasks, onDraft = ::draftToChat)
-                OrbitSubPage.PROCESS -> {
-                    val process = openProcess
-                    if (process != null) {
-                        OrbitProcessPage(process, onBack = back, onOpenTask = { taskId ->
-                            openTaskId = taskId
-                            openSystemTasks = false
-                            push(OrbitSubPage.TASK)
-                        }, developer = settings.developerMode)
-                    } else {
-                        LaunchedEffect(Unit) { pop() }
-                    }
-                }
-                OrbitSubPage.MEMORY_LIBRARY -> {
-                    val id = memoryResult?.getOrNull()
-                    if (id != null) {
-                        OrbitLearningPage(id, orbit.chatId, back, onDraft = ::draftToChat)
-                    } else {
-                        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                            Column(Modifier.fillMaxSize().statusBarsPadding().padding(24.dp),
-                                verticalArrangement = Arrangement.Center,
-                                horizontalAlignment = Alignment.CenterHorizontally) {
-                                if (memoryResult == null) CircularProgressIndicator()
-                                else {
-                                    Text(stringResource(R.string.orbit_memory_unavailable))
-                                    TextButton(onClick = { memoryRetry++ }) { Text(stringResource(R.string.orbit_memory_retry)) }
-                                }
-                                TextButton(onClick = back) { Text(stringResource(R.string.back)) }
-                            }
-                        }
-                    }
-                }
-            }
+        // opening one from the settings never shows the profile on the way. On a tablet the
+        // settings and what opens from them show in a card over the whole screen instead.
+        // Pages under the tablet's settings card or the sidebar's search are covered: not active.
+        CompositionLocalProvider(
+            LocalOrbitLeaveGuard provides leaveGuard,
+            LocalOrbitPageActive provides (!settingsModal && !sidebarSearch),
+        ) {
+            OrbitPushHost(
+                entries = pageStack,
+                onPop = { pop() },
+                state = pushState,
+                page = renderPage,
+            )
         }
-        // The recorded developer view sliding off the page it goes back to, over every page of this
-        // Orbit, with the usual dim over that page. It takes every touch while it moves. The recording
-        // is played into its own layer once and only the layer moves, so the swipe does not replay the
-        // whole page each frame.
-        devPicture?.let { picture ->
+    }
+    if (wide) {
+        // Muse's tablet sidebar: the tabs, the side chats, and settings, search and a new side chat.
+        // Drawn after the page so its search covers the whole screen. Picking something from it
+        // shows that in the page and closes what was open over the page; a page with an unsaved
+        // edit asks first, and the pick waits.
+        fun showInPage(): Boolean {
+            if (!cardLeaveGuard.tryLeave() || !leaveGuard.tryLeave()) return false
+            showProfile = false
+            stackNames = ""
+            chatSearchOpen = false
+            if (editingFile != null) { editingFile = null; filesVersion++ }
+            return true
+        }
+        OrbitSideMenu(
+            visible = docked,
+            orbit = orbit, currentChatId = currentChatId, unread = unreadChats,
+            onSelect = {
+                if (showInPage()) {
+                    if (it !in orbit.talkChatIds) justCreatedChatId = it
+                    talkChatId = it
+                    tab = OrbitTab.CHAT
+                }
+            },
+            onDismiss = { sidebarOpen = false },
+            onOpenSettings = { if (settingsAt < 0) push(OrbitSubPage.SETTINGS) },
+            // An unsaved edit asks first here too.
+            onLeaveOrbit = { if (cardLeaveGuard.tryLeave() && leaveGuard.tryLeave()) leaveOrbit() },
+            docked = true,
+            selectedTab = tab,
+            onSelectTab = { picked ->
+                if (showInPage()) {
+                    if (picked == OrbitTab.CHAT) talkChatId = orbit.chatId else pageTab = picked
+                    tab = picked
+                }
+            },
+            onSearchShown = { sidebarSearch = it },
+            blocked = settingsModal,
+        )
+    }
+    // The recorded developer view sliding off the page it goes back to, over every page of this
+    // Orbit and the sidebar, with the usual dim over them. It takes every touch while it moves. The
+    // recording is played into its own layer once and only the layer moves, so the swipe does not
+    // replay the whole page each frame.
+    devPicture?.let { picture ->
             Box(
                 Modifier.fillMaxSize()
                     .pointerInput(Unit) {
@@ -1150,7 +1261,54 @@ private fun OrbitChatPage(
                     .graphicsLayer { translationX = size.width * devLeave.value }
                     .drawBehind { drawIntoCanvas { it.nativeCanvas.drawPicture(picture) } }
             )
+    }
+    run {
+        // The settings card. What it shows is kept while it fades away, so it does not empty on its way.
+        var modalStack by remember(orbit.id) { mutableStateOf(emptyList<OrbitSubPage>()) }
+        val shownModal = if (settingsModal) cardStack else modalStack
+        androidx.compose.runtime.SideEffect { if (settingsModal) modalStack = cardStack }
+        val modalPush = remember(orbit.id) { OrbitPushState() }
+        val settingsTitle = stringResource(R.string.settings)
+        OrbitCoverPage(visible = settingsModal, onDismiss = ::closeSettingsCard, fade = true, dim = 0.32f) {
+            val outside = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+            Box(
+                Modifier.fillMaxSize().clickable(
+                    interactionSource = outside, indication = null,
+                    onClickLabel = stringResource(R.string.close),
+                ) { closeSettingsCard() },
+                contentAlignment = Alignment.Center,
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(32.dp),
+                    color = MaterialTheme.colorScheme.background,
+                    shadowElevation = 16.dp,
+                    modifier = Modifier
+                        .systemBarsPadding()
+                        .padding(24.dp)
+                        .widthIn(max = 640.dp).fillMaxWidth(0.9f)
+                        .heightIn(max = 960.dp).fillMaxHeight(0.9f)
+                        .semantics { paneTitle = settingsTitle; isTraversalGroup = true }
+                        // A tap on the card itself never closes it.
+                        .pointerInput(Unit) { detectTapGestures { } },
+                ) {
+                    // The card sits inside the system bars, so its pages need no room for them.
+                    Box(Modifier.fillMaxSize().consumeWindowInsets(androidx.compose.foundation.layout.WindowInsets.systemBars)) {
+                        CompositionLocalProvider(LocalOrbitLeaveGuard provides cardLeaveGuard) {
+                            OrbitPushHost(
+                                entries = shownModal.drop(1),
+                                onPop = { pop() },
+                                state = modalPush,
+                                base = {
+                                    CompositionLocalProvider(LocalOrbitModalRoot provides true) { renderPage(OrbitSubPage.SETTINGS) }
+                                },
+                                page = renderPage,
+                            )
+                        }
+                    }
+                }
+            }
         }
+    }
     }
 
     }

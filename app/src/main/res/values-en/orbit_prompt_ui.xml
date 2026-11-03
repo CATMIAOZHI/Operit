@@ -126,7 +126,7 @@
     <string name="orbit_web_wait_title">Web page wait</string>
     <string name="orbit_web_wait_desc">How long Orbit waits after opening a page before reading it. Orbit reads pages without handing them to you, so 1 second is enough by default. The app\'s own setting is not affected.</string>
     <string name="orbit_language_row">Change the language the app shows</string>
-    <string name="orbit_storage_row">See what takes space and clear caches</string>
+    <string name="orbit_storage_row">Library size, deleting when full, and what takes space</string>
     <string name="orbit_components_row">Optional parts such as offline voice models</string>
     <string name="orbit_help_row">Common questions and how to use it</string>
     <string name="orbit_agreement_row">User agreement and privacy</string>
