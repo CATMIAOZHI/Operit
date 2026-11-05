@@ -138,7 +138,6 @@ internal fun rawChunks(text: String): List<String> {
 private const val MAX_LINE = 4000
 
 private fun copyRaw(context: Context, text: String) {
-    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
-    clipboard.setPrimaryClip(ClipData.newPlainText("message", text))
-    Toast.makeText(context, R.string.orbit_dev_view_raw_copied, Toast.LENGTH_SHORT).show()
+    // A tool result can be megabytes: too long for the clipboard, it points to the export instead.
+    com.ai.assistance.operit.ui.features.orbit.orbitDevCopy(context, text, tooBig = R.string.orbit_dev_copy_use_export)
 }

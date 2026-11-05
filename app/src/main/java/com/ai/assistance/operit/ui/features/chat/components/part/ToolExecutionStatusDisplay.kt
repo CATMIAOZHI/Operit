@@ -444,6 +444,7 @@ private fun PermissionReviewLifecycleDisplay(
         remember(context) {
             ChatRuntimeHolder.getInstance(context.applicationContext).getCore(ChatRuntimeSlot.MAIN)
         }
+    val reviewHost = LocalSubagentChatHost.current
     val reviewerRunFlow =
         remember(event.reviewerTaskId, event.parentChatId, event.action.targetId) {
             event.reviewerTaskId?.let(repository::observeById)
@@ -823,7 +824,10 @@ private fun PermissionReviewLifecycleDisplay(
                                 run.childChatId,
                                 permissionReviewJumpMarker(event.id),
                             )
-                            chatCore.switchChat(run.childChatId, scrollToBottom = false)
+                            // Outside the main chat (Orbit, its developer view) the host opens it;
+                            // switching the main chat there is undone at once.
+                            reviewHost?.open?.invoke(run.childChatId)
+                                ?: chatCore.switchChat(run.childChatId, scrollToBottom = false)
                         }
                     ) {
                         Text(stringResource(R.string.permission_review_open_subagent))

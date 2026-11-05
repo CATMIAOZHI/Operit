@@ -388,6 +388,8 @@ fun ChatArea(
     // Developer view: where the newest summary is, with the chat it is for. The model reads from it
     // on, so the rows before it are no longer sent. Read again when a summary or a new row comes in.
     val devView = LocalShowHiddenChatRows.current
+    // Developer view: the user messages that did not reach the server, marked on their rows.
+    val devUnsent = if (devView) LocalOrbitUnsentMessages.current else null
     val shownSummaryAt = remember(chatHistory) { chatHistory.lastOrNull { it.sender == "summary" }?.timestamp }
     val devSummary by androidx.compose.runtime.produceState<Pair<String, Long?>?>(
         null, devView, currentChatId, shownSummaryAt, chatHistory.lastOrNull()?.timestamp,
@@ -441,6 +443,8 @@ fun ChatArea(
                             com.ai.assistance.operit.ui.common.markdown.LocalTranscriptMarkdownSlice.current?.first != false) {
                             val sender = renderedMessage.sender
                             when {
+                                devUnsent != null && sender == "user" && renderedMessage.timestamp in devUnsent.timestamps ->
+                                    stringResource(R.string.orbit_dev_mark_unsent)
                                 devSummaryAt != null && sender == "summary" -> stringResource(
                                     if (renderedMessage.timestamp == devSummaryAt) R.string.orbit_dev_mark_summary_latest
                                     else R.string.orbit_dev_mark_summary_old,
@@ -466,6 +470,9 @@ fun ChatArea(
                             currentChatId = currentChatId,
                             message = renderedMessage,
                             devMark = devMark,
+                            // A part sealed when the user cut in has no end time; its turn ends at the next row.
+                            turnEnd = if (devView && renderedMessage.completedAt <= 0L)
+                                chatHistory.getOrNull(renderIndex + 1)?.timestamp else null,
                             showAssistantHeader = !isAssistantContinuation(chatHistory, renderIndex) &&
                                 com.ai.assistance.operit.ui.common.markdown.LocalTranscriptMarkdownSlice.current?.first != false,
                             enableDialogs = enableDialogs,
@@ -664,6 +671,19 @@ fun ChatArea(
                 }
             } else {
                 heldBubble()
+                // Developer view: messages handed to the running turn that it has not written yet.
+                if (devView && !hasNewerDisplayHistory && steeringSends.isNotEmpty()) {
+                    val times = remember(chatHistory) { chatHistory.mapTo(hashSetOf()) { it.timestamp } }
+                    steeringSends.filter { it.savedAt == null || it.savedAt !in times }.forEach { item ->
+                        val text = (item.steeringText ?: item.text).replace('\n', ' ').take(80)
+                        androidx.compose.runtime.key(item.id) {
+                            OrbitDevMark(
+                                stringResource(R.string.orbit_dev_mark_steering, text),
+                                Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp),
+                            )
+                        }
+                    }
+                }
                 if (showLoadingIndicator && showChatFloatingDotsAnimation) {
                     Box(Modifier.padding(start = 16.dp)) { LoadingDotsIndicator(aiTextColor) }
                 }
@@ -683,6 +703,8 @@ private fun MessageItem(
     message: ChatMessage,
     /** Developer view of an Orbit chat: text the model reads before this message, shown above it. */
     devMark: String? = null,
+    /** Developer view: where this reply's turn ends when the reply has no end time (see MessageInfoDialog). */
+    turnEnd: Long? = null,
     showAssistantHeader: Boolean,
     enableDialogs: Boolean,
     allowTranscriptMutation: Boolean,
@@ -1660,6 +1682,7 @@ private fun MessageItem(
             MessageInfoDialog(
                 message = message,
                 chatId = currentChatId,
+                turnEnd = turnEnd,
                 onDismiss = { showMessageInfoDialog = false }
             )
         }

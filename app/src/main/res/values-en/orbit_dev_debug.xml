@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="orbit_dev_more">Developer tools</string>
-    <string name="orbit_dev_requests">Requests sent</string>
+    <string name="orbit_dev_requests">Request records</string>
     <string name="orbit_dev_raw_search">Search raw text</string>
-    <string name="orbit_dev_events">Retries, repairs and compaction</string>
+    <string name="orbit_dev_events">Request results, retries, repairs and compaction</string>
 
-    <string name="orbit_dev_requests_hint">Kept only while developer mode is on, the last 6 per chat. Images and files show only their size.</string>
-    <string name="orbit_dev_requests_none">Nothing kept yet. With developer mode on, the next request this chat sends shows here.</string>
+    <string name="orbit_dev_requests_hint">Kept only while developer mode is on, the last 6 per chat. Ones that never went out are marked \"not sent\". Images and files show only their size.</string>
+    <string name="orbit_dev_requests_none">Nothing kept yet. With developer mode on, this chat\'s next request shows here.</string>
     <string name="orbit_dev_request_kind_send">Message</string>
     <string name="orbit_dev_request_kind_tool">Tool results</string>
     <string name="orbit_dev_request_params">Parameters</string>
@@ -17,7 +17,7 @@
     <string name="orbit_dev_request_copied">Copied</string>
     <string name="orbit_dev_request_too_big">Too large to copy at once; copy the messages one by one</string>
 
-    <string name="orbit_dev_events_hint">Retried model requests, local fixes to tool calls, and compaction inside a turn. Kept only while developer mode is on.</string>
+    <string name="orbit_dev_events_hint">How each model request ended and how long each stage took, errors, retries, local fixes to tool calls, and compaction inside a turn. Kept only while developer mode is on.</string>
     <string name="orbit_dev_events_none">Nothing kept yet</string>
     <string name="orbit_dev_event_kind_retry">Retry</string>
     <string name="orbit_dev_event_kind_repair">Local fix</string>
@@ -42,11 +42,30 @@
     <string name="orbit_dev_mark_summary_latest">The model reads from this summary on</string>
     <string name="orbit_dev_mark_summary_old">Old summary · replaced by a later one</string>
 
-    <string name="orbit_dev_info_request">Request sent</string>
+    <string name="orbit_dev_info_request">Request records</string>
     <string name="orbit_dev_info_request_none">Nothing kept for this turn. Requests sent while developer mode was off are not kept.</string>
-    <string name="orbit_dev_info_request_count">This turn sent %1$d requests; these are the parameters of the last</string>
+    <string name="orbit_dev_info_request_count">This turn actually sent %1$d requests (retries included); these are the parameters of the last</string>
     <string name="orbit_dev_info_open_request">View this request</string>
     <string name="orbit_dev_info_request_count_only">This turn sent %1$d requests. The last one\'s body was not kept: newer ones may have replaced it (only the last 6 per chat are kept), or too many requests went out at once.</string>
     <string name="orbit_dev_request_failed">Could not read this request</string>
     <string name="orbit_dev_request_retry">Try again</string>
+    <string name="orbit_dev_info_request_unsent">This turn\'s request was built but never sent (for example it failed or was stopped before connecting).</string>
+    <string name="orbit_dev_mark_unsent">Not sent</string>
+    <string name="orbit_dev_mark_steering">Handed to the running turn, not written to the chat yet: %1$s</string>
+    <string name="orbit_dev_task_unchanged">Nothing new, skipped</string>
+    <string name="orbit_dev_task_skipped">Not run</string>
+    <string name="orbit_dev_task_in_chat">Handed to the main chat</string>
+    <string name="orbit_dev_task_no_chat">This run left no chat. Its state and reason are below.</string>
+    <string name="orbit_dev_request_tool_config">Tool call settings</string>
+    <string name="orbit_dev_request_result">Result and timing</string>
+    <string name="orbit_dev_event_kind_result">Request result</string>
+    <string name="orbit_dev_export">Export this chat\'s raw content</string>
+    <string name="orbit_dev_export_failed">Export failed</string>
+    <string name="orbit_dev_copy_use_export">Too long to copy. Use \"Export this chat\'s raw content\" in the top-right menu.</string>
+    <string name="orbit_dev_exporting">Exporting</string>
+    <string name="orbit_dev_result_ok">Done</string>
+    <string name="orbit_dev_result_failed">Failed</string>
+    <string name="orbit_dev_result_cancelled">Stopped</string>
+    <string name="orbit_dev_result_log">App log line, as written:</string>
+    <string name="orbit_dev_request_unsent_mark">not sent</string>
 </resources>

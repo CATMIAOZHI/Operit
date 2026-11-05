@@ -124,6 +124,14 @@ abstract class ChatContentDao {
     @Query("SELECT MAX(timestamp) FROM messages WHERE chatId=:chatId AND sender='summary'")
     abstract suspend fun latestSummaryAt(chatId: String): Long?
 
+    /** Which of [chatIds] have any message at all (a task run that never reached the model has none). */
+    @Query("SELECT DISTINCT chatId FROM messages WHERE chatId IN (:chatIds)")
+    abstract suspend fun chatsWithMessages(chatIds: List<String>): List<String>
+
+    /** When the next row after [timestamp] in [chatId] was written, or null when it is the last. */
+    @Query("SELECT MIN(timestamp) FROM messages WHERE chatId=:chatId AND timestamp>:timestamp")
+    abstract suspend fun nextMessageAt(chatId: String, timestamp: Long): Long?
+
     @Query("""
         SELECT SUBSTR(CAST(COALESCE(v.content,m.content) AS BLOB),:byteOffset+1,32768)
         FROM messages m JOIN chats c ON c.id=m.chatId

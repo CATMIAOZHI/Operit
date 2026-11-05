@@ -50,6 +50,20 @@ data class OrbitActionRow(
     val updatedAt: Long,
 )
 
+/** One run of an Orbit task as the developer view lists it: skipped runs too, with why. */
+data class OrbitDevRunRow(
+    val id: String,
+    val taskId: String,
+    val title: String,
+    val state: String,
+    val decision: String,
+    val observation: String,
+    val error: String,
+    val startedAt: Long,
+    val finishedAt: Long,
+    val generation: Long,
+)
+
 /** Marks an event put back because Orbit's token allowance ran out; see [OrbitTaskDao.stopForQuota]. */
 private const val QUOTA_RETRY_KEY = ":quota-retry:"
 /** How many generations a resumable run gets after process deaths before only that run is given up. */
@@ -59,6 +73,9 @@ private const val MAX_RESUMES = 3
 interface OrbitTaskDao {
     @Query("SELECT r.id AS id, r.taskId AS taskId, t.title AS title, t.kind AS kind, r.state AS state, SUBSTR(r.observation,1,400) AS observation, SUBSTR(r.error,1,400) AS error, r.startedAt AS startedAt, r.finishedAt AS finishedAt, r.generation AS generation FROM orbit_runs r INNER JOIN orbit_tasks t ON t.id = r.taskId WHERE t.orbitId = :orbitId AND r.decision NOT IN ('" + OrbitRunEntity.UNCHANGED + "', '" + OrbitRunEntity.SKIPPED + "', '" + OrbitRunEntity.IN_CHAT + "') AND r.decision NOT LIKE '@in_chat:%' ORDER BY r.startedAt DESC LIMIT 200")
     fun observeActivity(orbitId: String): Flow<List<OrbitActivityRow>>
+    /** The latest runs of [orbitId]'s tasks, unchanged, skipped and in-chat ones included. */
+    @Query("SELECT r.id AS id, r.taskId AS taskId, t.title AS title, r.state AS state, r.decision AS decision, SUBSTR(r.observation,1,400) AS observation, SUBSTR(r.error,1,800) AS error, r.startedAt AS startedAt, r.finishedAt AS finishedAt, r.generation AS generation FROM orbit_runs r INNER JOIN orbit_tasks t ON t.id = r.taskId WHERE t.orbitId = :orbitId ORDER BY r.startedAt DESC LIMIT :limit")
+    suspend fun devRuns(orbitId: String, limit: Int): List<OrbitDevRunRow>
     /** A sent turn cannot be replayed; enrich only that completed run after its chat reply ends. */
     @Query("UPDATE orbit_runs SET decision=:decision WHERE id=:runId AND generation=:generation AND owner=:owner AND state='COMPLETED' AND decision='" + OrbitRunEntity.IN_CHAT + "'")
     suspend fun recordChatDecision(runId: String, generation: Long, owner: String, decision: String): Int
