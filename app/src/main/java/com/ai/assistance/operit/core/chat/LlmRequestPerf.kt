@@ -162,6 +162,8 @@ internal class LlmRequestPerf(
             "requestHeadersStart" -> {
                 callExchanges++
                 EXCHANGE_EVENTS.forEach { net.remove(it) }
+                // Only now has the request really gone out (after auth and building the call).
+                OrbitDevRecorder.sent(chatId, if (toolResult) OrbitDevRecorder.KIND_TOOL else OrbitDevRecorder.KIND_SEND)
             }
             "connectionReleased" -> releasedAt = t
         }
@@ -252,16 +254,34 @@ internal class LlmRequestPerf(
         return "[$kind${model?.let { " $it" }.orEmpty()} $outcome] " + parts.joinToString("｜")
     }
 
-    /** 输出总结；同一次请求只输出一次（成功路径和失败路径都会调用）。 */
-    fun log(model: String?, outcome: String) {
+    /**
+     * 输出总结；同一次请求只输出一次（成功路径和失败路径都会调用）。The developer view keeps the
+     * same line as the request's result, with [error]'s type and message (cut short) when it failed.
+     */
+    fun log(model: String?, outcome: String, error: Throwable? = null) {
         val line = synchronized(this) {
             if (logged) return
             logged = true
             summary(model, outcome)
         }
         AppLogger.i(TAG, line)
+        val cancelled = error is kotlinx.coroutines.CancellationException || outcome.startsWith("中断")
+        val status = when {
+            cancelled -> OrbitDevRecorder.RESULT_CANCELLED
+            error == null && outcome == "完成" -> OrbitDevRecorder.RESULT_OK
+            else -> OrbitDevRecorder.RESULT_FAILED
+        }
+        val failure = error?.takeUnless { it is kotlinx.coroutines.CancellationException }?.let {
+            "\n${it.javaClass.name}: ${it.message.orEmpty().take(MAX_ERROR_TEXT)}"
+        }.orEmpty()
+        // The first line says how it ended for the screen to show in its own language; the rest is
+        // the log line as written.
+        OrbitDevRecorder.event(chatId, OrbitDevRecorder.EVENT_RESULT, OrbitDevRecorder.RESULT_PREFIX + status + "\n" + line + failure)
     }
 }
+
+/** How much of a failure's message the developer view keeps: enough for a provider's error body. */
+private const val MAX_ERROR_TEXT = 3000
 
 /** 当前请求的计时卡；不在计时中的调用（测试连接、拉模型列表等）返回 null。 */
 internal suspend fun currentLlmPerf(): LlmRequestPerf? = kotlin.coroutines.coroutineContext[LlmRequestPerf]

@@ -1534,6 +1534,8 @@ class EnhancedAIService private constructor(
                 )
             registerExecutionContext(execContext)
             var hadFatalError = false
+            // The failure of this request, for its result in the developer view.
+            var fatalError: Throwable? = null
             // 计时从这里开始：前面在发送入口里花的时间（附件、历史、插件）由 [LlmRequestPerf.markUpstream] 补上。
             val perf = com.ai.assistance.operit.core.chat.LlmRequestPerf("发消息 $functionType", options.perfStart, stream, chatId)
             try {
@@ -1970,7 +1972,7 @@ class EnhancedAIService private constructor(
                     }
                     } catch (e: Throwable) {
                         perf.log(serviceForFunction.providerModel,
-                            if (e is CancellationException) "中断" else "失败: ${e.javaClass.simpleName}")
+                            if (e is CancellationException) "中断" else "失败: ${e.javaClass.simpleName}", e)
                         throw e
                     } } }
 
@@ -2017,6 +2019,7 @@ class EnhancedAIService private constructor(
                 if (handedToCompaction) {
                     // Compaction sends the turn again; nothing more of this request is processed.
                     hadFatalError = true
+                    fatalError = e
                 } else if (e.message?.contains("Socket closed", ignoreCase = true) == true) {
                     if (isExecutionContextActive(execContext)) {
                         AppLogger.d(TAG, "Stream was cancelled by the user (Socket closed).")
@@ -2025,6 +2028,7 @@ class EnhancedAIService private constructor(
                     }
                 } else {
                     hadFatalError = true
+                    fatalError = e
                     // Handle any exceptions
                     AppLogger.e(TAG, "发送消息时发生错误: ${e.message}", e)
                     withContext(Dispatchers.Main) {
@@ -2053,7 +2057,7 @@ class EnhancedAIService private constructor(
                 }
             } finally {
                 // 准备阶段出错或被取消时也留一行；正常完成的已经输出过，不会重复。
-                perf.log(null, if (hadFatalError) "失败" else "中断")
+                perf.log(null, if (hadFatalError) "失败" else "中断", fatalError)
                 try {
                     // 确保流处理完成后调用；如果本轮已被取消，则不能再继续跑完成逻辑。
                     if (!hadFatalError && isExecutionContextActive(execContext)) {
@@ -3385,7 +3389,7 @@ class EnhancedAIService private constructor(
                     }
                     } catch (e: Throwable) {
                         perf.log(serviceForFunction.providerModel,
-                            if (e is CancellationException) "中断" else "失败: ${e.javaClass.simpleName}")
+                            if (e is CancellationException) "中断" else "失败: ${e.javaClass.simpleName}", e)
                         throw e
                     } } }
 
@@ -3459,7 +3463,7 @@ class EnhancedAIService private constructor(
             }
         } catch (e: Throwable) {
             // 准备阶段出错或被取消也留一行，看得出卡在哪一步；已输出过的不会重复。
-            perf.log(null, if (e is CancellationException) "中断" else "失败: ${e.javaClass.simpleName}")
+            perf.log(null, if (e is CancellationException) "中断" else "失败: ${e.javaClass.simpleName}", e)
             throw e
         }
     }

@@ -88,9 +88,13 @@ private fun clockOf(at: Long): String = synchronized(clock) { clock.format(Date(
 /** Beyond this the clipboard may refuse the text; it is copied piece by piece instead. */
 private const val MAX_COPY = 400_000
 
-private fun copy(context: Context, text: String) {
+/**
+ * Copies [text] for a developer. Too long for the clipboard, it says so with [tooBig] instead of
+ * failing the page (one transaction can only carry so much).
+ */
+internal fun orbitDevCopy(context: Context, text: String, tooBig: Int = R.string.orbit_dev_request_too_big) {
     if (text.length > MAX_COPY) {
-        Toast.makeText(context, R.string.orbit_dev_request_too_big, Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, tooBig, Toast.LENGTH_LONG).show()
         return
     }
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
@@ -98,9 +102,11 @@ private fun copy(context: Context, text: String) {
         clipboard.setPrimaryClip(ClipData.newPlainText("orbit-dev", text))
         Toast.makeText(context, R.string.orbit_dev_request_copied, Toast.LENGTH_SHORT).show()
     } catch (e: RuntimeException) {
-        Toast.makeText(context, R.string.orbit_dev_request_too_big, Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, tooBig, Toast.LENGTH_LONG).show()
     }
 }
+
+private fun copy(context: Context, text: String) = orbitDevCopy(context, text)
 
 /** One line of a request shown in the sheet. */
 @Immutable
@@ -110,9 +116,11 @@ private sealed interface RequestLine {
     class Head(val title: String, val raw: String) : RequestLine
     class Param(val key: String, val value: String) : RequestLine
     class Body(val text: String) : RequestLine
+    /** One tool as declared to the model; tapping its name shows the whole declaration. */
+    class Tool(val name: String, val raw: String) : RequestLine
 }
 
-private class RequestTitles(val params: String, val system: String, val messages: String, val tools: String)
+private class RequestTitles(val params: String, val system: String, val messages: String, val tools: String, val toolConfig: String)
 
 /** Top-level fields that are the conversation itself; the rest are the request's parameters. */
 private val conversationKeys = setOf(
@@ -151,14 +159,18 @@ private fun textOf(value: Any?): String? = when (value) {
     else -> value.toString()
 }
 
-private fun toolNames(tools: JSONArray): List<String> = (0 until tools.length()).flatMap { i ->
+/** Each tool declared in the request, by name, with its declaration as sent. */
+private fun toolDeclarations(tools: JSONArray): List<Pair<String, JSONObject>> = (0 until tools.length()).flatMap { i ->
     val tool = tools.optJSONObject(i) ?: return@flatMap emptyList()
-    tool.optJSONObject("function")?.optString("name")?.takeIf { it.isNotBlank() }?.let { return@flatMap listOf(it) }
-    tool.optString("name").takeIf { it.isNotBlank() }?.let { return@flatMap listOf(it) }
-    tool.optJSONArray("functionDeclarations")?.let { list ->
-        return@flatMap (0 until list.length()).mapNotNull { list.optJSONObject(it)?.optString("name") }
+    (tool.optJSONArray("functionDeclarations") ?: tool.optJSONArray("function_declarations"))?.let { list ->
+        return@flatMap (0 until list.length()).mapNotNull { j ->
+            list.optJSONObject(j)?.let { (it.optString("name").ifBlank { "?" }) to it }
+        }
     }
-    listOf(tool.optString("type").ifBlank { "?" })
+    val name = tool.optJSONObject("function")?.optString("name")?.takeIf { it.isNotBlank() }
+        ?: tool.optString("name").takeIf { it.isNotBlank() }
+        ?: tool.optString("type").ifBlank { "?" }
+    listOf(name to tool)
 }
 
 private fun MutableList<RequestLine>.text(text: String) {
@@ -205,9 +217,14 @@ private fun conversationLines(body: JSONObject, titles: RequestTitles, lines: Ar
         }
     }
     body.optJSONArray("tools")?.let { tools ->
-        val names = toolNames(tools)
-        lines += RequestLine.Section(String.format(titles.tools, names.size))
-        lines.text(names.joinToString(", "))
+        val declared = toolDeclarations(tools)
+        lines += RequestLine.Section(String.format(titles.tools, declared.size))
+        declared.forEach { (name, declaration) -> lines += RequestLine.Tool(name, declaration.toString(2)) }
+    }
+    // How the model may call them (Gemini's toolConfig, tool_choice and the like live in parameters).
+    listOf("toolConfig", "tool_config").mapNotNull { key -> body.opt(key)?.takeIf { it != JSONObject.NULL } }.forEach { config ->
+        lines += RequestLine.Section(titles.toolConfig)
+        lines.text(if (config is JSONObject) config.toString(2) else config.toString())
     }
     return lines
 }
@@ -293,7 +310,51 @@ internal fun OrbitDevRequestSheet(chatId: String, onDismiss: () -> Unit, initial
         stringResource(R.string.orbit_dev_request_system),
         stringResource(R.string.orbit_dev_request_messages),
         stringResource(R.string.orbit_dev_request_tools),
+        stringResource(R.string.orbit_dev_request_tool_config),
     )
+    // How each request ended and where its time went: the result noted after it, before the next.
+    val results by produceState<List<OrbitDevRecorder.Event>>(emptyList(), chatId, changes) {
+        value = try {
+            OrbitDevRecorder.events(context, chatId).filter { it.kind == OrbitDevRecorder.EVENT_RESULT }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+    // Which kept requests really went out: a send noted after the request was built, before the next.
+    val marks by produceState<List<OrbitDevRecorder.Mark>?>(null, chatId, changes) {
+        value = try {
+            OrbitDevRecorder.marks(context, chatId)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        }
+    }
+    // The next request built after one, kept body or not: what is noted before it belongs to that one.
+    fun nextBuilt(at: Long): Long? =
+        marks?.filter { !it.sent && it.at > at }?.minOfOrNull { it.at }
+            ?: list.orEmpty().filter { it.at > at }.minOfOrNull { it.at }
+    val result = shown?.let { request ->
+        val newer = nextBuilt(request.at)
+        results.filter { it.at >= request.at && (newer == null || it.at < newer) }.minByOrNull { it.at }
+    }
+    val unsent = remember(list, marks) {
+        val all = list.orEmpty()
+        val kept = marks ?: return@remember emptySet<String>()
+        val sends = kept.filter { it.sent }.map { it.at }
+        // The next request built after each, kept body or not, bounds which sends are its own.
+        val builds = kept.filterNot { it.sent }.map { it.at }.sorted()
+        // Marks older than the oldest one kept were trimmed; those requests are not judged.
+        val since = kept.minOfOrNull { it.at } ?: return@remember emptySet<String>()
+        all.mapNotNull { request ->
+            val newer = builds.firstOrNull { it > request.at }
+            request.file.name.takeIf {
+                request.at >= since && sends.none { at -> at >= request.at && (newer == null || at < newer) }
+            }
+        }.toSet()
+    }
     // Read and laid out off the main thread: a request can be megabytes. The request on screen
     // stays while the next one loads, so switching does not blank the sheet.
     var loaded by remember { mutableStateOf<LoadedRequest?>(null) }
@@ -315,6 +376,7 @@ internal fun OrbitDevRequestSheet(chatId: String, onDismiss: () -> Unit, initial
     }
     // Each request keeps where it was read to.
     val positions = remember { HashMap<String, LazyListState>() }
+    val openByRequest = remember { HashMap<String, androidx.compose.runtime.snapshots.SnapshotStateMap<Int, Boolean>>() }
     OrbitModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState,
         containerColor = MaterialTheme.colorScheme.surfaceContainerHigh) {
         Column(Modifier.fillMaxWidth().fillMaxHeight(0.92f)) {
@@ -348,7 +410,8 @@ internal fun OrbitDevRequestSheet(chatId: String, onDismiss: () -> Unit, initial
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 items(list, key = { it.file.name }) { request ->
-                    DevPill("${clockOf(request.at)} · ${kindLabel(request.kind)}", request == shown) {
+                    val notSent = if (request.file.name in unsent) " · " + stringResource(R.string.orbit_dev_request_unsent_mark) else ""
+                    DevPill("${clockOf(request.at)} · ${kindLabel(request.kind)}$notSent", request == shown) {
                         picked = request.file.name
                     }
                 }
@@ -367,6 +430,9 @@ internal fun OrbitDevRequestSheet(chatId: String, onDismiss: () -> Unit, initial
                 return@Column
             }
             val listState = remember(content.name) { positions.getOrPut(content.name) { LazyListState() } }
+            // Which tool declarations are open, per request, so scrolling away does not close them.
+            val openTools = remember(content.name) { openByRequest.getOrPut(content.name) { androidx.compose.runtime.mutableStateMapOf() } }
+            val shownResult = result.takeIf { current != null }
             Surface(
                 shape = RoundedCornerShape(16.dp),
                 color = MaterialTheme.colorScheme.surface,
@@ -375,9 +441,33 @@ internal fun OrbitDevRequestSheet(chatId: String, onDismiss: () -> Unit, initial
             ) {
                 SelectionContainer {
                     LazyColumn(state = listState, contentPadding = PaddingValues(14.dp)) {
+                        // How it ended and where its time went, scrolled with the request so it never
+                        // takes the body's room on a short screen.
+                        if (shownResult != null) {
+                            item(key = "result", contentType = "result") {
+                                val (status, log) = OrbitDevRecorder.resultParts(shownResult.text)
+                                Column(Modifier.fillMaxWidth().padding(bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text(
+                                        stringResource(R.string.orbit_dev_request_result) +
+                                            resultLabel(status)?.let { " · " + stringResource(it) }.orEmpty(),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = resultColor(status),
+                                    )
+                                    Text(stringResource(R.string.orbit_dev_result_log), style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(log, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                                }
+                            }
+                        }
                         // The previous request stays faded while the next loads; its copy buttons are off.
-                        itemsIndexed(content.lines, contentType = { _, line -> line::class }) { _, line ->
-                            RequestLineRow(line, enabled = current != null)
+                        // Keyed by line, so the result arriving above does not move what is being read.
+                        itemsIndexed(content.lines, key = { index, _ -> index }, contentType = { _, line -> line::class }) { index, line ->
+                            RequestLineRow(
+                                line,
+                                enabled = current != null,
+                                open = openTools[index] == true,
+                                onToggle = { openTools[index] = openTools[index] != true },
+                            )
                         }
                     }
                 }
@@ -387,7 +477,7 @@ internal fun OrbitDevRequestSheet(chatId: String, onDismiss: () -> Unit, initial
 }
 
 @Composable
-private fun RequestLineRow(line: RequestLine, enabled: Boolean) {
+private fun RequestLineRow(line: RequestLine, enabled: Boolean, open: Boolean = false, onToggle: () -> Unit = {}) {
     val context = LocalContext.current
     when (line) {
         is RequestLine.Section -> Text(
@@ -414,6 +504,32 @@ private fun RequestLineRow(line: RequestLine, enabled: Boolean) {
                 modifier = Modifier.weight(1f))
         }
         is RequestLine.Body -> Text(line.text, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+        is RequestLine.Tool -> {
+            Column(Modifier.fillMaxWidth()) {
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
+                        .clickable(role = Role.Button, onClickLabel = line.name, onClick = onToggle)
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(orbitIcon(if (open) "chevron-down" else "chevron-right"), contentDescription = null,
+                        modifier = Modifier.size(14.dp))
+                    Text(line.name, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace,
+                        modifier = Modifier.weight(1f).padding(start = 6.dp))
+                    if (open) {
+                        IconButton(onClick = { copy(context, line.raw) }, enabled = enabled, modifier = Modifier.size(28.dp)) {
+                            Icon(orbitIcon("copy"), contentDescription = stringResource(R.string.copy_message), modifier = Modifier.size(14.dp))
+                        }
+                    }
+                }
+                if (open) {
+                    rawChunks(line.raw).forEach {
+                        Text(it, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 20.dp))
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -454,13 +570,28 @@ internal fun OrbitDevEventsSheet(chatId: String, onDismiss: () -> Unit) {
                                     "${clockOf(event.at)} · " + stringResource(when (event.kind) {
                                         OrbitDevRecorder.EVENT_RETRY -> R.string.orbit_dev_event_kind_retry
                                         OrbitDevRecorder.EVENT_REPAIR -> R.string.orbit_dev_event_kind_repair
+                                        OrbitDevRecorder.EVENT_RESULT -> R.string.orbit_dev_event_kind_result
                                         else -> R.string.orbit_dev_event_kind_compact
                                     }),
                                     style = MaterialTheme.typography.labelMedium,
-                                    color = if (event.kind == OrbitDevRecorder.EVENT_RETRY) MaterialTheme.colorScheme.error
-                                        else MaterialTheme.colorScheme.tertiary,
+                                    // A result that did not end done (stopped or failed) shows like a retry.
+                                    color = when (event.kind) {
+                                        OrbitDevRecorder.EVENT_RETRY -> MaterialTheme.colorScheme.error
+                                        OrbitDevRecorder.EVENT_RESULT -> resultColor(OrbitDevRecorder.resultParts(event.text).first)
+                                        else -> MaterialTheme.colorScheme.tertiary
+                                    },
                                 )
-                                Text(event.text, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                                if (event.kind == OrbitDevRecorder.EVENT_RESULT) {
+                                    val (status, log) = OrbitDevRecorder.resultParts(event.text)
+                                    resultLabel(status)?.let {
+                                        Text(stringResource(it), style = MaterialTheme.typography.bodySmall, color = resultColor(status))
+                                    }
+                                    Text(stringResource(R.string.orbit_dev_result_log), style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(log, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                                } else {
+                                    Text(event.text, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                                }
                             }
                         }
                     }
@@ -469,6 +600,20 @@ internal fun OrbitDevEventsSheet(chatId: String, onDismiss: () -> Unit) {
         }
     }
 }
+
+/** How a request ended, in the screen's language. */
+private fun resultLabel(status: String?): Int? = when (status) {
+    OrbitDevRecorder.RESULT_OK -> R.string.orbit_dev_result_ok
+    OrbitDevRecorder.RESULT_FAILED -> R.string.orbit_dev_result_failed
+    OrbitDevRecorder.RESULT_CANCELLED -> R.string.orbit_dev_result_cancelled
+    else -> null
+}
+
+/** A request that did not end done (stopped or failed) shows like a retry. */
+@Composable
+private fun resultColor(status: String?) =
+    if (status == null || status == OrbitDevRecorder.RESULT_OK) MaterialTheme.colorScheme.tertiary
+    else MaterialTheme.colorScheme.error
 
 /** One message the raw search found: where it is and the stored text around the match. */
 @Immutable

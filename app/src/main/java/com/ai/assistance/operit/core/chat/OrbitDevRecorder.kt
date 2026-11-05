@@ -30,14 +30,17 @@ object OrbitDevRecorder {
     private const val TAG = "OrbitDevRecorder"
     private const val DIR = "orbit_dev"
     private const val EVENTS = "events.jsonl"
-    /** One line per request sent, kept apart from the bodies so a turn's count stays whole. */
+    /**
+     * One line per request built ("B") and per exchange that really went on the network ("S"),
+     * kept apart from the bodies so a turn's counts stay whole.
+     */
     private const val SENT = "sent.log"
     private const val KEEP_PER_CHAT = 6
     private const val MAX_TOTAL_BYTES = 120L * 1024 * 1024
     private const val MAX_CHAT_DIRS = 80
     private const val MAX_EVENTS = 200
     private const val MAX_EVENTS_BYTES = 256L * 1024
-    private const val MAX_EVENT_TEXT = 4000
+    private const val MAX_EVENT_TEXT = 6000
     private const val MAX_SENT_LINES = 400
     private const val MAX_SENT_BYTES = 16L * 1024
     /** Bodies waiting to be read and kept; beyond this a burst (many subagents) skips the body. */
@@ -50,12 +53,30 @@ object OrbitDevRecorder {
     const val EVENT_RETRY = "retry"
     const val EVENT_REPAIR = "repair"
     const val EVENT_COMPACT = "compact"
+    /** How a request ended (done, stopped or failed and why) and where its time went. */
+    const val EVENT_RESULT = "result"
+    /** A result's text starts with this and one of the RESULT_ states on its own line. */
+    const val RESULT_PREFIX = "status:"
+    const val RESULT_OK = "ok"
+    const val RESULT_FAILED = "failed"
+    const val RESULT_CANCELLED = "cancelled"
+
+    /** A result's state (null when it has none) and the log text after it. */
+    fun resultParts(text: String): Pair<String?, String> =
+        if (text.startsWith(RESULT_PREFIX)) {
+            text.substringBefore('\n').removePrefix(RESULT_PREFIX).trim() to text.substringAfter('\n', "")
+        } else {
+            null to text
+        }
 
     /** One request kept for a chat; [file] holds its body. */
     data class Request(val file: File, val at: Long, val kind: String, val bytes: Long)
 
     /** One event in a chat that its messages do not show. */
     data class Event(val at: Long, val kind: String, val text: String)
+
+    /** A request built ([sent] false) or an exchange that really went out ([sent] true). */
+    data class Mark(val at: Long, val sent: Boolean)
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mutex = Mutex()
@@ -85,15 +106,17 @@ object OrbitDevRecorder {
      * Keeps [body], the request just built for [chatId]. Read and written in the background; the
      * request is not held up. [label] names the provider and model it went to. Bodies are read one
      * at a time; when many arrive at once the extra bodies are skipped, their count still noted.
-     * [keepBody] false only counts the send: a retry that sends the same body again.
+     * [keepBody] false is a retry sending the same body again: nothing new is built, nothing kept
+     * (the network side counts the send itself, see [sent]).
      */
     fun request(chatId: String?, kind: String, label: String, body: okhttp3.RequestBody, keepBody: Boolean = true) {
+        if (!keepBody) return
         val id = chatId?.takeIf { it.isNotBlank() } ?: return
         val context = app() ?: return
         if (!enabled(context)) return
         val at = System.currentTimeMillis()
-        val queued = keepBody && pending.incrementAndGet() <= MAX_PENDING
-        if (keepBody && !queued) pending.decrementAndGet()
+        val queued = pending.incrementAndGet() <= MAX_PENDING
+        if (!queued) pending.decrementAndGet()
         // Only a queued body is held by the work below; a skipped one is let go right away.
         val bodyToKeep = body.takeIf { queued }
         scope.launch {
@@ -101,7 +124,7 @@ object OrbitDevRecorder {
                 mutex.withLock {
                     val root = File(context.cacheDir, DIR)
                     val dir = chatDir(context, id).apply { mkdirs() }
-                    noteSent(File(dir, SENT), at, kind)
+                    noteMark(File(dir, SENT), at, "B", kind)
                     if (bodyToKeep != null) {
                         // Read and parsed inside the lock: only one large body is held at a time.
                         val raw = okio.Buffer().also { bodyToKeep.writeTo(it) }.readUtf8()
@@ -123,8 +146,24 @@ object OrbitDevRecorder {
         }
     }
 
-    private fun noteSent(file: File, at: Long, kind: String) {
-        file.appendText("$at $kind\n", Charsets.UTF_8)
+    /** Notes that a request of [chatId] really went on the network (an HTTP exchange started). */
+    fun sent(chatId: String?, kind: String) {
+        val id = chatId?.takeIf { it.isNotBlank() } ?: return
+        val context = app() ?: return
+        if (!enabled(context)) return
+        val at = System.currentTimeMillis()
+        scope.launch {
+            try {
+                mutex.withLock { noteMark(File(chatDir(context, id).apply { mkdirs() }, SENT), at, "S", kind) }
+                revision.value += 1
+            } catch (e: Exception) {
+                AppLogger.w(TAG, "Could not count the request for the developer view", e)
+            }
+        }
+    }
+
+    private fun noteMark(file: File, at: Long, mark: String, kind: String) {
+        file.appendText("$at $mark $kind\n", Charsets.UTF_8)
         if (file.length() > MAX_SENT_BYTES) {
             val kept = file.readLines(Charsets.UTF_8).filter { it.isNotBlank() }.takeLast(MAX_SENT_LINES)
             file.writeText(kept.joinToString("\n", postfix = "\n"), Charsets.UTF_8)
@@ -178,11 +217,31 @@ object OrbitDevRecorder {
         JSONObject(request.file.readText(Charsets.UTF_8))
     }
 
-    /** When each request of [chatId] was sent (the latest few hundred), bodies kept or not. */
-    suspend fun sentTimes(context: Context, chatId: String): List<Long> = withContext(Dispatchers.IO) {
+    /** Copies everything kept for [chatId] (requests, events, counts) into [into], for an export. */
+    suspend fun copyTo(context: Context, chatId: String, into: java.util.zip.ZipOutputStream, folder: String) =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                chatDir(context, chatId).listFiles()?.sortedBy { it.name }?.forEach { file ->
+                    into.putNextEntry(java.util.zip.ZipEntry("$folder/${file.name}"))
+                    file.inputStream().use { it.copyTo(into) }
+                    into.closeEntry()
+                }
+            }
+        }
+
+    /** The requests of [chatId] built and really sent (the latest few hundred), bodies kept or not. */
+    suspend fun marks(context: Context, chatId: String): List<Mark> = withContext(Dispatchers.IO) {
         val file = File(chatDir(context, chatId), SENT)
         if (!file.exists()) return@withContext emptyList()
-        mutex.withLock { file.readLines(Charsets.UTF_8) }.mapNotNull { it.substringBefore(' ').toLongOrNull() }
+        mutex.withLock { file.readLines(Charsets.UTF_8) }.mapNotNull { line ->
+            val parts = line.split(' ')
+            val at = parts.getOrNull(0)?.toLongOrNull() ?: return@mapNotNull null
+            when (parts.getOrNull(1)) {
+                "B" -> Mark(at, sent = false)
+                "S" -> Mark(at, sent = true)
+                else -> null
+            }
+        }
     }
 
     /** The events kept for [chatId], newest first. */

@@ -116,6 +116,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.isTraversalGroup
 import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
@@ -1516,18 +1517,27 @@ private fun OrbitDevHeader(
     val resources = LocalResources.current
     var menuOpen by remember { mutableStateOf(false) }
     var devSheet by remember { mutableStateOf<OrbitDevSheet?>(null) }
+    var exporting by remember { mutableStateOf(false) }
+    val exportScope = rememberCoroutineScope()
     val untitledTask = stringResource(R.string.orbit_turn_untitled, orbit.name.ifBlank { stringResource(R.string.nav_orbit) })
+    val orbitName = orbit.name.ifBlank { stringResource(R.string.nav_orbit) }
     // The hidden chats behind Orbit's chats (subagents, automatic reviews, background task runs),
     // read again each time the list opens.
     val sources by androidx.compose.runtime.produceState(OrbitDevSources(), orbit.talkChatIds, pickerOpen) {
         value = try {
+            // Every recent run, skipped and unchanged ones too, with its state and why; a run that
+            // never reached the model has no chat and opens its details instead.
             val tasks = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                com.ai.assistance.operit.features.orbit.OrbitTaskRepository(context).dao.observeActivity(orbit.id).first().take(DEV_TASK_RUNS)
-            }.map { run ->
-                OrbitDevChatEntry(
-                    OrbitProcess.TaskRun(run.id, run.generation, run.taskId, "", run.startedAt).chatId,
-                    OrbitWork.listLine(run.title).ifBlank { untitledTask }, run.startedAt,
-                )
+                val runs = com.ai.assistance.operit.features.orbit.OrbitTaskRepository(context).dao.devRuns(orbit.id, DEV_TASK_RUNS)
+                val chatIds = runs.map { OrbitProcess.TaskRun(it.id, it.generation, it.taskId, "", it.startedAt).chatId }
+                val talked = if (chatIds.isEmpty()) emptySet() else
+                    com.ai.assistance.operit.data.db.AppDatabase.getDatabase(context).chatContentDao().chatsWithMessages(chatIds).toHashSet()
+                runs.zip(chatIds).map { (run, chatId) ->
+                    OrbitDevChatEntry(
+                        chatId, OrbitWork.listLine(run.title).ifBlank { untitledTask }, run.startedAt,
+                        detail = devRunDetail(context, orbitName, run), noChat = chatId !in talked,
+                    )
+                }
             }
             // Background task runs start subagents and reviews too, so they are roots as well.
             val roots = orbit.talkChatIds + tasks.map { it.chatId }
@@ -1569,11 +1579,26 @@ private fun OrbitDevHeader(
         )
         // What the chat itself does not show: the requests sent, a raw search, retries and repairs.
         Box(Modifier.align(Alignment.TopEnd)) {
-            OrbitCircleButton(
-                icon = orbitIcon("ellipsis"),
-                contentDescription = stringResource(R.string.orbit_dev_more),
-                onClick = { menuOpen = true },
-            )
+            if (exporting) {
+                // The export runs after the menu closes; this shows it is still going.
+                val exportingLabel = stringResource(R.string.orbit_dev_exporting)
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surface,
+                    shadowElevation = 3.dp,
+                    modifier = Modifier.size(52.dp).semantics { contentDescription = exportingLabel },
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        androidx.compose.material3.CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                    }
+                }
+            } else {
+                OrbitCircleButton(
+                    icon = orbitIcon("ellipsis"),
+                    contentDescription = stringResource(R.string.orbit_dev_more),
+                    onClick = { menuOpen = true },
+                )
+            }
             OrbitDropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                 listOf(
                     Triple(OrbitDevSheet.REQUESTS, "send", R.string.orbit_dev_requests),
@@ -1589,6 +1614,28 @@ private fun OrbitDevHeader(
                         },
                     )
                 }
+                // The whole chat as stored, with what the developer view kept, as a zip to share.
+                androidx.compose.material3.DropdownMenuItem(
+                    text = { Text(stringResource(R.string.orbit_dev_export)) },
+                    leadingIcon = { Icon(orbitIcon("share"), contentDescription = null, modifier = Modifier.size(20.dp)) },
+                    enabled = !exporting,
+                    onClick = {
+                        menuOpen = false
+                        exporting = true
+                        exportScope.launch {
+                            try {
+                                val file = OrbitDevExport.export(context, currentChatId)
+                                shareOrbitFile(context) { file }
+                            } catch (e: kotlinx.coroutines.CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                android.widget.Toast.makeText(context, R.string.orbit_dev_export_failed, android.widget.Toast.LENGTH_SHORT).show()
+                            } finally {
+                                exporting = false
+                            }
+                        }
+                    },
+                )
             }
         }
         // Between the two round buttons (52dp each plus a gap), so a long title never covers them.
@@ -1656,6 +1703,28 @@ private enum class OrbitDevSheet { REQUESTS, SEARCH, EVENTS }
 
 /** How many background task runs the developer view lists. */
 private const val DEV_TASK_RUNS = 30
+
+/** One line on what a task run did: its state, why it was skipped or handed on, and its error. */
+private fun devRunDetail(
+    context: android.content.Context,
+    name: String,
+    run: com.ai.assistance.operit.data.dao.OrbitDevRunRow,
+): String {
+    val resources = context.resources
+    val decision = run.decision
+    val why = when {
+        decision == com.ai.assistance.operit.data.model.OrbitRunEntity.UNCHANGED -> resources.getString(R.string.orbit_dev_task_unchanged)
+        decision == com.ai.assistance.operit.data.model.OrbitRunEntity.SKIPPED -> resources.getString(R.string.orbit_dev_task_skipped)
+        decision == com.ai.assistance.operit.data.model.OrbitRunEntity.IN_CHAT -> resources.getString(R.string.orbit_dev_task_in_chat)
+        // Handed to the chat: what Orbit then did there (spoke, stayed quiet, failed) and why.
+        com.ai.assistance.operit.features.orbit.OrbitChatDecision.isChat(decision) ->
+            com.ai.assistance.operit.features.orbit.OrbitChatDecision.describe(context, decision, name).replace('\n', ' ')
+        // Any other reason the runner wrote (a watch script that chose not to wake Orbit, say).
+        else -> decision.trim().takeIf { it.isNotEmpty() }?.replace('\n', ' ')
+    }
+    val error = run.error.trim().takeIf { it.isNotEmpty() }?.replace('\n', ' ')
+    return listOfNotNull(run.state, why, error).joinToString(" · ")
+}
 
 /** The hidden chats behind Orbit's chats that the developer view can open. */
 private class OrbitDevSources(
