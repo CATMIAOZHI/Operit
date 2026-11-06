@@ -31,9 +31,9 @@
       "parameters": [
         {"name": "prompt", "type": "string", "required": true, "description": {"zh": "绘图要求", "en": "Image prompt"}},
         {"name": "referenced_image_paths", "type": "array", "required": false, "description": {"zh": "仅作参考的本地 PNG、JPEG 或 WebP 图片路径数组，最多 5 张；不会覆盖原图", "en": "Up to 5 local PNG, JPEG, or WebP paths used only as references; original files are preserved"}},
-        {"name": "size", "type": "string", "required": false, "description": {"zh": "1024x1024、1024x1536、1536x1024 或 auto", "en": "1024x1024, 1024x1536, 1536x1024, or auto"}},
+        {"name": "size", "type": "string", "required": false, "description": {"zh": "1024x1024、1024x1536、1536x1024 或 auto；不填时无参考图用 1024x1024，有参考图用 auto", "en": "1024x1024, 1024x1536, 1536x1024, or auto; defaults to 1024x1024 without references and auto with references"}},
         {"name": "quality", "type": "string", "required": false, "description": {"zh": "auto、low、medium 或 high", "en": "auto, low, medium, or high"}},
-        {"name": "background", "type": "string", "required": false, "description": {"zh": "auto、opaque 或 transparent", "en": "auto, opaque, or transparent"}},
+        {"name": "background", "type": "string", "required": false, "description": {"zh": "auto、opaque 或 transparent；有参考图时 auto 按 opaque 处理", "en": "auto, opaque, or transparent; with references, auto is sent as opaque"}},
         {"name": "file_name", "type": "string", "required": false, "description": {"zh": "保存文件名，不含路径和扩展名", "en": "Output filename without path or extension"}},
         {"name": "chat_model", "type": "string", "required": false, "description": {"zh": "可选承载模型；默认 gpt-5.5，若服务端不支持可指定当前 Codex 模型", "en": "Optional carrier model, default gpt-5.5; change if the server rejects it"}}
       ]
@@ -45,9 +45,9 @@
         {"name": "prompt", "type": "string", "required": true, "description": {"zh": "图片修改要求", "en": "Image editing prompt"}},
         {"name": "image_path", "type": "string", "required": true, "description": {"zh": "本地 PNG、JPEG 或 WebP 图片路径", "en": "Local PNG, JPEG, or WebP path"}},
         {"name": "referenced_image_paths", "type": "array", "required": false, "description": {"zh": "额外参考图的本地路径数组；加上编辑目标最多 5 张", "en": "Additional local reference image paths; at most 5 images including the edit target"}},
-        {"name": "size", "type": "string", "required": false, "description": {"zh": "1024x1024、1024x1536、1536x1024 或 auto", "en": "1024x1024, 1024x1536, 1536x1024, or auto"}},
+        {"name": "size", "type": "string", "required": false, "description": {"zh": "1024x1024、1024x1536、1536x1024 或 auto；默认 auto", "en": "1024x1024, 1024x1536, 1536x1024, or auto; defaults to auto"}},
         {"name": "quality", "type": "string", "required": false, "description": {"zh": "auto、low、medium 或 high", "en": "auto, low, medium, or high"}},
-        {"name": "background", "type": "string", "required": false, "description": {"zh": "auto、opaque 或 transparent", "en": "auto, opaque, or transparent"}},
+        {"name": "background", "type": "string", "required": false, "description": {"zh": "auto、opaque 或 transparent；auto 按 opaque 处理", "en": "auto, opaque, or transparent; auto is sent as opaque"}},
         {"name": "file_name", "type": "string", "required": false, "description": {"zh": "保存文件名，不含路径和扩展名", "en": "Output filename without path or extension"}},
         {"name": "chat_model", "type": "string", "required": false, "description": {"zh": "可选承载模型；默认 gpt-5.5", "en": "Optional carrier model, default gpt-5.5"}}
       ]
