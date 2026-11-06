@@ -78,7 +78,7 @@ object CodexDrawBridge {
         val background = option(params, "background", "auto", setOf("auto", "opaque", "transparent"))
             .let { if (hasImageInput && it == "auto") "opaque" else it }
         val imageModel = option(params, "model", "gpt-image-2", setOf("gpt-image-2"))
-        val chatModel = params.optString("chat_model").trim().ifBlank { "gpt-5.5" }
+        val chatModel = params.optString("chat_model").trim().ifBlank { "gpt-6-luna" }
         require(Regex("""gpt-[a-zA-Z0-9.\-]+""").matches(chatModel)) { "chat_model 格式无效" }
 
         val auth = CodexAuthManager.getInstance(context)
