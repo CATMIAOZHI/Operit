@@ -8,10 +8,15 @@ import com.ai.assistance.operit.util.ChatUtils
  * 通过缓存之前计算过的对话历史token数量，避免重复计算相同的内容
  */
 class TokenCacheManager {
-    // 上一次的聊天历史
-    private var previousChatHistory: List<Pair<String, String>> = emptyList()
-    // 对应于previousChatHistory的token数量
-    private var previousHistoryTokenCount = 0
+    /**
+     * Recent requests sent with this model, newest first. A provider keeps more than one prefix
+     * cached, and background tasks share the model with the chat, so the estimate takes the
+     * longest prefix any of them shares. A request whose system prompt or tools changed shares
+     * nothing and counts as a miss.
+     */
+    private class Sent(val history: List<Pair<String, String>>, val tokens: Int)
+    private val recent = ArrayDeque<Sent>()
+    private val recentLimit = 4
     
     // 缓存的输入token数量（对应于previousChatHistory的公共前缀）
     private var _cachedInputTokenCount = 0
@@ -49,9 +54,9 @@ class TokenCacheManager {
     /**
      * 重置所有token计数和缓存
      */
+    @Synchronized
     fun resetTokenCounts() {
-        previousChatHistory = emptyList()
-        previousHistoryTokenCount = 0
+        recent.clear()
         _cachedInputTokenCount = 0
         _currentInputTokenCount = 0
         _outputTokenCount = 0
@@ -90,6 +95,7 @@ class TokenCacheManager {
      * @param toolsJson 工具定义的JSON字符串（可选）
      * @return 总的输入token数量
      */
+    @Synchronized
     fun calculateInputTokens(
         chatHistory: List<Pair<String, String>>,
         toolsJson: String? = null,
@@ -115,20 +121,20 @@ class TokenCacheManager {
             chatHistory
         }
 
-        // 找到与之前历史的公共前缀长度
-        // 注意：previousChatHistory现在存储的是包含工具定义的版本
-        val commonPrefixLength = findCommonPrefixLength(historyWithTools, previousChatHistory)
-        
-        AppLogger.d("TokenCacheManager", "聊天历史比较: 当前=${historyWithTools.size}, 之前=${previousChatHistory.size}, 公共前缀=${commonPrefixLength}")
+        // 找到与最近几次请求（均包含工具定义）的最长公共前缀
+        val best = recent.maxByOrNull { findCommonPrefixLength(historyWithTools, it.history) }
+        val commonPrefixLength = best?.let { findCommonPrefixLength(historyWithTools, it.history) } ?: 0
+
+        AppLogger.d("TokenCacheManager", "聊天历史比较: 当前=${historyWithTools.size}, 之前=${best?.history?.size ?: 0}, 公共前缀=${commonPrefixLength}")
         
         val cachedTokens: Int
         val newTokens: Int
 
         if (commonPrefixLength > 0) {
             // 有公共前缀，可以使用缓存
-            cachedTokens = if (commonPrefixLength == previousChatHistory.size) {
+            cachedTokens = if (commonPrefixLength == best!!.history.size) {
                 // 完全匹配之前的历史，直接使用缓存
-                previousHistoryTokenCount
+                best.tokens
             } else {
                 // 部分匹配，重新计算公共前缀的token数量
                 val commonPrefix = historyWithTools.take(commonPrefixLength)
@@ -149,12 +155,11 @@ class TokenCacheManager {
             _cachedInputTokenCount = cachedTokens
             _currentInputTokenCount = newTokens
 
-            // 更新缓存的历史记录 token 数量
-            previousHistoryTokenCount = saturatedTokenSum(cachedTokens, newTokens)
-
-            // 更新缓存的历史记录列表（包含工具定义）
+            // 记录本次请求（包含工具定义），它取代被它延长的旧记录
             if (chatHistory.isNotEmpty()) {
-                previousChatHistory = historyWithTools
+                if (best != null && commonPrefixLength == best.history.size) recent.remove(best)
+                recent.addFirst(Sent(historyWithTools, saturatedTokenSum(cachedTokens, newTokens)))
+                while (recent.size > recentLimit) recent.removeLast()
             }
 
             if (cachedTokens > 0) {

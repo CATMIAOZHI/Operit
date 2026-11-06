@@ -17,6 +17,8 @@ class LearningPromptSnapshotRepository internal constructor(root: File, chatId: 
     companion object {
         private val locks = ConcurrentHashMap<String,Mutex>()
         private const val REVISION_PREFS = "system_prompt_revisions"
+        /** An Orbit chat builds its prompt again at least this often, even with no nightly review. */
+        private const val DAY_MS = 24L * 60 * 60 * 1000
         fun markChanged(context: Context, key: String) {
             context.getSharedPreferences(REVISION_PREFS, Context.MODE_PRIVATE).edit()
                 .putString(key, java.util.UUID.randomUUID().toString()).apply()
@@ -39,24 +41,46 @@ class LearningPromptSnapshotRepository internal constructor(root: File, chatId: 
         syncDirectory(file.parentFile!!)
     }
 
-    /** Only a persisted successful summary starts a new prefix epoch. */
-    suspend fun bindMemoryScope(scope: String, identityRevision: String = "") = withContext(Dispatchers.IO) {
+    /**
+     * A scope or identity change starts over. An Orbit chat (a scope other than "global") also
+     * starts over once a day: after the nightly review asked for it, or a day after its prompt
+     * was built. Memory edits in between wait for that or for the next summary, so the cached
+     * prefix stays the same all day. Only the call that starts building a prompt passes
+     * [refreshDaily]; a later bind in the same turn must not reset what that turn already read.
+     */
+    suspend fun bindMemoryScope(scope: String, identityRevision: String = "", refreshDaily: Boolean = false) =
+        withContext(Dispatchers.IO) {
         mutex.withLock {
             val data = read()
+            val now = System.currentTimeMillis()
+            val daily = refreshDaily && scope != "global" && (data.optBoolean("_refresh_due") ||
+                data.has("_since") && now - data.optLong("_since") >= DAY_MS)
             if (data.optString("_memory_scope", "global") != scope ||
-                data.optString("_identity_revision") != identityRevision) {
-                write(JSONObject().put("_memory_scope", scope).put("_identity_revision", identityRevision))
+                data.optString("_identity_revision") != identityRevision || daily) {
+                write(JSONObject().put("_memory_scope", scope).put("_identity_revision", identityRevision)
+                    .put("_since", now))
+            } else if (!data.has("_since")) {
+                write(data.put("_since", now))
             }
         }
     }
 
+    /** The next reply of this chat builds its prompt again. Nothing changes while one is running. */
+    suspend fun requestRefresh() = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            if (file.exists()) write(read().put("_refresh_due", true))
+        }
+    }
+
+    /** Only a persisted successful summary starts a new prefix epoch. */
     suspend fun beginEpoch(summary: String) = withContext(Dispatchers.IO) {
         mutex.withLock {
             val data = read()
             val epoch = LearnedSkillRepository.version(summary)
             if (data.optString("_epoch") != epoch)
                 write(JSONObject().put("_epoch", epoch).put("_memory_scope", data.optString("_memory_scope", "global"))
-                    .put("_identity_revision", data.optString("_identity_revision")))
+                    .put("_identity_revision", data.optString("_identity_revision"))
+                    .put("_since", System.currentTimeMillis()))
         }
     }
 

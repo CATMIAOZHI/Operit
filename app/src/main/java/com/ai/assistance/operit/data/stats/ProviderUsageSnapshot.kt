@@ -109,6 +109,8 @@ object ProviderUsageNormalizer {
                 ?: usage.optJSONObject("input_tokens_details")
                     ?.optLong("cached_tokens", -1)
                     ?.takeIf { it >= 0 }
+                // DeepSeek: top-level prompt_cache_hit_tokens.
+                ?: usage.optLong("prompt_cache_hit_tokens", -1).takeIf { it >= 0 }
                 ?: usage.optLong("cached_tokens", -1).takeIf { it >= 0 }
         val cacheWrite =
             usage.optJSONObject("prompt_tokens_details")

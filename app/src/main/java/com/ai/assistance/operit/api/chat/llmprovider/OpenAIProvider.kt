@@ -246,11 +246,16 @@ open class OpenAIProvider(
         attemptNumber: Int = 1
     ) {
         val parsed = OpenAIResponsesPayloadAdapter.parseUsageCounts(usage) ?: return
-        tokenCacheManager.updateActualTokens(parsed.actualInputTokens, parsed.cachedInputTokens)
+        // What the provider did not report keeps the local estimate: no input count keeps the
+        // estimated input, no hit count keeps the estimated hit (at most the reported input).
+        val total = if (parsed.inputKnown) parsed.totalInputTokens else tokenCacheManager.totalInputTokenCount
+        val cached = if (parsed.cacheKnown) parsed.cachedInputTokens
+            else tokenCacheManager.cachedInputTokenCount.coerceAtMost(total)
+        tokenCacheManager.updateActualTokens((total - cached).coerceAtLeast(0), cached)
         tokenCacheManager.setOutputTokens(parsed.outputTokens)
         onTokensUpdated(
-            parsed.totalInputTokens,
-            parsed.cachedInputTokens,
+            tokenCacheManager.totalInputTokenCount,
+            tokenCacheManager.cachedInputTokenCount,
             tokenCacheManager.outputTokenCount
         )
         onUsageReported?.invoke(
