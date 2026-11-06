@@ -264,7 +264,107 @@ internal fun OrbitStoragePage(onBack: () -> Unit, onOpenComponents: () -> Unit, 
             // The app's normal chats are managed in the app; Orbit's chats are in its chat list.
             onManageChats = null,
             onBackup = onOpenBackup,
+            leadingContent = { OrbitFilesStorageCard() },
         )
+    }
+}
+
+/**
+ * Orbit's own files: the Library (what the user sent it), its builds, and the copies kept in the
+ * chat, with the Library's size and whether a full Library deletes its oldest files.
+ */
+@Composable
+private fun OrbitFilesStorageCard() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val preferences = remember { com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context) }
+    val settings by preferences.settingsFlow.collectAsState(initial = preferences.loadedSnapshot())
+    val orbit = settings?.let { it.active ?: it.orbits.firstOrNull { o -> !o.deleting } }
+    val who = orbit?.name?.takeIf { it.isNotBlank() } ?: "Orbit"
+    val limitGb = settings?.libraryLimitGb ?: com.ai.assistance.operit.data.preferences.OrbitSettings.DEFAULT_LIBRARY_LIMIT_GB
+    val autoDelete = settings?.libraryAutoDelete ?: true
+    data class Counts(val library: Pair<Int, Long>, val usage: com.ai.assistance.operit.features.orbit.OrbitFiles.Usage)
+    val counts by androidx.compose.runtime.produceState<Counts?>(null, orbit?.id) {
+        val id = orbit?.id ?: return@produceState
+        value = runCatching {
+            val uploads = com.ai.assistance.operit.features.orbit.OrbitUploads.list(context, id)
+            Counts(uploads.size to uploads.sumOf { it.size },
+                com.ai.assistance.operit.features.orbit.OrbitFiles.of(context, id).usage())
+        }.getOrNull()
+    }
+    fun line(files: Int?, bytes: Long?): String =
+        if (files == null || bytes == null) "—"
+        else context.getString(R.string.orbit_storage_files_line,
+            android.text.format.Formatter.formatShortFileSize(context, bytes), files)
+    com.ai.assistance.operit.ui.features.settings.components.SettingsCard(
+        backgroundColor = settingsCardColor(false),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+    ) {
+        Text(
+            stringResource(R.string.orbit_storage_files_title, who),
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 10.dp),
+        )
+        OrbitStorageLine(orbitIcon("folder"), stringResource(R.string.orbit_builds_uploads),
+            stringResource(R.string.orbit_storage_library_desc, who), line(counts?.library?.first, counts?.library?.second))
+        OrbitStorageLine(orbitIcon("shapes"), stringResource(R.string.orbit_builds_made),
+            stringResource(R.string.orbit_storage_made_desc, who), line(counts?.usage?.madeFiles, counts?.usage?.madeBytes))
+        OrbitStorageLine(orbitIcon("message-circle"), stringResource(R.string.orbit_storage_sent),
+            stringResource(R.string.orbit_storage_sent_desc), line(counts?.usage?.sentFiles, counts?.usage?.sentBytes))
+        com.ai.assistance.operit.ui.features.settings.components.SettingsRowDivider(inset = false)
+        var picking by remember { mutableStateOf(false) }
+        Box {
+            com.ai.assistance.operit.ui.features.settings.components.SettingsNavRow(
+                title = stringResource(R.string.orbit_storage_limit),
+                subtitle = stringResource(R.string.orbit_storage_limit_desc),
+                onClick = { picking = true },
+                trailing = {
+                    Text(stringResource(R.string.orbit_storage_gb, limitGb), style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.primary)
+                },
+            )
+            OrbitDropdownMenu(expanded = picking, onDismissRequest = { picking = false },
+                modifier = Modifier.align(androidx.compose.ui.Alignment.TopEnd)) {
+                com.ai.assistance.operit.data.preferences.OrbitSettings.LIBRARY_LIMITS_GB.forEach { gb ->
+                    androidx.compose.material3.DropdownMenuItem(
+                        text = { Text(stringResource(R.string.orbit_storage_gb, gb)) },
+                        trailingIcon = if (gb == limitGb) {
+                            { androidx.compose.material3.Icon(orbitIcon("check"), null, Modifier.size(18.dp)) }
+                        } else null,
+                        onClick = {
+                            picking = false
+                            scope.launch { preferences.setLibraryLimitGb(gb) }
+                        },
+                    )
+                }
+            }
+        }
+        com.ai.assistance.operit.ui.features.settings.components.SettingsRowDivider(inset = false)
+        com.ai.assistance.operit.ui.features.settings.components.SettingsSwitchRow(
+            title = stringResource(R.string.orbit_storage_auto_delete),
+            subtitle = if (autoDelete) stringResource(R.string.orbit_storage_auto_delete_on,
+                com.ai.assistance.operit.data.preferences.OrbitSettings.LIBRARY_KEEP_FILES)
+            else stringResource(R.string.orbit_storage_auto_delete_off),
+            checked = autoDelete,
+            onCheckedChange = { on -> scope.launch { preferences.setLibraryAutoDelete(on) } },
+        )
+    }
+}
+
+@Composable
+private fun OrbitStorageLine(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, desc: String, value: String) {
+    androidx.compose.foundation.layout.Row(
+        Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 10.dp),
+        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+    ) {
+        com.ai.assistance.operit.ui.features.settings.components.SettingsIconBadge(icon = icon)
+        androidx.compose.foundation.layout.Spacer(Modifier.size(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(desc, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Text(value, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(start = 8.dp))
     }
 }
 

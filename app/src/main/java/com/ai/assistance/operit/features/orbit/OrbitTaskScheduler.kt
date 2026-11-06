@@ -42,6 +42,7 @@ object OrbitTaskScheduler {
         var due: Long? = null
         for (task in tasks) {
             if (task.goalId.isNotEmpty() && repo.dao.goal(task.goalId)?.state != "ACTIVE") continue
+            if (OrbitTaskRepository.prechecked(task) && repo.dao.hasPendingResult(task.id)) continue
             val event = repo.dao.pendingEvent(task.id, task.version)
             if (event == null && (task.scheduleMode == "EVENT" || task.kind == OrbitGeofence.KIND)) continue
             val run = event?.let { repo.dao.eventRun(it.id) }
@@ -55,7 +56,7 @@ object OrbitTaskScheduler {
             // A run in progress here, or a due task waiting for its busy lane, is rescheduled by
             // that lane when it ends; waking every few seconds for hours would only burn
             // battery. A slow safety wake-up still covers a process that dies mid-run.
-            if ((run != null && OrbitTaskRunner.isRunningHere(run.id)) ||
+            if ((run != null && (OrbitTaskRunner.isRunningHere(run.id) || OrbitWake.isWatching(run.handoffTurnId))) ||
                 (run == null && retryAt <= now && OrbitTaskRunner.laneBusyHere(OrbitTaskRepository.isLongRun(task)))) {
                 val safety = now + BUSY_LANE_SAFETY_WAKE_MS
                 due = minOf(due ?: safety, safety)
@@ -65,6 +66,11 @@ object OrbitTaskScheduler {
         }
         for (delivery in repo.dao.pendingDeliveries(active.id)) {
             val ready = OrbitDelivery.dueAt(context, delivery, now).coerceAtLeast(now + 60_000)
+            due = minOf(due ?: ready, ready)
+        }
+        // A killed process leaves HANDING rows; live slow replies retain a modest safety wake-up.
+        for (delivery in repo.dao.handingDeliveries(active.id)) {
+            val ready = if (OrbitWake.isWatching(delivery.handoffTurnId)) now + BUSY_LANE_SAFETY_WAKE_MS else now + 60_000
             due = minOf(due ?: ready, ready)
         }
         if (due == null) {
@@ -120,6 +126,8 @@ object OrbitTaskScheduler {
 class OrbitTimeZoneReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_TIMEZONE_CHANGED) return
+        // Messages sent from now on carry the new zone when they reach the model.
+        OrbitMessageTime.recordZoneChange(context, intent.getStringExtra(Intent.EXTRA_TIMEZONE), System.currentTimeMillis())
         WorkManager.getInstance(context).enqueueUniqueWork("orbit_calendar_timezone", ExistingWorkPolicy.REPLACE,
             OneTimeWorkRequestBuilder<OrbitTimeZoneWorker>().build())
     }

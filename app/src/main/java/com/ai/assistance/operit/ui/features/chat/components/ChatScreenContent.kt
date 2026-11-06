@@ -358,7 +358,8 @@ fun ChatScreenContent(
             }).sortedBy { it.steeringAt }
     }
     // The rows only see this chat's unsent messages; another chat's change keeps the same value.
-    val unsentInChat = if (orbitMessageHost != null && !transcriptLocked) {
+    // The developer view keeps them too, to show which messages never went out.
+    val unsentInChat = if ((orbitMessageHost != null || LocalShowHiddenChatRows.current) && !transcriptLocked) {
         val failedFlow = remember { com.ai.assistance.operit.core.chat.ChatSendFailures.failed(context) }
         val failed by failedFlow.collectAsState()
         val timestamps = failed[currentChatId].orEmpty()

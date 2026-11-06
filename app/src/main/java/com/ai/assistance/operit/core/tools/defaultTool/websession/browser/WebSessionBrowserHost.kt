@@ -195,6 +195,13 @@ internal class WebSessionBrowserHost(
                             when {
                                 w.controlling && hostState.browserState.pendingDialog != null ->
                                     ({ callbacks.onHandlePendingDialog(false, null) })
+                                // The download sheet and the "open in another app" prompt close first, too.
+                                w.controlling && hostState.externalOpenPrompt != null -> {
+                                    val id = hostState.externalOpenPrompt!!.requestId
+                                    ({ callbacks.onCancelExternalOpen(id) })
+                                }
+                                w.controlling && hostState.sheetRoute == WebSessionBrowserSheetRoute.DOWNLOADS ->
+                                    ({ updateHostState { it.copy(sheetRoute = WebSessionBrowserSheetRoute.NONE) } })
                                 else -> w.onClose
                             }
                         }

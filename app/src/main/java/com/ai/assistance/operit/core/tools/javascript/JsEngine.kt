@@ -25,6 +25,7 @@ import com.ai.assistance.operit.core.tools.packTool.TOOLPKG_EVENT_MESSAGE_PROCES
 import com.ai.assistance.operit.data.db.AppDatabase
 import com.ai.assistance.operit.features.draw.CodexDrawBridge
 import com.ai.assistance.operit.features.draw.GrokDrawBridge
+import com.ai.assistance.operit.features.orbit.OrbitMemoryScope
 import com.ai.assistance.operit.data.preferences.CharacterCardManager
 import com.ai.assistance.operit.data.repository.SubagentRunRepository
 import com.ai.assistance.operit.features.reading.ReadingCompanionAudit
@@ -128,6 +129,8 @@ class JsEngine(private val context: Context) {
         val intermediateResultCallback: ((Any?) -> Unit)?,
         val dispatchIntermediateOnMain: Boolean,
         val envOverrides: Map<String, String>,
+        /** Null preserves the main app's environment; Orbit calls only see declared global keys. */
+        val allowedGlobalEnvKeys: Set<String>?,
         val packageChatId: String?,
         val packageName: String?,
         val toolRuntimeContext: ToolExecutionManager.ToolRuntimeContext?,
@@ -389,23 +392,27 @@ class JsEngine(private val context: Context) {
         toolPkgApiVersion: ToolPkgApiVersion?,
         executionListener: JsExecutionListener?
     ): ExecutionSession {
+        val runtime = ToolExecutionManager.currentToolRuntimeContext()
+        val packageChatId = params["__operit_package_chat_id"]?.toString()?.trim()?.ifBlank { null }
+        val packageName = params["__operit_package_name"]?.toString()?.trim()?.ifBlank { null }
+        val callerChatId = runtime?.callerChatId ?: packageChatId
+        val isOrbit = !callerChatId.isNullOrBlank() && runBlocking {
+            OrbitMemoryScope.owner(context, callerChatId) != null
+        }
+        val allowedGlobalEnvKeys = if (isOrbit) {
+            packageName?.let { packageManager.getPackageTools(it) }?.env
+                .orEmpty().map { it.name.trim() }.filter { it.isNotEmpty() }.toSet()
+        } else null
         return ExecutionSession(
             callId = callId,
             future = CompletableFuture(),
             intermediateResultCallback = onIntermediateResult,
             dispatchIntermediateOnMain = dispatchIntermediateOnMain,
             envOverrides = envOverrides,
-            packageChatId =
-                params["__operit_package_chat_id"]
-                    ?.toString()
-                    ?.trim()
-                    ?.ifBlank { null },
-            packageName =
-                params["__operit_package_name"]
-                    ?.toString()
-                    ?.trim()
-                    ?.ifBlank { null },
-            toolRuntimeContext = ToolExecutionManager.currentToolRuntimeContext(),
+            allowedGlobalEnvKeys = allowedGlobalEnvKeys,
+            packageChatId = packageChatId,
+            packageName = packageName,
+            toolRuntimeContext = runtime,
             toolPkgApiVersion = toolPkgApiVersion,
             toolPkgLogSnapshot = toolPkgExecutionContext.capture(script, functionName, params),
             executionListener = executionListener
@@ -1611,11 +1618,13 @@ class JsEngine(private val context: Context) {
 
         @JavascriptInterface
         fun getEnvForCall(callId: String, key: String): String? {
-            val session = resolveExecutionSession(callId)
+            // An expired or fabricated call must not fall back to the main app's full environment.
+            val session = resolveExecutionSession(callId) ?: return ""
             return JsNativeInterfaceDelegates.getEnv(
                 context = context,
                 key = key,
-                envOverrides = session?.envOverrides ?: emptyMap()
+                envOverrides = session.envOverrides,
+                allowedGlobalEnvKeys = session.allowedGlobalEnvKeys
             )
         }
 

@@ -48,6 +48,7 @@ import androidx.core.app.ActivityCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.preferences.OrbitPreferences
 import com.ai.assistance.operit.features.orbit.OrbitPermissionCards
@@ -87,11 +88,24 @@ internal fun OrbitPermissionCard(card: JSONObject) {
     val onChecked: (Boolean, Int) -> Unit = { on, checkedTick ->
         // An older read may finish after the tap. Only a read started after the result/return counts.
         if (grantPending && checkedTick > grantAfterTick) {
-            grantPending = false
-            if (on) OrbitPermissionCards.grantedFromCard(context, orbitId, card.optString("chat_id"), permission, cardId)
+            if (!on) grantPending = false
+            else {
+                OrbitPermissionCards.grantedFromCard(context, orbitId, card.optString("chat_id"), permission, cardId) {
+                    grantPending = false
+                }
+            }
         }
     }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(grantPending, lifecycle) {
+        if (grantPending) lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            // Keep an unsent result retryable if the chat was busy or the process was recreated.
+            while (true) {
+                kotlinx.coroutines.delay(30_000)
+                tick++
+            }
+        }
+    }
     DisposableEffect(lifecycle) {
         val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_RESUME) tick++ }
         lifecycle.addObserver(observer)
@@ -124,11 +138,11 @@ private fun DeviceAccessBody(name: String, tick: Int, onRefresh: () -> Unit,
     val openPage = LocalOrbitOpenPage.current
     // The access page opens inside the app, so coming back is no resume; it reports its close instead.
     val closed by OrbitPermissionCards.deviceAccessPageClosed.collectAsState()
-    var seenClosed by remember { mutableIntStateOf(closed) }
+    var seenClosed by rememberSaveable { mutableIntStateOf(closed) }
     // Setting it up often means a trip to Shizuku or a root app and back while the access page is
     // still open. Those returns only update what the card shows; a tap is settled by the first read
     // after the page closes (from [settleTick] on), so finishing on the page still tells Orbit.
-    var settleTick by remember { mutableIntStateOf(-1) }
+    var settleTick by rememberSaveable { mutableIntStateOf(-1) }
     LaunchedEffect(closed) {
         if (closed != seenClosed) {
             seenClosed = closed

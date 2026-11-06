@@ -171,6 +171,23 @@ class EnhancedAIService private constructor(
             }
         }
 
+        /** Called after a temporary task's turn and token collectors have stopped. */
+        suspend fun releaseTaskChatInstance(chatId: String) {
+            val instance = synchronized(CHAT_INSTANCES) { CHAT_INSTANCES.remove(chatId) } ?: return
+            try {
+                instance.cancelConversationAndAwait()
+                instance.initScope.coroutineContext[kotlinx.coroutines.Job]?.let { job ->
+                    job.cancel()
+                    job.join()
+                }
+                instance.multiServiceManager.cancelAllStreaming()
+                instance.multiServiceManager.refreshAllServices()
+            } finally {
+                instance.initScope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
+                instance.toolProcessingScope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
+            }
+        }
+
         /**
          * 获取指定功能类型的 AIService 实例（非实例化方式）
          * @param context 应用上下文
@@ -543,6 +560,8 @@ class EnhancedAIService private constructor(
         var composerPredictionParameters: List<ModelParameter<*>>? = null,
         /** Whether the most recent request ran with thinking enabled. */
         var composerPredictionEnableThinking: Boolean = false,
+        /** An Orbit chat: user messages, including ones sent mid-turn, start with their send time. */
+        var stampUserTime: Boolean = false,
     )
 
     @Volatile
@@ -986,6 +1005,10 @@ class EnhancedAIService private constructor(
         check(compactedTokens < maxTokens) {
             "Agent context remains larger than the configured capacity after compaction"
         }
+        com.ai.assistance.operit.core.chat.OrbitDevRecorder.event(
+            chatId, com.ai.assistance.operit.core.chat.OrbitDevRecorder.EVENT_COMPACT,
+            context.getString(R.string.orbit_dev_event_compact_whole, history.size, compacted.size, summary.length),
+        )
 
         withContext(NonCancellable) {
             val scopeId = requireNotNull(execution.onTurnInput).invoke(
@@ -1049,6 +1072,10 @@ class EnhancedAIService private constructor(
         check(estimatePreparedRequestWindow(service, compacted, tools, true) < maxTokens * threshold * IN_PLACE_ROOM) {
             "Context is still too full after compaction to keep reading"
         }
+        com.ai.assistance.operit.core.chat.OrbitDevRecorder.event(
+            chatId, com.ai.assistance.operit.core.chat.OrbitDevRecorder.EVENT_COMPACT,
+            context.getString(R.string.orbit_dev_event_compact_whole, history.size, compacted.size, summary.length),
+        )
         com.ai.assistance.operit.api.chat.enhance.InPlaceCompaction.compacted(chatId)
         return compacted
     }
@@ -1067,6 +1094,7 @@ class EnhancedAIService private constructor(
      */
     private suspend fun compactTurn(
         execution: MessageExecutionContext,
+        chatId: String?,
         compactor: com.ai.assistance.operit.api.chat.compaction.TurnCompactor,
         history: List<PromptTurn>,
         ratio: Double,
@@ -1090,12 +1118,12 @@ class EnhancedAIService private constructor(
         }
         var current = history
         if (beforeTurn) {
-            compactWithinTurn(execution, compactor, history)?.let { compacted ->
+            compactWithinTurn(execution, chatId, compactor, history)?.let { compacted ->
                 current = compacted
                 if (measure(compacted) < threshold) return compacted
             }
         }
-        return compactSteps(execution, compactor, current, tailLimit) ?: current.takeIf { it !== history }
+        return compactSteps(execution, chatId, compactor, current, tailLimit) ?: current.takeIf { it !== history }
     }
 
     /** The chat before the turn has not been summarized in this turn yet. */
@@ -1127,6 +1155,7 @@ class EnhancedAIService private constructor(
      */
     private suspend fun compactSteps(
         execution: MessageExecutionContext,
+        chatId: String?,
         compactor: com.ai.assistance.operit.api.chat.compaction.TurnCompactor,
         history: List<PromptTurn>,
         tailLimit: Int,
@@ -1139,6 +1168,13 @@ class EnhancedAIService private constructor(
         val compacted = history.subList(0, summary.covered).filter { it.kind == PromptTurnKind.SYSTEM } +
             PromptTurn(PromptTurnKind.SUMMARY, summary.text) +
             history.subList(summary.covered, history.size)
+        com.ai.assistance.operit.core.chat.OrbitDevRecorder.event(
+            chatId, com.ai.assistance.operit.core.chat.OrbitDevRecorder.EVENT_COMPACT,
+            context.getString(
+                R.string.orbit_dev_event_compact_steps,
+                history.subList(0, summary.covered).count { it.kind != PromptTurnKind.SYSTEM }, summary.text.length,
+            ),
+        )
         // The chat before the turn is inside this summary now.
         execution.turnStart = -1
         execution.conversationHistory.clear()
@@ -1153,6 +1189,7 @@ class EnhancedAIService private constructor(
      */
     private suspend fun compactWithinTurn(
         execution: MessageExecutionContext,
+        chatId: String?,
         compactor: com.ai.assistance.operit.api.chat.compaction.TurnCompactor,
         history: List<PromptTurn>,
     ): List<PromptTurn>? {
@@ -1163,6 +1200,10 @@ class EnhancedAIService private constructor(
         val summary = compactor.takeReady() ?: whileSummarizing { compactor.await() }
         if (summary.isNullOrBlank()) return null
         val compacted = leading + PromptTurn(PromptTurnKind.SUMMARY, summary) + history.subList(start, history.size)
+        com.ai.assistance.operit.core.chat.OrbitDevRecorder.event(
+            chatId, com.ai.assistance.operit.core.chat.OrbitDevRecorder.EVENT_COMPACT,
+            context.getString(R.string.orbit_dev_event_compact_before_turn, start - leading.size, summary.length),
+        )
         execution.turnStart = leading.size + 1
         execution.conversationHistory.clear()
         execution.conversationHistory.addAll(compacted)
@@ -1365,12 +1406,20 @@ class EnhancedAIService private constructor(
             finalPreparedHistory = ChatUtils.stripOpenAiResponsesReasoningMetaTurns(finalPreparedHistory)
         }
 
-        val requestHistory =
+        val finalizedHistory =
             applyFinalizedCurrentUserTurn(
                 preparedHistory = finalPreparedHistory,
                 originalCurrentMessage = message,
                 finalizedCurrentMessage = finalProcessedInput
-            ).mergeAdjacentTurns { previous, current ->
+            )
+        val requestHistory =
+            (if (com.ai.assistance.operit.features.orbit.OrbitMessageTime.appliesTo(context, chatId)) {
+                // Estimates can be asked for from the main thread; labels for a long chat and the
+                // first read of the zone log stay off it.
+                withContext(Dispatchers.IO) {
+                    com.ai.assistance.operit.features.orbit.OrbitMessageTime.stamp(context, finalizedHistory, System.currentTimeMillis())
+                }
+            } else finalizedHistory).mergeAdjacentTurns { previous, current ->
                 com.ai.assistance.operit.core.agent.collaboration.CollaborationPromptHistory.canMergeUserTurns(previous, current)
             }
 
@@ -1502,8 +1551,10 @@ class EnhancedAIService private constructor(
                 )
             registerExecutionContext(execContext)
             var hadFatalError = false
+            // The failure of this request, for its result in the developer view.
+            var fatalError: Throwable? = null
             // 计时从这里开始：前面在发送入口里花的时间（附件、历史、插件）由 [LlmRequestPerf.markUpstream] 补上。
-            val perf = com.ai.assistance.operit.core.chat.LlmRequestPerf("发消息 $functionType", options.perfStart, stream)
+            val perf = com.ai.assistance.operit.core.chat.LlmRequestPerf("发消息 $functionType", options.perfStart, stream, chatId)
             try {
                 // 确保所有操作都在IO线程上执行
                 withContext(Dispatchers.IO) {
@@ -1685,7 +1736,13 @@ class EnhancedAIService private constructor(
                             preparedHistory = finalPreparedHistory,
                             originalCurrentMessage = message,
                             finalizedCurrentMessage = finalProcessedInput
-                        )
+                        ).let { history ->
+                            execContext.stampUserTime =
+                                com.ai.assistance.operit.features.orbit.OrbitMessageTime.appliesTo(context, chatId)
+                            if (execContext.stampUserTime) {
+                                com.ai.assistance.operit.features.orbit.OrbitMessageTime.stamp(context, history, System.currentTimeMillis())
+                            } else history
+                        }
                     var requestHistory =
                         finalizedHistory.mergeAdjacentTurns { previous, current ->
                             com.ai.assistance.operit.core.agent.collaboration.CollaborationPromptHistory.canMergeUserTurns(previous, current)
@@ -1746,7 +1803,7 @@ class EnhancedAIService private constructor(
                             ).toDouble() / maxTokens
                         }
                         val finalWindow = compactTurn(
-                            execContext, initialCompactor, requestHistory, initialRatio, tokenUsageThreshold, maxTokens,
+                            execContext, chatId, initialCompactor, requestHistory, initialRatio, tokenUsageThreshold, maxTokens,
                             measureRequest,
                         )?.let { compacted ->
                             requestHistory = compacted
@@ -1932,7 +1989,7 @@ class EnhancedAIService private constructor(
                     }
                     } catch (e: Throwable) {
                         perf.log(serviceForFunction.providerModel,
-                            if (e is CancellationException) "中断" else "失败: ${e.javaClass.simpleName}")
+                            if (e is CancellationException) "中断" else "失败: ${e.javaClass.simpleName}", e)
                         throw e
                     } } }
 
@@ -1979,6 +2036,7 @@ class EnhancedAIService private constructor(
                 if (handedToCompaction) {
                     // Compaction sends the turn again; nothing more of this request is processed.
                     hadFatalError = true
+                    fatalError = e
                 } else if (e.message?.contains("Socket closed", ignoreCase = true) == true) {
                     if (isExecutionContextActive(execContext)) {
                         AppLogger.d(TAG, "Stream was cancelled by the user (Socket closed).")
@@ -1987,6 +2045,7 @@ class EnhancedAIService private constructor(
                     }
                 } else {
                     hadFatalError = true
+                    fatalError = e
                     // Handle any exceptions
                     AppLogger.e(TAG, "发送消息时发生错误: ${e.message}", e)
                     withContext(Dispatchers.Main) {
@@ -2015,7 +2074,7 @@ class EnhancedAIService private constructor(
                 }
             } finally {
                 // 准备阶段出错或被取消时也留一行；正常完成的已经输出过，不会重复。
-                perf.log(null, if (hadFatalError) "失败" else "中断")
+                perf.log(null, if (hadFatalError) "失败" else "中断", fatalError)
                 try {
                     // 确保流处理完成后调用；如果本轮已被取消，则不能再继续跑完成逻辑。
                     if (!hadFatalError && isExecutionContextActive(execContext)) {
@@ -2302,6 +2361,16 @@ class EnhancedAIService private constructor(
             }
 
             val truncatedToolRecovery = detectAndRepairTruncatedToolRound(content)
+            truncatedToolRecovery?.let { recovery ->
+                com.ai.assistance.operit.core.chat.OrbitDevRecorder.event(
+                    chatId, com.ai.assistance.operit.core.chat.OrbitDevRecorder.EVENT_REPAIR,
+                    this@EnhancedAIService.context.getString(
+                        R.string.orbit_dev_event_truncated_tool,
+                        recovery.invalidatedToolNames.joinToString(", ").ifBlank { "?" },
+                        recovery.appendedSuffix,
+                    ),
+                )
+            }
             val finalContent = truncatedToolRecovery?.repairedContent ?: content
 
             // 截断修复仅追加缺失后缀，不撤回已经发出的内容
@@ -2951,7 +3020,9 @@ class EnhancedAIService private constructor(
             inputOnly: Boolean = false,
     ) {
         val startTime = messageTimingNow()
-        val perf = com.ai.assistance.operit.core.chat.LlmRequestPerf("工具结果回传 $functionType", streaming = stream)
+        val perf = com.ai.assistance.operit.core.chat.LlmRequestPerf(
+            "工具结果回传 $functionType", streaming = stream, chatId = chatId, toolResult = true,
+        )
         try {
             val toolNames = results.joinToString(", ") { it.toolName }
             val rawToolResultMessage =
@@ -3005,8 +3076,13 @@ class EnhancedAIService private constructor(
                 // Once durable user rows are written, cancellation must not return those same
                 // messages to the queue. Complete the history handoff and acknowledgement together.
                 withContext(NonCancellable) {
+                    // Each input's chat row is written inside onTurnInput; its time labels the input below.
+                    val rowTimes = java.util.concurrent.ConcurrentHashMap<Int, Long>()
+                    val trackedInputs = turnInputs.mapIndexed { index, input ->
+                        input.copy(saved = { at -> rowTimes[index] = at; input.saved(at) })
+                    }
                     val nextAssistantScope = context.onTurnInput?.invoke(
-                        turnInputs,
+                        trackedInputs,
                         ToolExecutionBoundarySnapshot(
                             context.roundManager.getDisplaySnapshot(), context.emittedReplayCharCount.get(),
                             context.eventChannel.replayCache.size,
@@ -3019,14 +3095,19 @@ class EnhancedAIService private constructor(
                         context.toolSequence.startMessage(nextAssistantScope)
                         com.ai.assistance.operit.core.tools.phone.PhoneControlTools.registerTurn(nextAssistantScope)
                     }
-                    turnInputs.forEach { input ->
-                        val inputTurn = PromptTurn(
+                    turnInputs.forEachIndexed { index, input ->
+                        val rawInputTurn = PromptTurn(
                             kind = PromptTurnKind.USER, content = input.text,
                             metadata = if (input.agentPath != null) mapOf(
                                 com.ai.assistance.operit.core.agent.collaboration.CollaborationPromptHistory.EVENT_METADATA to true,
                                 com.ai.assistance.operit.core.agent.collaboration.CollaborationPromptHistory.TASK_METADATA to input.startsAgentTurn,
                             ) else emptyMap(),
                         )
+                        val inputTurn = if (context.stampUserTime) {
+                            com.ai.assistance.operit.features.orbit.OrbitMessageTime.stamp(
+                                this@EnhancedAIService.context, rawInputTurn,
+                                input.sentAt.takeIf { it > 0L } ?: rowTimes[index] ?: System.currentTimeMillis())
+                        } else rawInputTurn
                         context.conversationHistory.add(inputTurn)
                         if (context.collaborationInputs.isNotEmpty()) {
                             context.collaborationInputs.add(inputTurn)
@@ -3132,7 +3213,7 @@ class EnhancedAIService private constructor(
                     usageRatio >= tokenUsageThreshold * com.ai.assistance.operit.api.chat.compaction.ContextCompaction.PRECOMPUTE_RATIO
                 ) {
                     val compacted = compactTurn(
-                        context, turnCompactor, currentChatHistory, usageRatio, tokenUsageThreshold, maxTokens,
+                        context, chatId, turnCompactor, currentChatHistory, usageRatio, tokenUsageThreshold, maxTokens,
                     ) { prepared ->
                         estimatePreparedRequestWindow(
                             serviceForFunction = serviceForFunction,
@@ -3326,7 +3407,7 @@ class EnhancedAIService private constructor(
                     }
                     } catch (e: Throwable) {
                         perf.log(serviceForFunction.providerModel,
-                            if (e is CancellationException) "中断" else "失败: ${e.javaClass.simpleName}")
+                            if (e is CancellationException) "中断" else "失败: ${e.javaClass.simpleName}", e)
                         throw e
                     } } }
 
@@ -3400,7 +3481,7 @@ class EnhancedAIService private constructor(
             }
         } catch (e: Throwable) {
             // 准备阶段出错或被取消也留一行，看得出卡在哪一步；已输出过的不会重复。
-            perf.log(null, if (e is CancellationException) "中断" else "失败: ${e.javaClass.simpleName}")
+            perf.log(null, if (e is CancellationException) "中断" else "失败: ${e.javaClass.simpleName}", e)
             throw e
         }
     }

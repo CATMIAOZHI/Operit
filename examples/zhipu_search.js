@@ -18,6 +18,14 @@
         "en": "Zhipu Search API Key (independent from draw Key)"
       },
       "required": false
+    },
+    {
+      "name": "DEFAULT_API_KEY",
+      "description": {
+        "zh": "未设置智谱搜索专用密钥时使用的备用 API Key（可选）",
+        "en": "Optional fallback API key when the dedicated Zhipu Search key is unset"
+      },
+      "required": false
     }
   ],
   "category": "Search",

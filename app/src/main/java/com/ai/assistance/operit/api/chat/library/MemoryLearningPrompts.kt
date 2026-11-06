@@ -37,6 +37,8 @@ internal fun buildMemoryLearningInstructions(chatId: String, notes: Boolean, ski
             Do not invent facts or remove existing facts just because excerpts omit them.
             You have scoped learning tools only. Do not execute scripts or perform external actions.
             Do not retain credentials or transient task status.
+            When the user asks to forget something, do not record it. Within this run's scope (the documents or
+            skills you may change below), also remove what is already saved about it, including earlier in this run.
         """.trimIndent())
         if (notes) appendLine("""
             Scope: durable memory and user notes.
@@ -163,6 +165,8 @@ private val ORBIT_NOTES_SCOPE = """
     Never put tool usage, workarounds, errors, debugging or task progress in memory.md. A lesson about how to
     work (something the user corrected, a mistake not to repeat) goes to LESSONS.md with lesson_add; a
     repeatable procedure becomes a skill when skills are in scope; progress is not kept at all.
+    Read LESSONS.md with people_read and use lesson_change to replace a corrected lesson or remove one
+    that is outdated or duplicated; do not just append a conflicting rule.
     The unsorted section holds notes from before the sections existed. When it is there, move a few of its
     entries on each page: first add each one to the right section, or lesson_add a tool lesson that still
     holds, and only after that succeeds remove it from unsorted. Remove without moving only an entry that is
@@ -177,7 +181,7 @@ private val ORBIT_NOTES_SCOPE = """
 internal fun memoryLearningActionDescription(notes: Boolean, skills: Boolean, orbit: Boolean = false): String = buildString {
     val actions = mutableListOf("read_next", "commit", "history")
     if (notes) actions += listOf("memory_read", "memory_change")
-    if (notes && orbit) actions += listOf("people_list", "people_read", "people_write", "lesson_add")
+    if (notes && orbit) actions += listOf("people_list", "people_read", "people_write", "lesson_add", "lesson_change")
     if (skills) actions += listOf("skill_list", "skill_read", "skill_create", "skill_write", "skill_patch", "skill_remove_file", "skill_delete")
     appendLine("Scoped learning operations. Only these actions are available in this run: ${actions.joinToString(", ")}.")
     appendLine("read_next takes no arguments and returns the next page of the source conversation (the same page until it is committed). " +
@@ -198,6 +202,8 @@ internal fun memoryLearningActionDescription(notes: Boolean, skills: Boolean, or
         people_write: path and content, the whole new text of one person or circle note (read it first, even
         a new one); at most $PEOPLE_NOTE_MAX_CHARS characters.
         lesson_add: content, one lesson line (at most $LESSON_MAX_CHARS characters) appended to LESSONS.md.
+        lesson_change: operation=replace/remove, old_text (an exact unique excerpt read with people_read),
+        and content for replace. Correct or remove existing lessons; unrelated entries stay untouched.
     """.trimIndent())
     if (skills) appendLine("""
         Skill arguments: name, path (default SKILL.md), content, old_text, description, reason.

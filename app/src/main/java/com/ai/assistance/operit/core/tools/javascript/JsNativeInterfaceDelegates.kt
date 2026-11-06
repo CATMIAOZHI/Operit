@@ -240,13 +240,15 @@ internal object JsNativeInterfaceDelegates {
     fun getEnv(
         context: Context,
         key: String,
-        envOverrides: Map<String, String>
+        envOverrides: Map<String, String>,
+        allowedGlobalEnvKeys: Set<String>? = null
     ): String {
         return guard("", "Error reading environment variable from JS: $key") {
             val normalizedKey = normalizeNonBlank(key) ?: return@guard ""
             envOverrides[normalizedKey]?.takeIf { it.isNotEmpty() }
-                ?: EnvPreferences.getInstance(context).getEnv(normalizedKey)
-                ?: ""
+                ?: if (allowedGlobalEnvKeys == null || normalizedKey in allowedGlobalEnvKeys) {
+                    EnvPreferences.getInstance(context).getEnv(normalizedKey).orEmpty()
+                } else ""
         }
     }
 

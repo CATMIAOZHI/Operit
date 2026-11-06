@@ -1088,7 +1088,18 @@ object ToolExecutionManager {
 
         // Record after batch splitting so recursive execution does not log a repair twice.
         rawInvocations.forEach { invocation ->
-            ToolCallRepairRouter.route(invocation)?.let { ToolCallRepairLogger.record(context, it) }
+            ToolCallRepairRouter.route(invocation)?.let { repair ->
+                ToolCallRepairLogger.record(context, repair)
+                com.ai.assistance.operit.core.chat.OrbitDevRecorder.event(
+                    callerChatId, com.ai.assistance.operit.core.chat.OrbitDevRecorder.EVENT_REPAIR,
+                    context.getString(
+                        com.ai.assistance.operit.R.string.orbit_dev_event_repair,
+                        repair.originalToolName, repair.originalParameterNames.joinToString(", "),
+                        repair.targetToolName, repair.parameterNames.joinToString(", "),
+                        repair.rules.joinToString(", "),
+                    ),
+                )
+            }
         }
         val errorBatchId = java.util.UUID.randomUUID().toString()
         val parameterObservers = java.util.concurrent.ConcurrentHashMap<String, ToolParameterObservation>()

@@ -27,6 +27,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -86,6 +87,31 @@ internal fun OrbitAppLockGate(enabled: Boolean, orbit: OrbitProfile?, content: @
     val unlocked by OrbitAppLock.unlocked.collectAsState()
     val lifecycleState by androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
     val resumed = lifecycleState.isAtLeast(Lifecycle.State.RESUMED)
+    val activity = context.lockActivity()
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(activity, enabled, lifecycle) {
+        val window = activity?.window
+        val secureFlag = android.view.WindowManager.LayoutParams.FLAG_SECURE
+        val alreadySecure = (window?.attributes?.flags?.and(secureFlag) ?: 0) != 0
+        fun protectRecents() {
+            if (android.os.Build.VERSION.SDK_INT >= 33) {
+                activity?.setRecentsScreenshotEnabled(!enabled)
+            } else if (enabled) {
+                window?.addFlags(secureFlag)
+            }
+        }
+        protectRecents()
+        // Another protected page may remove its own flag when closing; restore ours before backgrounding.
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_RESUME) protectRecents()
+        }
+        lifecycle.addObserver(observer)
+        onDispose {
+            lifecycle.removeObserver(observer)
+            if (android.os.Build.VERSION.SDK_INT >= 33) activity?.setRecentsScreenshotEnabled(true)
+            else if (enabled && !alreadySecure) window?.clearFlags(secureFlag)
+        }
+    }
     // Read again on each return: a phone whose screen lock was removed has nothing left to check
     // against, and the user must not be shut out of Orbit (and of the switch that turns this off).
     val secure = remember(enabled, resumed) { !enabled || OrbitAppLock.deviceSecure(context) }

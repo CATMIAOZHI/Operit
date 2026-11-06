@@ -50,6 +50,20 @@ data class OrbitActionRow(
     val updatedAt: Long,
 )
 
+/** One run of an Orbit task as the developer view lists it: skipped runs too, with why. */
+data class OrbitDevRunRow(
+    val id: String,
+    val taskId: String,
+    val title: String,
+    val state: String,
+    val decision: String,
+    val observation: String,
+    val error: String,
+    val startedAt: Long,
+    val finishedAt: Long,
+    val generation: Long,
+)
+
 /** Marks an event put back because Orbit's token allowance ran out; see [OrbitTaskDao.stopForQuota]. */
 private const val QUOTA_RETRY_KEY = ":quota-retry:"
 /** How many generations a resumable run gets after process deaths before only that run is given up. */
@@ -59,6 +73,9 @@ private const val MAX_RESUMES = 3
 interface OrbitTaskDao {
     @Query("SELECT r.id AS id, r.taskId AS taskId, t.title AS title, t.kind AS kind, r.state AS state, SUBSTR(r.observation,1,400) AS observation, SUBSTR(r.error,1,400) AS error, r.startedAt AS startedAt, r.finishedAt AS finishedAt, r.generation AS generation FROM orbit_runs r INNER JOIN orbit_tasks t ON t.id = r.taskId WHERE t.orbitId = :orbitId AND r.decision NOT IN ('" + OrbitRunEntity.UNCHANGED + "', '" + OrbitRunEntity.SKIPPED + "', '" + OrbitRunEntity.IN_CHAT + "') AND r.decision NOT LIKE '@in_chat:%' ORDER BY r.startedAt DESC LIMIT 200")
     fun observeActivity(orbitId: String): Flow<List<OrbitActivityRow>>
+    /** The latest runs of [orbitId]'s tasks, unchanged, skipped and in-chat ones included. */
+    @Query("SELECT r.id AS id, r.taskId AS taskId, t.title AS title, r.state AS state, r.decision AS decision, SUBSTR(r.observation,1,400) AS observation, SUBSTR(r.error,1,800) AS error, r.startedAt AS startedAt, r.finishedAt AS finishedAt, r.generation AS generation FROM orbit_runs r INNER JOIN orbit_tasks t ON t.id = r.taskId WHERE t.orbitId = :orbitId ORDER BY r.startedAt DESC LIMIT :limit")
+    suspend fun devRuns(orbitId: String, limit: Int): List<OrbitDevRunRow>
     /** A sent turn cannot be replayed; enrich only that completed run after its chat reply ends. */
     @Query("UPDATE orbit_runs SET decision=:decision WHERE id=:runId AND generation=:generation AND owner=:owner AND state='COMPLETED' AND decision='" + OrbitRunEntity.IN_CHAT + "'")
     suspend fun recordChatDecision(runId: String, generation: Long, owner: String, decision: String): Int
@@ -447,11 +464,14 @@ interface OrbitTaskDao {
     suspend fun hasUserMessageAt(chatId: String, timestamp: Long): Boolean
 
     /** Orbit's messages in [chatId] written after [after], oldest first; one reply can be several. */
-    @Query("SELECT content FROM messages WHERE chatId = :chatId AND sender = 'ai' AND timestamp > :after ORDER BY timestamp ASC")
+    @Query("SELECT excerpt FROM (SELECT SUBSTR(content,-16000) AS excerpt, timestamp FROM messages " +
+        "WHERE chatId = :chatId AND sender = 'ai' AND timestamp > :after ORDER BY timestamp DESC LIMIT 32) ORDER BY timestamp ASC")
     suspend fun aiSaidAfter(chatId: String, after: Long): List<String>
 
     /** Bound a registered turn by its terminal assistant timestamp, excluding later chat turns. */
-    @Query("SELECT content FROM messages WHERE chatId = :chatId AND sender = 'ai' AND timestamp > :after AND timestamp <= :through ORDER BY timestamp ASC")
+    @Query("SELECT excerpt FROM (SELECT SUBSTR(content,-16000) AS excerpt, timestamp FROM messages " +
+        "WHERE chatId = :chatId AND sender = 'ai' AND timestamp > :after AND timestamp <= :through " +
+        "ORDER BY timestamp DESC LIMIT 32) ORDER BY timestamp ASC")
     suspend fun aiSaidThrough(chatId: String, after: Long, through: Long): List<String>
 
     @Query("SELECT * FROM orbit_runs WHERE taskId = :taskId AND state IN ('COMPLETED','FAILED') ORDER BY finishedAt DESC LIMIT 1")
@@ -483,6 +503,12 @@ interface OrbitTaskDao {
 
     @Query("SELECT * FROM orbit_deliveries WHERE orbitId = :orbitId AND state = 'PENDING' ORDER BY createdAt")
     suspend fun pendingDeliveries(orbitId: String): List<OrbitDeliveryEntity>
+
+    @Query("SELECT * FROM orbit_deliveries WHERE orbitId = :orbitId AND state = 'HANDING'")
+    suspend fun handingDeliveries(orbitId: String): List<OrbitDeliveryEntity>
+
+    @Query("SELECT EXISTS(SELECT 1 FROM orbit_deliveries WHERE taskId=:taskId AND state IN ('PENDING','HANDING'))")
+    suspend fun hasPendingResult(taskId: String): Boolean
 
     @Query("SELECT * FROM orbit_deliveries WHERE id = :id")
     suspend fun delivery(id: String): OrbitDeliveryEntity?
@@ -536,18 +562,60 @@ interface OrbitTaskDao {
     @Query("UPDATE orbit_deliveries SET state='SENT', notificationSent=1 WHERE orbitId=:orbitId AND messageId=:messageId AND state='PENDING'")
     suspend fun markBatchDelivered(orbitId: String, messageId: Long)
 
-    /** Reports Orbit was told about in its chat; Orbit's own reply is the message. */
-    @Query("UPDATE orbit_deliveries SET state='SENT', notificationSent=1 WHERE id IN (:ids) AND state='PENDING'")
-    suspend fun markHandedToOrbit(ids: List<String>)
+    /** Persist the hand-off before starting the chat turn; a restart can still recover it. */
+    @Query("UPDATE orbit_deliveries SET state='HANDING', handoffTurnId=:turnId, attempts=MIN(attempts+1,16) " +
+        "WHERE id IN (:ids) AND state='PENDING'")
+    suspend fun markHandedToOrbit(ids: List<String>, turnId: String)
+
+    @Transaction
+    suspend fun finishDeliveries(ids: List<String>, turnId: String, now: Long) {
+        ids.forEach { id ->
+            val item = delivery(id)?.takeIf { it.state == "HANDING" && it.handoffTurnId == turnId } ?: return@forEach
+            updateDelivery(item.copy(state = "SENT", notificationSent = true, handoffTurnId = "",
+                verdict = item.verdict.ifEmpty { OrbitDeliveryEntity.UNREGISTERED },
+                decidedAt = item.decidedAt.takeIf { it > 0 } ?: now))
+            acknowledgeFingerprint(item.runId)
+        }
+    }
+
+    /** A source becomes the baseline only after its result was handled by the chat. */
+    @Transaction
+    suspend fun acknowledgeFingerprint(runId: String) {
+        val run = run(runId)?.takeIf { it.error.isEmpty() && it.hasSource } ?: return
+        val task = task(run.taskId)?.takeIf { it.version == run.taskVersion } ?: return
+        // A late reply for an older draft must not roll back a newer successful baseline.
+        if (newerHandledRun(run.taskId, run.startedAt) == 0) {
+            updateTask(task.copy(lastFingerprint = run.fingerprint))
+        }
+    }
+
+    @Query("SELECT COUNT(*) FROM orbit_runs r WHERE r.taskId=:taskId AND r.startedAt>:startedAt " +
+        "AND r.state='COMPLETED' AND r.error='' AND r.hasSource=1 AND " +
+        "(NOT EXISTS (SELECT 1 FROM orbit_deliveries d WHERE d.runId=r.id) OR " +
+        "EXISTS (SELECT 1 FROM orbit_deliveries d WHERE d.runId=r.id AND d.state='SENT'))")
+    suspend fun newerHandledRun(taskId: String, startedAt: Long): Int
 
     /**
      * Orbit's reply to the reports failed (the model was down), so the user heard none of them: the ones
      * it had not decided on, or had chosen to tell, wait to be told again. A call to leave one out stands.
      */
-    @Query("UPDATE orbit_deliveries SET state='PENDING', notificationSent=0, verdict='', verdictReason='', verdictNote='', " +
-        "presentation='', decidedAt=0 WHERE id IN (:ids) AND state='SENT' " +
-        "AND (verdict='' OR verdict='" + OrbitDeliveryEntity.SEND + "')")
-    suspend fun returnToPending(ids: List<String>)
+    @Transaction
+    suspend fun retryDeliveries(ids: List<String>, now: Long) {
+        ids.forEach { id ->
+            val item = delivery(id)?.takeIf { it.state in setOf("PENDING", "HANDING") } ?: return@forEach
+            // A deliberate skip or a user's answer already settled this item.
+            if (item.verdict == OrbitDeliveryEntity.SKIP || item.userResponse.isNotEmpty()) {
+                updateDelivery(item.copy(state = "SENT", notificationSent = true, handoffTurnId = ""))
+                acknowledgeFingerprint(item.runId)
+            } else {
+                val attempts = (item.attempts + if (item.state == "PENDING") 1 else 0).coerceAtMost(16)
+                val delay = minOf(6 * 60 * 60_000L, 60_000L * (1L shl (attempts - 1).coerceIn(0, 9)))
+                updateDelivery(item.copy(state = "PENDING", notificationSent = false, handoffTurnId = "",
+                    attempts = attempts, retryAt = now + delay, verdict = "", verdictReason = "",
+                    verdictNote = "", presentation = "", decidedAt = 0))
+            }
+        }
+    }
 
     /** Drafts that ran out before Orbit heard of them are never told; the reason is kept. */
     @Query("UPDATE orbit_deliveries SET state='CANCELLED', verdict='" + OrbitDeliveryEntity.SKIP + "', verdictReason='moot', " +
@@ -556,7 +624,7 @@ interface OrbitTaskDao {
     suspend fun expirePending(orbitId: String, now: Long)
 
     /** Items Orbit has already told the user, newest first, to spot a repeat of the same matter. */
-    @Query("SELECT * FROM orbit_deliveries WHERE orbitId=:orbitId AND verdict='" + OrbitDeliveryEntity.SEND + "' " +
+    @Query("SELECT * FROM orbit_deliveries WHERE orbitId=:orbitId AND state='SENT' AND verdict='" + OrbitDeliveryEntity.SEND + "' " +
         "AND decidedAt > :since ORDER BY decidedAt DESC LIMIT :limit")
     suspend fun toldSince(orbitId: String, since: Long, limit: Int): List<OrbitDeliveryEntity>
 
@@ -567,7 +635,7 @@ interface OrbitTaskDao {
     /** Orbit's call on one handed item; it can still replace a default "not registered" skip. */
     @Query("UPDATE orbit_deliveries SET verdict=:verdict, verdictReason=:reason, verdictNote=:note, " +
         "presentation=:presentation, decidedAt=:now " +
-        "WHERE id=:id AND orbitId=:orbitId AND chatId=:chatId AND state='SENT' " +
+        "WHERE id=:id AND orbitId=:orbitId AND chatId=:chatId AND state IN ('HANDING','SENT') " +
         "AND (verdict='' OR verdict='" + OrbitDeliveryEntity.UNREGISTERED + "')")
     suspend fun decide(id: String, orbitId: String, chatId: String, verdict: String, reason: String, note: String,
         presentation: String, now: Long): Int
@@ -619,7 +687,7 @@ interface OrbitTaskDao {
     @Query("UPDATE orbit_runs SET state = 'CANCELLED', finishedAt = :now WHERE taskId = :taskId AND state = 'RUNNING'")
     suspend fun cancelRuns(taskId: String, now: Long)
 
-    @Query("UPDATE orbit_deliveries SET state = 'CANCELLED' WHERE taskId = :taskId AND state = 'PENDING'")
+    @Query("UPDATE orbit_deliveries SET state = 'CANCELLED' WHERE taskId = :taskId AND state IN ('PENDING','HANDING')")
     suspend fun cancelDeliveries(taskId: String)
 
     @Query("DELETE FROM orbit_deliveries WHERE orbitId = :orbitId")
@@ -724,6 +792,7 @@ interface OrbitTaskDao {
          */
         resumable: Boolean = false,
         resumeNextRunAt: Long = 0,
+        continueNextRunAt: Long = 0,
     ): OrbitRunEntity? {
         val task = task(event.taskId)?.takeIf { it.state == "ACTIVE" && it.version == event.taskVersion }
             ?: return null
@@ -748,7 +817,7 @@ interface OrbitTaskDao {
             old?.let { updateRun(it.copy(state = "UNKNOWN", finishedAt = now)) }
             return null
         }
-        if (old != null && bindings(old.id, old.generation).isNotEmpty()) {
+        if (old != null && (old.handoffTurnId.isNotEmpty() || bindings(old.id, old.generation).isNotEmpty())) {
             if (resumable && old.generation >= MAX_RESUMES) {
                 updateRun(old.copy(state = "INTERRUPTED", error = interruptedMessage, finishedAt = now))
                 deleteEvent(old.eventId)
@@ -756,7 +825,7 @@ interface OrbitTaskDao {
                 return null
             }
             if (!resumable) {
-                interrupt(old, now, interruptedMessage)
+                interrupt(old, now, interruptedMessage, continueNextRunAt)
                 return null
             }
         }
@@ -777,14 +846,19 @@ interface OrbitTaskDao {
 
     /** A started model may have used any ordinary tool; never replay it after losing ownership. */
     @Transaction
-    suspend fun interrupt(token: OrbitRunEntity, now: Long, message: String): Boolean {
+    suspend fun interrupt(token: OrbitRunEntity, now: Long, message: String, continueNextRunAt: Long = 0): Boolean {
         val current = run(token.id) ?: return false
         val task = task(token.taskId) ?: return false
         if (current.state != "RUNNING" || current.owner != token.owner || current.generation != token.generation ||
             task.version != token.taskVersion || task.state != "ACTIVE") return false
         markUnreceiptedUnknown(task.id, now)
-        updateTask(task.copy(state = if (unresolvedActions(task.id).isEmpty()) "PAUSED" else "VERIFY", updatedAt = now))
-        updateRun(current.copy(state = "INTERRUPTED", error = message, finishedAt = now))
+        val unresolved = unresolvedActions(task.id).isNotEmpty()
+        val trial = task.kind != "ONCE" && task.scheduleMode == "ONCE" &&
+            current.eventId.contains(":manual:") && task.nextRunAt > (event(current.eventId)?.createdAt ?: current.startedAt)
+        updateTask(task.copy(state = if (unresolved) "VERIFY" else if (trial || continueNextRunAt > 0) "ACTIVE" else "PAUSED",
+            nextRunAt = if (!unresolved && continueNextRunAt > 0) continueNextRunAt else task.nextRunAt, updatedAt = now))
+        updateRun(current.copy(state = "INTERRUPTED", error = message, finishedAt = now, handoffTurnId = ""))
+        if (!unresolved && (trial || continueNextRunAt > 0)) deleteEvent(current.eventId)
         insertDelivery(OrbitDeliveryEntity(current.id, current.id, task.id, task.version, task.orbitId,
             task.chatId, task.title, message, now, "PENDING", null, null, false))
         return true
@@ -851,6 +925,23 @@ interface OrbitTaskDao {
         return true
     }
 
+    @Transaction
+    suspend fun beginChatHandoff(token: OrbitRunEntity, turnId: String, bootId: String, now: Long, elapsed: Long): Boolean {
+        val current = currentLease(token, bootId, now, elapsed) ?: return false
+        updateRun(current.copy(handoffTurnId = turnId, decision = OrbitRunEntity.IN_CHAT))
+        return true
+    }
+
+    /** Only the exact turn that took this run can finish it after its worker stopped waiting. */
+    @Transaction
+    suspend fun finishChatHandoff(token: OrbitRunEntity, turnId: String, observation: String, nextRunAt: Long,
+        bootId: String, now: Long, elapsed: Long): Boolean {
+        val current = run(token.id)?.takeIf { it.state == "RUNNING" && it.owner == token.owner &&
+            it.generation == token.generation && it.handoffTurnId == turnId } ?: return false
+        updateRun(current.copy(bootId = bootId, leaseUntilWall = now + 120_000, leaseUntilElapsed = elapsed + 120_000))
+        return complete(token, observation, "", "", nextRunAt, bootId, now, elapsed, OrbitRunEntity.IN_CHAT)
+    }
+
     /** Result + next schedule + delivery form one commit. Recovery never reruns a submitted result. */
     @Transaction
     suspend fun complete(token: OrbitRunEntity, observation: String, message: String, error: String,
@@ -863,10 +954,13 @@ interface OrbitTaskDao {
         // The same kind of failure is told once; a changing detail after the colon (such as stderr) does not re-alert.
         fun kind(text: String) = text.substringBefore('：').substringBefore(": ").take(48)
         val repeatFailure = error.isNotEmpty() && lastRealRun(task.id)?.error?.let(::kind) == kind(error)
+        val trial = task.kind != "ONCE" && task.scheduleMode == "ONCE" &&
+            current.eventId.contains(":manual:") && task.nextRunAt > (event(current.eventId)?.createdAt ?: current.startedAt)
         updateRun(current.copy(state = if (error.isEmpty()) "COMPLETED" else "FAILED", sourceText = "",
-            observation = observation, error = error, finishedAt = now, decision = decision.take(1000)))
-        updateTask(task.copy(nextRunAt = nextRunAt, updatedAt = now,
+            observation = observation, error = error, finishedAt = now, decision = decision.take(1000), handoffTurnId = ""))
+        updateTask(task.copy(nextRunAt = if (trial) task.nextRunAt else nextRunAt, updatedAt = now,
             state = when {
+                trial -> task.state
                 task.kind == "ONCE" -> "DONE" // Internal manual check-ins have no resume UI.
                 task.scheduleMode == "ONCE" -> if (error.isEmpty()) "DONE" else "PAUSED"
                 else -> task.state
@@ -874,7 +968,7 @@ interface OrbitTaskDao {
             // Handed to Orbit in the chat, the run notes only that; what Orbit last noted stays.
             lastObservation = if (error.isEmpty() && decision != OrbitRunEntity.IN_CHAT) observation else task.lastObservation,
             // A run that never read its source (a skipped check) keeps the last known fingerprint.
-            lastFingerprint = if (error.isEmpty() && current.hasSource) current.fingerprint else task.lastFingerprint))
+            lastFingerprint = if (error.isEmpty() && current.hasSource && message.isBlank()) current.fingerprint else task.lastFingerprint))
         if (message.isNotBlank() && (!repeatFailure || task.notifyPolicy == "ALWAYS")) insertDelivery(OrbitDeliveryEntity(
             id = current.id, runId = current.id, taskId = task.id, taskVersion = task.version,
             orbitId = task.orbitId, chatId = task.chatId, title = task.title, body = message,
@@ -883,11 +977,21 @@ interface OrbitTaskDao {
         ))
         deleteEvent(current.eventId)
         // A check skipped because its source was not ready is not a success that relays to EVENT tasks.
-        if (triggerFollowers && error.isEmpty() && decision != OrbitRunEntity.SKIPPED) subscribers(task.id).filter { it.orbitId == task.orbitId }.forEach { subscriber ->
+        if (triggerFollowers && !trial && error.isEmpty() && decision != OrbitRunEntity.SKIPPED) subscribers(task.id).filter { it.orbitId == task.orbitId }.forEach { subscriber ->
             insertEvent(OrbitEventEntity(
                 "${subscriber.id}:${subscriber.version}:completed:${current.id}",
                 subscriber.id, subscriber.version, now, now, current.id))
         }
         return true
     }
+
+    /** Keep the newest 200 runs per task, plus records still needed by work or durable receipts. */
+    @Query("DELETE FROM orbit_runs WHERE taskId=:taskId AND state IN ('COMPLETED','FAILED','CANCELLED','INTERRUPTED') " +
+        "AND id NOT IN (SELECT id FROM orbit_runs WHERE taskId=:taskId ORDER BY startedAt DESC LIMIT 200) " +
+        "AND NOT EXISTS (SELECT 1 FROM orbit_events e WHERE e.id=orbit_runs.eventId) " +
+        "AND NOT EXISTS (SELECT 1 FROM orbit_events e WHERE e.sourceRunId=orbit_runs.id) " +
+        "AND NOT EXISTS (SELECT 1 FROM orbit_deliveries d WHERE d.runId=orbit_runs.id AND d.state IN ('PENDING','HANDING')) " +
+        "AND NOT EXISTS (SELECT 1 FROM orbit_actions a WHERE a.runId=orbit_runs.id) " +
+        "AND NOT EXISTS (SELECT 1 FROM orbit_artifact_versions a WHERE a.runId=orbit_runs.id)")
+    suspend fun pruneRuns(taskId: String)
 }

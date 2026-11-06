@@ -31,6 +31,8 @@ When the user finds a mistake, inspect the current content and correct it; do no
 Learning records and origin records can explain changes, but are not a queue awaiting permission.
 
 When a new fact replaces an old one, correct the original location instead of retaining contradictory versions.
+Old lessons in `LESSONS.md` can also be corrected or removed in place; background review can revise existing entries instead of only appending.
+Ordinary profile edits do not skip unread conversations. New memory and forgetting reach the prompt in a new chat, at the daily prompt refresh (after the nightly review, or after 24 hours), or after the current chat is compacted; tools can read the latest content during a chat.
 Create person and circle notes only for people and circles the user explicitly mentioned, never from a contact name or inference; record only relationships the user stated and mark anything uncertain.
 Never store passwords, verification codes, or payment-card numbers in memory.
 
@@ -55,11 +57,8 @@ Import does not restore the original chat, account settings, or another app's pe
 ## Forgetting information
 
 Use `orbit_forget action=plan` to inspect copies and the proposed cleanup scope.
-Explain the categories to be cleared, anything outside the tool's reach, and that deletion is irreversible, without repeating the information being forgotten.
-Use `confirm` only after the user explicitly agrees to that plan; make a new plan if its scope changes or it becomes stale.
-
-Report `remaining`, `failed`, and `unscanned` honestly.
-Only `all_clear=true` supports saying the inspectable storage scope was cleared, not “forgotten everywhere.”
-Original chat messages, content already sent externally, and the user's own backups do not disappear.
-For identity or personality matches that need manual handling, point to the relevant controls as indicated by the result.
-Do not learn the cleared information again from old context.
+Explain the categories to be cleared and that deletion is irreversible, without repeating the information being forgotten.
+Use `confirm` only after the user explicitly agrees, then say honestly what was cleared and what `remaining` still lists.
+Matches in SOUL.md and IDENTITY.md are for the user to edit.
+Original chat messages are not deleted; the user can delete that chat from the chat list.
+When background memory learning or the nightly review reads that the user asked to forget something, it does not record it and removes what it recorded before; the proactive check skips it and drafts nothing about it.

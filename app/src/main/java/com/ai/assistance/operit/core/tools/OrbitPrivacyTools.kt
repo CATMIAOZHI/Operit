@@ -38,14 +38,11 @@ internal object OrbitPrivacyTools {
             ToolParameterSchema("plan_id", description = "confirm：plan 返回的编号", required = false),
         ),
         details = """
-  - 「忘掉」是在你这里全面清理，不是改一条笔记。改错的事实、换个偏好，用记忆工具改就行，不用这个。
-  - 先 plan（只读，不改任何东西）。它会列出记忆、用户资料、文件（含每晚复盘记录和对齐状态）、技能、目标、定时任务、任务做出的成果（含旧版本）、动态（含卡片）、点子和跟踪、批准记录、还没发出的汇报、修改记录里有这条信息的地方，以及准备怎么处理（edit 整行删除、delete 整条删除、stop 停止）。还没回答的批准申请会被安静地拒绝。SOUL.md、IDENTITY.md、自定义提示词和用户自己加的技能里的命中只列出来（user_review），不会自动改，要请用户自己在 Orbit 资料页或技能设置里改。scanned 是查过的范围，unscanned 是读不了、没能检查的地方；图片、音视频只按文件名查。
-  - 用日常说法把范围告诉用户：记忆、提醒和定时任务、你做的东西、记录。说清楚删除不能撤销，再问一句是否确认。不要在回复里重复要忘掉的内容，用「那件事」指代。
-  - 用户明确同意后才 confirm。沉默、含糊、只同意一部分，都不算同意；用户改了范围就重新 plan。
-  - confirm 会重新检查，情况变了会要求重新 plan。完成后按结果汇报清掉了哪些类别、停了哪些任务、还剩什么。
-  - 聊天记录不会被清理：这次和以前的聊天里还留着原话，用户可以在聊天列表里自己删掉那些聊天。汇报时要说明这一点。
-  - 只有 all_clear 为 true 时，才能说「我存的内容里已经清干净了」；不要说成「完全忘掉了」。all_clear 为 false 时，照 remaining、failed 和 unscanned 如实说还剩哪里、哪里没能检查。
-  - 清理之后不留这条信息的任何记录；以后用户自己又提起，就当新信息正常处理。别人的邮件、日历、已经发出去的东西要另外问用户。
+  - 「忘掉」是把你存的这件事都清掉，不是改一条笔记。改错的事实、换个偏好，用记忆工具改就行。
+  - 先 plan（只读）：列出记忆、用户资料、文件、你学到的技能、目标、定时任务、动态和点子里有这件事的地方，以及怎么处理（edit 删掉那几行、delete 整条删掉、stop 停掉）。SOUL.md 和 IDENTITY.md 里的只列出来（user_review），请用户自己改。
+  - 用日常说法告诉用户范围，说清删了不能撤销，问一句是否确认。不要复述要忘掉的内容，用「那件事」指代。
+  - 用户明确同意后才 confirm；含糊或只同意一部分不算。完成后说清掉了哪些，remaining 里还剩的如实说。
+  - 聊天原话不会删，用户想删可以在聊天列表里自己删那段聊天。
 """,
     )
 
@@ -65,7 +62,7 @@ internal object OrbitPrivacyTools {
 
     val presendPrompt = ToolPrompt(
         name = PRESEND,
-        description = "以用户的名义往外发消息、邮件、评论之前的检查：隐私、密码、内容是否定稿、收件人是否明确、用户是否看过并同意。",
+        description = "可选：以用户的名义往外发消息、邮件、评论之前自查隐私、密码、内容是否定稿、收件人是否明确。",
         parametersStructured = listOf(
             ToolParameterSchema("text", description = "准备发出去的完整正文", required = true),
             ToolParameterSchema("recipient", description = "发给谁：名字、邮箱、号码或群名", required = true),
@@ -73,18 +70,14 @@ internal object OrbitPrivacyTools {
             ToolParameterSchema("approval_id", description = "可选：orbit_request_approval 已获批准的编号；申请必须写全本次正文、收件人和渠道，且来自当前聊天。有此参数时 channel 必填", required = false),
         ),
         details = """
-  - 每次替用户对外发东西前都先调用。verdict 是 BLOCK 就不要发，按 checks 里的原因处理（改正文、问清收件人、先给用户看草稿）。
-  - 草稿要先原样发给用户看，用户同意后再检查和发送；也可用 orbit_request_approval 卡片让用户看完整正文、收件人和渠道，批准后传 approval_id。改过的版本要重新给用户看并同意。
-  - 传 approval_id 时，会核对同一个 Orbit、当前聊天、已批准状态以及正文/收件人/渠道是否一致。approval 为 APPROVED 且 verdict 为 PASS 时，可按卡片批准发送；approval_basis 说明依据。后续普通用户回复仍会返回 user_replies；若用户改口或提出修改，不得发送，应重新申请。
-  - 没传 approval_id 或批准后用户又说了话时，approval 可能是 UNVERIFIED：工具不能替你判断普通文字是否同意。verdict 为 PASS 时仍要读 user_replies（最后一条最新），明确同意才发；后面又说“等等”“不要发”、提了修改或含糊其辞都不算。
+  - 拿不准时用它自查一下，不是每次发送都必须调用。verdict 是 BLOCK 就不要发，按 checks 里的原因处理（改正文、问清收件人）。
+  - 它不替用户批准。用户明确让你发、说清了发什么和发给谁，这本身就是同意；正文是你自己写的或拿不准时，先给用户看草稿，或用 orbit_request_approval 申请，批准后可传 approval_id 核对正文、收件人和渠道。
+  - 返回的 user_replies 是你给用户看过这段正文之后、用户说的话（最后一条最新）。其中有“等等”“不要发”或提了修改，就不要发，先问清楚。
   - warnings 不拦截，但要想一想：比如正文里有电话号码、身份证号，确认是用户想发的。
 """,
     )
 
     private fun args(tool: AITool) = tool.parameters.associate { it.name to it.value }
-    private val CANNOT_ERASE = listOf("this chat and earlier chats (the user can delete those chats from the chat list)",
-        "things already sent to outside services or other apps", "data backups the user made", "background run logs",
-        "what is inside pictures, audio, video and other non-text files (only their file names are checked)")
     private fun fail(name: String, e: Exception) = ToolResult(name, false, StringResultData(""), error = e.message ?: e.toString())
 
     private suspend fun orbitOf(context: Context): Pair<OrbitProfile, String?> {
@@ -106,33 +99,23 @@ internal object OrbitPrivacyTools {
                     val hits = planned.hits
                     JSONObject().put("plan_id", planned.id)
                         .put("summary", JSONObject(hits.groupingBy { it.category }.eachCount()))
-                        .put("places", JSONArray(hits.map { it.json() }))
+                        .put("places", JSONArray(hits.take(OrbitForget.SHOWN).map { it.json() }))
                         .put("scanned", JSONArray(OrbitForget.SCANNED))
-                        .put("unscanned", JSONArray(planned.unscanned.take(50)))
-                        .put("cannot_erase", JSONArray(CANNOT_ERASE))
-                        .put("next", when {
-                            hits.isEmpty() && planned.unscanned.isEmpty() -> "Nothing was found. Tell the user, or plan again with other terms."
-                            hits.isEmpty() -> "Nothing was found in what could be read, but the places in unscanned could not be checked; tell the user that."
-                            else -> "Tell the user the scope in everyday words, say it cannot be undone, and ask once for confirmation." +
-                                if (planned.unscanned.isNotEmpty()) " Also say some places could not be checked." else ""
-                        })
+                        .put("next", if (hits.isEmpty()) "Nothing was found. Tell the user, or plan again with other terms."
+                            else "Tell the user the scope in everyday words, say it cannot be undone, and ask once for confirmation.")
                 }
                 "confirm" -> {
                     val lastUser = ChatHistoryManager.getInstance(context).loadChatMessagesDesc(chatId, 30)
                         .firstOrNull { it.sender == "user" }?.timestamp ?: 0L
                     val outcome = OrbitForget.confirm(context, orbit, chatId, a["plan_id"]?.trim().orEmpty(), lastUser)
                     JSONObject().put("cleaned", JSONObject(outcome.cleaned as Map<*, *>))
-                        .put("remaining", JSONArray(outcome.remaining.take(OrbitForget.MAX_PLACES).map { it.json() }))
+                        .put("remaining", JSONArray(outcome.remaining.take(OrbitForget.SHOWN).map { it.json() }))
                         .put("failed", JSONArray(outcome.failed))
-                        .put("scanned", JSONArray(OrbitForget.SCANNED))
-                        .put("unscanned", JSONArray(outcome.unscanned.take(50)))
-                        .put("all_clear", outcome.remaining.isEmpty() && outcome.failed.isEmpty() && outcome.unscanned.isEmpty())
-                        .put("cannot_erase", JSONArray(CANNOT_ERASE))
-                        .put("note", "all_clear covers only what this Orbit stores, not chat history. " +
-                            "Places in unscanned could not be read, so they may still hold it. " +
-                            "Places marked user_review must be edited by the user. Report categories only; never repeat the information.")
+                        .put("note", "Chat messages are not deleted. Places marked user_review are for the user to edit. " +
+                            "Report categories only; never repeat the information. Your system prompt in open chats " +
+                            "may still show the old memory until it refreshes (daily or at the next summary); do not use it.")
                 }
-                "cancel" -> { OrbitForget.cancel(context, orbit.id); JSONObject().put("cancelled", true) }
+                "cancel" -> { OrbitForget.cancel(orbit.id); JSONObject().put("cancelled", true) }
                 else -> error("Unknown action \"${a["action"].orEmpty()}\"; use plan, confirm or cancel")
             }
             ToolResult(FORGET, true, StringResultData(result.toString()))
@@ -243,7 +226,7 @@ internal object OrbitPrivacyTools {
             val userReplies = JSONArray()
             var repliesCut = false
             var approval = "UNVERIFIED"
-            var approvalBasis = "A visible reply after the exact draft is required; its meaning must be checked."
+            var approvalBasis = "No approval card was given. The user's clear request to send this is their OK; this check does not approve for them."
             var approvalNote = ""
             if (talk) {
                 val messages = ChatHistoryManager.getInstance(context).loadChatMessagesDesc(caller!!, 40)
@@ -299,30 +282,24 @@ internal object OrbitPrivacyTools {
                             else "The approval note does not ask to stop or change it")
                     }
                 } else {
-                    // The newest draft that starts the same way, and whether it is the whole of this text.
-                    val started = messages.firstOrNull { it.sender == "ai" && said(it).contains(probe) }
-                    val shown = started?.takeIf { said(it).contains(full) }
+                    // A draft shown in the chat is not required; when there is one, what the user said after it still counts.
+                    val shown = messages.firstOrNull { it.sender == "ai" && said(it).contains(probe) }
+                        ?.takeIf { said(it).contains(full) }
                     since = shown?.timestamp
-                    val answered = shown?.let { draft -> messages.any { it.sender == "user" && it.timestamp > draft.timestamp &&
-                        it.displayMode == com.ai.assistance.operit.data.model.ChatMessageDisplayMode.NORMAL } } == true
-                    check("draft shown and answered", answered, when {
-                        started == null -> "Show the user this exact text first and wait for their answer"
-                        shown == null -> "The draft you showed is different from this text; show the final version to the user first"
-                        !answered -> "The user has not answered since you showed the draft"
-                        else -> "The user answered after seeing this exact text; read user_replies (the last one is the newest) to decide if it approves"
-                    })
                 }
                 // Hidden approval notices are not ordinary user replies; later visible changes still matter.
                 val replies = since?.let { at -> messages.filter {
                     it.sender == "user" && it.timestamp > at &&
                         it.displayMode == com.ai.assistance.operit.data.model.ChatMessageDisplayMode.NORMAL
                 }.sortedBy { it.timestamp } }.orEmpty()
-                if (approvalId.isNotEmpty() && replies.isNotEmpty()) {
+                if (replies.isNotEmpty()) {
                     check("no later stop or change", replies.none { stopSending.containsMatchIn(it.content) },
-                        if (replies.any { stopSending.containsMatchIn(it.content) }) "The user asked to wait, cancel or change it after approval; ask again"
+                        if (replies.any { stopSending.containsMatchIn(it.content) }) "The user asked to wait, cancel or change it; ask again"
                         else "Read user_replies for any later changes before sending")
-                    approval = "UNVERIFIED"
-                    approvalBasis = "A card was approved, but the user spoke afterwards; verify their newest reply still permits this exact message."
+                    if (approvalId.isNotEmpty()) {
+                        approval = "UNVERIFIED"
+                        approvalBasis = "A card was approved, but the user spoke afterwards; verify their newest reply still permits this exact message."
+                    }
                 }
                 repliesCut = replies.size > 5
                 replies.takeLast(5).forEach { m ->
@@ -360,7 +337,7 @@ internal object OrbitPrivacyTools {
                 .put("next", if (blocked) "Do not send. Fix what the failed checks say."
                     else if (approval == "APPROVED") "Send exactly the text to the recipient through the channel covered by the approved card."
                     else if (approvalNote.isNotBlank()) "Check approval_note and any user_replies: send only if they still clearly allow this exact message, recipient and channel; otherwise ask again."
-                    else if (talk) "Send only if the newest of user_replies still clearly approves this text; if any later reply hesitates or says no, do not send and ask again."
+                    else if (talk) "Send if the user clearly asked for this message, recipient and channel; if you wrote it yourself or a later reply hesitates, show it or ask first."
                     else "Send only if the user's task instruction clearly asks for this message.")
             ToolResult(PRESEND, true, StringResultData(result.toString()))
         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { fail(PRESEND, e) }

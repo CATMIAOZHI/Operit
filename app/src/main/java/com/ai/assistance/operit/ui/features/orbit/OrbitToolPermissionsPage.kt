@@ -70,6 +70,8 @@ private class ToolFolder(val key: String, val title: String, val icon: String, v
 
 /** The three levels a tool can have in Orbit's chats; Orbit never waits on a prompt. */
 private val OrbitLevels = listOf(PermissionLevel.ALLOW, PermissionLevel.AUTO_REVIEW, PermissionLevel.FORBID)
+/** A tool that sends for the user is never left to the automatic review: it asks on a card instead. */
+private val OrbitSendLevels = listOf(PermissionLevel.ALLOW, PermissionLevel.ASK, PermissionLevel.FORBID)
 
 /**
  * Orbit's own tool permissions, a developer page. They apply to Orbit's chats and its background
@@ -199,6 +201,7 @@ private fun levelLabel(level: PermissionLevel): String = stringResource(
     when (level) {
         PermissionLevel.ALLOW -> R.string.orbit_tools_level_allow
         PermissionLevel.FORBID -> R.string.orbit_tools_level_forbid
+        PermissionLevel.ASK -> R.string.orbit_tools_level_ask
         else -> R.string.orbit_tools_level_review
     }
 )
@@ -359,7 +362,7 @@ private fun LevelSheet(
             )
             Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)) {
                 Column {
-                    OrbitLevels.forEachIndexed { index, level ->
+                    (if (default == PermissionLevel.ASK) OrbitSendLevels else OrbitLevels).forEachIndexed { index, level ->
                         if (index > 0) HorizontalDivider(
                             modifier = Modifier.padding(horizontal = 16.dp),
                             color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
@@ -374,13 +377,14 @@ private fun LevelSheet(
                         ) {
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Text(levelLabel(level), style = MaterialTheme.typography.bodyLarge,
-                                    fontWeight = FontWeight.Medium, color = levelColor(level).takeIf { level != PermissionLevel.AUTO_REVIEW }
+                                    fontWeight = FontWeight.Medium, color = levelColor(level).takeIf { level != PermissionLevel.AUTO_REVIEW && level != PermissionLevel.ASK }
                                         ?: MaterialTheme.colorScheme.onSurface)
                                 Text(
                                     stringResource(
                                         when (level) {
                                             PermissionLevel.ALLOW -> R.string.orbit_tools_level_allow_desc
                                             PermissionLevel.FORBID -> R.string.orbit_tools_level_forbid_desc
+                                            PermissionLevel.ASK -> R.string.orbit_tools_level_ask_desc
                                             else -> R.string.orbit_tools_level_review_desc
                                         }
                                     ),

@@ -12,7 +12,7 @@ Actual preview support still depends on the format, content, and device decoding
 Other formats can open in an appropriate external app; do not promise an internal editor that does not exist.
 
 Use `orbit_file action=send` to deliver a file to the current chat.
-What you send is a copy taken at that moment and never changes, like a sent message; editing the original in `files/` afterwards does not change the one in the chat. Send it again to give the user a new version. When all sent copies together pass 2 GB, the oldest are removed and their chat cards show the file as gone.
+What you send is a copy taken at that moment and never changes, like a sent message; editing the original in `files/` afterwards does not change the one in the chat. Send it again to give the user a new version. One file can be at most 1 GB. Sent copies follow the Library's cleanup rules (below): the newest 100 always stay, so several big videos sent in a row all remain.
 Before sending a picture whose content you are not sure of, read it with `read_file`; send without looking only when you are sure, such as an image a drawing tool just made.
 When you read an image, the app shrinks it to at most 2048 pixels on the long edge and 4 MB per image before the model sees it, so a huge image cannot overload the request, though very small text in it may become hard to read.
 A raw device path is not a clickable deliverable; saying “saved at this path” is usually insufficient for the user to receive it.
@@ -34,8 +34,9 @@ Do not put user files, learned content, or temporary task state there.
 ## User uploads
 
 Uploaded files are saved within the current Orbit and are not cleared merely because the app closes.
-Each Orbit's upload area has a limit of approximately 5 GiB; adding files beyond the limit trims the oldest uploads.
-A single file larger than the total limit cannot be saved.
+The user picks the Library size under Settings → Storage (5 GB by default); the copies sent in the chat use the same size.
+With "Delete when full" on, going past it deletes the oldest first, but the newest 100 files always stay, so one huge file cannot sweep the rest out; with it off nothing is deleted and the user clears files themselves.
+A single file larger than the whole Library cannot be saved.
 
 The upload area is not a permanent backup.
 Deleting an item from the upload list removes it for good, and so does trimming by the storage limit.

@@ -449,15 +449,13 @@ internal object OrbitRoutines {
 
     /**
      * A chat keeps the system prompt it started with until it is summarized, so a new synthesis
-     * would wait for that. After a night's review, every chat of the Orbit
-     * builds its prompt again on its next reply: one fresh prompt a day. Skipped while Orbit is
-     * replying, which would swap the prompt under that reply; the next summary picks it up then.
+     * would wait for that. After a night's review, every chat of the Orbit builds its prompt again
+     * on its next reply: one fresh prompt a day. A reply already running keeps its prompt.
      */
     suspend fun afterAlignmentReview(context: Context, orbit: OrbitProfile) {
         try {
-            if (OrbitPackages.replying(context, orbit).first()) return
             orbit.talkChatIds.forEach {
-                com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository(context, it).delete()
+                com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository(context, it).requestRefresh()
             }
         } catch (e: CancellationException) {
             throw e
@@ -471,7 +469,7 @@ internal object OrbitRoutines {
         这次只管「你和这位用户怎么相处」，事实记忆不归这里管。全部在后台安静完成：
         文件都在你的 Orbit 文件夹里，用应用的文件工具（environment=android，path 填完整路径）：读用 read_file，新建或整篇重写用 write_file，改一处用 edit_file。
         1. 读 ALIGNMENT_SYNTHESIS.md、alignment/ALIGNMENT_STATE.yaml、alignment/PROGRESSION_HISTORY.yaml、alignment/REPAIR_THREADS.yaml，再 read SOURCE 里 latest_dream 那篇（是 none 就跳过）。SOURCE 说 resumed 时，先读 alignment/REVIEW_NOTES.md，那是之前记下的笔记，接着往下读就行。
-        2. 边读边记：orbit_review_read action=next 读一页，读完马上 action=commit 记下这一页说明了什么：摩擦和纠正（带 message id）、新定的规矩、哪里配合得好、还悬着的事。ruptures 填这一页里出现摩擦或纠正的用户消息 id：说「不对」「不是这个意思」、要求重做同一件事、定下新规矩（「以后都……」）、表达不满、给你的消息点了 👎 之类，拿不准就算上。一件事跨页时可以连读几页再记，但最多 3 页就必须 commit，不要全部读完再记。没什么可记就写「没有新内容」。想回看前面的消息用 action=look，不会挪动阅读位置；不确定读到哪就 action=status，应用会告诉你。一直读到 status 的 done 是 true。
+        2. 边读边记：orbit_review_read action=next 读一页，读完马上 action=commit 记下这一页说明了什么：摩擦和纠正（带 message id）、新定的规矩、哪里配合得好、还悬着的事。ruptures 填这一页里出现摩擦或纠正的用户消息 id：说「不对」「不是这个意思」、要求重做同一件事、定下新规矩（「以后都……」）、表达不满、给你的消息点了 👎 之类，拿不准就算上。一件事跨页时可以连读几页再记，但最多 3 页就必须 commit，不要全部读完再记。没什么可记就写「没有新内容」。读到用户让你忘掉某件事时，那件事不要写进任何文件；前面已经写进笔记或文件的，马上删掉。想回看前面的消息用 action=look，不会挪动阅读位置；不确定读到哪就 action=status，应用会告诉你。一直读到 status 的 done 是 true。
         3. 读完后数字以 status 为准：user_turns 和 rupture_turns 是应用按你的 commit 记的，correction_free_rate = 1 - rupture_turns / user_turns，保留两位小数。再读一遍 alignment/REVIEW_NOTES.md（你的笔记），下面几步都以它为依据。
         4. 摩擦清单 alignment/REPAIR_THREADS.yaml：一个 YAML 列表，只存标签和证据，不写正文。每条 {id, trigger（简短英文标签，如 too_verbose）, opened（日期）, evidence（message id 列表）, clean_reviews}。新摩擦开一条；已有的摩擦这次又出现，把新的 message id 加进 evidence，clean_reviews 归零；这次有相关互动但没再出现，clean_reviews 加 1；到 3 才整条删掉，不要刚道歉就算学会了。没有摩擦就写 []。
         5. 写 dreams/<today>.md（today 用 SOURCE 里的日期）。开头是 YAML frontmatter：
@@ -515,7 +513,8 @@ internal object OrbitRoutines {
            with notes on what the page shows (frictions and corrections with message ids, new rules, what went well,
            open matters) and ruptures: the ids of the user's messages on it with friction or a correction ("that's
            wrong", "not what I meant", redoing the same thing, a new rule like "from now on...", displeasure, a 👎 on
-           your message; when unsure, count it). A matter running across pages may be read over a few pages first,
+           your message; when unsure, count it). When the user asks you to forget something, write it into no file,
+           and remove it at once from notes or files you already wrote. A matter running across pages may be read over a few pages first,
            but commit after at most 3; never read everything first. "nothing new" is a fine note. action=look
            re-reads earlier messages without moving your position; action=status says where you are. Read until
            status says done.
@@ -747,7 +746,7 @@ internal object OrbitRoutines {
     private val PROACTIVE_ZH = """
         主动巡检（后台）。SOURCE 里是现在的时间，以及上次巡检后用户说过话的聊天里这段时间的消息（从旧到新）。找出聊天里定下了、但还没人跟进的事：
         1. 读：这段时间的新消息要全部读完再下结论。SOURCE 末尾有“NOT YET READ”的，按给出的 search_chat_history 调用读完（用 next_offset 翻页）；标了 [cut] 的消息，要紧的用 message_id 加 mode=message 读全文。需要更早的上下文也用 search_chat_history 查。
-        2. 对账：每件定下的事（要买的、要去的、要回复的、有截止的、说好要提醒的），用 orbit_task action=list 查现有提醒和任务，用 orbit_goal 查目标，逐条确认有没有已经覆盖。已经有提醒、用户已经办了、或者用户说过不要的，都跳过。读 PROACTIVE_PREFERENCES.md（如果有），里面不要的类型也跳过。
+        2. 对账：每件定下的事（要买的、要去的、要回复的、有截止的、说好要提醒的），用 orbit_task action=list 查现有提醒和任务，用 orbit_goal 查目标，逐条确认有没有已经覆盖。已经有提醒、用户已经办了、用户说过不要的、或者让你忘掉的，都跳过。读 PROACTIVE_PREFERENCES.md（如果有），里面不要的类型也跳过。
         3. 只为真需要用户本人点头的缺口备稿，一次只备最要紧的一条：userMessage 是给 Orbit 看的准备稿，按五段写——背景与时机（谁什么时候定的、硬约束、已经覆盖了什么、缺口在哪、离要紧还有多久）、已核实（查了什么，消息编号、任务编号）、缺什么（需要他点头的动作，定义完整到一次同意就能办，比如提醒要写清标题、时间和时区、发到哪个聊天、提醒内容要点）、不确定的地方（比如他可能已经办了）和措辞怎么留余地、投递方式（一句话还是选项，选项把接受/不要/已经办好了并列）和优先级。opportunityKey 用 <类别>:<事由>，同一件事每次都用同一个；给出 expiresAt 和 evidence。
         4. 不要自己创建提醒、发消息或替用户做决定，只备稿；说不说由主聊天判断。紧急程度要和真实截止相符，不承诺没核实过的价格和优惠。
         5. 没有真缺口就把 userMessage 留空，宁可不提也不要凑数。
@@ -763,7 +762,7 @@ internal object OrbitRoutines {
         2. Reconcile: for every decided matter (something to buy, a place to go, a reply to send, a deadline, a reminder
            they wanted), list the current reminders and tasks with orbit_task action=list and the goals with orbit_goal,
            and check one by one whether it is already covered. Skip what already has a reminder, what the user already
-           did, and what they said they do not want. Read PROACTIVE_PREFERENCES.md if it exists and skip the kinds it
+           did, what they said they do not want, and what they asked you to forget. Read PROACTIVE_PREFERENCES.md if it exists and skip the kinds it
            rules out.
         3. Draft only for a gap that truly needs the user's own yes, and only the most important one per run. userMessage
            is a prepared brief for Orbit, not the message itself, in five parts: background and timing (who decided what

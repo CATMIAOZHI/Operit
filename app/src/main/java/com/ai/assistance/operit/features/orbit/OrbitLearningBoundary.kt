@@ -58,7 +58,8 @@ class OrbitLearningBoundary(
             action()
         }
     }
-    suspend fun <T> edit(mutationId: String, expected: Long, action: suspend () -> T): T = withContext(Dispatchers.IO) {
+    suspend fun <T> edit(mutationId: String, expected: Long, discardHistory: Boolean = false,
+        action: suspend () -> T): T = withContext(Dispatchers.IO) {
         mutex.withLock {
             require(mutationId.isNotBlank())
             val state = read()
@@ -66,8 +67,11 @@ class OrbitLearningBoundary(
                 check(state.guard.generation == expected && mutationId !in state.mutations) {
                     "Memory was corrected again; reopen it before editing"
                 }
-                write(State(Guard(state.guard.generation + 1, maxOf(state.guard.cutoff, horizon()),
-                    maxOf(state.guard.cutoffTimestamp, clock())),
+                // An ordinary correction invalidates an in-flight draft, not unread conversation.
+                // Only explicit forgetting closes the source range.
+                write(State(Guard(state.guard.generation + 1,
+                    if (discardHistory) maxOf(state.guard.cutoff, horizon()) else state.guard.cutoff,
+                    if (discardHistory) maxOf(state.guard.cutoffTimestamp, clock()) else state.guard.cutoffTimestamp),
                     state.mutations + mutationId))
             }
             action()
@@ -90,13 +94,11 @@ class OrbitLearningBoundary(
             forSpace(context, spaceId)?.snapshot() ?: Guard()
 
         suspend fun promptRevision(context: Context, orbitId: String): String {
-            val preferences = OrbitPreferences.getInstance(context)
-            val orbit = preferences.current().orbits.single { it.id == orbitId }
-            val generation = orbit.memorySpaceId?.let { guard(context, it).generation } ?: 0
             // "layout-v2": stable parts first, Soul/memory/user last; the required packages list the
             // packages every Orbit always has; "isolation-v1": main-app persona and settings stay out.
-            // A change to any of these rebuilds old snapshots once.
-            return "${OrbitSoulRepository(context, orbitId).snapshot().current.id}:$generation:skills-v1:layout-v2:isolation-v1:" +
+            // A change to any of these rebuilds old snapshots once. Memory edits are left out: they
+            // reach the prompt with the daily refresh or the next summary, so the cached prefix holds.
+            return "${OrbitSoulRepository(context, orbitId).snapshot().current.id}:skills-v1:layout-v2:isolation-v1:" +
                 "required-${OrbitPackages.REQUIRED.sorted().joinToString(",")}:" +
                 "defaults-${OrbitPackages.DEFAULT.sorted().joinToString(",")}:" +
                 OrbitPromptFiles.revision(context, orbitId)
@@ -104,14 +106,14 @@ class OrbitLearningBoundary(
 
         suspend fun <T> explicitEdit(context: Context, spaceId: String, action: suspend () -> T): T {
             val boundary = forSpace(context, spaceId) ?: return action()
-            return boundary.edit(java.util.UUID.randomUUID().toString(), boundary.snapshot().generation, action)
+            return boundary.edit(java.util.UUID.randomUUID().toString(), boundary.snapshot().generation, action = action)
         }
 
         suspend fun filter(context: Context, spaceId: String, chatId: String,
             messages: List<com.ai.assistance.operit.data.model.ChatMessage>): Pair<Guard?, List<com.ai.assistance.operit.data.model.ChatMessage>> {
             val boundary = forSpace(context, spaceId) ?: return null to messages
             val guard = boundary.snapshot()
-            if (guard.generation == 0L) return guard to messages
+            if (guard.cutoff == 0L && guard.cutoffTimestamp == 0L) return guard to messages
             val dao = AppDatabase.getDatabase(context).chatContentDao()
             val allowed = messages.filter { it.timestamp > guard.cutoffTimestamp &&
                 (dao.learningMessageId(chatId, it.timestamp) ?: 0) > guard.cutoff }

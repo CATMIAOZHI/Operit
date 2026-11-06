@@ -34,7 +34,8 @@ class OrbitTaskDaoTest {
         whenever(context.getDatabasePath(any())).thenAnswer { File(dir, it.getArgument<String>(0)) }
         return Room.databaseBuilder(context, AppDatabase::class.java, "orbit-test")
             .setDriver(JdbcSQLiteDriver()).addMigrations(AppDatabase.MIGRATION_35_36, AppDatabase.MIGRATION_36_37,
-                AppDatabase.MIGRATION_37_38, AppDatabase.MIGRATION_38_39, AppDatabase.MIGRATION_39_40, AppDatabase.MIGRATION_40_41, AppDatabase.MIGRATION_41_42, AppDatabase.MIGRATION_42_43, AppDatabase.MIGRATION_43_44, AppDatabase.MIGRATION_44_45)
+                AppDatabase.MIGRATION_37_38, AppDatabase.MIGRATION_38_39, AppDatabase.MIGRATION_39_40, AppDatabase.MIGRATION_40_41, AppDatabase.MIGRATION_41_42, AppDatabase.MIGRATION_42_43, AppDatabase.MIGRATION_43_44, AppDatabase.MIGRATION_44_45,
+                AppDatabase.MIGRATION_45_46, AppDatabase.MIGRATION_46_47)
             .allowMainThreadQueries().build()
     }
     @Before fun setUp() {
@@ -520,6 +521,13 @@ class OrbitTaskDaoTest {
         DriverManager.getConnection("jdbc:sqlite:${File(dir, "orbit-test").absolutePath}").use { connection ->
             connection.createStatement().use { statement ->
                 statement.execute("ALTER TABLE orbit_tasks DROP COLUMN modelRole")
+                statement.execute("ALTER TABLE orbit_runs DROP COLUMN handoffTurnId")
+                statement.execute("ALTER TABLE orbit_deliveries DROP COLUMN handoffTurnId")
+                statement.execute("ALTER TABLE orbit_deliveries DROP COLUMN attempts")
+                statement.execute("ALTER TABLE orbit_deliveries DROP COLUMN retryAt")
+                statement.execute("DROP INDEX index_orbit_runs_taskId_startedAt")
+                statement.execute("DROP INDEX index_orbit_events_sourceRunId")
+                statement.execute("DROP INDEX index_orbit_artifact_versions_runId")
                 statement.execute("PRAGMA user_version=44")
             }
         }

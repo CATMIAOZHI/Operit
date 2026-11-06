@@ -50,7 +50,7 @@ internal object OrbitReadingTools {
   - where: the open book and chapter, which paragraphs the user's page shows (page_paragraphs; exact=false means guessed), and how many chapters ahead already have your comments.
   - read: paragraphs come as "[n] text"; n is the paragraph number to comment on. "*" after [n] means you already commented there. You may read any chapter, also ones the user has not reached.
   - copy: saves chapters' text into your folder, one file a chapter under files/reading/<book-name-and-id>/text/, lines "[n] text" with the same numbers as read. Use reading_folder from the result for this book's notes and summaries; do not guess it from the title. Then read them with read_file or read_file_part and look things up with grep_code (environment=android, paths under absolute_folder from the result). Chapters Legado has not saved are fetched from the book's website, so copy a few at a time and go on with next_chapter.
-  - write_comments: comments go on the chapter as Legado lays it out now; read the chapter first so the numbers match. The result says what was saved and where.
+  - write_comments: first read or copy the chapter in this chat/task so its version can be checked. If the version is no longer known or has changed, read or copy it again before writing. The result says what was saved and where.
   - Comments are kept per Orbit and shown in Legado right away. Notes, summaries and where you stopped are yours to keep under files/reading/ (write_file to create, edit_file to change).
 """,
     )
@@ -291,10 +291,13 @@ internal object OrbitReadingTools {
         require(list.length() in 1..OrbitReading.MAX_COMMENTS_PER_CALL) {
             "Give 1 to ${OrbitReading.MAX_COMMENTS_PER_CALL} comments per call; got ${list.length()}"
         }
-        // Taken before the fetch below, which records the version it gets.
-        val seen = reading.seen(bookId, index)
+        // A missing version after restart or eviction cannot establish that the paragraph numbers match.
+        val seen = requireNotNull(reading.seen(bookId, index)) {
+            "The version you read for chapter ${index + 1} is not available in this chat/task. " +
+                "No comments were saved. Use orbit_reading read or copy for this chapter, then write."
+        }
         val chapter = reading.chapter(bookId, index, fresh = true)
-        require(seen == null || seen == chapter.contractHash) {
+        require(seen == chapter.contractHash) {
             "Chapter ${index + 1} changed in Legado since you read or copied it, so the paragraph numbers may have moved. " +
                 "Read it again (or copy it again), then write."
         }

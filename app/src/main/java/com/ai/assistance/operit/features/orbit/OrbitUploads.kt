@@ -2,6 +2,7 @@ package com.ai.assistance.operit.features.orbit
 
 import android.content.Context
 import com.ai.assistance.operit.data.preferences.OrbitPreferences
+import com.ai.assistance.operit.data.preferences.OrbitSettings
 import java.io.File
 import java.io.InputStream
 import java.util.UUID
@@ -12,12 +13,11 @@ import kotlinx.coroutines.withContext
  * The files the user sends in an Orbit chat (pictures, documents, recordings). Other chats keep
  * attachments in a folder that is emptied when the app closes; an Orbit keeps them in its own
  * folder, `orbit/<UUID>/uploads/<time>-<id>/<name>`, so its chat still shows them after a restart
- * and the Builds tab can list them. Together they stay under [LIMIT_BYTES]: past it the oldest
- * go first. Deleting the Orbit deletes them with the rest of its folder.
+ * and the Builds tab can list them. The user picks how much room they may take; with automatic
+ * deleting on, the oldest go first once it is full, but the newest [OrbitSettings.LIBRARY_KEEP_FILES]
+ * always stay. Deleting the Orbit deletes them with the rest of its folder.
  */
 object OrbitUploads {
-    /** 5 GB for one Orbit's uploads. */
-    const val LIMIT_BYTES = 5L * 1024 * 1024 * 1024
     private const val FOLDER = "uploads"
     /** Uploads still being copied live here, outside the listed folders, so trimming never sees them. */
     private const val INCOMING = ".incoming"
@@ -27,6 +27,31 @@ object OrbitUploads {
     private val lock = Any()
 
     data class Upload(val file: File, val name: String, val size: Long, val addedAt: Long)
+
+    /** The Library's room and whether full means deleting the oldest; sent chat copies follow it too. */
+    data class Cleanup(val limitBytes: Long, val autoDelete: Boolean) {
+        /**
+         * Which of [items] (oldest first, with their sizes) go so the rest fit in [limitBytes]. Nothing
+         * goes with automatic deleting off, and the newest [OrbitSettings.LIBRARY_KEEP_FILES] never go.
+         */
+        fun <T> toDelete(items: List<T>, size: (T) -> Long): List<T> {
+            if (!autoDelete) return emptyList()
+            var total = items.sumOf(size)
+            val removable = items.dropLast(OrbitSettings.LIBRARY_KEEP_FILES)
+            val out = mutableListOf<T>()
+            for (item in removable) {
+                if (total <= limitBytes) break
+                out += item
+                total -= size(item)
+            }
+            return out
+        }
+    }
+
+    /** The user's Library settings. Reads settings; call off the main thread. */
+    fun cleanup(context: Context): Cleanup = cleanup(OrbitPreferences.getInstance(context).loadedSettingsBlocking())
+
+    fun cleanup(settings: OrbitSettings): Cleanup = Cleanup(settings.libraryLimitGb * GB, settings.libraryAutoDelete)
 
     /** The file is bigger than the whole Library can hold. */
     class TooLargeException : java.io.IOException("The file is larger than the Orbit Library limit")
@@ -42,10 +67,11 @@ object OrbitUploads {
      * Saves one upload and makes room under the limit, the newest file always kept. Blocking IO.
      * The copy is made in [INCOMING] and only moved into the Library when complete, so another
      * upload finishing meanwhile cannot trim it. Returns null (and keeps nothing) when the stream
-     * was empty; throws [TooLargeException] for a file over [LIMIT_BYTES], keeping nothing.
+     * was empty; throws [TooLargeException] for a file bigger than the whole Library, keeping nothing.
      */
     fun save(context: Context, orbitId: String, name: String, input: InputStream): File? {
         val root = root(context, orbitId)
+        val cleanup = cleanup(context)
         val now = System.currentTimeMillis()
         val id = "$now-" + UUID.randomUUID().toString().replace("-", "").take(8)
         val incoming = File(File(root, INCOMING), id)
@@ -60,7 +86,7 @@ object OrbitUploads {
                     val read = input.read(buffer)
                     if (read < 0) break
                     total += read
-                    if (total > LIMIT_BYTES) throw TooLargeException()
+                    if (total > cleanup.limitBytes) throw TooLargeException()
                     output.write(buffer, 0, read)
                 }
             }
@@ -78,7 +104,7 @@ object OrbitUploads {
                 incoming.deleteRecursively()
                 error("Could not keep the upload")
             }
-            trim(root, keep = folder)
+            trim(root, keep = folder, cleanup)
         }
         return File(folder, fileName)
     }
@@ -120,23 +146,21 @@ object OrbitUploads {
         return folder.takeIf { it.parentFile == root.canonicalFile && FOLDER_NAME.matches(it.name) }
     }
 
-    /** Deletes the oldest uploads until the rest fit under the limit; [keep] is never deleted. */
-    private fun trim(root: File, keep: File) {
+    /** Deletes the oldest uploads the [cleanup] rules let go; [keep] (the one just saved) never goes. */
+    private fun trim(root: File, keep: File, cleanup: Cleanup) {
         // Copies cut off by the app closing would otherwise stay forever.
         val cutoff = System.currentTimeMillis() - STALE_INCOMING_MS
         File(root, INCOMING).listFiles()?.forEach { folder ->
             val time = FOLDER_NAME.matchEntire(folder.name)?.groupValues?.get(1)?.toLongOrNull()
             if (time != null && time < cutoff) folder.deleteRecursively()
         }
-        val all = uploads(root).sortedBy { it.addedAt }
-        var total = all.sumOf { it.size }
-        for (upload in all) {
-            if (total <= LIMIT_BYTES) break
-            val folder = upload.file.parentFile ?: continue
-            if (folder == keep) continue
-            if (folder.deleteRecursively()) total -= upload.size
+        val all = uploads(root).sortedWith(compareBy<Upload> { it.addedAt }.thenBy { it.file.parentFile?.name })
+        cleanup.toDelete(all) { it.size }.forEach { upload ->
+            upload.file.parentFile?.takeIf { it != keep }?.deleteRecursively()
         }
     }
+
+    private const val GB = 1024L * 1024 * 1024
 
     private fun safeName(name: String): String {
         val clean = name.replace(Regex("[\\\\/:*?\"<>|\\p{Cntrl}]"), "_").trim().trimStart('.')

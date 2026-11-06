@@ -55,6 +55,7 @@ object MemoryLearningCoordinator {
     private val manualClaims = ConcurrentHashMap.newKeySet<String>()
     /** Backlog that is still pending after a full round keeps draining without another idle wait. */
     private const val BACKLOG_RETRY_MS = 30_000L
+    private const val MAX_AUTOMATIC_ATTEMPTS = 3
     /** How often a busy-foreground check is repeated before the backlog is allowed to run anyway. */
     private const val BUSY_RETRY_MS = 60_000L
     /**
@@ -119,6 +120,10 @@ object MemoryLearningCoordinator {
         var persistProgress: suspend () -> Unit = {}
         var recordModelRound: () -> Unit = {}
         val evidenceBytes = AtomicLong()
+        var scoreEvidence = ""
+        fun recordScoreEvidence(text: String) {
+            scoreEvidence = SkillScorer.boundEvidence(listOf(scoreEvidence, text).filter { it.isNotBlank() }.joinToString("\n\n"))
+        }
         var evidenceBudget: Long = Long.MAX_VALUE
         var lastProgressWriteAt: Long = 0
         lateinit var job: Job
@@ -282,6 +287,7 @@ object MemoryLearningCoordinator {
         if (profileId in deletedProfiles || chatId in manualClaims) return
         val settings = MemorySearchSettingsPreferences(context,profileId)
         val job = scope.launch(start=CoroutineStart.LAZY) {
+            repeat(MAX_AUTOMATIC_ATTEMPTS) { attempt ->
             try {
                 while (true) {
                     if (profileId in deletedProfiles) return@launch
@@ -291,7 +297,7 @@ object MemoryLearningCoordinator {
                     val skills=journal.pending("skills") && settings.shouldExtractSkills()
                     // A finished batch is exported before anything else so its proposals are never
                     // lost behind a range that is no longer reviewable.
-                    if (exportFinishedBatch(context,profileId,chatId,journal)!=null) return@launch
+                    exportFinishedBatch(context,profileId,chatId,journal)?.let { error(it) }
                     if (!notes && !skills) return@launch
                     // Every review starts only once the chat has been quiet this long since its last saved
                     // reply, including replies saved while an earlier review was running. The wait never
@@ -317,13 +323,29 @@ object MemoryLearningCoordinator {
                     val remaining=MemoryLearningJournal(context,profileId,chatId)
                     if (!(remaining.pending("notes") && settings.shouldExtractNewMemory()) &&
                         !(remaining.pending("skills") && settings.shouldExtractSkills())) return@launch
+                    check(heldBack(chatId, overdue) ||
+                        listOf("notes", "skills").any { journal.cursor(it) != remaining.cursor(it) }) {
+                        "Background review left the same unread range pending"
+                    }
                     // Backlog the run did not finish continues after a short pause; the quiet check at the
                     // top still holds back messages saved while it ran.
                     delay(BACKLOG_RETRY_MS)
                 }
             }
+            catch(e: PageTimeout) {
+                currentCoroutineContext().ensureActive()
+                AppLogger.w("MemoryLearning","Background review page timed out",e)
+            }
+            catch(e: TimeoutCancellationException) {
+                currentCoroutineContext().ensureActive()
+                AppLogger.w("MemoryLearning","Background review timed out",e)
+            }
             catch(e: CancellationException) { throw e }
             catch(e: Exception) { AppLogger.e("MemoryLearning","Background review failed",e) }
+            // Checkpoints and pending markers survive. Stop after three attempts; a later turn or
+            // app restart can try the same unread range again without a permanent retry loop.
+            if (attempt + 1 < MAX_AUTOMATIC_ATTEMPTS) delay(BACKLOG_RETRY_MS * (attempt + 1))
+            }
         }
         if (jobs.putIfAbsent(chatId,job)!=null) { job.cancel(); return }
         jobProfiles[chatId]=profileId
@@ -559,14 +581,15 @@ object MemoryLearningCoordinator {
                         source.next(journal.cursor(paths.first()),pageBudget)
                     } catch (e: CancellationException) { throw e }
                     catch (e: Exception) {
-                        // Source that cannot be read back fails identically on every retry, so the reason
-                        // is recorded and the range stops being retried on every idle period.
+                        // A read can fail transiently too. Keep its cursor and pending marker so the
+                        // scheduler's bounded retry can read the same range again.
                         val reason=context.getString(R.string.memory_extraction_source_unreadable)
                         recordUnreviewable(context,profileId,chatId,paths,reason,
                             e.message?.takeIf { it.isNotBlank() } ?: e.toString())
-                        journal.abandon(paths, reviewedGeneration)
-                        session.stopped = "The rest of this conversation cannot be read."
-                        return stopResult(session.stopped!!)
+                        throw e
+                    }
+                    check(batch.guard == null || batch.guard.generation == carryGeneration) {
+                        "Memory changed during this review; restart with fresh context"
                     }
                     if (batch.text.isBlank()) {
                         // Nothing to learn from here (skipped or empty messages): move past it.
@@ -578,20 +601,26 @@ object MemoryLearningCoordinator {
                     }
                     pages++
                     session.page = batch
+                    session.recordScoreEvidence(batch.text)
                     // A page's changes carry that page's provenance, as a batch's did.
                     session.actions = MemoryLearningActions(context,profileId,chatId,notes,skills,true,staged,
-                        learningGuard = batch.guard, evidence = batch.evidence)
+                        learningGuard = batch.guard, evidence = batch.evidence,
+                        onHistoryRead = session::recordScoreEvidence)
                     return pageResult(batch, pages, again = false)
                 }
             }
 
             override suspend fun commit(carry: String): JSONObject {
                 val batch = checkNotNull(session.page) { "No page is open. Call read_next." }
-                // A new skill is installed off and waits for the independent grader, which reads the
-                // page it came from.
+                check(batch.guard == null || batch.guard.generation ==
+                    com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.guard(context, profileId).generation) {
+                    "Memory changed during this page; leave it unread for a fresh review"
+                }
+                // Include earlier source pages and the history the reviewer actually read. A method's
+                // successful result may be outside the page where its skill was drafted.
                 staged.replaceAll { change ->
                     if (change.kind != "skill") change else {
-                        val key = SkillScorer.keepEvidence(context,profileId,chatId,batch.text)
+                        val key = SkillScorer.keepEvidence(context,profileId,chatId,session.scoreEvidence)
                         change.copy(holdForScore = true, scoreEvidence = key)
                     }
                 }
@@ -817,7 +846,7 @@ object MemoryLearningCoordinator {
     private const val CARRY_LIMIT = 800
     /** Actions that stage a change; they need an open page. */
     private val PAGE_CHANGES = setOf("memory_change", "skill_create", "skill_write", "skill_patch",
-        "skill_remove_file", "skill_delete", "people_write", "lesson_add")
+        "skill_remove_file", "skill_delete", "people_write", "lesson_add", "lesson_change")
 
     /** Where the review starts in the chat, and the notes an earlier review left for it. */
     private fun runHead(start: Long, carried: String): String = buildString {

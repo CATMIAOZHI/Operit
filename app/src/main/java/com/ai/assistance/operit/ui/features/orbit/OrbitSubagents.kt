@@ -53,13 +53,15 @@ internal object OrbitSubagents {
             val dao = AppDatabase.getDatabase(context).subagentRunDao()
             val parentChatId = when (process) {
                 is OrbitProcess.ChatTurn -> process.chatId
+                is OrbitProcess.LiveTurn -> process.chatId
                 is OrbitProcess.TaskRun -> process.chatId
                 is OrbitProcess.Subagent -> process.chatId
                 is OrbitProcess.Learning -> return@withContext emptyList()
             }
             val runs = dao.getByParentChatId(parentChatId).filter(::isWorker)
             if (runs.isEmpty()) return@withContext emptyList()
-            val owned = if (process is OrbitProcess.ChatTurn) {
+            // A turn in a chat owns only the agents its own calls started.
+            val owned = if (process is OrbitProcess.ChatTurn || process is OrbitProcess.LiveTurn) {
                 val calls = messages.asSequence().filter { it.sender == "ai" }
                     .flatMap { parsePersistedToolExecutions(it.content).values }
                     .mapNotNull { it.callId?.takeIf(String::isNotBlank) }.toSet()
@@ -164,6 +166,17 @@ internal object OrbitSubagents {
         }
 
     private const val MAX_DEPTH = 6
+
+    /** The automatic permission reviews run for [chatIds], newest first, at most [limit]. */
+    suspend fun reviewsUnder(context: Context, chatIds: List<String>, limit: Int = 50): List<SubagentRunEntity> =
+        withContext(Dispatchers.IO) {
+            val dao = AppDatabase.getDatabase(context).subagentRunDao()
+            chatIds.distinct().flatMap { parent ->
+                dao.getByParentChatId(parent).filter {
+                    it.agentProfileId == com.ai.assistance.operit.core.agent.AgentProfileRepository.PERMISSION_REVIEWER_ID
+                }
+            }.sortedByDescending { it.createdAt }.take(limit)
+        }
 
     /** The words of an agent message (a task handed over) without its envelope. */
     fun payload(content: String): String =

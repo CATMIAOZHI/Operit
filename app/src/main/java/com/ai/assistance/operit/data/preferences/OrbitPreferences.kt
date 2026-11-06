@@ -127,6 +127,13 @@ data class OrbitSettings(
      * never handed to the user, so it waits briefly; the main app keeps its own longer wait.
      */
     val webWaitSeconds: Int = DEFAULT_WEB_WAIT_SECONDS,
+    /** How much room the Library (files the user sends Orbit) may take, in GB. */
+    val libraryLimitGb: Int = DEFAULT_LIBRARY_LIMIT_GB,
+    /**
+     * Whether the oldest files go by themselves once the Library is full. Even then the newest
+     * [LIBRARY_KEEP_FILES] always stay, however big, so one huge file cannot sweep out the rest.
+     */
+    val libraryAutoDelete: Boolean = true,
 ) {
     val active: OrbitProfile?
         get() = activeOrbitId?.let { id -> orbits.firstOrNull { it.id == id } }
@@ -145,6 +152,11 @@ data class OrbitSettings(
         const val DEFAULT_CHECK_IN_MINUTE = 9 * 60
         const val DEFAULT_WEB_WAIT_SECONDS = 1
         const val MAX_WEB_WAIT_SECONDS = 10
+        const val DEFAULT_LIBRARY_LIMIT_GB = 5
+        /** The Library sizes the user can choose, in GB. */
+        val LIBRARY_LIMITS_GB = listOf(1, 2, 5, 10, 20, 50)
+        /** Automatic deleting never touches the newest this many files. */
+        const val LIBRARY_KEEP_FILES = 100
         const val MAX_FOCUS_NOTES_LENGTH = 1000
         const val MAX_NAME_LENGTH = 24
         const val MAX_SIDE_CHATS = 20
@@ -183,6 +195,9 @@ class OrbitPreferences private constructor(context: Context) {
             appLock = preferences[APP_LOCK] ?: false,
             webWaitSeconds = (preferences[WEB_WAIT_SECONDS] ?: OrbitSettings.DEFAULT_WEB_WAIT_SECONDS)
                 .coerceIn(0, OrbitSettings.MAX_WEB_WAIT_SECONDS),
+            libraryLimitGb = (preferences[LIBRARY_LIMIT_GB] ?: OrbitSettings.DEFAULT_LIBRARY_LIMIT_GB)
+                .takeIf { it in OrbitSettings.LIBRARY_LIMITS_GB } ?: OrbitSettings.DEFAULT_LIBRARY_LIMIT_GB,
+            libraryAutoDelete = preferences[LIBRARY_AUTO_DELETE] ?: true,
         )
     }
 
@@ -239,6 +254,15 @@ class OrbitPreferences private constructor(context: Context) {
 
     suspend fun setWebWaitSeconds(seconds: Int) {
         dataStore.edit { it[WEB_WAIT_SECONDS] = seconds.coerceIn(0, OrbitSettings.MAX_WEB_WAIT_SECONDS) }
+    }
+
+    suspend fun setLibraryLimitGb(gb: Int) {
+        require(gb in OrbitSettings.LIBRARY_LIMITS_GB) { "Unsupported Library size" }
+        dataStore.edit { it[LIBRARY_LIMIT_GB] = gb }
+    }
+
+    suspend fun setLibraryAutoDelete(enabled: Boolean) {
+        dataStore.edit { it[LIBRARY_AUTO_DELETE] = enabled }
     }
 
     suspend fun setCheckInMinuteOfDay(minuteOfDay: Int) {
@@ -574,6 +598,8 @@ class OrbitPreferences private constructor(context: Context) {
         private val DEVELOPER_MODE = booleanPreferencesKey("orbit_developer_mode")
         private val APP_LOCK = booleanPreferencesKey("orbit_app_lock")
         private val WEB_WAIT_SECONDS = intPreferencesKey("orbit_web_wait_seconds")
+        private val LIBRARY_LIMIT_GB = intPreferencesKey("orbit_library_limit_gb")
+        private val LIBRARY_AUTO_DELETE = booleanPreferencesKey("orbit_library_auto_delete")
 
         private fun decodeOrbits(raw: String?): List<OrbitProfile> {
             if (raw.isNullOrBlank()) return emptyList()

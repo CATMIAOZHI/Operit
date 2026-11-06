@@ -299,6 +299,12 @@ class MemoryReviewRepository internal constructor(
                     baseVersion = previous.baseVersion, addition = joined, createdAt = previous.createdAt)
                     .also { pending[index] = it }
             }
+            // An append did not read the whole book and has no baseline. When an exact edit replaces
+            // it, use the disk text the edit just read; its body already includes the staged append.
+            if (change.kind == ORBIT_FILE && previous.addition.isNotEmpty() && change.addition.isEmpty()) {
+                return@withContext change.copy(id = previous.id, createdAt = previous.createdAt)
+                    .also { pending[index] = it }
+            }
             // The replacement carries the whole target text, so an accumulated notes addition must not
             // be appended on top of it.
             return@withContext change.copy(id = previous.id, before = previous.before,

@@ -102,7 +102,7 @@ internal fun OrbitRawMessageSheet(message: ChatMessage, onDismiss: () -> Unit) {
 }
 
 /** The text in slices of about 40 lines, with a very long line cut every 4000 characters. */
-private fun rawChunks(text: String): List<String> {
+internal fun rawChunks(text: String): List<String> {
     if (text.isEmpty()) return listOf("")
     val out = ArrayList<String>()
     // Walks the text once by index, so even one huge line is copied only once.
@@ -138,7 +138,6 @@ private fun rawChunks(text: String): List<String> {
 private const val MAX_LINE = 4000
 
 private fun copyRaw(context: Context, text: String) {
-    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
-    clipboard.setPrimaryClip(ClipData.newPlainText("message", text))
-    Toast.makeText(context, R.string.orbit_dev_view_raw_copied, Toast.LENGTH_SHORT).show()
+    // A tool result can be megabytes: too long for the clipboard, it points to the export instead.
+    com.ai.assistance.operit.ui.features.orbit.orbitDevCopy(context, text, tooBig = R.string.orbit_dev_copy_use_export)
 }

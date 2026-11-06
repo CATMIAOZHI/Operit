@@ -114,6 +114,8 @@ internal fun OrbitTasksPage(
     openSystem: Boolean = false,
     /** Puts a prompt in the main chat's input box and shows the chat; nothing is sent. */
     onDraft: (String) -> Unit,
+    /** Opens the record of a run as it happens; without it the task page has no such button. */
+    onOpenProcess: ((OrbitProcess) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val resources = LocalResources.current
@@ -237,6 +239,7 @@ internal fun OrbitTasksPage(
                 onResolve = { id, completed -> resolveReceipt = Triple(shown, id, completed) },
                 onRecord = { id -> historyTask = id },
                 onDraft = onDraft,
+                onOpenProcess = onOpenProcess,
             )
             }
         }
@@ -681,6 +684,7 @@ private fun TaskDetail(
     onResolve: (String, Boolean) -> Unit,
     onRecord: (String) -> Unit,
     onDraft: (String) -> Unit,
+    onOpenProcess: ((OrbitProcess) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val resources = LocalResources.current
@@ -782,6 +786,13 @@ private fun TaskDetail(
                         CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
                         Spacer(Modifier.width(10.dp))
                         Text(stringResource(R.string.orbit_task_running), style = MaterialTheme.typography.bodyLarge)
+                    }
+                    // A run going on now can be watched step by step.
+                    if (onOpenProcess != null && run != null) {
+                        TaskButton(stringResource(R.string.orbit_task_watch_run), "eye", primary = false) {
+                            onOpenProcess(OrbitProcess.TaskRun(run.id, run.generation, run.taskId,
+                                OrbitWork.listLine(task.title), run.startedAt, running = true))
+                        }
                     }
                 } else {
                     val failed = run?.state == "FAILED" && !run.error.isNullOrBlank()

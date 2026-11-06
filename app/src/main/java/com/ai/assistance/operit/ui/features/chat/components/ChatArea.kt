@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -370,6 +371,39 @@ fun ChatArea(
             showLoadingIndicator &&
             chatStyle == ChatStyle.BUBBLE &&
             lastMessage?.sender == "ai"
+    // Developer view of an Orbit chat: mark what the model reads but the chat never shows, the
+    // send time before each user message and the break between the parts of a split reply.
+    val devOrbitMarks = LocalShowHiddenChatRows.current && remember(currentChatId) {
+        val chatId = currentChatId ?: return@remember false
+        val prefs = com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context)
+        prefs.loadedSnapshot()?.orbitForChat(chatId)?.talkChatIds?.contains(chatId) == true
+    }
+    // Read off the main thread; times show once it is in. A new message reads it again, in case
+    // the phone changed zone meanwhile.
+    val devZoneLog by androidx.compose.runtime.produceState<List<Pair<Long, String>>?>(
+        null, devOrbitMarks, chatHistory.lastOrNull()?.timestamp,
+    ) {
+        value = if (devOrbitMarks) com.ai.assistance.operit.features.orbit.OrbitMessageTime.zoneLog(context) else null
+    }
+    // Developer view: where the newest summary is, with the chat it is for. The model reads from it
+    // on, so the rows before it are no longer sent. Read again when a summary or a new row comes in.
+    val devView = LocalShowHiddenChatRows.current
+    // Developer view: the user messages that did not reach the server, marked on their rows.
+    val devUnsent = if (devView) LocalOrbitUnsentMessages.current else null
+    val shownSummaryAt = remember(chatHistory) { chatHistory.lastOrNull { it.sender == "summary" }?.timestamp }
+    val devSummary by androidx.compose.runtime.produceState<Pair<String, Long?>?>(
+        null, devView, currentChatId, shownSummaryAt, chatHistory.lastOrNull()?.timestamp,
+    ) {
+        val chatId = currentChatId?.takeIf { devView && it.isNotBlank() } ?: run { value = null; return@produceState }
+        value = try {
+            chatId to com.ai.assistance.operit.data.db.AppDatabase.getDatabase(context).chatContentDao().latestSummaryAt(chatId)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            value?.takeIf { it.first == chatId }
+        }
+    }
+    val devSummaryAt = devSummary?.takeIf { it.first == currentChatId }?.second
     VirtualTranscript(
         chatId = currentChatId.orEmpty(),
         messages = chatHistory,
@@ -405,10 +439,40 @@ fun ChatArea(
                     }
                 }
             }
+                        val devMark = if (devView &&
+                            com.ai.assistance.operit.ui.common.markdown.LocalTranscriptMarkdownSlice.current?.first != false) {
+                            val sender = renderedMessage.sender
+                            when {
+                                devUnsent != null && sender == "user" && renderedMessage.timestamp in devUnsent.timestamps ->
+                                    stringResource(R.string.orbit_dev_mark_unsent)
+                                devSummaryAt != null && sender == "summary" -> stringResource(
+                                    if (renderedMessage.timestamp == devSummaryAt) R.string.orbit_dev_mark_summary_latest
+                                    else R.string.orbit_dev_mark_summary_old,
+                                )
+                                devSummaryAt != null && renderedMessage.timestamp < devSummaryAt &&
+                                    (sender == "user" || sender == "ai") -> stringResource(R.string.orbit_dev_mark_summarized)
+                                !devOrbitMarks -> null
+                                com.ai.assistance.operit.features.orbit.OrbitMessageTime.stampsRow(
+                                    renderedMessage.sender, renderedMessage.displayMode, renderedMessage.content) ->
+                                    devZoneLog?.let { log ->
+                                        remember(renderedMessage.timestamp, log) {
+                                            com.ai.assistance.operit.features.orbit.OrbitMessageTime.labelFor(log, renderedMessage.timestamp)
+                                        }
+                                    }
+                                renderIndex > 0 && com.ai.assistance.operit.services.core.OrbitMessageBreaks.isPartOf(
+                                    renderedMessage, chatHistory[renderIndex - 1]) ->
+                                    com.ai.assistance.operit.services.core.OrbitMessageBreaks.BREAK
+                                else -> null
+                            }
+                        } else null
                         MessageItem(
                             index = renderIndex,
                             currentChatId = currentChatId,
                             message = renderedMessage,
+                            devMark = devMark,
+                            // A part sealed when the user cut in has no end time; its turn ends at the next row.
+                            turnEnd = if (devView && renderedMessage.completedAt <= 0L)
+                                chatHistory.getOrNull(renderIndex + 1)?.timestamp else null,
                             showAssistantHeader = !isAssistantContinuation(chatHistory, renderIndex) &&
                                 com.ai.assistance.operit.ui.common.markdown.LocalTranscriptMarkdownSlice.current?.first != false,
                             enableDialogs = enableDialogs,
@@ -607,6 +671,19 @@ fun ChatArea(
                 }
             } else {
                 heldBubble()
+                // Developer view: messages handed to the running turn that it has not written yet.
+                if (devView && !hasNewerDisplayHistory && steeringSends.isNotEmpty()) {
+                    val times = remember(chatHistory) { chatHistory.mapTo(hashSetOf()) { it.timestamp } }
+                    steeringSends.filter { it.savedAt == null || it.savedAt !in times }.forEach { item ->
+                        val text = (item.steeringText ?: item.text).replace('\n', ' ').take(80)
+                        androidx.compose.runtime.key(item.id) {
+                            OrbitDevMark(
+                                stringResource(R.string.orbit_dev_mark_steering, text),
+                                Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp),
+                            )
+                        }
+                    }
+                }
                 if (showLoadingIndicator && showChatFloatingDotsAnimation) {
                     Box(Modifier.padding(start = 16.dp)) { LoadingDotsIndicator(aiTextColor) }
                 }
@@ -624,6 +701,10 @@ private fun MessageItem(
     index: Int,
     currentChatId: String,
     message: ChatMessage,
+    /** Developer view of an Orbit chat: text the model reads before this message, shown above it. */
+    devMark: String? = null,
+    /** Developer view: where this reply's turn ends when the reply has no end time (see MessageInfoDialog). */
+    turnEnd: Long? = null,
     showAssistantHeader: Boolean,
     enableDialogs: Boolean,
     allowTranscriptMutation: Boolean,
@@ -848,6 +929,14 @@ private fun MessageItem(
         ) {
             if (quietOrbitReply) {
                 OrbitHiddenInChatBadge(Modifier.padding(start = 12.dp, top = 4.dp, bottom = 2.dp))
+            }
+            devMark?.let { mark ->
+                OrbitDevMark(
+                    mark,
+                    Modifier.fillMaxWidth()
+                        .wrapContentWidth(if (message.sender == "user") Alignment.End else Alignment.Start)
+                        .padding(horizontal = 12.dp, vertical = 2.dp),
+                )
             }
             if (showHiddenRows && isHiddenUserMessage) {
                 OrbitHiddenUserRow(message.content)
@@ -1592,6 +1681,8 @@ private fun MessageItem(
         if (showMessageInfoDialog) {
             MessageInfoDialog(
                 message = message,
+                chatId = currentChatId,
+                turnEnd = turnEnd,
                 onDismiss = { showMessageInfoDialog = false }
             )
         }

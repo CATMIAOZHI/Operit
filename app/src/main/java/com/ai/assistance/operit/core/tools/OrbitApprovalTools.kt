@@ -21,8 +21,8 @@ internal object OrbitApprovalTools {
 
     val prompt = ToolPrompt(
         name = NAME,
-        description = "Ask the user to approve one thing you are about to do and are not sure you should (send an email for them, " +
-            "post or buy something, open a site you doubt, delete their data). 请用户批准一件你拿不准该不该做的事。",
+        description = "Ask the user to approve one thing you are about to do and are not sure you should (send something they did not " +
+            "clearly ask for, buy something, open a site you doubt, delete their data). 请用户批准一件你拿不准该不该做的事。",
         parametersStructured = listOf(
             ToolParameterSchema("title", description = "short title in the user's language, e.g. 给张三发邮件 (at most ${OrbitApprovals.MAX_TITLE} characters)", required = true),
             ToolParameterSchema("detail", description = "exactly what you will do: who/where, what content, any amount; one approval covers only this (at most ${OrbitApprovals.MAX_DETAIL} characters)", required = true),
@@ -31,10 +31,10 @@ internal object OrbitApprovalTools {
   - Puts an approval card in the chat and adds the request to the approval list, then returns at once. End the turn after it with one short line, e.g. "I've asked; tap approve and I'll send it."
   - Do not do the thing before the answer comes. You get a hidden note with the user's answer (and any reason they typed); then act on it.
   - One request is one concrete action. Put everything that matters into detail; if any of it changes later, ask again.
-  - For sending a message or email, include the complete final body, exact recipient and channel in the request. After approval, call orbit_presend_check with the approved approval_id, text, recipient and channel before sending.
+  - Not needed when the user clearly asked for the action, and connector tools that send put their own card in the chat. For a message you are unsure about, include the complete final body, exact recipient and channel in the request.
   - Ask only when it matters: things you can undo, or that only touch your own notes and files, need no approval.
   - 一次申请只对应一件具体的事，detail 里写清楚收件人/网站、内容、金额；之后有变化就重新申请。答复到之前不要动手。
-  - 发消息或邮件时，申请中写全最终正文、明确收件人和渠道；批准后，把 approval_id 和这三项传给 orbit_presend_check，通过后再发。
+  - 用户已经明确要求的事不用再申请；连接器里对外发送的工具会自己放卡片。拿不准的消息，申请里写全最终正文、收件人和渠道。
 """,
     )
 

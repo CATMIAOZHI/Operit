@@ -166,6 +166,7 @@ object OrbitQuota {
     private val WEEKLY_USED = longPreferencesKey("weekly_used")
     private val EXTRA_USED = longPreferencesKey("extra_used")
     private val WARNED_WEEK = longPreferencesKey("warned_week")
+    private val PAUSED_WARNED_WEEK = longPreferencesKey("paused_warned_week")
     /**
      * Where earlier versions kept every day's use in one value. At the next call counted it moves
      * into the month files ([UsageFiles]) and is dropped from here.
@@ -259,7 +260,8 @@ object OrbitQuota {
     /** A null value keeps what is stored, read inside the same edit so parallel changes never undo each other. */
     suspend fun setLimits(context: Context, weekly: Long? = null, extra: Long? = null, extraWeekly: Boolean? = null) {
         val now = System.currentTimeMillis()
-        context.applicationContext.orbitQuotaStore.edit { p ->
+        val app = context.applicationContext
+        app.orbitQuotaStore.edit { p ->
             val stored = read(p)
             val s = stored.at(now)
             p[WEEK_START] = s.weekStart
@@ -268,12 +270,17 @@ object OrbitQuota {
             p[WEEKLY_LIMIT] = (weekly ?: stored.weeklyLimit).coerceIn(MIN_WEEKLY, MAX_LIMIT)
             p[EXTRA_LIMIT] = (extra ?: stored.extraLimit).coerceIn(0L, MAX_LIMIT)
             p[EXTRA_WEEKLY] = extraWeekly ?: stored.extraWeekly
+            if (!read(p).paused) p.remove(PAUSED_WARNED_WEEK)
         }
+        if (state(app).paused) OrbitPreferences.getInstance(app).current().active?.let { warnPaused(app, it.id) }
     }
 
     /** Fills the extra allowance again: what was spent from it no longer counts. */
     suspend fun refillExtra(context: Context) {
-        context.applicationContext.orbitQuotaStore.edit { p -> p[EXTRA_USED] = 0L }
+        context.applicationContext.orbitQuotaStore.edit { p ->
+            p[EXTRA_USED] = 0L
+            if (!read(p).at(System.currentTimeMillis()).paused) p.remove(PAUSED_WARNED_WEEK)
+        }
     }
 
     /**
@@ -312,7 +319,29 @@ object OrbitQuota {
         } catch (e: Exception) {
             AppLogger.w(TAG, "Could not save the use by day: ${e.message}")
         }
-        if (after.weeklyExhausted && after.warnedWeek != after.weekStart && !after.paused) warn(app, tag.orbitId)
+        if (after.paused) warnPaused(app, tag.orbitId)
+        else if (after.weeklyExhausted && after.warnedWeek != after.weekStart) warn(app, tag.orbitId)
+    }
+
+    /** No model call is available once paused, including when the extra allowance was set to zero. */
+    private suspend fun warnPaused(app: Context, orbitId: String) {
+        val orbit = OrbitPreferences.getInstance(app).current().orbits
+            .firstOrNull { it.id == orbitId && !it.deleting && it.chatId.isNotBlank() } ?: return
+        var notice: State? = null
+        app.orbitQuotaStore.edit { p ->
+            val s = read(p).at(System.currentTimeMillis())
+            if (s.paused && p[PAUSED_WARNED_WEEK] != s.weekStart) {
+                p[PAUSED_WARNED_WEEK] = s.weekStart
+                p[WARNED_WEEK] = s.weekStart
+                p[WARNED_ORBIT] = orbitId
+                notice = s
+            }
+        }
+        val s = notice ?: return
+        val name = orbit.name.ifBlank { app.getString(R.string.nav_orbit) }
+        OrbitDelivery.announce(app, orbit.chatId, app.getString(R.string.orbit_quota_paused_title),
+            app.getString(R.string.orbit_quota_paused_error, name, name, resetText(app, s.weekEnd)))
+        scheduleResetNotice(app, s.weekEnd + 60_000L)
     }
 
     /**

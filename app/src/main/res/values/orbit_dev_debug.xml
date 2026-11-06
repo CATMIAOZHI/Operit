@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="orbit_dev_more">开发者工具</string>
+    <string name="orbit_dev_requests">请求记录</string>
+    <string name="orbit_dev_raw_search">搜索原文</string>
+    <string name="orbit_dev_events">请求结果、重试、修复与压缩</string>
+
+    <string name="orbit_dev_requests_hint">开发者模式打开时才记录，每个聊天留最近 6 次。没真正发出去的会标“未发出”。图片和文件只显示大小。</string>
+    <string name="orbit_dev_requests_none">还没有记录。开发者模式打开后，这个聊天的下一次请求会出现在这里。</string>
+    <string name="orbit_dev_request_kind_send">发消息</string>
+    <string name="orbit_dev_request_kind_tool">回传工具结果</string>
+    <string name="orbit_dev_request_params">请求参数</string>
+    <string name="orbit_dev_request_system">系统提示</string>
+    <string name="orbit_dev_request_messages">消息（%1$d 条）</string>
+    <string name="orbit_dev_request_tools">工具（%1$d 个）</string>
+    <string name="orbit_dev_request_copy_all">复制全部</string>
+    <string name="orbit_dev_request_copied">已复制</string>
+    <string name="orbit_dev_request_too_big">内容太大，复制不了全部，可以一条一条复制</string>
+
+    <string name="orbit_dev_events_hint">每次模型请求的结果和各段耗时、出错原因、重试、本地对工具调用的修正、一轮里的上下文压缩。开发者模式打开时才记录。</string>
+    <string name="orbit_dev_events_none">还没有记录</string>
+    <string name="orbit_dev_event_kind_retry">重试</string>
+    <string name="orbit_dev_event_kind_repair">本地修正</string>
+    <string name="orbit_dev_event_kind_compact">压缩</string>
+    <string name="orbit_dev_event_retry">第 %1$d/%2$d 次重试，%3$d 毫秒后再发：%4$s</string>
+    <string name="orbit_dev_event_retry_gave_up">重试 %1$d 次后放弃：%2$s</string>
+    <string name="orbit_dev_event_truncated_tool">工具调用被截断：%1$s 没有执行，本地在结尾补上了 %2$s</string>
+    <string name="orbit_dev_event_repair">工具调用被本地修正：模型写的是 %1$s（参数：%2$s），实际执行 %3$s（参数：%4$s）。规则：%5$s</string>
+    <string name="orbit_dev_event_compact_before_turn">轮内压缩：这一轮之前的 %1$d 条换成了摘要（%2$d 字）</string>
+    <string name="orbit_dev_event_compact_steps">轮内压缩：这一轮已完成的 %1$d 条换成了摘要（%2$d 字）</string>
+    <string name="orbit_dev_event_compact_whole">压缩上下文：%1$d 条换成了 %2$d 条（摘要 %3$d 字）</string>
+
+    <string name="orbit_dev_search_hint">搜原文，含思考、工具和隐藏内容</string>
+    <string name="orbit_dev_search_none">没有找到</string>
+    <string name="orbit_dev_search_failed">搜索失败，请再试一次</string>
+    <string name="orbit_dev_search_more">只显示最新的 %1$d 条</string>
+
+    <string name="orbit_dev_chats_reviews">自动审核</string>
+    <string name="orbit_dev_chats_tasks">后台任务</string>
+
+    <string name="orbit_dev_mark_summarized">已被摘要替代 · 模型看不到</string>
+    <string name="orbit_dev_mark_summary_latest">模型从这条摘要读起</string>
+    <string name="orbit_dev_mark_summary_old">旧摘要 · 已被后面的摘要替代</string>
+
+    <string name="orbit_dev_info_request">请求记录</string>
+    <string name="orbit_dev_info_request_none">这一轮没有记录。开发者模式关着时发出的请求不会记录。</string>
+    <string name="orbit_dev_info_request_count">这一轮实际发出 %1$d 次（含重试），下面是最后一次的参数</string>
+    <string name="orbit_dev_info_open_request">查看这次请求</string>
+    <string name="orbit_dev_info_request_count_only">这一轮发了 %1$d 次请求。最后一次的内容没有保留：可能已被更新的记录替换（每个聊天只留最近 6 次），或同时请求太多时没有记下。</string>
+    <string name="orbit_dev_request_failed">这次请求读不出来</string>
+    <string name="orbit_dev_request_retry">再试一次</string>
+    <string name="orbit_dev_info_request_unsent">这一轮的请求已经拼好，但没有真正发出去（比如还没连上就出错或被停下）。</string>
+    <string name="orbit_dev_mark_unsent">没发出去</string>
+    <string name="orbit_dev_mark_steering">已交给正在跑的这一轮，还没写进聊天：%1$s</string>
+    <string name="orbit_dev_task_unchanged">没有新内容，跳过</string>
+    <string name="orbit_dev_task_skipped">没执行</string>
+    <string name="orbit_dev_task_in_chat">交给主聊天去做</string>
+    <string name="orbit_dev_task_no_chat">这次运行没有留下聊天记录。下面是它的状态和原因。</string>
+    <string name="orbit_dev_request_tool_config">工具调用设置</string>
+    <string name="orbit_dev_request_result">结果与耗时</string>
+    <string name="orbit_dev_event_kind_result">请求结果</string>
+    <string name="orbit_dev_export">导出这个聊天的原文</string>
+    <string name="orbit_dev_export_failed">导出失败</string>
+    <string name="orbit_dev_copy_use_export">内容太长，复制不了。请用右上角的“导出这个聊天的原文”。</string>
+    <string name="orbit_dev_exporting">正在导出</string>
+    <string name="orbit_dev_result_ok">成功</string>
+    <string name="orbit_dev_result_failed">失败</string>
+    <string name="orbit_dev_result_cancelled">中断</string>
+    <string name="orbit_dev_result_log">应用日志原文：</string>
+    <string name="orbit_dev_request_unsent_mark">未发出</string>
+</resources>

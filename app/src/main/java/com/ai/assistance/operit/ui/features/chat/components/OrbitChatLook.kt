@@ -208,6 +208,27 @@ fun OrbitHiddenInChatBadge(modifier: Modifier = Modifier) {
 }
 
 /**
+ * Text the model reads with a message but the chat never shows, such as `<message_break/>` or
+ * the send time, as the developer view writes it above the message.
+ */
+@Composable
+fun OrbitDevMark(text: String, modifier: Modifier = Modifier) {
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.6f),
+        modifier = modifier,
+    ) {
+        Text(
+            text,
+            style = MaterialTheme.typography.labelSmall,
+            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+        )
+    }
+}
+
+/**
  * A user row the chat hides (such as a tapback notice), as the developer view draws it: the label
  * and the first lines of what was sent. A tap shows all of it; a long press opens the menu.
  */
@@ -403,6 +424,8 @@ object OrbitSpeech {
         "^<tool_result[A-Za-z0-9_]*\\s[^>]*\\bname=\"(?:${CARD_TOOLS.joinToString("|")})\"[^>]*\\bstatus=\"success\"",
         RegexOption.IGNORE_CASE,
     )
+    // A sending tool stopped for the user's OK: its error carries the approval card.
+    private val errorToolResult = Regex("^<tool_result[A-Za-z0-9_]*\\s[^>]*\\bstatus=\"error\"", RegexOption.IGNORE_CASE)
     private val placeholder = Regex("\uE000(\\d+)\uE001")
     // The start of an options token at the very end of a reply still streaming in.
     private val partialOptionsToken = Regex("\\[\\[orbit-options(?::[a-z0-9]{0,10}]?)?$")
@@ -566,7 +589,13 @@ object OrbitSpeech {
 
     /** The card in one of Orbit's tool results, as one line of JSON, or null. */
     private fun cardOf(block: String): String? {
-        if (!block.contains(com.ai.assistance.operit.features.orbit.OrbitChatCards.KEY) || !cardToolResult.containsMatchIn(block)) return null
+        if (!block.contains(com.ai.assistance.operit.features.orbit.OrbitChatCards.KEY)) return null
+        if (!cardToolResult.containsMatchIn(block)) {
+            if (!errorToolResult.containsMatchIn(block) ||
+                !block.contains(com.ai.assistance.operit.features.orbit.OrbitConnectorSend.PREFIX)) return null
+            val error = block.substringAfter("<error>", "").substringBeforeLast("</error>", "")
+            return com.ai.assistance.operit.features.orbit.OrbitConnectorSend.cardIn(error)?.toString()
+        }
         val body = block.substringAfter("<content>", "").substringBeforeLast("</content>", "")
         return runCatching {
             org.json.JSONObject(body.trim()).optJSONObject(com.ai.assistance.operit.features.orbit.OrbitChatCards.KEY)?.toString()
