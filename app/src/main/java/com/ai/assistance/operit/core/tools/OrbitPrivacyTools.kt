@@ -112,7 +112,8 @@ internal object OrbitPrivacyTools {
                         .put("remaining", JSONArray(outcome.remaining.take(OrbitForget.SHOWN).map { it.json() }))
                         .put("failed", JSONArray(outcome.failed))
                         .put("note", "Chat messages are not deleted. Places marked user_review are for the user to edit. " +
-                            "Report categories only; never repeat the information.")
+                            "Report categories only; never repeat the information. Your system prompt in open chats " +
+                            "may still show the old memory until it refreshes (daily or at the next summary); do not use it.")
                 }
                 "cancel" -> { OrbitForget.cancel(orbit.id); JSONObject().put("cancelled", true) }
                 else -> error("Unknown action \"${a["action"].orEmpty()}\"; use plan, confirm or cancel")

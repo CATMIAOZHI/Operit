@@ -94,13 +94,11 @@ class OrbitLearningBoundary(
             forSpace(context, spaceId)?.snapshot() ?: Guard()
 
         suspend fun promptRevision(context: Context, orbitId: String): String {
-            val preferences = OrbitPreferences.getInstance(context)
-            val orbit = preferences.current().orbits.single { it.id == orbitId }
-            val generation = orbit.memorySpaceId?.let { guard(context, it).generation } ?: 0
             // "layout-v2": stable parts first, Soul/memory/user last; the required packages list the
             // packages every Orbit always has; "isolation-v1": main-app persona and settings stay out.
-            // A change to any of these rebuilds old snapshots once.
-            return "${OrbitSoulRepository(context, orbitId).snapshot().current.id}:$generation:skills-v1:layout-v2:isolation-v1:" +
+            // A change to any of these rebuilds old snapshots once. Memory edits are left out: they
+            // reach the prompt with the daily refresh or the next summary, so the cached prefix holds.
+            return "${OrbitSoulRepository(context, orbitId).snapshot().current.id}:skills-v1:layout-v2:isolation-v1:" +
                 "required-${OrbitPackages.REQUIRED.sorted().joinToString(",")}:" +
                 "defaults-${OrbitPackages.DEFAULT.sorted().joinToString(",")}:" +
                 OrbitPromptFiles.revision(context, orbitId)

@@ -449,15 +449,13 @@ internal object OrbitRoutines {
 
     /**
      * A chat keeps the system prompt it started with until it is summarized, so a new synthesis
-     * would wait for that. After a night's review, every chat of the Orbit
-     * builds its prompt again on its next reply: one fresh prompt a day. Skipped while Orbit is
-     * replying, which would swap the prompt under that reply; the next summary picks it up then.
+     * would wait for that. After a night's review, every chat of the Orbit builds its prompt again
+     * on its next reply: one fresh prompt a day. A reply already running keeps its prompt.
      */
     suspend fun afterAlignmentReview(context: Context, orbit: OrbitProfile) {
         try {
-            if (OrbitPackages.replying(context, orbit).first()) return
             orbit.talkChatIds.forEach {
-                com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository(context, it).delete()
+                com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository(context, it).requestRefresh()
             }
         } catch (e: CancellationException) {
             throw e

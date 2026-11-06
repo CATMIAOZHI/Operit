@@ -213,8 +213,9 @@ internal object OrbitForget {
                 }.toInt()
             }
             plans.remove(orbit.id)
-            // A new memory generation rebuilds the prompts of open chats, so none keeps the old memory.
-            step("prompt refresh") { OrbitLearningBoundary.explicitEdit(context, spaceId) {}; 0 }
+            // A new memory generation stops a learner that already read the old memory from saving it.
+            // Open chats keep their prompt until the daily refresh or their next summary.
+            step("learning guard") { OrbitLearningBoundary.explicitEdit(context, spaceId) {}; 0 }
             Outcome(cleaned, scan(context, orbit, matcher), failed)
         }
 }
