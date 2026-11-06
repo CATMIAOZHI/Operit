@@ -248,8 +248,11 @@ internal object OrbitWork {
     /** The rows of a live turn: from its start to its answer, the user's messages into it included. */
     private class LiveRows(val timestamps: List<Long>, val finished: Boolean)
 
-    private suspend fun liveRows(manager: ChatHistoryManager, process: OrbitProcess.LiveTurn): LiveRows {
-        val rows = manager.loadChatMessageProcessMetadataFrom(process.chatId, process.since)
+    private suspend fun liveRows(manager: ChatHistoryManager, process: OrbitProcess.LiveTurn): LiveRows =
+        turnRows(manager.loadChatMessageProcessMetadataFrom(process.chatId, process.since))
+
+    /** [rows] start where a turn starts; the turn is cut where its answer ends or a later turn begins. */
+    private fun turnRows(rows: List<com.ai.assistance.operit.data.model.ChatMessageProcessMetadata>): LiveRows {
         // The turn's steps share the send time of its first reply row; a reply row with another
         // time belongs to a later turn, and the record stops before it.
         val key = rows.firstOrNull { it.sender == "ai" }?.sentAt ?: 0L
@@ -261,7 +264,8 @@ internal object OrbitWork {
             if (isFinalStep(row)) {
                 // An answer sent as several messages is saved as reply rows right after it.
                 var previous = row.timestamp
-                for (next in rows.drop(i + 1)) {
+                for (j in i + 1 until rows.size) {
+                    val next = rows[j]
                     if (next.sender != "ai" || next.timestamp - previous !in 1..BREAK_GAP_MS) break
                     kept += next
                     previous = next.timestamp
@@ -276,6 +280,61 @@ internal object OrbitWork {
     /** Whether a live turn has ended: its answer is written or a later turn has begun. */
     suspend fun liveTurnFinished(context: Context, process: OrbitProcess.LiveTurn): Boolean =
         liveRows(ChatHistoryManager.getInstance(context), process).finished
+
+    /**
+     * The chat turn a due task woke Orbit for, from its hidden notice to Orbit's answer: the first
+     * notice named [title] saved in any of [chatIds] between [from] and [until]. A run that has
+     * ended ([until] is its end) opens as a fixed record that never follows later talk; only a run
+     * still going ([until] is [Long.MAX_VALUE]) keeps itself up to date. Null when no notice with
+     * that name is there, so another task's turn is never shown in its place.
+     */
+    suspend fun wakeTurn(
+        context: Context,
+        chatIds: List<String>,
+        title: String,
+        from: Long,
+        until: Long,
+        notice: Pair<String, Long>? = null,
+    ): OrbitProcess? {
+        val manager = ChatHistoryManager.getInstance(context)
+        val running = until == Long.MAX_VALUE
+        // A little past the run's end, for answer rows saved as the run was being closed.
+        val readUntil = if (running) Long.MAX_VALUE else until + END_SLACK_MS
+        val name = title.trim()
+        var found: Triple<String, Long, List<com.ai.assistance.operit.data.model.ChatMessageProcessMetadata>>? = null
+        if (notice != null) {
+            // The run saved which notice woke it, so the task's title (which can be edited) is not needed.
+            val (chatId, at) = notice
+            val rows = manager.loadChatMessageProcessMetadataBetween(chatId, at, readUntil)
+            if (rows.none { it.timestamp == at }) return null
+            found = Triple(chatId, at, rows)
+        } else for (chatId in chatIds.filter { it.isNotBlank() }.distinct()) {
+            val rows = manager.loadChatMessageProcessMetadataBetween(chatId, from, readUntil)
+            val hidden = rows.filter { it.timestamp <= until && it.sender == "user" &&
+                it.displayMode == com.ai.assistance.operit.data.model.ChatMessageDisplayMode.HIDDEN_PLACEHOLDER.name }
+                .map { it.timestamp }
+            if (hidden.isEmpty()) continue
+            val notice = manager.loadChatMessagesByTimestamps(chatId, hidden)
+                .firstOrNull { com.ai.assistance.operit.features.orbit.OrbitWake.titleOf(it.content)?.trim() == name }
+                ?: continue
+            if (found == null || notice.timestamp < found.second) found = Triple(chatId, notice.timestamp, rows)
+        }
+        val (chatId, at, rows) = found ?: return null
+        // After an ended run only late rows of the answer it had begun count: what the user wrote
+        // then, or a reply when the run had none of its own, is later talk.
+        val window = rows.subList(rows.indexOfFirst { it.timestamp == at }, rows.size)
+            .let { tail ->
+                if (running) tail else {
+                    val answered = tail.any { it.sender == "ai" && it.timestamp <= until }
+                    tail.filter { it.timestamp <= until || (answered && it.sender == "ai") }
+                }
+            }
+        val turn = turnRows(window)
+        return if (running && !turn.finished) OrbitProcess.LiveTurn(chatId, at, title, at)
+            else OrbitProcess.ChatTurn(chatId, turn.timestamps, title, at)
+    }
+
+    private const val END_SLACK_MS = 60_000L
 
     /** A hidden notice named for the list: "you reacted 👍", "scheduled: …" and the like. */
     private fun noticeTitle(content: String, reactionTitle: String, scheduledTitle: String): String? =
