@@ -34,6 +34,7 @@
         {"name": "size", "type": "string", "required": false, "description": {"zh": "1024x1024、1024x1536、1536x1024 或 auto；不填时无参考图用 1024x1024，有参考图用 auto", "en": "1024x1024, 1024x1536, 1536x1024, or auto; defaults to 1024x1024 without references and auto with references"}},
         {"name": "quality", "type": "string", "required": false, "description": {"zh": "auto、low、medium 或 high", "en": "auto, low, medium, or high"}},
         {"name": "background", "type": "string", "required": false, "description": {"zh": "auto、opaque 或 transparent；有参考图时 auto 按 opaque 处理", "en": "auto, opaque, or transparent; with references, auto is sent as opaque"}},
+        {"name": "model", "type": "string", "required": false, "description": {"zh": "可选图片模型，默认 gpt-image-2；须以 gpt-image- 开头，用户没指定时不要填", "en": "Optional image model, default gpt-image-2; must start with gpt-image-; leave empty unless the user asks"}},
         {"name": "file_name", "type": "string", "required": false, "description": {"zh": "保存文件名，不含路径和扩展名", "en": "Output filename without path or extension"}},
         {"name": "chat_model", "type": "string", "required": false, "description": {"zh": "可选承载模型；默认 gpt-6-luna，若服务端不支持可指定当前 Codex 模型", "en": "Optional carrier model, default gpt-6-luna; change if the server rejects it"}}
       ]
@@ -48,6 +49,7 @@
         {"name": "size", "type": "string", "required": false, "description": {"zh": "1024x1024、1024x1536、1536x1024 或 auto；默认 auto", "en": "1024x1024, 1024x1536, 1536x1024, or auto; defaults to auto"}},
         {"name": "quality", "type": "string", "required": false, "description": {"zh": "auto、low、medium 或 high", "en": "auto, low, medium, or high"}},
         {"name": "background", "type": "string", "required": false, "description": {"zh": "auto、opaque 或 transparent；auto 按 opaque 处理", "en": "auto, opaque, or transparent; auto is sent as opaque"}},
+        {"name": "model", "type": "string", "required": false, "description": {"zh": "可选图片模型，默认 gpt-image-2；须以 gpt-image- 开头，用户没指定时不要填", "en": "Optional image model, default gpt-image-2; must start with gpt-image-; leave empty unless the user asks"}},
         {"name": "file_name", "type": "string", "required": false, "description": {"zh": "保存文件名，不含路径和扩展名", "en": "Output filename without path or extension"}},
         {"name": "chat_model", "type": "string", "required": false, "description": {"zh": "可选承载模型；默认 gpt-6-luna", "en": "Optional carrier model, default gpt-6-luna"}}
       ]

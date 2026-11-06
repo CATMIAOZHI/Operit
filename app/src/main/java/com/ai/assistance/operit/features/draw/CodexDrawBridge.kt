@@ -77,7 +77,12 @@ object CodexDrawBridge {
         val quality = option(params, "quality", "auto", setOf("auto", "low", "medium", "high"))
         val background = option(params, "background", "auto", setOf("auto", "opaque", "transparent"))
             .let { if (hasImageInput && it == "auto") "opaque" else it }
-        val imageModel = option(params, "model", "gpt-image-2", setOf("gpt-image-2"))
+        // The backend decides which image models an account may use; unknown names come back
+        // as an upstream error with the server's reason.
+        val imageModel = params.optString("model").trim().ifBlank { "gpt-image-2" }
+        require(Regex("""gpt-image-[a-z0-9][a-z0-9.\-]*""").matches(imageModel)) {
+            "model 必须是 gpt-image- 开头的图片模型名，例如 gpt-image-2"
+        }
         val chatModel = params.optString("chat_model").trim().ifBlank { "gpt-6-luna" }
         require(Regex("""gpt-[a-zA-Z0-9.\-]+""").matches(chatModel)) { "chat_model 格式无效" }
 
