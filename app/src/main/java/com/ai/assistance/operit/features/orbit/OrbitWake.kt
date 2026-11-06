@@ -271,6 +271,7 @@ object OrbitWake {
                 signal.invokeOnCompletion { decision?.accepting = false }
             }
             val noticeAt = com.ai.assistance.operit.data.model.ChatMessageTimestampAllocator.next()
+            decision?.noticeAt = noticeAt
             // A notice that went out is always recorded: nothing can cancel in between.
             withContext(NonCancellable) {
                 activeTurns.add(turnId)

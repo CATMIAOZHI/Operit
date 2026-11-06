@@ -13,6 +13,8 @@ object OrbitChatDecision {
         @Volatile var silenceRequested = false
         @Volatile var confirmed = false
         @Volatile var accepting = true
+        /** When the hidden notice was saved in the chat, so the run can find its turn later. */
+        @Volatile var noticeAt: Long = 0L
     }
 
     private val turns = ConcurrentHashMap<String, Turn>()
@@ -33,8 +35,18 @@ object OrbitChatDecision {
         return true
     }
 
-    fun encode(outcome: String, reason: String): String =
-        OrbitRunEntity.IN_CHAT + ":" + JSONObject().put("outcome", outcome).put("reason", reason.take(300))
+    fun encode(outcome: String, reason: String, chatId: String = "", noticeAt: Long = 0L): String =
+        OrbitRunEntity.IN_CHAT + ":" + JSONObject().put("outcome", outcome).put("reason", reason.take(300)).apply {
+            if (chatId.isNotBlank() && noticeAt > 0) put("chat", chatId).put("at", noticeAt)
+        }
+
+    /** The chat and saved time of the notice that woke this run; null for runs recorded without them. */
+    fun noticeOf(decision: String): Pair<String, Long>? = runCatching {
+        val value = JSONObject(decision.substringAfter(':'))
+        val chat = value.optString("chat")
+        val at = value.optLong("at")
+        if (chat.isNotBlank() && at > 0) chat to at else null
+    }.getOrNull()
 
     fun isChat(decision: String) = decision == OrbitRunEntity.IN_CHAT || decision.startsWith(OrbitRunEntity.IN_CHAT + ":")
 
@@ -43,14 +55,23 @@ object OrbitChatDecision {
         runCatching { JSONObject(decision.substringAfter(':')).optString("outcome") == "failed" }.getOrDefault(false)
 
     fun describe(context: Context, decision: String, name: String): String {
+        val label = label(context, decision, name)
+        return reason(decision).takeIf { it.isNotBlank() }?.let { "$label\n$it" } ?: label
+    }
+
+    /** How the woken turn ended, in a line: spoke, stayed quiet, failed or not confirmed yet. */
+    fun label(context: Context, decision: String, name: String): String {
         val value = runCatching { JSONObject(decision.substringAfter(':')) }.getOrNull()
-        if (value == null) return context.getString(R.string.orbit_decision_in_chat, name)
-        val label = context.getString(when (value.optString("outcome")) {
+            ?: return context.getString(R.string.orbit_decision_in_chat, name)
+        return context.getString(when (value.optString("outcome")) {
             "send" -> R.string.orbit_decision_chat_spoke
             "skip" -> R.string.orbit_decision_chat_quiet
             "failed" -> R.string.orbit_decision_chat_failed
             else -> R.string.orbit_decision_chat_pending
         }, name)
-        return value.optString("reason").takeIf { it.isNotBlank() }?.let { "$label\n$it" } ?: label
     }
+
+    /** The reason Orbit gave for speaking or staying quiet; empty when it gave none. */
+    fun reason(decision: String): String =
+        runCatching { JSONObject(decision.substringAfter(':')).optString("reason").trim() }.getOrDefault("")
 }

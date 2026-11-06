@@ -522,7 +522,8 @@ object OrbitTaskRunner {
                 if (!saved) return
                 if (!failed) {
                     dao.recordChatDecision(state.token.id, state.token.generation, state.token.owner,
-                        OrbitChatDecision.encode(if (told == OrbitWake.Told.SPOKE) "send" else "skip", decision.reason))
+                        OrbitChatDecision.encode(if (told == OrbitWake.Told.SPOKE) "send" else "skip", decision.reason,
+                            chatId, decision.noticeAt))
                     modelWorked(context, state)
                     if (told == OrbitWake.Told.SPOKE) dao.touchDelivered(orbit.id, now)
                     logRun(context, state, observation, "", if (told == OrbitWake.Told.SPOKE) "-" else "")
