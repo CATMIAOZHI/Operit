@@ -1,12 +1,11 @@
 package com.ai.assistance.operit.ui.features.orbit
 
 import android.content.Context
-import com.ai.assistance.operit.api.chat.ChatRuntimeHolder
-import com.ai.assistance.operit.api.chat.ChatRuntimeSlot
 import com.ai.assistance.operit.data.model.ChatTurnOptions
 import com.ai.assistance.operit.data.repository.ChatHistoryManager
 import com.ai.assistance.operit.features.orbit.OrbitReactionNotice
 import com.ai.assistance.operit.features.orbit.OrbitReactions
+import com.ai.assistance.operit.features.orbit.OrbitWake
 import com.ai.assistance.operit.ui.features.chat.components.OrbitSpeech
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.util.LocaleUtils
@@ -19,7 +18,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Tells Orbit when the user puts an emoji on one of its messages, in a hidden turn the chat does
@@ -51,23 +49,6 @@ internal object OrbitReactionSender {
             suspend fun stillThere() = OrbitReactions.ofUser(app, orbitId).observe(chatId).first()[key] == emoji
             if (!stillThere() || !told.add("$pendingKey:$emoji")) return@launch
             try {
-                val core = ChatRuntimeHolder.getInstance(app).getCore(ChatRuntimeSlot.MAIN)
-                // Never cut into a reply being written; Orbit hears about it once that reply ends.
-                // A running summary of this chat is waited out too: a send during it is refused, and
-                // the wait for the refused turn would end by cancelling that summary.
-                withTimeoutOrNull(WAIT_FOR_IDLE_MS) {
-                    // Both at the same moment: no reply and no summary on this chat.
-                    kotlinx.coroutines.flow.combine(
-                        core.activeStreamingChatIds, core.summarizingChatFlow(chatId),
-                    ) { active, summarizing -> chatId !in active && !summarizing }
-                        .first { it }
-                }
-                    ?: error("The chat stayed busy")
-                // Taken off while waiting: say nothing, and let a later tap of the same emoji count.
-                if (!stillThere()) {
-                    told.remove("$pendingKey:$emoji")
-                    return@launch
-                }
                 val words = said ?: run {
                     val timestamp = key.toLongOrNull() ?: return@launch
                     val message = withContext(Dispatchers.IO) {
@@ -76,10 +57,14 @@ internal object OrbitReactionSender {
                     OrbitSpeech.words(message.content, app.getString(com.ai.assistance.operit.R.string.orbit_sent_card))
                 }
                 if (words.isBlank()) return@launch
-                // Says whether the send was taken. If the chat just got busy, it is refused without
-                // touching anything (no summary or message is cancelled), and the catch below lets
-                // the same emoji be told later.
-                val taken = core.trySendUserMessageToExistingChat(
+                // Never cut into a reply or a summary, here or in the floating window showing the same
+                // chat; Orbit hears about it once the chat is quiet. Sending holds the same per-chat
+                // lock as scheduled notices, so two hidden turns never start together.
+                val taken = OrbitWake.whenQuiet(app, chatId, WAIT_FOR_IDLE_MS) { core ->
+                    // Taken off while waiting: say nothing, and let a later tap of the same emoji count.
+                    if (!stillThere()) return@whenQuiet Sent.GONE
+                    // Refused without touching anything when the chat just got busy.
+                    if (core.trySendUserMessageToExistingChat(
                     chatId = chatId,
                     messageText = OrbitReactionNotice.build(LocaleUtils.usesEnglishPrompt(app), emoji, words),
                     // Hidden in the chat but kept in the conversation. It is not typed by the user,
@@ -91,8 +76,13 @@ internal object OrbitReactionSender {
                         // message does that, so this turn starts at once instead of waiting behind it.
                         disableSummary = true,
                     ),
-                )
-                if (!taken) error("The chat was busy")
+                    )) Sent.YES else Sent.BUSY
+                } ?: Sent.BUSY
+                when (taken) {
+                    Sent.YES -> Unit
+                    Sent.GONE -> told.remove("$pendingKey:$emoji")
+                    Sent.BUSY -> error("The chat stayed busy")
+                }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 told.remove("$pendingKey:$emoji")
                 throw e
@@ -104,4 +94,6 @@ internal object OrbitReactionSender {
         pending[pendingKey] = job
         job.invokeOnCompletion { pending.remove(pendingKey, job) }
     }
+
+    private enum class Sent { YES, GONE, BUSY }
 }

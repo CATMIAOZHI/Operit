@@ -11,8 +11,13 @@ import com.ai.assistance.operit.data.preferences.OrbitProfile
 import com.ai.assistance.operit.ui.features.chat.components.OrbitSpeech
 import com.ai.assistance.operit.services.core.ChatTurnTerminalSignal
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
@@ -37,6 +42,11 @@ object OrbitWake {
 
     /** One wake at a time per chat, so two notices never race for the same idle chat. */
     private val locks = ConcurrentHashMap<String, Mutex>()
+    private val replyScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val activeTurns = ConcurrentHashMap.newKeySet<String>()
+
+    /** A worker may stop waiting while the chat still owns its turn and terminal listener. */
+    internal fun isWatching(turnId: String): Boolean = turnId.isNotEmpty() && turnId in activeTurns
 
     /** How a [tell] ended. */
     enum class Told {
@@ -221,6 +231,10 @@ object OrbitWake {
         /** Builds the notice once the chat is held, for a notice that says how things are right now. */
         noticeNow: (suspend () -> String)? = null,
         modelRole: String? = null,
+        /** Durable intent, saved before the chat can begin using tools. */
+        onSending: suspend () -> Unit = {},
+        /** Runs on the actual terminal signal, even after this caller's bounded wait expires. */
+        onFinished: suspend (Told) -> Unit = {},
     ): Told {
         val app = context.applicationContext
         val holder = ChatRuntimeHolder.getInstance(app)
@@ -244,6 +258,7 @@ object OrbitWake {
         // Every notice runs as a known turn, so it is only counted as sent once its message is saved.
         val turnId = decision?.turnId ?: java.util.UUID.randomUUID().toString()
         var terminal: CompletableDeferred<ChatTurnTerminalSignal>? = null
+        var followup: Deferred<Told>? = null
         try {
         val taken = locks.computeIfAbsent(chatId) { Mutex() }.withLock {
             // Another notice may have taken the chat while this one waited for the lock.
@@ -258,6 +273,8 @@ object OrbitWake {
             val noticeAt = com.ai.assistance.operit.data.model.ChatMessageTimestampAllocator.next()
             // A notice that went out is always recorded: nothing can cancel in between.
             withContext(NonCancellable) {
+                activeTurns.add(turnId)
+                onSending()
                 val sent = withContext(Dispatchers.Main.immediate) {
                         core.trySendUserMessageToExistingChat(
                             chatId = chatId,
@@ -277,49 +294,43 @@ object OrbitWake {
                     if (e is kotlinx.coroutines.CancellationException) throw e
                     com.ai.assistance.operit.util.AppLogger.w("OrbitWake", "Notice sent but not recorded: ${e.message}")
                 }
+                if (sent && announce) {
+                    followup = replyScope.async(start = CoroutineStart.UNDISPATCHED) {
+                        try {
+                            val signal = terminal!!.await()
+                            val outcome = if (signal is ChatTurnTerminalSignal.Completed) {
+                                decision?.confirmed = true
+                                val reply = dao.aiSaidThrough(chatId, before, signal.assistantMessageTimestamp)
+                                    .joinToString("\n\n")
+                                val said = OrbitSpeech.words(reply, app.getString(com.ai.assistance.operit.R.string.orbit_sent_card))
+                                if (said.isBlank()) Told.QUIET else {
+                                    OrbitDelivery.announce(app, chatId, orbit.name, said)
+                                    Told.SPOKE
+                                }
+                            } else Told.FAILED
+                            onFinished(outcome)
+                            outcome
+                        } finally {
+                            decision?.accepting = false
+                            activeTurns.remove(turnId)
+                        }
+                    }
+                }
                 if (sent) Told.QUIET else Told.BUSY
             }
         }
         if (!taken.sent) return taken
         if (!announce) return taken
         val left = totalWaitMs - (android.os.SystemClock.elapsedRealtime() - startedAt)
-        if (decision?.turnId != null) {
-            val signal = withTimeoutOrNull(left.coerceAtLeast(0)) { terminal!!.await() }
-            if (signal is ChatTurnTerminalSignal.Failed) return Told.FAILED
-            // Failed/cancelled/timed-out turns do not borrow a later reply as their result.
-            if (signal !is ChatTurnTerminalSignal.Completed) return Told.QUIET
-            decision?.confirmed = true
-            val reply = withContext(Dispatchers.IO) {
-                dao.aiSaidThrough(chatId, before, signal.assistantMessageTimestamp).joinToString("\n\n")
-            }
-            val said = OrbitSpeech.words(reply, app.getString(com.ai.assistance.operit.R.string.orbit_sent_card))
-            if (said.isBlank()) return Told.QUIET
-            OrbitDelivery.announce(app, chatId, orbit.name, said)
-            return Told.SPOKE
-        }
-        // Orbit's answer is the first message it writes after the notice, read once the chat is
-        // quiet again; the turn may start late when the model is slow to begin.
-        val reply = withTimeoutOrNull(left.coerceAtLeast(0)) {
-            var found: String? = null
-            while (found == null) {
-                quiet.first { it }
-                delay(500)
-                found = withContext(Dispatchers.IO) { dao.aiSaidAfter(chatId, before) }
-                    .takeIf { it.isNotEmpty() }?.joinToString("\n\n")
-                    ?.takeIf { quietNow() }
-                if (found == null) delay(1_000)
-            }
-            found
-        } ?: return Told.QUIET
-        val said = OrbitSpeech.words(reply, app.getString(com.ai.assistance.operit.R.string.orbit_sent_card))
-        if (said.isBlank()) return Told.QUIET
-        OrbitDelivery.announce(app, chatId, orbit.name, said)
-        return Told.SPOKE
+        return withTimeoutOrNull(left.coerceAtLeast(0)) { followup!!.await() } ?: Told.QUIET
         } finally {
-            decision?.accepting = false
-            // Unregister the waiter without stopping the user's chat if our bounded wait ended.
-            if (terminal?.isCompleted == false) {
-                core.failRegisteredChatTurn(turnId, chatId, "Orbit stopped waiting for this scheduled turn")
+            // A slow reply belongs to the chat, not to the worker's waiting budget.
+            if (followup == null) {
+                decision?.accepting = false
+                activeTurns.remove(turnId)
+                if (terminal?.isCompleted == false) {
+                    core.failRegisteredChatTurn(turnId, chatId, "Orbit did not start a reply listener")
+                }
             }
         }
     }
@@ -356,4 +367,39 @@ object OrbitWake {
 
     private const val SAVE_WAIT_MS = 120_000L
     private const val CANCEL_WAIT_MS = 10_000L
+
+    /**
+     * Runs [send] once [chatId] is quiet both in the main chat and in the floating window, holding
+     * the same per-chat lock as notices, so two hidden turns never start in one chat at once.
+     * Returns null when the chat stayed busy for [waitMs].
+     */
+    suspend fun <T : Any> whenQuiet(
+        context: Context,
+        chatId: String,
+        waitMs: Long,
+        send: suspend (com.ai.assistance.operit.services.ChatServiceCore) -> T,
+    ): T? {
+        val holder = ChatRuntimeHolder.getInstance(context.applicationContext)
+        val core = holder.getCore(ChatRuntimeSlot.MAIN)
+        val floating = holder.getCore(ChatRuntimeSlot.FLOATING)
+        fun quietIn(c: com.ai.assistance.operit.services.ChatServiceCore) =
+            combine(c.activeStreamingChatIds, c.summarizingChatFlow(chatId)) { active, summarizing ->
+                chatId !in active && !summarizing
+            }
+        fun quietNow() = listOf(core, floating).all {
+            chatId !in it.activeStreamingChatIds.value && !it.isSummarizingChat(chatId)
+        }
+        return withTimeoutOrNull(waitMs) {
+            while (true) {
+                combine(quietIn(core), quietIn(floating)) { a, b -> a && b }.first { it }
+                val done = locks.computeIfAbsent(chatId) { Mutex() }.withLock {
+                    // Another turn may have taken the chat while this one waited for the lock.
+                    if (quietNow()) send(core) else null
+                }
+                if (done != null) return@withTimeoutOrNull done
+            }
+            @Suppress("UNREACHABLE_CODE")
+            null
+        }
+    }
 }

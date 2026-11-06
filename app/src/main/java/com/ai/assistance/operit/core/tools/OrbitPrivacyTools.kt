@@ -65,7 +65,7 @@ internal object OrbitPrivacyTools {
 
     val presendPrompt = ToolPrompt(
         name = PRESEND,
-        description = "以用户的名义往外发消息、邮件、评论之前的检查：隐私、密码、内容是否定稿、收件人是否明确、用户是否看过并同意。",
+        description = "可选：以用户的名义往外发消息、邮件、评论之前自查隐私、密码、内容是否定稿、收件人是否明确。",
         parametersStructured = listOf(
             ToolParameterSchema("text", description = "准备发出去的完整正文", required = true),
             ToolParameterSchema("recipient", description = "发给谁：名字、邮箱、号码或群名", required = true),
@@ -73,10 +73,9 @@ internal object OrbitPrivacyTools {
             ToolParameterSchema("approval_id", description = "可选：orbit_request_approval 已获批准的编号；申请必须写全本次正文、收件人和渠道，且来自当前聊天。有此参数时 channel 必填", required = false),
         ),
         details = """
-  - 每次替用户对外发东西前都先调用。verdict 是 BLOCK 就不要发，按 checks 里的原因处理（改正文、问清收件人、先给用户看草稿）。
-  - 草稿要先原样发给用户看，用户同意后再检查和发送；也可用 orbit_request_approval 卡片让用户看完整正文、收件人和渠道，批准后传 approval_id。改过的版本要重新给用户看并同意。
-  - 传 approval_id 时，会核对同一个 Orbit、当前聊天、已批准状态以及正文/收件人/渠道是否一致。approval 为 APPROVED 且 verdict 为 PASS 时，可按卡片批准发送；approval_basis 说明依据。后续普通用户回复仍会返回 user_replies；若用户改口或提出修改，不得发送，应重新申请。
-  - 没传 approval_id 或批准后用户又说了话时，approval 可能是 UNVERIFIED：工具不能替你判断普通文字是否同意。verdict 为 PASS 时仍要读 user_replies（最后一条最新），明确同意才发；后面又说“等等”“不要发”、提了修改或含糊其辞都不算。
+  - 拿不准时用它自查一下，不是每次发送都必须调用。verdict 是 BLOCK 就不要发，按 checks 里的原因处理（改正文、问清收件人）。
+  - 它不替用户批准。用户明确让你发、说清了发什么和发给谁，这本身就是同意；正文是你自己写的或拿不准时，先给用户看草稿，或用 orbit_request_approval 申请，批准后可传 approval_id 核对正文、收件人和渠道。
+  - 返回的 user_replies 是你给用户看过这段正文之后、用户说的话（最后一条最新）。其中有“等等”“不要发”或提了修改，就不要发，先问清楚。
   - warnings 不拦截，但要想一想：比如正文里有电话号码、身份证号，确认是用户想发的。
 """,
     )
@@ -243,7 +242,7 @@ internal object OrbitPrivacyTools {
             val userReplies = JSONArray()
             var repliesCut = false
             var approval = "UNVERIFIED"
-            var approvalBasis = "A visible reply after the exact draft is required; its meaning must be checked."
+            var approvalBasis = "No approval card was given. The user's clear request to send this is their OK; this check does not approve for them."
             var approvalNote = ""
             if (talk) {
                 val messages = ChatHistoryManager.getInstance(context).loadChatMessagesDesc(caller!!, 40)
@@ -299,30 +298,24 @@ internal object OrbitPrivacyTools {
                             else "The approval note does not ask to stop or change it")
                     }
                 } else {
-                    // The newest draft that starts the same way, and whether it is the whole of this text.
-                    val started = messages.firstOrNull { it.sender == "ai" && said(it).contains(probe) }
-                    val shown = started?.takeIf { said(it).contains(full) }
+                    // A draft shown in the chat is not required; when there is one, what the user said after it still counts.
+                    val shown = messages.firstOrNull { it.sender == "ai" && said(it).contains(probe) }
+                        ?.takeIf { said(it).contains(full) }
                     since = shown?.timestamp
-                    val answered = shown?.let { draft -> messages.any { it.sender == "user" && it.timestamp > draft.timestamp &&
-                        it.displayMode == com.ai.assistance.operit.data.model.ChatMessageDisplayMode.NORMAL } } == true
-                    check("draft shown and answered", answered, when {
-                        started == null -> "Show the user this exact text first and wait for their answer"
-                        shown == null -> "The draft you showed is different from this text; show the final version to the user first"
-                        !answered -> "The user has not answered since you showed the draft"
-                        else -> "The user answered after seeing this exact text; read user_replies (the last one is the newest) to decide if it approves"
-                    })
                 }
                 // Hidden approval notices are not ordinary user replies; later visible changes still matter.
                 val replies = since?.let { at -> messages.filter {
                     it.sender == "user" && it.timestamp > at &&
                         it.displayMode == com.ai.assistance.operit.data.model.ChatMessageDisplayMode.NORMAL
                 }.sortedBy { it.timestamp } }.orEmpty()
-                if (approvalId.isNotEmpty() && replies.isNotEmpty()) {
+                if (replies.isNotEmpty()) {
                     check("no later stop or change", replies.none { stopSending.containsMatchIn(it.content) },
-                        if (replies.any { stopSending.containsMatchIn(it.content) }) "The user asked to wait, cancel or change it after approval; ask again"
+                        if (replies.any { stopSending.containsMatchIn(it.content) }) "The user asked to wait, cancel or change it; ask again"
                         else "Read user_replies for any later changes before sending")
-                    approval = "UNVERIFIED"
-                    approvalBasis = "A card was approved, but the user spoke afterwards; verify their newest reply still permits this exact message."
+                    if (approvalId.isNotEmpty()) {
+                        approval = "UNVERIFIED"
+                        approvalBasis = "A card was approved, but the user spoke afterwards; verify their newest reply still permits this exact message."
+                    }
                 }
                 repliesCut = replies.size > 5
                 replies.takeLast(5).forEach { m ->
@@ -360,7 +353,7 @@ internal object OrbitPrivacyTools {
                 .put("next", if (blocked) "Do not send. Fix what the failed checks say."
                     else if (approval == "APPROVED") "Send exactly the text to the recipient through the channel covered by the approved card."
                     else if (approvalNote.isNotBlank()) "Check approval_note and any user_replies: send only if they still clearly allow this exact message, recipient and channel; otherwise ask again."
-                    else if (talk) "Send only if the newest of user_replies still clearly approves this text; if any later reply hesitates or says no, do not send and ask again."
+                    else if (talk) "Send if the user clearly asked for this message, recipient and channel; if you wrote it yourself or a later reply hesitates, show it or ask first."
                     else "Send only if the user's task instruction clearly asks for this message.")
             ToolResult(PRESEND, true, StringResultData(result.toString()))
         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { fail(PRESEND, e) }

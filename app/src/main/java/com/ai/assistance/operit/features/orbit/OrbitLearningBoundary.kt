@@ -58,7 +58,8 @@ class OrbitLearningBoundary(
             action()
         }
     }
-    suspend fun <T> edit(mutationId: String, expected: Long, action: suspend () -> T): T = withContext(Dispatchers.IO) {
+    suspend fun <T> edit(mutationId: String, expected: Long, discardHistory: Boolean = false,
+        action: suspend () -> T): T = withContext(Dispatchers.IO) {
         mutex.withLock {
             require(mutationId.isNotBlank())
             val state = read()
@@ -66,8 +67,11 @@ class OrbitLearningBoundary(
                 check(state.guard.generation == expected && mutationId !in state.mutations) {
                     "Memory was corrected again; reopen it before editing"
                 }
-                write(State(Guard(state.guard.generation + 1, maxOf(state.guard.cutoff, horizon()),
-                    maxOf(state.guard.cutoffTimestamp, clock())),
+                // An ordinary correction invalidates an in-flight draft, not unread conversation.
+                // Only explicit forgetting closes the source range.
+                write(State(Guard(state.guard.generation + 1,
+                    if (discardHistory) maxOf(state.guard.cutoff, horizon()) else state.guard.cutoff,
+                    if (discardHistory) maxOf(state.guard.cutoffTimestamp, clock()) else state.guard.cutoffTimestamp),
                     state.mutations + mutationId))
             }
             action()
@@ -104,14 +108,20 @@ class OrbitLearningBoundary(
 
         suspend fun <T> explicitEdit(context: Context, spaceId: String, action: suspend () -> T): T {
             val boundary = forSpace(context, spaceId) ?: return action()
-            return boundary.edit(java.util.UUID.randomUUID().toString(), boundary.snapshot().generation, action)
+            return boundary.edit(java.util.UUID.randomUUID().toString(), boundary.snapshot().generation, action = action)
+        }
+
+        suspend fun forget(context: Context, spaceId: String) {
+            val boundary = forSpace(context, spaceId) ?: error("This memory space has no Orbit owner")
+            boundary.edit(java.util.UUID.randomUUID().toString(), boundary.snapshot().generation,
+                discardHistory = true) { }
         }
 
         suspend fun filter(context: Context, spaceId: String, chatId: String,
             messages: List<com.ai.assistance.operit.data.model.ChatMessage>): Pair<Guard?, List<com.ai.assistance.operit.data.model.ChatMessage>> {
             val boundary = forSpace(context, spaceId) ?: return null to messages
             val guard = boundary.snapshot()
-            if (guard.generation == 0L) return guard to messages
+            if (guard.cutoff == 0L && guard.cutoffTimestamp == 0L) return guard to messages
             val dao = AppDatabase.getDatabase(context).chatContentDao()
             val allowed = messages.filter { it.timestamp > guard.cutoffTimestamp &&
                 (dao.learningMessageId(chatId, it.timestamp) ?: 0) > guard.cutoff }

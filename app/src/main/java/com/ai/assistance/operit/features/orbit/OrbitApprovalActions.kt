@@ -379,10 +379,11 @@ internal object OrbitApprovalActions {
      * the user picked on the sheet for a new model configuration.
      */
     suspend fun run(context: Context, orbit: OrbitProfile, approval: OrbitApprovals.Approval, secret: String?,
-        models: List<String>? = null): String {
+        models: List<String>? = null, always: Boolean = false): String {
         val action = JSONObject(approval.action)
         val english = LocaleUtils.usesEnglishPrompt(context)
         return when (action.optString("type")) {
+            OrbitConnectorSend.RUN_TOOL -> OrbitConnectorSend.run(context, orbit, approval, action, english, always)
             IMPORT_PACKAGES -> importPackages(context, orbit, action, english)
             TOGGLE_PACKAGES -> togglePackages(context, orbit, action, english)
             TOGGLE_MCP -> toggleMcp(context, orbit, action, english)

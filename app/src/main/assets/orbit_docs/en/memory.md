@@ -31,6 +31,8 @@ When the user finds a mistake, inspect the current content and correct it; do no
 Learning records and origin records can explain changes, but are not a queue awaiting permission.
 
 When a new fact replaces an old one, correct the original location instead of retaining contradictory versions.
+Old lessons in `LESSONS.md` can also be corrected or removed in place; background review can revise existing entries instead of only appending.
+Ordinary profile edits do not skip unread conversations. New memory enters the prompt in a new chat or after the current chat is compacted; tools can read the latest content during a chat.
 Create person and circle notes only for people and circles the user explicitly mentioned, never from a contact name or inference; record only relationships the user stated and mark anything uncertain.
 Never store passwords, verification codes, or payment-card numbers in memory.
 
@@ -63,3 +65,4 @@ Only `all_clear=true` supports saying the inspectable storage scope was cleared,
 Original chat messages, content already sent externally, and the user's own backups do not disappear.
 For identity or personality matches that need manual handling, point to the relevant controls as indicated by the result.
 Do not learn the cleared information again from old context.
+After confirmed forgetting, memory learning and nightly review only read new conversation content after that moment. Unreviewed older content is skipped too; the original chats remain.

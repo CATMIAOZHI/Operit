@@ -23,6 +23,7 @@ Each copied line is `[n] text`, with the same `n` that `write_comments` takes.
 Read the files with `read_file` or `read_file_part` (`environment=android`, a full path under the `absolute_folder` that `copy` returned), and use `grep_code` (`path` = `absolute_folder`) to find where a name, a place or a line appears in the whole book; the full paths it finds can be read directly.
 Chapters Legado has not saved are downloaded from the book's website, so copy a few to twenty at a time and go on with the returned `next_chapter`; do not copy the whole book at once.
 If the user switched source or the text changed in Legado, paragraph numbers can move; when unsure, `orbit_reading read` the chapter again before commenting.
+Writing checks the chapter version last obtained with `read` or `copy` in this chat or task. If it changed, or the version record was lost after a restart, no new comments are saved. Read or copy the chapter again as instructed, then write using the new paragraph numbers.
 
 ## No spoiler fence
 

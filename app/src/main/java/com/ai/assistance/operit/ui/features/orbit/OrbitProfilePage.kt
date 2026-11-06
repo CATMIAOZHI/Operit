@@ -48,6 +48,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
@@ -309,12 +310,16 @@ internal fun OrbitCircleButton(
 /** Orbit's picture with a small pencil. Tapping either opens the avatar sheet. */
 @Composable
 private fun EditableOrbitAvatar(orbit: OrbitProfile, onDraft: (String) -> Unit, modifier: Modifier = Modifier) {
-    var showSheet by remember { mutableStateOf(false) }
+    var showSheet by rememberSaveable(orbit.id) { mutableStateOf(false) }
     // A picked photo waits here while the user frames it; the crop window then hands it to the chat.
-    var cropSource by remember { mutableStateOf<Uri?>(null) }
+    var cropSource by rememberSaveable(orbit.id) { mutableStateOf<Uri?>(null) }
     val context = LocalContext.current
     val resources = LocalResources.current
     val shared = LocalOrbitSharedAvatar.current
+    LaunchedEffect(Unit) {
+        // A restored crop already has its photo; do not reopen the picker sheet over it.
+        if (cropSource != null) showSheet = false
+    }
     Box(modifier) {
         // Orbit's one picture shows here; it moves in from the chat header on top of the page.
         if (shared != null) OrbitAvatarSlot(
@@ -355,7 +360,7 @@ private fun EditableOrbitAvatar(orbit: OrbitProfile, onDraft: (String) -> Unit, 
             onDismiss = { showSheet = false },
         )
     }
-    cropSource?.let { source ->
+    cropSource?.takeUnless { showSheet }?.let { source ->
         OrbitAvatarCropWindow(
             source = source,
             onCropped = { file ->
@@ -371,6 +376,9 @@ private fun EditableOrbitAvatar(orbit: OrbitProfile, onDraft: (String) -> Unit, 
                     false
                 }
                 if (attached) {
+                    runCatching {
+                        context.contentResolver.releasePersistableUriPermission(source, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
                     cropSource = null
                     onDraft(resources.getString(R.string.orbit_avatar_draft_image))
                 } else {
@@ -379,7 +387,12 @@ private fun EditableOrbitAvatar(orbit: OrbitProfile, onDraft: (String) -> Unit, 
                     ).show()
                 }
             },
-            onDismiss = { cropSource = null },
+            onDismiss = {
+                runCatching {
+                    context.contentResolver.releasePersistableUriPermission(source, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                cropSource = null
+            },
         )
     }
 }
@@ -428,8 +441,13 @@ private fun OrbitAvatarSheet(
         }
     }
     val pickImage =
-        rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
+        rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
             if (uri == null || busy) return@rememberLauncherForActivityResult
+            // Keep access while framing the photo, including after process recreation.
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            onPickedImage(uri)
             busy = true
             scope.launch {
                 try {
@@ -437,7 +455,6 @@ private fun OrbitAvatarSheet(
                 } finally {
                     busy = false
                     onDismiss()
-                    onPickedImage(uri)
                 }
             }
         }
@@ -467,7 +484,7 @@ private fun OrbitAvatarSheet(
                         icon = orbitIcon("image"),
                         label = stringResource(R.string.orbit_avatar_from_photos),
                         enabled = !busy,
-                        onClick = { pickImage.launch("image/*") },
+                        onClick = { pickImage.launch(arrayOf("image/*")) },
                         modifier = Modifier.weight(1f),
                     )
                     AvatarSourceTile(

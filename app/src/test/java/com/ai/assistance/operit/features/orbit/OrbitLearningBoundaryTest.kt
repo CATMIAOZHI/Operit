@@ -16,7 +16,7 @@ class OrbitLearningBoundaryTest {
         val file = File(folder.root, "a/boundary.json")
         val boundary = OrbitLearningBoundary(file) { 42 }
         val old = boundary.snapshot()
-        boundary.edit("correction", old.generation) {}
+        boundary.edit("correction", old.generation, discardHistory = true) {}
         val restored = OrbitLearningBoundary(file)
         assertEquals(OrbitLearningBoundary.Guard(1, 42), restored.snapshot())
         var wrote = false
@@ -29,11 +29,11 @@ class OrbitLearningBoundaryTest {
     @Test fun `interrupted edit retry keeps original cutoff and older mutations cannot replay`() = runBlocking {
         var watermark = 10L
         val boundary = OrbitLearningBoundary(File(folder.root, "boundary.json")) { watermark }
-        assertTrue(runCatching { boundary.edit("a", 0) { error("interrupted") } }.isFailure)
+        assertTrue(runCatching { boundary.edit("a", 0, discardHistory = true) { error("interrupted") } }.isFailure)
         watermark = 20
-        boundary.edit("a", 0) {}
+        boundary.edit("a", 0, discardHistory = true) {}
         assertEquals(OrbitLearningBoundary.Guard(1, 10), boundary.snapshot())
-        boundary.edit("b", 1) {}
+        boundary.edit("b", 1, discardHistory = true) {}
         assertFalse(boundary.accepts(0, "a"))
         assertTrue(runCatching { boundary.edit("a", 0) {} }.isFailure)
         assertEquals(OrbitLearningBoundary.Guard(2, 20), boundary.snapshot())
@@ -58,5 +58,18 @@ class OrbitLearningBoundaryTest {
     @Test fun `damaged governance journal cannot silently reopen old evidence`() = runBlocking {
         val file = File(folder.root, "broken.json").apply { writeText("{") }
         assertTrue(runCatching { OrbitLearningBoundary(file).snapshot() }.isFailure)
+    }
+
+    @Test fun `ordinary edits invalidate drafts without skipping unread history`() = runBlocking {
+        var watermark = 10L
+        var now = 100L
+        val boundary = OrbitLearningBoundary(File(folder.root, "boundary.json"), { now }) { watermark }
+        boundary.edit("profile", 0) {}
+        assertEquals(OrbitLearningBoundary.Guard(1, 0, 0), boundary.snapshot())
+        boundary.edit("forget", 1, discardHistory = true) {}
+        watermark = 20
+        now = 200
+        boundary.edit("profile-again", 2) {}
+        assertEquals(OrbitLearningBoundary.Guard(3, 10, 100), boundary.snapshot())
     }
 }

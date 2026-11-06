@@ -23,8 +23,9 @@ object OrbitDelivery {
         val dao = AppDatabase.getDatabase(context).orbitTaskDao()
         val policy = dao.notificationPolicy(item.orbitId)
             ?: com.ai.assistance.operit.data.model.OrbitNotificationEntity(item.orbitId)
-        return OrbitDeliveryPolicy.nextAllowed(if (item.messageId == null) policy else policy.copy(intervalMinutes = 0),
-            item.createdAt, item.messageId == null && dao.task(item.taskId)?.notifyPolicy == "DIGEST", now)
+        return maxOf(item.retryAt,
+            OrbitDeliveryPolicy.nextAllowed(if (item.messageId == null) policy else policy.copy(intervalMinutes = 0),
+                item.createdAt, item.messageId == null && dao.task(item.taskId)?.notifyPolicy == "DIGEST", now))
     }
 
     /**
@@ -95,6 +96,10 @@ object OrbitDelivery {
         val picked = OrbitExecutionGate.serialized {
                 val orbit = OrbitPreferences.getInstance(context).current().active
                 if (orbit?.id != orbitId || orbit.deleting) return@serialized null
+                // No live listener means the process died or bookkeeping failed. Keep the draft
+                // retryable; a hand-off alone is never evidence that the user received it.
+                val abandoned = dao.handingDeliveries(orbitId).filterNot { OrbitWake.isWatching(it.handoffTurnId) }
+                if (abandoned.isNotEmpty()) dao.retryDeliveries(abandoned.map { it.id }, now)
                 // A report for a side chat that is gone goes to the main chat instead.
                 val chats = AppDatabase.getDatabase(context).chatDao()
                 dao.pendingDeliveries(orbitId).map { it.chatId }.distinct()
@@ -127,29 +132,30 @@ object OrbitDelivery {
         }
         val notice = OrbitWake.resultNotice(com.ai.assistance.operit.util.LocaleUtils.usesEnglishPrompt(context), batch,
             earlier, preferences)
-        // Marked as told the moment Orbit takes the notice, so a crash never tells it twice.
-        // Followed to its end, so a reply that failed (the model was down) leaves the reports to be told again.
         val turn = OrbitChatDecision.Turn()
         val told = OrbitWake.tell(context, orbit, chatId, notice, IDLE_WAIT_MS, totalWaitMs, decision = turn,
             // A report cancelled or replaced while the chat was busy is not told.
             ready = { OrbitExecutionGate.serialized { dao.validPending(ids).size == ids.size } },
-            // Tried twice: a report left pending after it went out would be told again later.
-            onSent = {
-                try { OrbitExecutionGate.serialized { dao.markHandedToOrbit(ids) } }
-                catch (e: kotlinx.coroutines.CancellationException) { throw e }
-                catch (e: Exception) { OrbitExecutionGate.serialized { dao.markHandedToOrbit(ids) } }
+            onSending = {
+                OrbitExecutionGate.serialized {
+                    check(dao.validPending(ids).size == ids.size) { "Reports were cancelled before hand-off" }
+                    dao.markHandedToOrbit(ids, turn.turnId)
+                }
+            },
+            onFinished = { outcome ->
+                OrbitExecutionGate.serialized {
+                    val finishedAt = System.currentTimeMillis()
+                    if (outcome == OrbitWake.Told.FAILED) dao.retryDeliveries(ids, finishedAt)
+                    else {
+                        dao.finishDeliveries(ids, turn.turnId, finishedAt)
+                        if (outcome == OrbitWake.Told.SPOKE) dao.touchDelivered(orbitId, finishedAt)
+                    }
+                }
+                OrbitTaskScheduler.reschedule(context, fromWorker = true)
             })
-        if (told == OrbitWake.Told.SPOKE) dao.touchDelivered(orbitId, System.currentTimeMillis())
-        if (told == OrbitWake.Told.FAILED) {
-            runCatching { OrbitExecutionGate.serialized { dao.returnToPending(ids) } }
-                .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
-            busy += chatId
-            return true
+        if (told == OrbitWake.Told.BUSY) {
+            OrbitExecutionGate.serialized { dao.retryDeliveries(ids, System.currentTimeMillis()) }
         }
-        // An item Orbit did not register a call for counts as not sent (undecided means no).
-        // A call that comes later, from a reply still running, still replaces this.
-        if (told.sent) runCatching { dao.markUnregistered(ids, System.currentTimeMillis()) }
-            .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
         busy += chatId
         return true
     }
@@ -209,7 +215,8 @@ object OrbitDelivery {
     private fun notify(context: Context, key: String, chatId: String, title: String, body: String) {
         if (ActivityLifecycleManager.getCurrentActivity() != null) return
         // The Orbit's own switch: off keeps what it says in the chat only.
-        val orbit = runCatching { OrbitPreferences.getInstance(context).loadedSettingsBlocking().orbitForChat(chatId) }.getOrNull()
+        val settings = runCatching { OrbitPreferences.getInstance(context).loadedSettingsBlocking() }.getOrNull()
+        val orbit = settings?.orbitForChat(chatId)
         if (orbit?.messageNotifications == false) return
         // Blocked by the system (app notifications or Orbit's channel off): Orbit hears it once, so it can ask.
         if (!NotificationManagerCompat.from(context).areNotificationsEnabled() || !channelOn(context)) {
@@ -222,10 +229,14 @@ object OrbitDelivery {
         manager.createNotificationChannel(NotificationChannel(channel,
             context.getString(R.string.orbit_notification_channel), NotificationManager.IMPORTANCE_DEFAULT))
         val pending = openChatIntent(context, chatId, key)
-        val text = WaifuMessageProcessor.cleanContentForWaifu(body).ifBlank { body }
+        // Hide the preview whenever the lock is enabled, including its background grace period.
+        val privatePreview = settings == null || settings.appLock
+        val text = if (privatePreview) context.getString(R.string.orbit_chats_unread)
+            else WaifuMessageProcessor.cleanContentForWaifu(body).ifBlank { body }
         manager.notify("orbit:$key", 0, NotificationCompat.Builder(context, channel)
             .setSmallIcon(R.drawable.ic_launcher_simple_foreground).setContentTitle(title)
             .setContentText(text).setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .apply {
                 orbit?.let { OrbitNotificationIcon.of(it) { uri ->
                     com.ai.assistance.operit.api.chat.AIForegroundService.loadBitmapFromUri(context, uri, OrbitNotificationIcon.SIZE)

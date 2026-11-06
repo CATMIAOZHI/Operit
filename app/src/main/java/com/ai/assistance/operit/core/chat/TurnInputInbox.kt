@@ -24,6 +24,8 @@ class TurnInputInbox {
         val startsAgentTurn: Boolean = false,
         /** Told the time of the chat row this input becomes, just before that row is added. */
         val saved: (Long) -> Unit = {},
+        /** When the user sent it; 0 for input not typed by the user. Its row keeps this time. */
+        val sentAt: Long = 0L,
     )
     private val pending = ArrayDeque<Input>()
     private var delivering: List<Input> = emptyList()

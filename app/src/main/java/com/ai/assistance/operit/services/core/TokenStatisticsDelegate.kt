@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import java.util.concurrent.ConcurrentHashMap
 
 /** 委托类，负责管理token统计相关功能 */
@@ -155,6 +156,18 @@ class TokenStatisticsDelegate(
         if (isActiveKey(key)) {
             refreshActiveFromCache()
         }
+    }
+
+    /** Temporary task chats keep their saved usage, but no longer need live collectors or caches. */
+    suspend fun unbindChatService(chatId: String) {
+        val key = chatKey(chatId)
+        tokenCollectorJobsByChatKey.remove(key)?.cancelAndJoin()
+        boundServicesByChatKey.remove(key)
+        cumulativeInputTokensByChatKey.remove(key)
+        cumulativeOutputTokensByChatKey.remove(key)
+        lastWindowSizeByChatKey.remove(key)
+        perRequestTokenCountByChatKey.remove(key)
+        if (isActiveKey(key)) refreshActiveFromCache()
     }
 
     /** 重置token统计 */

@@ -75,14 +75,19 @@ Do not repeatedly request the same approval when explicit authorization already 
 Withdrawn authorization or a material change to the recipient or content invalidates the old approval.
 Learned skills take effect directly; they are not a queue of changes awaiting individual user approval.
 
-## Pre-send checks
+## Sending out
 
-Before sending externally, check the actual draft with `orbit_presend_check`.
-`PASS` means the check passed; by itself, **it does not mean the user approved**.
-You can pass an approved `orbit_request_approval` card's ID as `approval_id`, together with `channel`. The tool checks that the card belongs to the same Orbit and current chat, is approved, covers the complete text, recipient and channel, and allows the entire chat period after approval to be checked. With no approval note or later ordinary user reply and all checks passed, it returns `approval: APPROVED` and `verdict: PASS`; send the exact text to the recipient through the approved channel. See `approval_basis` for the evidence.
-Without `approval_id`, `approval` is `UNVERIFIED`; show the complete draft first, then read the returned `user_replies` (the last is newest) and verify clear assent and current authorization yourself. An approval note or a later user reply also downgrades a card approval to `UNVERIFIED`: check `approval_note` and the latest `user_replies` for conditions, withdrawal or changes, and ask again if unclear. A mismatched card, incomplete history or another failed check returns `BLOCK`.
+When the user clearly asked you to send something and said what and to whom, that is their OK: send it.
+A connector (a package tool made to send texts, WeChat or QQ messages, Moments posts or calls for the user) is always stopped by the app first: a card showing that exact call appears in the chat with "Allow once", "Always allow" and "Decline". End the turn with one short line; once allowed, the app sends it itself and a hidden note tells you the result, so do not send it again. After "Always allow" that tool sends directly.
+Through the terminal or another way without a review, it is your call. When you wrote the text yourself, the recipient is unclear, or you are unsure the user wants it sent, show the draft first or ask with `orbit_request_approval`.
 
-Send only with clear assent, a matching destination, and no material draft change.
+## Optional pre-send check
+
+`orbit_presend_check` is an optional check: whether the text is final, holds a password or key, has a clear recipient, plus warnings about private details. It **never approves for the user**.
+With an approved card's `approval_id` and `channel`, it checks that the card covers the complete text, recipient and channel.
+The returned `user_replies` are what the user said after seeing this text (the last is newest). A clear wait or don't send returns `BLOCK`, but the check only knows common phrasings: on `PASS`, still read `user_replies` and `approval_note` yourself, and apply any change asked for there (like "end it with see you tomorrow") first.
+
+Send only to the intended destination, without material changes of your own to what the user asked.
 The user's latest withdrawal or modification takes precedence; do not send on `BLOCK`.
 Ambiguous replies, invented consent, and approval for another matter are not authorization.
 

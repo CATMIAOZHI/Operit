@@ -230,6 +230,9 @@ fun rememberDraftVoiceController(
     val latestValue by rememberUpdatedState(value)
     val latestChange by rememberUpdatedState(onValueChange)
     val didNotHearText = stringResource(R.string.floating_didnt_hear_clearly)
+    val recognitionFailedText = stringResource(R.string.speech_error_recognition_failed)
+    val microphoneUnavailableText = stringResource(R.string.speech_error_microphone_unavailable)
+    val engineUnavailableText = stringResource(R.string.speech_error_engine_unavailable)
 
     return key(chatId) {
         val controller = remember { DraftVoiceController(context, scope, view) }
@@ -272,7 +275,13 @@ fun rememberDraftVoiceController(
         LaunchedEffect(controller) {
             controller.manager.speechService.recognitionErrorFlow.collect {
                 if (it.message.isNotBlank() && (controller.isRecording || controller.isProcessing)) {
-                    controller.fail(it.message)
+                    controller.fail(
+                        when (it.message) {
+                            microphoneUnavailableText -> microphoneUnavailableText
+                            engineUnavailableText -> engineUnavailableText
+                            else -> recognitionFailedText
+                        }
+                    )
                 }
             }
         }

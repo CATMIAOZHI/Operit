@@ -187,7 +187,7 @@ private fun PhoneScreenCard(
 
 /**
  * The background screen in full: the user watches; after "Take over" their touches go to it,
- * and "Hand back" returns it to Orbit. The system back key only closes this view.
+ * and "Hand back" returns it to Orbit. Closing the view also returns control.
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -202,6 +202,9 @@ internal fun OrbitPhoneWatchHost() {
     val key = screen.key
     var viewSize by remember { mutableStateOf(IntSize.Zero) }
     val id = screen.id
+    androidx.compose.runtime.DisposableEffect(id) {
+        onDispose { PhoneBackgroundControl.handBack(id) }
+    }
     // The user's touches go out one by one, in order, and stop the moment they hand the screen back.
     val touches = remember(key) { Channel<MotionEvent>(256) }
     LaunchedEffect(key) {
@@ -235,13 +238,19 @@ internal fun OrbitPhoneWatchHost() {
     }
     // Orbit's window: the back swipe shrinks it under the finger before it closes.
     OrbitModalWindow(
-        onDismissRequest = { PhoneBackgroundControl.watch(null) },
+        onDismissRequest = {
+            PhoneBackgroundControl.handBack(id)
+            PhoneBackgroundControl.watch(null)
+        },
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
     ) {
         Surface(Modifier.fillMaxSize(), color = colors.background) {
             Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = { PhoneBackgroundControl.watch(null) }) {
+                    IconButton(onClick = {
+                        PhoneBackgroundControl.handBack(id)
+                        PhoneBackgroundControl.watch(null)
+                    }) {
                         Icon(Icons.Outlined.Close, stringResource(R.string.orbit_browser_watch_close))
                     }
                     Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {

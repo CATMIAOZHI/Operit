@@ -20,11 +20,15 @@ import android.webkit.WebResourceRequest
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.core.config.DistributionConfig
 import com.ai.assistance.operit.ui.features.token.webview.WebViewConfig
+import com.ai.assistance.operit.ui.features.orbit.OrbitBackHandler
+import com.ai.assistance.operit.ui.features.orbit.orbitDismissLayer
+import com.ai.assistance.operit.ui.features.orbit.rememberOrbitBackMotion
 
 @Composable
 fun HelpScreen(onBackPressed: () -> Unit = {}) {
     val context = LocalContext.current
     var isLoading by remember { mutableStateOf(true) }
+    var canGoBack by remember { mutableStateOf(false) }
     val helpUrl = DistributionConfig.HELP_URL
     val focusRequester = remember { FocusRequester() }
 
@@ -40,6 +44,11 @@ fun HelpScreen(onBackPressed: () -> Unit = {}) {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
                     isLoading = false
+                    canGoBack = view?.canGoBack() == true
+                }
+
+                override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
+                    canGoBack = view?.canGoBack() == true
                 }
                 
                 override fun onReceivedError(
@@ -80,7 +89,9 @@ fun HelpScreen(onBackPressed: () -> Unit = {}) {
         webView.loadUrl(helpUrl)
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    val backMotion = rememberOrbitBackMotion()
+    OrbitBackHandler(backMotion, enabled = canGoBack) { webView.goBack() }
+    Box(modifier = Modifier.fillMaxSize().orbitDismissLayer(backMotion)) {
         // WebView
         AndroidView(
             factory = { webView },

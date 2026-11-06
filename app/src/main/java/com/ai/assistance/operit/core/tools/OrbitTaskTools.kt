@@ -99,6 +99,18 @@ internal object OrbitTaskTools {
                 // Made in a side chat: its reports go back to that side chat, like Muse. Made by a
                 // running task: its reports go where that task reports.
                 chatId = reportChatId(context, orbit, runtime?.callerChatId)), context).apply {
+                    if (!androidx.core.app.NotificationManagerCompat.from(context).areNotificationsEnabled() ||
+                        !OrbitDelivery.channelOn(context)) {
+                        put("notification_permission", false)
+                        put("notification_note", "The task was saved, but system notifications are disabled. " +
+                            "Tell the user and call orbit_permission_card permission=notify so they can enable them. " +
+                            "Do not promise a system reminder until notifications are enabled.")
+                    }
+                    if (!orbit.messageNotifications) {
+                        put("orbit_notifications_enabled", false)
+                        put("orbit_notification_note", "The task was saved, but this Orbit's message notifications are off. " +
+                            "Results will stay in the chat; tell the user before promising a system reminder.")
+                    }
                     if (kind == OrbitWatchSources.KIND && OrbitWatchSources.isScript(source)) {
                         put("next", "Created paused. Call dry_run with task_id, inspect the output, then call resume only if the read-only check is correct.")
                     }

@@ -206,8 +206,6 @@ fun OrbitScreen(
     // With the app lock on, nothing of Orbit draws until the system check is passed.
     OrbitAppLockGate(enabled = loadedSettings.appLock, orbit = loadedSettings.active) {
         OrbitScreenContent(loadedSettings, hasBackgroundImage, onManageRoleCards, chatContent)
-        // Orbit's background phone screen in full, opened from its card in the chat.
-        OrbitPhoneWatchHost()
     }
 }
 
@@ -346,6 +344,9 @@ private fun OrbitScreenContent(
     // The name the user gave it, for words about the companion inside its chat and pages.
     CompositionLocalProvider(com.ai.assistance.operit.ui.features.chat.components.LocalOrbitName provides orbitName(orbit)) {
         OrbitAppearanceTheme(orbit) {
+            // Keep the background phone view inside this Orbit's colors and name.
+            OrbitPhoneWatchHost()
+            OrbitQuotaPauseNotice(orbit)
             Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
                 // On a tablet the menu stays open at the left and the chat, the profile and every page
                 // over them share one column to its right, so the moving picture and the sliding pages
@@ -365,6 +366,27 @@ private fun OrbitScreenContent(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun OrbitQuotaPauseNotice(orbit: OrbitProfile) {
+    val context = LocalContext.current
+    val quota by remember(context) { com.ai.assistance.operit.features.orbit.OrbitQuota.stateFlow(context) }
+        .collectAsState(initial = com.ai.assistance.operit.features.orbit.OrbitQuota.lastState)
+    var dismissedWeek by rememberSaveable(orbit.id) { mutableStateOf(0L) }
+    LaunchedEffect(quota?.paused) {
+        if (quota?.paused == false) dismissedWeek = 0L
+    }
+    val current = quota ?: return
+    if (current.paused && dismissedWeek != current.weekStart) {
+        val name = orbitName(orbit)
+        OrbitInfoDialog(
+            title = stringResource(R.string.orbit_quota_paused_title),
+            message = stringResource(R.string.orbit_quota_paused_error, name, name,
+                com.ai.assistance.operit.features.orbit.OrbitQuota.resetText(context, current.weekEnd)),
+            onDismiss = { dismissedWeek = current.weekStart },
+        )
     }
 }
 
@@ -1518,7 +1540,32 @@ private fun OrbitDevHeader(
     var menuOpen by remember { mutableStateOf(false) }
     var devSheet by remember { mutableStateOf<OrbitDevSheet?>(null) }
     var exporting by remember { mutableStateOf(false) }
+    var confirmExportChat by rememberSaveable { mutableStateOf<String?>(null) }
     val exportScope = rememberCoroutineScope()
+    confirmExportChat?.let { chatToExport ->
+        OrbitConfirmDialog(
+            title = stringResource(R.string.orbit_dev_export),
+            message = stringResource(R.string.orbit_dev_export_scope),
+            confirmLabel = stringResource(R.string.orbit_export_confirm),
+            onDismiss = { confirmExportChat = null },
+            onConfirm = {
+                confirmExportChat = null
+                exporting = true
+                exportScope.launch {
+                    try {
+                        val file = OrbitDevExport.export(context, chatToExport)
+                        shareOrbitFile(context) { file }
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Toast.makeText(context, R.string.orbit_dev_export_failed, Toast.LENGTH_SHORT).show()
+                    } finally {
+                        exporting = false
+                    }
+                }
+            },
+        )
+    }
     val untitledTask = stringResource(R.string.orbit_turn_untitled, orbit.name.ifBlank { stringResource(R.string.nav_orbit) })
     val orbitName = orbit.name.ifBlank { stringResource(R.string.nav_orbit) }
     // The hidden chats behind Orbit's chats (subagents, automatic reviews, background task runs),
@@ -1621,19 +1668,7 @@ private fun OrbitDevHeader(
                     enabled = !exporting,
                     onClick = {
                         menuOpen = false
-                        exporting = true
-                        exportScope.launch {
-                            try {
-                                val file = OrbitDevExport.export(context, currentChatId)
-                                shareOrbitFile(context) { file }
-                            } catch (e: kotlinx.coroutines.CancellationException) {
-                                throw e
-                            } catch (e: Exception) {
-                                android.widget.Toast.makeText(context, R.string.orbit_dev_export_failed, android.widget.Toast.LENGTH_SHORT).show()
-                            } finally {
-                                exporting = false
-                            }
-                        }
+                        confirmExportChat = currentChatId
                     },
                 )
             }

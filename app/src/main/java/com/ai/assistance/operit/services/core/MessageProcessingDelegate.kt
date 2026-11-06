@@ -720,6 +720,8 @@ class MessageProcessingDelegate(
                 toolBoundarySnapshot = cancellationToolBoundarySnapshot,
             )
         }
+        // The partial reply is saved now; let go of the stopped turn's text.
+        chatRuntime.transcriptMutex.withLock { chatRuntime.steeredTranscript.release() }
 
         chatRuntime.responseStream = null
         chatRuntime.streamingAiMessage = null
@@ -755,6 +757,21 @@ class MessageProcessingDelegate(
 
     suspend fun cancelMessageForDestructiveMutation(chatId: String) {
         cancelMessageInternal(chatId, keepPartialResponse = false)
+    }
+
+    /** A stopped temporary task keeps its database transcript, not an in-memory runtime forever. */
+    @Synchronized
+    fun releaseTaskChatRuntime(chatId: String) {
+        val runtime = chatRuntimes[chatId] ?: return
+        check(!runtime.isLoading.value && runtime.sendJob?.isActive != true) { "Task chat is still running" }
+        chatRuntimes.remove(chatId, runtime)
+        composerPredictionGenerations.remove(chatId)
+        composerPredictionAttempts.remove(chatId)
+        _composerPredictionSnapshots.update { it - chatId }
+        _turnCompleteCounterByChatId.update { it - chatId }
+        _currentTurnToolInvocationCountByChatId.update { it - chatId }
+        _lastToolNameByChatId.update { it - chatId }
+        _lastTurnToolInvocationCountByChatId.update { it - chatId }
     }
 
     init {
@@ -1002,6 +1019,10 @@ class MessageProcessingDelegate(
             turnOptions.perfStartMs ?: com.ai.assistance.operit.core.chat.LlmRequestPerf.now())
         val sendJob =
             coroutineScope.launch(Dispatchers.IO + CoroutineName("ChatSend")) {
+            // Preparing the message (model settings, attachments, saving it) runs before the turn's own
+            // try/finally. A failure there must still release the chat, or it stays "generating" for good.
+            var sendBodyStarted = false
+            try {
             val sendUserMessageStartTime = messageTimingNow()
             val effectivePersistTurn = turnOptions.persistTurn
             val effectiveHideUserMessage = effectivePersistTurn && turnOptions.hideUserMessage
@@ -1158,6 +1179,7 @@ class MessageProcessingDelegate(
             // not rebuild the content from that unmerged replay after the boundary merge ran.
             val boundaryMergedContent = AtomicReference<String?>(null)
             try {
+                sendBodyStarted = true
                 // if (!NetworkUtils.isNetworkAvailable(context)) {
                 //     withContext(Dispatchers.Main) { showErrorMessage("网络连接不可用") }
                 //     _isLoading.value = false
@@ -1436,6 +1458,10 @@ class MessageProcessingDelegate(
                                         input.startsAgentTurn -> ChatMessageDisplayMode.COLLABORATION_TASK
                                         else -> ChatMessageDisplayMode.COLLABORATION_EVENT
                                     },
+                                    // The row is ordered when the model takes it; for a user row,
+                                    // completedAt keeps when the user sent it. (sentAt stays empty:
+                                    // that is what marks a message slipped into a running reply.)
+                                    completedAt = input.sentAt,
                                 )
                                 // The sender's stand-in bubble steps aside once this row is shown.
                                 input.saved(row.timestamp)
@@ -2046,7 +2072,9 @@ class MessageProcessingDelegate(
                     chatRuntime.steeredTranscript.finalTimestamp(it)
                 }
                 val cleanupRuntimeStartTime = messageTimingNow()
-                cleanupRuntimeAfterSend(chatId, chatRuntime)
+                // A stopped turn still saves its partial reply after this (cancelMessageInternal),
+                // so its text is let go there instead.
+                cleanupRuntimeAfterSend(chatId, chatRuntime, releaseTranscript = cancellationToPropagate == null)
                 logMessageTiming(
                     stage = "delegate.cleanupRuntime",
                     startTimeMs = cleanupRuntimeStartTime,
@@ -2157,6 +2185,11 @@ class MessageProcessingDelegate(
                 }
             }
             cancellationToPropagate?.let { throw it }
+            } catch (e: Throwable) {
+                if (sendBodyStarted) throw e
+                abortBeforeSend(chatId, chatRuntime, e, turnOptions.turnId)
+                if (e is kotlinx.coroutines.CancellationException) throw e
+            }
         }
         sendJob.invokeOnCompletion { perfStart.reportIfUnused(it) }
         chatRuntime.sendJob = sendJob
@@ -2556,9 +2589,11 @@ class MessageProcessingDelegate(
         return false
     }
 
-    private fun cleanupRuntimeAfterSend(chatId: String, chatRuntime: ChatRuntime) {
+    private fun cleanupRuntimeAfterSend(chatId: String, chatRuntime: ChatRuntime, releaseTranscript: Boolean = true) {
         com.ai.assistance.operit.api.chat.library.MemoryLearningCoordinator.foregroundEnded(context,chatId)
-        chatRuntime.steeredTranscript.closeStream()
+        // The turn's rows are saved by now: let go of its text, keeping only the row times.
+        if (releaseTranscript) chatRuntime.steeredTranscript.release() else chatRuntime.steeredTranscript.closeStream()
+        chatRuntime.steeringBoundarySnapshot = null
         chatRuntime.streamCollectionJob = null
         chatRuntime.stateCollectionJob?.cancel()
         chatRuntime.stateCollectionJob = null
@@ -2573,6 +2608,37 @@ class MessageProcessingDelegate(
 
         updateGlobalLoadingState()
         clearCurrentTurnToolInvocationCount(chatId)
+    }
+
+    /**
+     * The message failed (or was cancelled) while it was still being prepared, before the turn's own
+     * cleanup was in place: release the chat, hand back any steering input it took, and end the turn.
+     */
+    private suspend fun abortBeforeSend(chatId: String?, chatRuntime: ChatRuntime, error: Throwable, turnId: String?) {
+        val cancelled = error is kotlinx.coroutines.CancellationException
+        val job = coroutineContext[Job]
+        withContext(kotlinx.coroutines.NonCancellable) {
+            if (cancelled) AppLogger.d(TAG, "消息准备阶段被取消") else AppLogger.e(TAG, "消息准备阶段出错", error)
+            chatRuntime.canSteer = false
+            chatRuntime.prepareSteeringInput = null
+            chatRuntime.inputInbox?.close().orEmpty().forEach { it.returned() }
+            cleanupRuntimeAfterSend(chatId.orEmpty(), chatRuntime)
+            val message = error.message ?: error.javaClass.simpleName
+            if (cancelled) {
+                setChatInputProcessingState(chatId, EnhancedInputProcessingState.Idle)
+            } else {
+                val text = context.getString(R.string.message_send_failed, message)
+                setChatInputProcessingState(chatId, EnhancedInputProcessingState.Error(text))
+                withContext(Dispatchers.Main) { showErrorMessage(text) }
+            }
+            turnId?.let {
+                onTurnTerminated(
+                    if (cancelled) ChatTurnTerminalSignal.Cancelled(turnId = it, chatId = chatId.orEmpty())
+                    else ChatTurnTerminalSignal.Failed(turnId = it, chatId = chatId.orEmpty(), error = message)
+                )
+            }
+            if (job != null && chatRuntime.sendJob === job) chatRuntime.sendJob = null
+        }
     }
 
     /**

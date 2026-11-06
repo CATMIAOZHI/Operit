@@ -1543,9 +1543,11 @@ object AIMessageManager {
             )
         }
 
-        // An Orbit chat puts this time before the message when it builds the request.
-        val sentAt = if (message.timestamp > 0L) {
-            mapOf(com.ai.assistance.operit.features.orbit.OrbitMessageTime.SENT_AT to message.timestamp)
+        // An Orbit chat puts this time before the message when it builds the request. A message sent
+        // while a reply was running is saved later; its row keeps the earlier send time in completedAt.
+        val sentTime = listOf(message.timestamp, message.completedAt).filter { it > 0L }.minOrNull()
+        val sentAt = if (sentTime != null) {
+            mapOf(com.ai.assistance.operit.features.orbit.OrbitMessageTime.SENT_AT to sentTime)
         } else emptyMap()
 
         // 群组编排模式 + 角色隔离模式：给用户消息添加 [From user] 前缀

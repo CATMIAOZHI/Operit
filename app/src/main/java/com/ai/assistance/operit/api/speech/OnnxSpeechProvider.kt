@@ -302,7 +302,13 @@ internal class OnnxSpeechProvider(private val context: Context, private val mode
     private fun failure(e: Exception) {
         AppLogger.e("OnnxSpeech", "Local recognition failed", e)
         recognitionStateFlow.value = SpeechService.RecognitionState.ERROR
-        recognitionErrorFlow.value = SpeechService.RecognitionError(-1,e.message.orEmpty())
+        val message = when {
+            e is SecurityException || e.message.orEmpty().contains("Microphone", ignoreCase = true) ->
+                R.string.speech_error_microphone_unavailable
+            !isInitialized.value -> R.string.speech_error_engine_unavailable
+            else -> R.string.speech_error_recognition_failed
+        }
+        recognitionErrorFlow.value = SpeechService.RecognitionError(-1, context.getString(message))
     }
     override fun shutdown() {
         closed = true

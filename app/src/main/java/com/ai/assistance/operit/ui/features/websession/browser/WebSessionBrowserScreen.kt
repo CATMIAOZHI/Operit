@@ -13,15 +13,20 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -167,8 +172,65 @@ internal fun WebSessionBrowserScreen(
                     }
                 },
             )
+            if (watch.controlling) {
+                // The watch header reserves this space beside its centered title.
+                Surface(
+                    onClick = { onHostStateChange { it.copy(sheetRoute = WebSessionBrowserSheetRoute.DOWNLOADS) } },
+                    modifier = Modifier.align(Alignment.TopEnd).statusBarsPadding()
+                        .padding(horizontal = 16.dp, vertical = 10.dp).size(48.dp),
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surface,
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(Icons.Filled.Download, stringResource(R.string.web_session_downloads), Modifier.size(24.dp))
+                    }
+                }
+            }
+            if (watch.controlling && activeSheetRoute == WebSessionBrowserSheetRoute.DOWNLOADS) {
+                val back = com.ai.assistance.operit.ui.features.orbit.rememberOrbitBackMotion()
+                com.ai.assistance.operit.ui.features.orbit.OrbitPopupBack(back, dismissSheet)
+                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.42f))
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null,
+                        onClick = dismissSheet))
+                Surface(
+                    modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(0.75f)
+                        .navigationBarsPadding().orbitDismissLayer(back),
+                    shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                ) {
+                    WebSessionDownloadSheet(
+                        uiState = hostState.downloadUiState,
+                        onFilterChange = { filter ->
+                            onHostStateChange { it.copy(downloadUiState = it.downloadUiState.copy(selectedFilter = filter)) }
+                        },
+                        onPauseDownload = onPauseDownload,
+                        onResumeDownload = onResumeDownload,
+                        onCancelDownload = onCancelDownload,
+                        onRetryDownload = onRetryDownload,
+                        onDeleteDownload = onDeleteDownload,
+                        onOpenDownloadedFile = onOpenDownloadedFile,
+                        onOpenDownloadLocation = onOpenDownloadLocation,
+                    )
+                }
+            }
             // A page dialog needs an answer from whoever holds the page; the user only once in control.
             if (watch.controlling) {
+                hostState.externalOpenPrompt?.let { prompt ->
+                    val back = com.ai.assistance.operit.ui.features.orbit.rememberOrbitBackMotion()
+                    val cancel = { onCancelExternalOpen(prompt.requestId) }
+                    com.ai.assistance.operit.ui.features.orbit.OrbitPopupBack(back, cancel)
+                    Box(
+                        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.42f))
+                            .clickable(interactionSource = remember { MutableInteractionSource() },
+                                indication = null, onClick = cancel),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Box(Modifier.orbitDismissLayer(back)) {
+                            ExternalOpenPromptBar(prompt.title, prompt.target,
+                                onConfirm = { onConfirmExternalOpen(prompt.requestId) }, onCancel = cancel)
+                        }
+                    }
+                }
                 browserState.pendingDialog?.let { pendingDialog ->
                     PendingDialogOverlay(
                         orbitStyle = true,
