@@ -64,9 +64,19 @@ object CodexDrawBridge {
         require(referencePaths.size + (if (isEdit) 1 else 0) <= MAX_REFERENCE_IMAGES) {
             "输入图片最多 $MAX_REFERENCE_IMAGES 张"
         }
-        val size = option(params, "size", "1024x1024", setOf("1024x1024", "1024x1536", "1536x1024", "auto"))
+        // Codex sends any image-conditioned request to the edits endpoint, even when the intent is a new image.
+        val hasImageInput = isEdit || referencePaths.isNotEmpty()
+        // The edits endpoint rejects fields the generations endpoint tolerates, so image-conditioned
+        // requests mirror the official Codex body: size defaults to auto, background is only
+        // opaque or transparent, and output_format is omitted (the result format is sniffed below).
+        // Options are checked before any image is read so a bad value fails immediately.
+        val size = option(
+            params, "size", if (hasImageInput) "auto" else "1024x1024",
+            setOf("1024x1024", "1024x1536", "1536x1024", "auto"),
+        )
         val quality = option(params, "quality", "auto", setOf("auto", "low", "medium", "high"))
         val background = option(params, "background", "auto", setOf("auto", "opaque", "transparent"))
+            .let { if (hasImageInput && it == "auto") "opaque" else it }
         val imageModel = option(params, "model", "gpt-image-2", setOf("gpt-image-2"))
         val chatModel = params.optString("chat_model").trim().ifBlank { "gpt-5.5" }
         require(Regex("""gpt-[a-zA-Z0-9.\-]+""").matches(chatModel)) { "chat_model 格式无效" }
@@ -76,8 +86,6 @@ object CodexDrawBridge {
         val inputPaths = (if (isEdit) listOf(editPath) else emptyList()) + referencePaths
         val permittedRoots = inputImageRoots(context)
         val imageData = inputPaths.map { loadInputImage(it, permittedRoots) }
-        // Codex sends any image-conditioned request to the edits endpoint, even when the intent is a new image.
-        val hasImageInput = imageData.isNotEmpty()
 
         val direct = JSONObject()
             .put("model", imageModel)
@@ -85,11 +93,12 @@ object CodexDrawBridge {
             .put("size", size)
             .put("quality", quality)
             .put("background", background)
-            .put("output_format", "png")
         if (hasImageInput) {
             val images = JSONArray()
             imageData.forEach { images.put(JSONObject().put("image_url", it)) }
             direct.put("images", images)
+        } else {
+            direct.put("output_format", "png")
         }
         val directPath = if (hasImageInput) "/images/edits" else "/images/generations"
         val imageBase64 = auth.withAuthRecovery { account ->
@@ -262,7 +271,7 @@ object CodexDrawBridge {
                     if (response.code == 401) {
                         throw CodexHttpException(401, isCodexExpiredToken(401, response.peekBody(16_384).string()))
                     }
-                    val errorBody = body.source().readUtf8Line().orEmpty().take(1000)
+                    val errorBody = response.peekBody(16_384).string()
                     return ImageResponse(response.code, null, extractError(errorBody))
                 }
                 if (!stream) {
@@ -315,9 +324,33 @@ object CodexDrawBridge {
         }
     }
 
-    private fun extractError(body: String): String =
-        try { JSONObject(body).optJSONObject("error")?.optString("message").orEmpty() }
-        catch (_: Exception) { "" }
+    /**
+     * Surfaces the server's reason whether it uses OpenAI's `error` shape or ChatGPT's `detail`
+     * shape. Only reason text is kept: whole objects can echo request fields such as image data.
+     */
+    internal fun extractError(body: String): String {
+        val text = body.trim()
+        if (text.isEmpty()) return ""
+        val root = try { JSONObject(text) } catch (_: Exception) { null }
+            ?: return cleanReason(text)
+        fun messageOf(value: Any?): String = when (value) {
+            is String -> value
+            is JSONObject -> listOf("message", "msg", "detail", "error")
+                .firstNotNullOfOrNull { key -> messageOf(value.opt(key)).takeIf { it.isNotBlank() } }
+                .orEmpty()
+            is JSONArray -> (0 until value.length()).joinToString("; ") { messageOf(value.opt(it)) }
+            null, JSONObject.NULL -> ""
+            else -> ""
+        }
+        return cleanReason(messageOf(root))
+    }
+
+    private fun cleanReason(text: String): String = text
+        .take(4_000)
+        .replace(Regex("""data:[\w.+/-]+;base64,[A-Za-z0-9+/=]*"""), "[图片数据]")
+        .replace(Regex("""\s+"""), " ")
+        .trim()
+        .take(500)
 
     private fun upstreamError(response: ImageResponse): IOException =
         IOException("Codex 生图请求失败（HTTP ${response.status}）${response.error?.takeIf { it.isNotBlank() }?.let { "：$it" }.orEmpty()}")
