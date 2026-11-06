@@ -307,7 +307,7 @@ object OrbitWake {
                                     OrbitDelivery.announce(app, chatId, orbit.name, said)
                                     Told.SPOKE
                                 }
-                            } else Told.FAILED
+                            } else if (signal is ChatTurnTerminalSignal.Failed) Told.FAILED else Told.QUIET
                             onFinished(outcome)
                             outcome
                         } finally {
