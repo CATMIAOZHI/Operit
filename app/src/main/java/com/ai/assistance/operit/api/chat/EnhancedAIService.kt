@@ -171,6 +171,23 @@ class EnhancedAIService private constructor(
             }
         }
 
+        /** Called after a temporary task's turn and token collectors have stopped. */
+        suspend fun releaseTaskChatInstance(chatId: String) {
+            val instance = synchronized(CHAT_INSTANCES) { CHAT_INSTANCES.remove(chatId) } ?: return
+            try {
+                instance.cancelConversationAndAwait()
+                instance.initScope.coroutineContext[kotlinx.coroutines.Job]?.let { job ->
+                    job.cancel()
+                    job.join()
+                }
+                instance.multiServiceManager.cancelAllStreaming()
+                instance.multiServiceManager.refreshAllServices()
+            } finally {
+                instance.initScope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
+                instance.toolProcessingScope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
+            }
+        }
+
         /**
          * 获取指定功能类型的 AIService 实例（非实例化方式）
          * @param context 应用上下文
@@ -3088,7 +3105,8 @@ class EnhancedAIService private constructor(
                         )
                         val inputTurn = if (context.stampUserTime) {
                             com.ai.assistance.operit.features.orbit.OrbitMessageTime.stamp(
-                                this@EnhancedAIService.context, rawInputTurn, rowTimes[index] ?: System.currentTimeMillis())
+                                this@EnhancedAIService.context, rawInputTurn,
+                                input.sentAt.takeIf { it > 0L } ?: rowTimes[index] ?: System.currentTimeMillis())
                         } else rawInputTurn
                         context.conversationHistory.add(inputTurn)
                         if (context.collaborationInputs.isNotEmpty()) {

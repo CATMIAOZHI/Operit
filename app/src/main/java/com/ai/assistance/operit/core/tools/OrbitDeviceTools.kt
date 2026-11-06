@@ -45,7 +45,7 @@ internal object OrbitDeviceTools {
             "query (required), limit 1-20 (default 10)", listOf(Manifest.permission.READ_CONTACTS)),
         Command("calendar.search", "Read calendar events, optionally only those whose title or place matches.",
             "days ahead 1-90 (default 7), past_days 0-30 (default 0), query (optional)", listOf(Manifest.permission.READ_CALENDAR)),
-        Command("sms.search", "Search received and sent text messages by text or sender.",
+        Command("sms.search", "Search text messages by text or address, including received, sent, draft, outbox, failed and queued messages; check direction.",
             "query (optional), limit 1-30 (default 10), before (optional: next_before from the last result, for older messages)",
             listOf(Manifest.permission.READ_SMS)),
         Command("sms.read", "Read one text message in full; use it when sms.search marked a text as cut. Up to 20000 characters per call.",
@@ -81,7 +81,7 @@ internal object OrbitDeviceTools {
   - 只在用户的请求需要时读，比如「给小王打电话前查下他的号码」「我下周有什么安排」「我现在在哪」。短信只在用户明确要求时读。
   - describe 的 permissions 列出每项权限现在开没开（名字和 orbit_permission_card 的一样），由 App 自己读，不需要 ADB、Shizuku 或终端；想知道自己有什么权限就看它，不要用终端命令去查。
   - 结果是这一刻从手机上实时读的。用户拒绝授权时不要换别的办法绕过去；他之后想开，用 orbit_permission_card 放一张对应的权限卡。
-  - 时间都是手机本地时间（结果里有 timezone）。has_more=true 说明还有没返回的：通讯录和日历请缩小 query 或天数，短信把 next_before 原样放进 params.before 往前翻。短信标了 cut=true 时用 sms.read 加它的 id 读全文；一次最多20000字，next_start_char 不为空时放进 params.start_char 接着读。
+  - 时间使用手机本地时区（结果里有 timezone）；全天日历事件只返回日期，按日历的 UTC 日期解析，end 是不包含在内的结束日期。has_more=true 说明还有没返回的：通讯录和日历请缩小 query 或天数，短信把 next_before 原样放进 params.before 往前翻。短信的 direction 区分 received/sent/draft/outbox/failed/queued/unknown，草稿和待发不代表已经收到或发送。短信标了 cut=true 时用 sms.read 加它的 id 读全文；一次最多20000字，next_start_char 不为空时放进 params.start_char 接着读。
   - 通知历史要开着「读取通知」（notification_read）才会记录：开启时通知栏里还在的和之后收到的，保留 ${OrbitNotificationHistory.KEEP_DAYS} 天；常驻通知（音乐、下载、正在运行）不记。用户问「刚才谁找我」「今天快递到了没」「最近一周银行发了什么」时用 notifications.search；按应用筛就填 app（应用名或包名，不确定先 notifications.apps 看有哪些应用）。翻页同短信（next_before 原样放进 params.before）；cut=true 时用 notifications.read 读全文，每条最多存 4000 字，stored_cut=true 说明原文更长、后面没存下来。没查到不代表没收到：应用可能没发通知，或只显示了部分内容。
   - 读到的号码、地址、消息只用在当前任务里，不要写进记忆，除非用户让你记。
 """,
@@ -197,7 +197,20 @@ internal object OrbitDeviceTools {
     }
 
     private fun time(millis: Long) = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.ROOT).format(Date(millis))
+    private fun allDayDate(millis: Long) = SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).apply {
+        timeZone = java.util.TimeZone.getTimeZone("UTC")
+    }.format(Date(millis))
     private fun zone() = java.util.TimeZone.getDefault().id
+
+    private fun smsType(type: Int): String = when (type) {
+        Telephony.Sms.MESSAGE_TYPE_INBOX -> "received"
+        Telephony.Sms.MESSAGE_TYPE_SENT -> "sent"
+        Telephony.Sms.MESSAGE_TYPE_DRAFT -> "draft"
+        Telephony.Sms.MESSAGE_TYPE_OUTBOX -> "outbox"
+        Telephony.Sms.MESSAGE_TYPE_FAILED -> "failed"
+        Telephony.Sms.MESSAGE_TYPE_QUEUED -> "queued"
+        else -> "unknown"
+    }
 
     private fun contacts(context: Context, params: JSONObject): String {
         val query = params.optString("query").trim()
@@ -252,9 +265,12 @@ internal object OrbitDeviceTools {
                 val place = cursor.getString(3).orEmpty()
                 if (query.isNotEmpty() && query !in title.lowercase() && query !in place.lowercase()) continue
                 if (events.length() >= 100) { more = true; break }
+                val allDay = cursor.getInt(4) == 1
                 events.put(JSONObject().put("title", title).put("place", place)
-                    .put("start", time(cursor.getLong(0))).put("end", time(cursor.getLong(1)))
-                    .put("all_day", cursor.getInt(4) == 1))
+                    .put("start", if (allDay) allDayDate(cursor.getLong(0)) else time(cursor.getLong(0)))
+                    .put("end", if (allDay) allDayDate(cursor.getLong(1)) else time(cursor.getLong(1)))
+                    .put("all_day", allDay)
+                    .apply { if (allDay) put("end_exclusive", true) })
             }
         }
         return JSONObject().put("source", "live").put("timezone", zone()).put("from", time(now - past * 86_400_000L))
@@ -297,7 +313,7 @@ internal object OrbitDeviceTools {
                 oldest = "${cursor.getLong(2)}:${cursor.getLong(4)}"
                 val body = cursor.getString(1).orEmpty()
                 messages.put(JSONObject().put("id", cursor.getLong(4)).put("from_or_to", cursor.getString(0).orEmpty())
-                    .put("direction", if (cursor.getInt(3) == Telephony.Sms.MESSAGE_TYPE_SENT) "sent" else "received")
+                    .put("direction", smsType(cursor.getInt(3)))
                     .put("time", time(cursor.getLong(2))).put("text", body.take(1000))
                     .apply { if (body.length > 1000) put("cut", true).put("chars", body.length) })
             }
@@ -322,7 +338,7 @@ internal object OrbitDeviceTools {
                 val end = minOf(body.length, from + 20_000)
                 return JSONObject().put("source", "live").put("timezone", zone()).put("id", id)
                     .put("from_or_to", cursor.getString(0).orEmpty())
-                    .put("direction", if (cursor.getInt(3) == Telephony.Sms.MESSAGE_TYPE_SENT) "sent" else "received")
+                    .put("direction", smsType(cursor.getInt(3)))
                     .put("time", time(cursor.getLong(2))).put("chars", body.length)
                     .put("start_char", from).put("text", body.substring(from, end))
                     .put("next_start_char", if (end < body.length) end else JSONObject.NULL)

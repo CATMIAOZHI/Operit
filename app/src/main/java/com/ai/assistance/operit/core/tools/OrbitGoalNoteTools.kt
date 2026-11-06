@@ -42,12 +42,15 @@ internal object OrbitGoalNoteTools {
             val args = tool.parameters.associate { it.name to it.value }
             val dao = AppDatabase.getDatabase(context).orbitTaskDao()
             val board = OrbitBoardRepository(context, orbit.id, Board.GOAL_NOTES)
-            suspend fun goalId(): String {
+            suspend fun goalId(allowCancelled: Boolean = false): String {
                 val id = args["goal_id"]?.trim().orEmpty()
                 require(id.isNotEmpty()) { "Missing goal_id; get it from orbit_goal list" }
                 val goal = dao.goal(id)
-                require(goal != null && goal.orbitId == orbit.id && goal.state != "CANCELLED") {
-                    "No open goal with goal_id \"$id\"; call orbit_goal with action=list to find it"
+                require(goal != null && goal.orbitId == orbit.id) {
+                    "No goal with goal_id \"$id\" in this Orbit; call orbit_goal with action=list to find it"
+                }
+                require(allowCancelled || goal.state != "CANCELLED") {
+                    "Goal \"$id\" is cancelled. Its existing progress can be listed and read, but no new notes can be added."
                 }
                 return id
             }
@@ -65,7 +68,7 @@ internal object OrbitGoalNoteTools {
                         runtime?.callId ?: java.util.UUID.randomUUID().toString(), state = "LOG"))
                 }
                 "brief" -> {
-                    // Briefings come from the background routine only, as in Muse.
+                    // Briefings come from the background routine only.
                     val chatId = runtime?.callerChatId
                     require(chatId != null && com.ai.assistance.operit.features.orbit.OrbitTaskExecution.resolve(context, chatId) != null) {
                         "Briefings are written by the background goal briefing; use log for progress in chat"
@@ -76,7 +79,7 @@ internal object OrbitGoalNoteTools {
                         goalId(), runtime?.callId ?: java.util.UUID.randomUUID().toString(), state = "BRIEF"))
                 }
                 "list" -> {
-                    val id = goalId()
+                    val id = goalId(allowCancelled = true)
                     val start = args["offset"]?.trim()?.takeIf { it.isNotEmpty() }?.let {
                         it.toIntOrNull()?.takeIf { n -> n >= 0 } ?: error("offset must be a whole number from 0; got \"$it\"")
                     } ?: 0

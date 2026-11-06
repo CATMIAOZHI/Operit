@@ -45,7 +45,7 @@ data class OrbitTaskEntity(
     @ColumnInfo(defaultValue = "'DEFAULT'") val modelRole: String = "DEFAULT",
 )
 
-@Entity(tableName = "orbit_events", indices = [Index("taskId")])
+@Entity(tableName = "orbit_events", indices = [Index("taskId"), Index("sourceRunId")])
 data class OrbitEventEntity(
     /** Stable key: task + definition version + scheduled time, or explicit request id. */
     @PrimaryKey val id: String,
@@ -56,7 +56,8 @@ data class OrbitEventEntity(
     @ColumnInfo(defaultValue = "''") val sourceRunId: String = "",
 )
 
-@Entity(tableName = "orbit_runs", indices = [Index(value = ["eventId"], unique = true), Index("taskId")])
+@Entity(tableName = "orbit_runs", indices = [Index(value = ["eventId"], unique = true), Index("taskId"),
+    Index(value = ["taskId", "startedAt"])])
 data class OrbitRunEntity(
     @PrimaryKey val id: String,
     val eventId: String,
@@ -80,6 +81,8 @@ data class OrbitRunEntity(
     val finishedAt: Long,
     /** Why this run messaged the user or stayed quiet; empty for older runs. */
     @ColumnInfo(defaultValue = "''") val decision: String = "",
+    /** A saved hand-off is not completion; a dead process must surface the unfinished work. */
+    @ColumnInfo(defaultValue = "''") val handoffTurnId: String = "",
 ) {
     companion object {
         /**
@@ -108,7 +111,7 @@ data class OrbitDeliveryEntity(
     val title: String,
     val body: String,
     val createdAt: Long,
-    /** PENDING, SENT, CANCELLED; messageId survives user deletion, so a message is never recreated. */
+    /** PENDING, HANDING, SENT, CANCELLED; only a completed chat turn counts as SENT. */
     val state: String,
     val messageId: Long?,
     val messageTimestamp: Long?,
@@ -135,6 +138,9 @@ data class OrbitDeliveryEntity(
     /** The user's answer in Orbit's words, for the item's record. */
     @ColumnInfo(defaultValue = "''") val userResponseNote: String = "",
     @ColumnInfo(defaultValue = "0") val respondedAt: Long = 0,
+    @ColumnInfo(defaultValue = "''") val handoffTurnId: String = "",
+    @ColumnInfo(defaultValue = "0") val attempts: Int = 0,
+    @ColumnInfo(defaultValue = "0") val retryAt: Long = 0,
 ) {
     companion object {
         const val SEND = "send"

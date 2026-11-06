@@ -96,10 +96,14 @@ internal object OrbitApprovals {
     val version: StateFlow<Int> = changes
     private val locks = ConcurrentHashMap<String, Mutex>()
     private val sending = ConcurrentHashMap.newKeySet<String>()
+    /** Answers asked to be told again while a delivery for them was already running. */
+    private val deliverAgain = ConcurrentHashMap.newKeySet<String>()
     /** Approvals being answered right now, so the card and the list cannot both answer one. */
     private val deciding = ConcurrentHashMap.newKeySet<String>()
     /** Actions carried out whose answer is not written yet, so a retry does not do them again. */
     private val doneActions = ConcurrentHashMap<String, String>()
+    /** Sends going out right now; their answer is already on disk but must not be told to Orbit yet. */
+    private val runningSends = ConcurrentHashMap.newKeySet<String>()
     /** The last known state of each approval, so a card scrolled back into view has its full height at once. */
     private val cache = ConcurrentHashMap<String, Approval>()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -188,7 +192,7 @@ internal object OrbitApprovals {
      * configuration; the request stays open if that throws.
      */
     suspend fun decide(context: Context, orbit: OrbitProfile, id: String, approve: Boolean, note: String,
-        secret: String? = null, models: List<String>? = null): Approval? {
+        secret: String? = null, models: List<String>? = null, always: Boolean = false): Approval? {
         val key = orbit.id + "/" + id
         if (!deciding.add(key)) return null
         val decided: Approval? = try {
@@ -198,22 +202,58 @@ internal object OrbitApprovals {
                     ?: return@withContext null
                 // Already done once: it stays a yes.
                 val approved = approve || doneActions.containsKey(key)
+                // A send cannot be taken back. It is written as approved before it runs, with a result
+                // saying it may or may not have gone out: if the app dies mid-send, the card cannot be
+                // approved again (a second send), and Orbit is told to check instead of resending.
+                val oneShot = approved && approve && !doneActions.containsKey(key) &&
+                    OrbitConnectorSend.toolOf(open.action) != null
+                if (oneShot) {
+                    // Shown while it runs, and kept only when the app stops before the real result is in.
+                    val unsure = context.getString(com.ai.assistance.operit.R.string.orbit_send_running)
+                    runningSends.add(key)
+                    val marked = lock(orbit.id).withLock {
+                        val current = read(context, orbit.id)
+                        val found = current.firstOrNull { it.id == id }?.takeIf { it.pending } ?: return@withLock false
+                        write(context, orbit.id, current.map {
+                            if (it.id == id) found.copy(state = APPROVED, note = note.trim().take(MAX_NOTE),
+                                decidedAt = System.currentTimeMillis(), notified = false, result = clipResult(unsure))
+                            else it
+                        })
+                        true
+                    }
+                    if (!marked) {
+                        runningSends.remove(key)
+                        return@withContext null
+                    }
+                }
                 // Done outside the lock: importing packages from files can take a while.
                 // A result already reached (the answer could not be written last time) is not done twice.
-                val result = if (approved && open.action.isNotEmpty()) {
-                    doneActions[key] ?: OrbitApprovalActions.run(context, orbit, open, secret, models).also { doneActions[key] = it }
-                } else ""
+                val result = try {
+                    if (approved && open.action.isNotEmpty()) {
+                        doneActions[key] ?: run {
+                            // "Always allow" for a sending tool: stored first, so the next call runs without a card.
+                            val keep = always && approve && OrbitConnectorSend.toolOf(open.action) != null
+                            if (keep) OrbitConnectorSend.allowAlways(context, open.action)
+                            OrbitApprovalActions.run(context, orbit, open, secret, models, keep)
+                        }.also { doneActions[key] = it }
+                    } else ""
+                } catch (e: Exception) {
+                    // The send is already marked approved; its failure is the result Orbit hears.
+                    if (!oneShot || e is kotlinx.coroutines.CancellationException) throw e
+                    e.message ?: e.javaClass.simpleName
+                }
                 lock(orbit.id).withLock {
                     val current = read(context, orbit.id)
-                    val found = current.firstOrNull { it.id == id }?.takeIf { it.pending } ?: return@withLock null
+                    val found = current.firstOrNull { it.id == id }?.takeIf { it.pending || oneShot } ?: return@withLock null
                     val next = found.copy(state = if (approved) APPROVED else DENIED, note = note.trim().take(MAX_NOTE),
                         decidedAt = System.currentTimeMillis(), notified = false, result = clipResult(result))
                     write(context, orbit.id, current.map { if (it.id == id) next else it })
                     doneActions.remove(key)
                     next
-                }?.also { deliver(context, orbit, it) }
+                }.also { runningSends.remove(key) }?.also { deliver(context, orbit, it) }
             }
         } finally {
+            runningSends.remove(key)
             deciding.remove(key)
         }
         // Told to Orbit above, even if the screen that asked has gone away since.
@@ -223,6 +263,7 @@ internal object OrbitApprovals {
     /** Answers that never reached Orbit (the app closed while it was busy) go out again. */
     suspend fun deliverPending(context: Context, orbit: OrbitProfile) {
         list(context, orbit.id).filter { it.kind == REQUEST && it.state != PENDING && !it.notified }
+            .filter { (orbit.id + "/" + it.id) !in runningSends }
             .forEach { deliver(context, orbit, it) }
     }
 
@@ -275,17 +316,34 @@ internal object OrbitApprovals {
 
     private fun deliver(context: Context, orbit: OrbitProfile, a: Approval) {
         val chatId = a.chatId.ifBlank { orbit.chatId }
-        if (chatId.isBlank() || !sending.add(orbit.id + "/" + a.id)) return
+        val key = orbit.id + "/" + a.id
+        if (chatId.isBlank()) return
+        // One delivery per answer at a time; a call while one runs asks it to look once more at the end.
+        if (!sending.add(key)) {
+            deliverAgain.add(key)
+            // The running one may have just ended without seeing the mark: then this call goes itself.
+            if (!sending.add(key)) return
+        }
         val app = context.applicationContext
         scope.launch {
             try {
-                val text = notice(LocaleUtils.usesEnglishPrompt(app), a)
+                val english = LocaleUtils.usesEnglishPrompt(app)
+                // [a] may be an old snapshot (a send still running): what is told is read fresh right before sending.
+                suspend fun latest() = withContext(Dispatchers.IO) {
+                    lock(orbit.id).withLock { read(app, orbit.id).firstOrNull { it.id == a.id } }
+                }
+                suspend fun wanted() = key !in runningSends &&
+                    latest()?.let { it.kind == REQUEST && it.state != PENDING && !it.notified } == true
+                deliverAgain.remove(key)
                 // The chat may be busy with a reply or another note; the answer waits its turn.
                 val deadline = android.os.SystemClock.elapsedRealtime() + IDLE_WAIT_MS
                 while (true) {
                     val left = deadline - android.os.SystemClock.elapsedRealtime()
                     if (left <= 0) break
-                    val told = OrbitWake.tell(app, orbit, chatId, text, left, left, onSent = { markNotified(app, orbit.id, a.id) })
+                    val told = OrbitWake.tell(app, orbit, chatId, notice(english, a), left, left,
+                        ready = { wanted() },
+                        noticeNow = { notice(english, latest() ?: a) },
+                        onSent = { markNotified(app, orbit.id, a.id) })
                     if (told != OrbitWake.Told.BUSY) break
                     kotlinx.coroutines.delay(1_500)
                 }
@@ -294,7 +352,9 @@ internal object OrbitApprovals {
             } catch (e: Exception) {
                 AppLogger.w("OrbitApprovals", "Could not tell Orbit about an answer: ${e.message}")
             } finally {
-                sending.remove(orbit.id + "/" + a.id)
+                sending.remove(key)
+                // Asked again while this one ran (the real result of a send came in): look once more.
+                if (deliverAgain.remove(key)) deliver(app, orbit, a)
             }
         }
     }

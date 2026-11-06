@@ -310,11 +310,18 @@ internal object OrbitPermissionCards {
     }
 
     /** Called only after a card's recorded off -> on transition; opening settings alone never wakes Orbit. */
-    fun grantedFromCard(context: Context, orbitId: String, chatId: String, permission: String, cardId: String) {
+    fun grantedFromCard(context: Context, orbitId: String, chatId: String, permission: String, cardId: String,
+        onDelivered: () -> Unit = {}) {
         if (chatId.isBlank() || !grantSending.add(cardId)) return
         val app = context.applicationContext
         scope.launch {
             try {
+                val saved = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                val deliveredKey = "granted:$cardId"
+                if (withContext(Dispatchers.IO) { saved.getBoolean(deliveredKey, false) }) {
+                    onDelivered()
+                    return@launch
+                }
                 val orbit = OrbitPreferences.getInstance(app).current().orbits
                     .firstOrNull { it.id == orbitId && !it.deleting && chatId in it.talkChatIds } ?: return@launch
                 suspend fun stillOn() = withContext(Dispatchers.IO) {
@@ -353,7 +360,14 @@ internal object OrbitPermissionCards {
                             OrbitPreferences.getInstance(app).current().orbits.any {
                                 it.id == orbitId && !it.deleting && chatId in it.talkChatIds
                             } && stillOn()
-                        }, announce = false)
+                        },
+                        onSent = {
+                            withContext(Dispatchers.IO) {
+                                check(saved.edit().putBoolean(deliveredKey, true).commit())
+                            }
+                            onDelivered()
+                        },
+                        announce = false)
                     if (told != OrbitWake.Told.BUSY) break
                     kotlinx.coroutines.delay(1_500)
                 }

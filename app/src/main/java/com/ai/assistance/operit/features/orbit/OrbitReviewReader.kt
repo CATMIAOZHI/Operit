@@ -50,8 +50,22 @@ internal class OrbitReviewReader private constructor(private val context: Contex
         withContext(Dispatchers.IO) { block() }
     }
 
-    private fun state(): JSONObject = if (file.isFile) runCatching { JSONObject(file.readText()) }
-        .getOrElse { JSONObject() } else JSONObject()
+    private suspend fun state(): JSONObject {
+        val state = if (file.isFile) runCatching { JSONObject(file.readText()) }
+            .getOrElse { JSONObject() } else JSONObject()
+        val space = OrbitPreferences.getInstance(context).current().orbits.firstOrNull { it.id == orbitId }?.memorySpaceId
+        val cutoff = space?.let { OrbitLearningBoundary.guard(context, it).cutoffTimestamp } ?: 0L
+        if (cutoff > state.optLong("forgotten_before")) {
+            state.put("forgotten_before", cutoff).put("reviewed_until", maxOf(cutoff, state.optLong("reviewed_until")))
+                .remove("session")
+            save(state)
+            lastLong = null
+        }
+        return state
+    }
+
+    /** Also repairs a crash between persisting the forgetting boundary and clearing the old window. */
+    suspend fun discardForgottenHistory() = locked { state(); Unit }
 
     private fun save(state: JSONObject) {
         file.parentFile?.mkdirs()
@@ -88,8 +102,9 @@ internal class OrbitReviewReader private constructor(private val context: Contex
         if (session == null) {
             val reviewed = state.optLong("reviewed_until", 0).takeIf { it in 1 until now }
             // The first review (or the first after the old excerpt review) looks back a few days.
-            val since = reviewed?.coerceAtLeast(now - MAX_BACKLOG_MS)
-                ?: (legacySince?.takeIf { it < now } ?: (now - FIRST_WINDOW_MS)).coerceAtLeast(now - MAX_WINDOW_MS)
+            val since = (reviewed?.coerceAtLeast(now - MAX_BACKLOG_MS)
+                ?: (legacySince?.takeIf { it < now } ?: (now - FIRST_WINDOW_MS)).coerceAtLeast(now - MAX_WINDOW_MS))
+                .coerceAtLeast(state.optLong("forgotten_before"))
             val labels = linkedMapOf(orbit.chatId to "main")
             orbit.sideChats.forEach { labels[it.chatId] = "side: ${it.title.take(40)}" }
             val ids = labels.keys.toList()
@@ -105,6 +120,7 @@ internal class OrbitReviewReader private constructor(private val context: Contex
             val users = dao.reviewCount(ids, since, until, listOf("user"))
             if (users == 0) return@locked null
             session = JSONObject().put("since", since).put("until", until)
+                .put("forgotten_before", state.optLong("forgotten_before"))
                 .put("chats", JSONObject(labels as Map<*, *>))
                 .put("total", dao.reviewCount(ids, since, until, listOf("user", "ai"))).put("user_total", users)
                 .put("read", Pos(since, Long.MAX_VALUE).json()).put("committed", Pos(since, Long.MAX_VALUE).json())
@@ -393,7 +409,8 @@ internal class OrbitReviewReader private constructor(private val context: Contex
         val count = args["count"]?.trim()?.toIntOrNull()?.coerceIn(1, 20) ?: 5
         val chats = chats(session)
         val ids = chats.keys.toList()
-        val rows = dao.reviewMessages(ids, 0, Long.MAX_VALUE, id - 1, Long.MAX_VALUE, count)
+        val rows = dao.reviewMessages(ids, session.optLong("forgotten_before"), Long.MAX_VALUE,
+            id - 1, Long.MAX_VALUE, count)
         require(rows.isNotEmpty()) { "No message $id in this Orbit's chats" }
         val start = args["start_char"]?.trim()?.toIntOrNull()?.coerceAtLeast(1) ?: 1
         val reactions = chats.keys.associateWith { reactionsOf(it) }

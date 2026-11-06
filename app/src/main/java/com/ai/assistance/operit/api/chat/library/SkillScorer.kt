@@ -151,19 +151,26 @@ object SkillScorer {
 
     /**
      * Keeps the conversation a new skill was learned from until it is graded, under a key of its own
-     * so two drafts with one name never share or delete each other's excerpt. Long pages keep their
+     * so two drafts with one name never share or delete each other's excerpt. Long excerpts keep their
      * start and end; the middle is cut. Returns the key the change carries.
      */
     fun keepEvidence(context: Context, profileId: String, chatId: String, text: String): String {
         val key = java.util.UUID.randomUUID().toString()
-        val kept = if (text.length <= EVIDENCE_CHARS) text
-            else text.take(EVIDENCE_CHARS / 2) + "\n\n[... middle of the conversation cut ...]\n\n" + text.takeLast(EVIDENCE_CHARS / 2)
+        val kept = boundEvidence(text)
         val dir = evidenceDir(context, profileId)
         dir.mkdirs()
         // Lets a restart find this space and a chat to hang the grader's run on.
         File(dir, OWNER_FILE).writeText("$profileId\n$chatId", Charsets.UTF_8)
         evidenceFile(context, profileId, key).writeText(kept, Charsets.UTF_8)
         return key
+    }
+
+    /** Actual source reads only; never carry-over notes or the learner's own claims of success. */
+    internal fun boundEvidence(text: String): String {
+        if (text.length <= EVIDENCE_CHARS) return text
+        val marker = "\n\n[... earlier evidence omitted to fit; this is not the whole conversation ...]\n\n"
+        val half = (EVIDENCE_CHARS - marker.length) / 2
+        return text.take(half) + marker + text.takeLast(half)
     }
 
     fun deleteSpace(context: Context, profileId: String) {

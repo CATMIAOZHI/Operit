@@ -16,7 +16,8 @@ data class OrbitGoalEntity(
     val updatedAt: Long,
 )
 
-@Entity(tableName = "orbit_artifact_versions", indices = [Index("orbitId"), Index("artifactId"), Index(value = ["actionId"], unique = true)])
+@Entity(tableName = "orbit_artifact_versions", indices = [Index("orbitId"), Index("artifactId"), Index(value = ["actionId"], unique = true),
+    Index("runId")])
 data class OrbitArtifactVersionEntity(
     @PrimaryKey val id: String,
     val artifactId: String,

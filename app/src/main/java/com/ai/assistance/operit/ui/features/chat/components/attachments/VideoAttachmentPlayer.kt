@@ -12,6 +12,7 @@ import com.google.android.exoplayer2.ExoPlayer
 import com.google.android.exoplayer2.MediaItem
 import com.google.android.exoplayer2.ui.AspectRatioFrameLayout
 import com.google.android.exoplayer2.ui.StyledPlayerView
+import com.ai.assistance.operit.R
 
 @Composable
 fun VideoAttachmentPlayer(
@@ -46,6 +47,9 @@ fun VideoAttachmentPlayer(
         factory = { ctx ->
             StyledPlayerView(ctx).apply {
                 this.player = player
+                setErrorMessageProvider {
+                    android.util.Pair.create(0, context.getString(R.string.video_attachment_playback_failed))
+                }
                 useController = true
                 resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
             }

@@ -15,7 +15,8 @@ class MemoryLearningActions(
     private val stagedChanges: MutableList<MemoryReviewChange>? = null,
     private val onCreated: () -> Unit = {},
     private val learningGuard: com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.Guard? = null,
-    private val evidence: String = ""
+    private val evidence: String = "",
+    private val onHistoryRead: (String) -> Unit = {}
 ) {
     private val skills = LearnedSkillRepository(context, profileId)
     private val reviews = MemoryReviewRepository(context,profileId,stagedChanges,
@@ -68,6 +69,7 @@ class MemoryLearningActions(
     /** LESSONS.md as it will read once this page is saved. */
     private suspend fun lessonsBook(files: com.ai.assistance.operit.features.orbit.OrbitFiles): String {
         val p = com.ai.assistance.operit.features.orbit.OrbitFiles.LESSONS
+        stagedOrbitFile(p)?.takeIf { it.addition.isEmpty() }?.let { return it.body }
         val base = files.readStored(p) ?: files.template(p).orEmpty()
         return stagedLessons().fold(base) { book, line -> (book.trimEnd() + "\n" + line + "\n").trimStart('\n') }
     }
@@ -98,7 +100,8 @@ class MemoryLearningActions(
                                 "This memory space does not allow reading thinking; the result has visible text only.")
                         }
                 }
-                if (boundary == null) run() else boundary.learn(learningGuard?.generation ?: 0, run)
+                (if (boundary == null) run() else boundary.learn(learningGuard?.generation ?: 0, run))
+                    .also { onHistoryRead(it.toString()) }
             }
             "memory_read" -> {
                 check(notesEnabled) { "Note extraction is not scheduled for this run. Do not retry memory operations; continue skill work or finish." }
@@ -198,13 +201,16 @@ class MemoryLearningActions(
                 val p = orbitNotePath(arg("path"), lessons = true)
                 if (p == com.ai.assistance.operit.features.orbit.OrbitFiles.LESSONS) {
                     // The book can grow far past a tool result, so it is read a page at a time.
+                    val disk = files.readStored(p)
+                    rememberVersion("orbit:$p", LearnedSkillRepository.version(disk.orEmpty()))
                     val book = lessonsBook(files)
                     val offset = arg("offset").ifBlank { "0" }.toInt().coerceIn(0, book.length)
                     val limit = arg("limit").ifBlank { "$LESSON_PAGE_CHARS" }.toInt().coerceIn(1, LESSON_PAGE_CHARS)
                     val end = (offset + limit).coerceAtMost(book.length)
-                    return JSONObject().put("path", p).put("exists", files.readStored(p) != null || stagedLessons().isNotEmpty())
+                    return JSONObject().put("path", p).put("exists", disk != null || stagedOrbitFile(p) != null)
                         .put("content", book.substring(offset, end)).put("offset", offset)
                         .put("total_chars", book.length).put("staged_lessons", stagedLessons().size)
+                        .put("staged", stagedOrbitFile(p) != null)
                         .put("next_offset", if (end < book.length) end else JSONObject.NULL)
                         .put("max_chars", com.ai.assistance.operit.features.orbit.OrbitFiles.MAX_TEXT)
                 }
@@ -249,14 +255,33 @@ class MemoryLearningActions(
                 if (book.lines().any { it.trim() == line }) return JSONObject().put("path", p).put("unchanged", true)
                     .put("message", "LESSONS.md already has this lesson; nothing staged")
                 require(book.trimEnd().length + line.length + 2 <= com.ai.assistance.operit.features.orbit.OrbitFiles.MAX_TEXT) {
-                    "LESSONS.md is full; skip this lesson"
+                    "LESSONS.md is full; read it with people_read and remove or replace outdated entries with lesson_change first"
                 }
                 // The record keeps only the appended line; applying it appends that line once.
-                val change = reviews.proposeOrbitFile(p, "", line, addition = line,
-                    sourceChatId = sourceChatId, onCreated = onCreated)
+                val change = if (stagedOrbitFile(p)?.addition?.isEmpty() == true)
+                    reviews.proposeOrbitFile(p, files.readStored(p).orEmpty(), book.trimEnd() + "\n" + line + "\n",
+                        sourceChatId = sourceChatId, onCreated = onCreated)
+                else reviews.proposeOrbitFile(p, "", line, addition = line,
+                        sourceChatId = sourceChatId, onCreated = onCreated)
                 reviews.toModelJson(reviews.applyAutomaticDecision(context, change)).put("path", p)
                     .put("added_line", line)
                     .put("message", "Staged one line at the end of LESSONS.md; it is saved when this page is committed")
+            }
+            "lesson_change" -> {
+                val files = orbitNotes()
+                val p = com.ai.assistance.operit.features.orbit.OrbitFiles.LESSONS
+                val disk = files.readStored(p).orEmpty()
+                check(readVersion("orbit:$p") == LearnedSkillRepository.version(disk)) {
+                    "Read LESSONS.md with people_read before changing it; it may have changed since"
+                }
+                val operation = arg("operation")
+                require(operation in setOf("replace", "remove")) { "Use replace or remove; add a new lesson with lesson_add" }
+                val book = lessonsBook(files)
+                val after = editText(book, operation, stripInvisibleCharacters(arg("content")), arg("old_text"))
+                require(after.length <= com.ai.assistance.operit.features.orbit.OrbitFiles.MAX_TEXT) { "LESSONS.md is full" }
+                val change = reviews.proposeOrbitFile(p, disk, after, sourceChatId = sourceChatId, onCreated = onCreated)
+                reviews.toModelJson(reviews.applyAutomaticDecision(context, change)).put("path", p)
+                    .put("message", "Staged the corrected LESSONS.md; it is saved when this page is committed")
             }
             "skill_list" -> {
                 check(skillsEnabled) { "Skill extraction is not scheduled for this run. Do not retry skill operations; continue note work or finish." }

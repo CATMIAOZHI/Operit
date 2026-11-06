@@ -155,6 +155,8 @@
     <string name="speech_error_microphone_unavailable">无法使用麦克风，请检查麦克风权限，或是否有其他应用正在占用</string>
     <string name="speech_error_batch_not_supported">当前语音引擎不支持这种识别方式</string>
     <string name="speech_error_engine_unavailable">语音引擎初始化失败，请重试</string>
+    <string name="speech_error_recognition_failed">这次语音识别没有成功，请重试；也可以在语音设置中检查所选引擎。</string>
+    <string name="video_attachment_playback_failed">视频暂时无法播放，请检查文件是否完整，或用其他播放器打开。</string>
     <string name="floating_recognizing">识别中...</string>
     <string name="floating_thinking_2">思考中...</string>
     <string name="floating_didnt_hear_clearly">没有听清</string>
@@ -9173,6 +9175,8 @@
     <string name="orbit_quota_extra_mode_weekly_desc">每周一 0 点和每周额度一起补满</string>
     <string name="orbit_quota_left">（剩余 %1$s）</string>
     <string name="orbit_quota_status_paused">两份额度都用完了，%1$s 已暂停</string>
+    <string name="orbit_quota_paused_title">额度已用完</string>
+    <string name="orbit_dev_export_scope">会导出当前聊天的完整原文（含思考、工具调用与结果、隐藏消息和回复版本），以及开发者模式记录的请求和事件。里面可能有隐私内容，分享前请先确认。</string>
     <string name="orbit_quota_status_extra">本周额度已用完，正在用额外额度</string>
     <string name="orbit_quota_usage">用量统计</string>
     <string name="orbit_quota_adjust">调整额度</string>
@@ -9729,8 +9733,8 @@
     <string name="orbit_access_row_desc">Orbit 用工具时怎么放行</string>
     <string name="orbit_access_full">完全访问</string>
     <string name="orbit_access_review">自动审核（快速）</string>
-    <string name="orbit_access_help">两种档位都不会弹窗问你，区别是要不要先让审核检查一下。在开发者模式里单独设过的工具，仍按单独的设置。</string>
-    <string name="orbit_access_full_desc">所有工具直接执行，不经过审核。最快，但请确认你信任它。</string>
+    <string name="orbit_access_help">两种档位的区别是要不要先让审核检查一下；用连接器对外发消息时，都会先在聊天里放卡片问你。在开发者模式里单独设过的工具，仍按单独的设置。</string>
+    <string name="orbit_access_full_desc">工具直接执行，不经过审核。最快，但请确认你信任它。用连接器对外发消息仍会先在聊天里问你，选“始终允许”后才直接发。</string>
     <string name="orbit_access_review_desc">Orbit 自己的工具直接执行；终端、文件、浏览器等通用工具先自动审核再执行。</string>
     <string name="orbit_vault_desc">%1$s 使用的密码、API 密钥和 OAuth 登录。点进去查看、修改或删除，OAuth 凭据不显示原值，%1$s 始终看不到保存的值。</string>
     <string name="orbit_vault_empty">还没有保存的密码、密钥或 OAuth 登录。需要时，%1$s 会弹出安全卡片。</string>
@@ -9747,7 +9751,7 @@
     <string name="orbit_tools_row">每个工具的权限</string>
     <string name="orbit_tools_row_desc">Orbit 自己的一套，和主应用分开</string>
     <string name="orbit_tools_title">工具权限</string>
-    <string name="orbit_tools_help">只管 Orbit 的聊天和它的后台任务，主应用的工具权限不受影响。Orbit 自己的工具，以及内置包里只做查询的工具（时间、搜索、天气等），默认直接允许；其他工具默认走自动审核（快速）。</string>
+    <string name="orbit_tools_help">只管 Orbit 的聊天和它的后台任务，主应用的工具权限不受影响。Orbit 自己的工具，以及内置包里只做查询的工具（时间、搜索、天气等），默认直接允许；对外发消息的工具默认在聊天里放卡片问你；其他工具默认走自动审核（快速）。</string>
     <string name="orbit_tools_search">搜索工具</string>
     <string name="orbit_tools_empty">没有找到工具</string>
     <string name="orbit_tools_folder_internal">Orbit 内部工具</string>
@@ -9757,6 +9761,8 @@
     <string name="orbit_tools_level_allow">始终允许</string>
     <string name="orbit_tools_level_review">自动审核</string>
     <string name="orbit_tools_level_forbid">禁止</string>
+    <string name="orbit_tools_level_ask">每次询问</string>
+    <string name="orbit_tools_level_ask_desc">要对外发东西，每次都在聊天里放一张卡片，等你允许</string>
     <string name="orbit_tools_level_default">%1$s · 默认</string>
     <string name="orbit_tools_level_allow_desc">直接执行，不用审核</string>
     <string name="orbit_tools_level_review_desc">先由自动审核（快速）判断能不能做</string>
@@ -9806,6 +9812,17 @@
     <string name="orbit_approval_card_gone">这条申请已经不在了</string>
     <string name="orbit_approval_deny">拒绝</string>
     <string name="orbit_approval_approve">同意</string>
+    <string name="orbit_approval_allow_once">允许一次</string>
+    <string name="orbit_approval_allow_always">始终允许</string>
+    <string name="orbit_send_card_title">用 %1$s 对外发送</string>
+    <string name="orbit_send_card_tool">工具：%1$s</string>
+    <string name="orbit_send_card_param">%1$s：%2$s</string>
+    <string name="orbit_send_running">已同意，正在执行。如果这里一直没变成执行结果，说明执行时 App 中断了：可能发出了，也可能没有。再做之前先核实，拿不准就问用户。</string>
+    <string name="orbit_send_ran">%1$s 已执行。工具返回（以此判断是否真的发出）：%2$s</string>
+    <string name="orbit_send_failed">%1$s 执行失败：%2$s</string>
+    <string name="orbit_send_nothing">（空）</string>
+    <string name="orbit_send_no_reason">没有给出原因</string>
+    <string name="orbit_send_always_note">用户选了始终允许 %1$s：以后在这里用它不再弹卡片。</string>
     <string name="orbit_approval_already">这条申请已经处理过了</string>
     <string name="orbit_approval_failed">没能保存，请再试一次</string>
     <string name="orbit_approval_view">查看详情</string>

@@ -283,6 +283,7 @@ internal fun WeixinConnectSheet(orbit: OrbitProfile, onDismiss: () -> Unit, onCo
     val login = remember(attempt) { OrbitWeixin.Login(app, orbit.id) }
     LaunchedEffect(login) { login.run() }
     val step by login.step.collectAsState()
+    var savingQr by remember { mutableStateOf(false) }
     val connected by rememberUpdatedState(onConnected)
     var told by remember { mutableStateOf(false) }
     LaunchedEffect(step) {
@@ -330,20 +331,32 @@ internal fun WeixinConnectSheet(orbit: OrbitProfile, onDismiss: () -> Unit, onCo
                     }
                     OutlinedButton(
                         onClick = {
+                            if (savingQr) return@OutlinedButton
                             val image = bitmap ?: return@OutlinedButton
+                            savingQr = true
                             scope.launch {
-                                val saved = withContext(Dispatchers.IO) {
-                                    runCatching {
-                                        val file = java.io.File(app.cacheDir, "weixin-login-qr.png")
-                                        file.outputStream().use { image.compress(Bitmap.CompressFormat.PNG, 100, it) }
-                                        saveToGallery(app, file).also { file.delete() }
-                                    }.getOrDefault(false)
+                                try {
+                                    val saved = withContext(Dispatchers.IO) {
+                                        runCatching {
+                                            val file = java.io.File.createTempFile("weixin-login-qr-", ".png", app.cacheDir)
+                                            try {
+                                                check(file.outputStream().use { image.compress(Bitmap.CompressFormat.PNG, 100, it) }) {
+                                                    "Could not encode the WeChat QR code"
+                                                }
+                                                saveToGallery(app, file)
+                                            } finally {
+                                                file.delete()
+                                            }
+                                        }.getOrDefault(false)
+                                    }
+                                    Toast.makeText(context, if (saved) R.string.orbit_weixin_qr_saved else R.string.orbit_weixin_qr_save_failed,
+                                        Toast.LENGTH_SHORT).show()
+                                } finally {
+                                    savingQr = false
                                 }
-                                Toast.makeText(context, if (saved) R.string.orbit_weixin_qr_saved else R.string.orbit_weixin_qr_save_failed,
-                                    Toast.LENGTH_SHORT).show()
                             }
                         },
-                        enabled = bitmap != null,
+                        enabled = bitmap != null && !savingQr,
                         shape = RoundedCornerShape(50),
                         modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
                     ) { Text(stringResource(R.string.orbit_weixin_save_qr)) }

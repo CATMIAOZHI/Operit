@@ -114,7 +114,7 @@
     <string name="orbit_log_export_app_confirm_title">导出应用日志？</string>
     <string name="orbit_log_export_app_confirm">会把最近的 App 运行日志保存到「下载/operit」。日志里可能有聊天片段和设备信息，只有你自己分享时才会发出去。</string>
     <string name="orbit_log_export_tool_errors_confirm_title">导出工具调用错误？</string>
-    <string name="orbit_log_export_tool_errors_confirm">选一个时间范围，这段时间里的工具调用错误会保存到「下载/operit」。</string>
+    <string name="orbit_log_export_tool_errors_confirm">选一个时间范围，这段时间里的工具调用错误会保存到「下载/operit」。导出包含工具名称、调用参数和错误信息，可能带有聊天内容、文件路径等隐私，分享前请先确认。</string>
     <string name="orbit_log_export_confirm_ok">导出</string>
     <string name="orbit_log_export_tool_errors_count">这个范围里有 %1$d 条记录</string>
     <string name="orbit_log_export_counting">正在统计…</string>

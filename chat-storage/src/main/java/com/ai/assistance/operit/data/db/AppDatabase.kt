@@ -66,7 +66,7 @@ import com.ai.assistance.operit.util.ChatMarkupRegex
         com.ai.assistance.operit.data.model.OrbitArtifactVersionEntity::class,
         com.ai.assistance.operit.data.model.OrbitNotificationEntity::class,
     ],
-    version = 45,
+    version = 47,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -92,6 +92,27 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun tokenStatsDao(): TokenStatsDao
 
     companion object {
+        /** Indexes for clearing old task runs; adds no data. */
+        val MIGRATION_46_47 = object : Migration(46, 47) {
+            private val statements = listOf(
+                "CREATE INDEX IF NOT EXISTS index_orbit_events_sourceRunId ON orbit_events(sourceRunId)",
+                "CREATE INDEX IF NOT EXISTS index_orbit_artifact_versions_runId ON orbit_artifact_versions(runId)",
+            )
+            override fun migrate(db: SupportSQLiteDatabase) = statements.forEach { db.execSQL(it) }
+            override fun migrate(connection: SQLiteConnection) = statements.forEach { connection.execSQL(it) }
+        }
+        /** Durable chat hand-offs and bounded task history; existing user data is retained. */
+        val MIGRATION_45_46 = object : Migration(45, 46) {
+            private val statements = listOf(
+                "ALTER TABLE orbit_runs ADD COLUMN handoffTurnId TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE orbit_deliveries ADD COLUMN handoffTurnId TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE orbit_deliveries ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE orbit_deliveries ADD COLUMN retryAt INTEGER NOT NULL DEFAULT 0",
+                "CREATE INDEX IF NOT EXISTS index_orbit_runs_taskId_startedAt ON orbit_runs(taskId, startedAt)",
+            )
+            override fun migrate(db: SupportSQLiteDatabase) = statements.forEach { db.execSQL(it) }
+            override fun migrate(connection: SQLiteConnection) = statements.forEach { connection.execSQL(it) }
+        }
         val MIGRATION_44_45 = object : Migration(44, 45) {
             private val sql = "ALTER TABLE orbit_tasks ADD COLUMN modelRole TEXT NOT NULL DEFAULT 'DEFAULT'"
             override fun migrate(db: SupportSQLiteDatabase) = db.execSQL(sql)
@@ -1247,6 +1268,8 @@ abstract class AppDatabase : RoomDatabase() {
                                 MIGRATION_42_43,
                                 MIGRATION_43_44,
                                 MIGRATION_44_45,
+                                MIGRATION_45_46,
+                                MIGRATION_46_47,
                             ) // 添加新的迁移
                             // personal/dev briefly shipped experimental schemas 21-23. Only those
                             // development inputs are intentionally rebuilt; stable v20 is migrated.

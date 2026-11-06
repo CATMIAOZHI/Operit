@@ -245,17 +245,17 @@ internal object OrbitForget {
             }
             val dao = AppDatabase.getDatabase(context).orbitTaskDao()
             val spaceId = space(context, orbit)
-            // A correction of memory: a background review that read the old messages is now outdated,
-            // so nothing it found can be saved, and every chat rebuilds its memory prefix.
-            step("learning") {
-                try {
-                    OrbitLearningBoundary.explicitEdit(context, spaceId) { }
-                } catch (e: IllegalStateException) {
-                    // Another correction landed between the read and the write; one more try settles it.
-                    OrbitLearningBoundary.explicitEdit(context, spaceId) { }
-                }
-                0
+            // Stop a review holding old chat in its context, and keep a new one from starting, until all is removed.
+            OrbitTaskRunner.holdTask(OrbitRoutines.alignmentId(orbit.id)) {
+            try {
+                OrbitLearningBoundary.forget(context, spaceId)
+            } catch (e: IllegalStateException) {
+                // Another correction landed between the read and the write; one more try settles it.
+                OrbitLearningBoundary.forget(context, spaceId)
             }
+            // The nightly reader applies the same boundary, including a saved unfinished window.
+            // Do not proceed with deletion if the reading boundary could not be persisted.
+            OrbitReviewReader.of(context, orbit.id).discardForgottenHistory()
             // Future work first, so nothing writes the information back while it is being removed.
             step("scheduled") {
                 val tasks = OrbitTaskRepository(context)
@@ -348,5 +348,6 @@ internal object OrbitForget {
             val unread = after.unscanned + if (after.tooMany) listOf("more matches than could be listed") else emptyList()
             withContext(Dispatchers.IO) { planStore(context, orbit.id).delete() }
             Outcome(cleaned, remaining, failed, unread)
+            }
         }
 }

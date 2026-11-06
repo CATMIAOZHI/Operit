@@ -114,7 +114,7 @@
     <string name="orbit_log_export_app_confirm_title">Export the app log?</string>
     <string name="orbit_log_export_app_confirm">The recent app log will be saved to Download/operit. It may contain bits of chats and device details, and it only leaves your phone if you share it.</string>
     <string name="orbit_log_export_tool_errors_confirm_title">Export tool errors?</string>
-    <string name="orbit_log_export_tool_errors_confirm">Pick a time range. The tool errors from that time will be saved to Download/operit.</string>
+    <string name="orbit_log_export_tool_errors_confirm">Pick a time range. The tool errors from that time will be saved to Download/operit. The export includes tool names, call parameters and error details, which may contain chat content, file paths or other private information. Check before sharing.</string>
     <string name="orbit_log_export_confirm_ok">Export</string>
     <string name="orbit_log_export_tool_errors_count">%1$d records in this range</string>
     <string name="orbit_log_export_counting">Counting…</string>

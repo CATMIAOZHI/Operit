@@ -130,6 +130,8 @@ internal fun OrbitApprovalCard(card: JSONObject) {
     val detail = a?.detail ?: if (loading) card.optString("detail") else ""
     // While the list is read the card is laid out as a waiting request, which it nearly always is.
     val waiting = a?.pending ?: loading
+    // A sending tool's call: allow once, or always allow that tool.
+    val sendTool = a?.let { com.ai.assistance.operit.features.orbit.OrbitConnectorSend.toolOf(it.action) }
     Column(
         Modifier.widthIn(max = 300.dp).clip(RoundedCornerShape(16.dp))
             .orbitCardGestures(onClick = { if (a != null) sheet = true })
@@ -163,6 +165,24 @@ internal fun OrbitApprovalCard(card: JSONObject) {
         }
         if (waiting) {
             val ready = a != null && orbit != null && !busy
+            fun approve(always: Boolean) {
+                val target = a ?: return
+                val owner = orbit ?: return
+                // Part of the request is hidden, or a key is to be typed: that is done in the sheet.
+                if (cut || OrbitApprovalActions.needsSecret(target.action) ||
+                    OrbitApprovalActions.picksModels(target.action)) { sheet = true; return }
+                busy = true
+                scope.launch {
+                    val result = runCatching { OrbitApprovals.decide(context, owner, target.id, true, "", always = always) }
+                    busy = false
+                    when {
+                        result.isFailure -> Toast.makeText(context, R.string.orbit_approval_failed, Toast.LENGTH_SHORT).show()
+                        result.getOrNull() == null -> Toast.makeText(context, R.string.orbit_approval_already, Toast.LENGTH_SHORT).show()
+                        // The app just did something for Orbit: show what came of it.
+                        target.action.isNotEmpty() -> sheet = true
+                    }
+                }
+            }
             Spacer(Modifier.height(14.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Surface(
@@ -177,24 +197,7 @@ internal fun OrbitApprovalCard(card: JSONObject) {
                     }
                 }
                 Surface(
-                    onClick = {
-                        val target = a ?: return@Surface
-                        val owner = orbit ?: return@Surface
-                        // Part of the request is hidden, or a key is to be typed: that is done in the sheet.
-                        if (cut || OrbitApprovalActions.needsSecret(target.action) ||
-                            OrbitApprovalActions.picksModels(target.action)) { sheet = true; return@Surface }
-                        busy = true
-                        scope.launch {
-                            val result = runCatching { OrbitApprovals.decide(context, owner, target.id, true, "") }
-                            busy = false
-                            when {
-                                result.isFailure -> Toast.makeText(context, R.string.orbit_approval_failed, Toast.LENGTH_SHORT).show()
-                                result.getOrNull() == null -> Toast.makeText(context, R.string.orbit_approval_already, Toast.LENGTH_SHORT).show()
-                                // The app just did something for Orbit: show what came of it.
-                                target.action.isNotEmpty() -> sheet = true
-                            }
-                        }
-                    },
+                    onClick = { approve(always = false) },
                     enabled = ready,
                     shape = RoundedCornerShape(50),
                     color = colors.primary,
@@ -202,7 +205,22 @@ internal fun OrbitApprovalCard(card: JSONObject) {
                     modifier = Modifier.weight(1f).height(46.dp),
                 ) {
                     Box(contentAlignment = Alignment.Center) {
-                        Text(stringResource(R.string.orbit_approval_approve), style = MaterialTheme.typography.titleMedium)
+                        Text(stringResource(if (sendTool != null) R.string.orbit_approval_allow_once else R.string.orbit_approval_approve),
+                            style = MaterialTheme.typography.titleMedium)
+                    }
+                }
+            }
+            if (sendTool != null) {
+                Spacer(Modifier.height(10.dp))
+                Surface(
+                    onClick = { approve(always = true) },
+                    enabled = ready,
+                    shape = RoundedCornerShape(50),
+                    color = colors.surface,
+                    modifier = Modifier.fillMaxWidth().height(46.dp),
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(stringResource(R.string.orbit_approval_allow_always), style = MaterialTheme.typography.titleMedium)
                     }
                 }
             }
@@ -290,13 +308,17 @@ internal fun OrbitApprovalSheet(
             onDismiss()
         }
     }
-    fun answer(approve: Boolean) {
+    val sendTool = remember(approval.id, approval.action) {
+        com.ai.assistance.operit.features.orbit.OrbitConnectorSend.toolOf(approval.action)
+    }
+    fun answer(approve: Boolean, always: Boolean = false) {
         busy = true
         scope.launch {
             val result = runCatching {
                 OrbitApprovals.decide(context, orbit, approval.id, approve, note,
                     secret = if (approve && needsKey) key else null,
-                    models = if (approve && modelRequest != null) picked.toList() else null)
+                    models = if (approve && modelRequest != null) picked.toList() else null,
+                    always = always)
             }
             busy = false
             if (result.isFailure) {
@@ -492,7 +514,19 @@ internal fun OrbitApprovalSheet(
                             CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = colors.onPrimary)
                             Spacer(Modifier.width(8.dp))
                         }
-                        Text(stringResource(R.string.orbit_approval_approve), style = MaterialTheme.typography.titleMedium)
+                        Text(stringResource(if (sendTool != null) R.string.orbit_approval_allow_once else R.string.orbit_approval_approve),
+                            style = MaterialTheme.typography.titleMedium)
+                    }
+                    if (sendTool != null) {
+                        Spacer(Modifier.height(8.dp))
+                        Surface(
+                            onClick = { answer(true, always = true) }, enabled = !busy, shape = RoundedCornerShape(50),
+                            color = colors.surface, modifier = Modifier.fillMaxWidth().height(52.dp),
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(stringResource(R.string.orbit_approval_allow_always), style = MaterialTheme.typography.titleMedium)
+                            }
+                        }
                     }
                     Spacer(Modifier.height(8.dp))
                     Surface(

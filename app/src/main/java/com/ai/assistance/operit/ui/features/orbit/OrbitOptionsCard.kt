@@ -54,11 +54,11 @@ internal fun OrbitOptionsCard(id: String) {
     val context = LocalContext.current
     // A shared picture waits for the saved options, so it shows them and which one was sent.
     var loaded by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        try { withContext(Dispatchers.IO) { OrbitOptions.load(context) } } finally { loaded = true }
+    val sets by OrbitOptions.sets.collectAsState()
+    LaunchedEffect(id, sets[id] == null) {
+        try { withContext(Dispatchers.IO) { OrbitOptions.find(context, id) } } finally { loaded = true }
     }
     com.ai.assistance.operit.ui.common.markdown.MarkdownSnapshotWork(!loaded)
-    val sets by OrbitOptions.sets.collectAsState()
     val chatId = com.ai.assistance.operit.ui.common.dynamicui.LocalDynamicUiOwner.current?.chatId
     val set = sets[id]?.takeIf { chatId == null || it.chatId == chatId } ?: return
     val send = LocalOrbitOptionSend.current

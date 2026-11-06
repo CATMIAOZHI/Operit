@@ -14,14 +14,16 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Muse-style reply options. Orbit makes a set with a tool and gets a token; the token written in
+ * Reply options. Orbit makes a set with a tool and gets a token; the token written in
  * its reply draws the options as buttons. A tap sends that option as the user's next message, and
- * the set can be used once. Sets are kept across restarts, newest [MAX] only.
+ * the set can be used once. The newest [MAX] stay in the index; older sets are archived on disk.
  */
 internal object OrbitOptions {
     const val MAX = 400
     const val MAX_OPTIONS = 4
     const val MAX_CHARS = 200
+    /** Archived sets read back for old messages stay in memory up to this many, the oldest read dropped first. */
+    private const val ARCHIVE_CACHE = 100
     private const val FILE = "orbit_options.json"
 
     /** The token as Orbit writes it in its reply. */
@@ -40,6 +42,11 @@ internal object OrbitOptions {
 
     private val _sets = MutableStateFlow<Map<String, OptionSet>>(emptyMap())
     val sets: StateFlow<Map<String, OptionSet>> = _sets
+    /** Ids of sets read back from the archive, oldest read first. They stay in their archive files. */
+    private val fromArchive = LinkedHashSet<String>()
+    private fun archived(id: String) = synchronized(fromArchive) { id in fromArchive }
+    /** Archived sets whose sent choice is still being written: kept in memory until it is on disk. */
+    private val pinned = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     @Volatile private var loaded = false
     private val lock = Any()
     /** Only the file write takes this, so a tap never waits for a save in progress. */
@@ -54,6 +61,59 @@ internal object OrbitOptions {
     }
 
     private fun file(context: Context) = File(context.applicationContext.filesDir, FILE)
+    private fun archive(context: Context, id: String) =
+        File(context.applicationContext.filesDir, "orbit_options_archive/$id.json")
+
+    private fun encode(set: OptionSet) = JSONObject().put("id", set.id).put("chat", set.chatId)
+        .put("options", JSONArray(set.options)).put("chosen", if (set.sent) set.chosen else -1).put("at", set.at)
+
+    /** Older messages load only their own option set; archives never have to be read as one big file. */
+    fun find(context: Context, id: String): OptionSet? {
+        load(context)
+        _sets.value[id]?.let { return it }
+        if (!id.matches(Regex("[a-z0-9]{10}"))) return null
+        return synchronized(lock) {
+            _sets.value[id] ?: runCatching {
+                val saved = archive(context, id)
+                if (!saved.isFile) return@runCatching null
+                val o = JSONObject(android.util.AtomicFile(saved).readFully().toString(Charsets.UTF_8))
+                val options = o.getJSONArray("options").let { a -> (0 until a.length()).map(a::getString) }
+                val chosen = o.optInt("chosen", -1)
+                OptionSet(id, o.getString("chat"), options, chosen, o.optLong("at"), sent = chosen >= 0)
+                    .also { set ->
+                        // Scrolling through old chats must not grow memory or the index without end:
+                        // the oldest read archived set is let go again (not one tapped and on its way).
+                        synchronized(fromArchive) {
+                            fromArchive.add(id)
+                            // Decided on the newest state, so a tap landing meanwhile is never dropped.
+                            _sets.update { current ->
+                                val over = (fromArchive.size - ARCHIVE_CACHE).coerceAtLeast(0)
+                                val drop = fromArchive.filter {
+                                    it != id && it !in pinned && current[it]?.let { s -> s.chosen < 0 || s.sent } != false
+                                }.take(over).toSet()
+                                current + (id to set) - drop
+                            }
+                            val now = _sets.value
+                            fromArchive.removeAll { it != id && it !in now }
+                        }
+                    }
+            }.onFailure { AppLogger.w("OrbitOptions", "Archived reply options could not be read") }.getOrNull()
+        }
+    }
+
+    private fun saveArchive(context: Context, set: OptionSet) {
+        val target = archive(context, set.id)
+        target.parentFile?.mkdirs()
+        val atomic = android.util.AtomicFile(target)
+        val output = atomic.startWrite()
+        try {
+            output.write(encode(set).toString().toByteArray(Charsets.UTF_8))
+            atomic.finishWrite(output)
+        } catch (error: Throwable) {
+            atomic.failWrite(output)
+            throw error
+        }
+    }
 
     /** Reads the saved sets once; call off the main thread. */
     fun load(context: Context) {
@@ -77,8 +137,8 @@ internal object OrbitOptions {
     private fun save(context: Context) = synchronized(saveLock) {
         val array = JSONArray()
         _sets.value.values.sortedBy { it.at }.forEach { set ->
-            array.put(JSONObject().put("id", set.id).put("chat", set.chatId).put("options", JSONArray(set.options))
-                .put("chosen", if (set.sent) set.chosen else -1).put("at", set.at))
+            // A set read back from the archive keeps living in its own archive file.
+            if (!archived(set.id)) array.put(encode(set))
         }
         val target = file(context)
         val temp = File(target.parentFile, "$FILE.tmp")
@@ -97,12 +157,19 @@ internal object OrbitOptions {
         require(clean.all { it.length <= MAX_CHARS }) { "Each option is at most $MAX_CHARS characters" }
         val id = java.util.UUID.randomUUID().toString().replace("-", "").take(10)
         synchronized(lock) {
-            _sets.update { all ->
-                (all + (id to OptionSet(id, chatId, clean, at = System.currentTimeMillis()))).values
-                    .sortedBy { it.at }.takeLast(MAX).associateBy { it.id }
+            synchronized(saveLock) {
+                val all = _sets.value.filterKeys { !archived(it) } + (id to OptionSet(id, chatId, clean, at = System.currentTimeMillis()))
+                val evicted = all.values.sortedBy { it.at }.dropLast(MAX).filter { it.chosen < 0 || it.sent }
+                // Archive before removing anything from the index. A failed write never loses a set.
+                evicted.forEach { saveArchive(context, it) }
+                val ids = evicted.map { it.id }.toSet()
+                _sets.update { current ->
+                    // A tap racing the archive stays live until its newer state has been saved too.
+                    (current + (id to all.getValue(id))) - ids.filter { current[it] == all[it] }.toSet()
+                }
+                save(context)
             }
         }
-        save(context)
         return id
     }
 
@@ -119,13 +186,29 @@ internal object OrbitOptions {
 
     /** The tapped option reached the chat: keep the set used from now on, across restarts. */
     fun confirm(context: Context, id: String, index: Int) {
+        var done: OptionSet? = null
+        // An archived set is pinned before it turns sent (only then could it be let go), and stays
+        // in memory until written, so reading it back can never bring the old state.
+        val fromFile = archived(id)
+        if (fromFile) pinned.add(id)
         while (true) {
             val all = _sets.value
-            val set = all[id] ?: return
-            if (set.chosen != index || set.sent) return
-            if (_sets.compareAndSet(all, all + (id to set.copy(sent = true)))) break
+            val set = all[id]
+            if (set == null || set.chosen != index || set.sent) {
+                if (fromFile) pinned.remove(id)
+                return
+            }
+            done = set.copy(sent = true)
+            if (_sets.compareAndSet(all, all + (id to done))) break
         }
-        saveSoon(context)
+        val saved = done ?: return
+        if (fromFile) {
+            // Read back from the archive: only its own file changes.
+            val app = context.applicationContext
+            io.launch {
+                try { runCatching { synchronized(saveLock) { saveArchive(app, saved) } } } finally { pinned.remove(id) }
+            }
+        } else saveSoon(context)
     }
 
     /** Undoes [choose] when the message could not be sent after all. */

@@ -166,6 +166,8 @@
     <string name="speech_error_microphone_unavailable">Cannot use the microphone. Check the microphone permission, or whether another app is using it.</string>
     <string name="speech_error_batch_not_supported">This speech engine does not support that recognition mode.</string>
     <string name="speech_error_engine_unavailable">The speech engine failed to initialize. Please try again.</string>
+    <string name="speech_error_recognition_failed">Speech recognition failed. Please try again, or check the selected engine in voice settings.</string>
+    <string name="video_attachment_playback_failed">This video cannot be played. Check that the file is complete, or open it in another player.</string>
     <string name="floating_recognizing">Recognizing…</string>
     <string name="floating_thinking_2">Thinking...</string>
     <string name="floating_didnt_hear_clearly">Didn\'t hear clearly</string>
@@ -9196,6 +9198,8 @@
     <string name="orbit_quota_extra_mode_weekly_desc">Refilled with the weekly allowance every Monday at midnight</string>
     <string name="orbit_quota_left"> (%1$s left)</string>
     <string name="orbit_quota_status_paused">Both allowances are used up; %1$s is paused</string>
+    <string name="orbit_quota_paused_title">Allowance used up</string>
+    <string name="orbit_dev_export_scope">This exports the full current chat, including reasoning, tool calls and results, hidden messages, reply versions, and requests and events recorded in developer mode. It may contain private content; check before sharing.</string>
     <string name="orbit_quota_status_extra">This week\'s allowance is used up; using the extra allowance</string>
     <string name="orbit_quota_usage">Usage</string>
     <string name="orbit_quota_adjust">Change allowances</string>
@@ -9752,8 +9756,8 @@
     <string name="orbit_access_row_desc">How Orbit\'s tool calls are allowed</string>
     <string name="orbit_access_full">Full access</string>
     <string name="orbit_access_review">Auto review (fast)</string>
-    <string name="orbit_access_help">Neither option asks you. The difference is whether a quick automatic review checks each call first. Tools you set individually in developer mode keep their own setting.</string>
-    <string name="orbit_access_full_desc">Every tool runs right away with no review. Fastest; only use it if you trust Orbit.</string>
+    <string name="orbit_access_help">The difference is whether a quick automatic review checks each call first. Either way, sending messages out through a connector asks you with a card in the chat. Tools you set individually in developer mode keep their own setting.</string>
+    <string name="orbit_access_full_desc">Tools run right away with no review. Fastest; only use it if you trust Orbit. Sending messages out through a connector still asks you in the chat first, until you choose \"Always allow\".</string>
     <string name="orbit_access_review_desc">Orbit\'s own tools run right away; general tools like terminal, files and browser get a quick automatic review first.</string>
     <string name="orbit_vault_desc">Passwords, API keys and OAuth logins used by %1$s. Tap an entry to see, change or delete it. OAuth credential values are never displayed; %1$s never sees any saved value.</string>
     <string name="orbit_vault_empty">No passwords, keys or OAuth logins saved yet. When one is needed, %1$s shows a secure card.</string>
@@ -9770,7 +9774,7 @@
     <string name="orbit_tools_row">Per-tool permissions</string>
     <string name="orbit_tools_row_desc">Orbit\'s own list, separate from the main app</string>
     <string name="orbit_tools_title">Tool permissions</string>
-    <string name="orbit_tools_help">Only for Orbit\'s chats and its background tasks; the main app\'s tool permissions stay as they are. Orbit\'s own tools and the built-in lookup-only tools (time, search, weather and the like) are allowed by default; other tools go through the fast automatic review.</string>
+    <string name="orbit_tools_help">Only for Orbit\'s chats and its background tasks; the main app\'s tool permissions stay as they are. Orbit\'s own tools and the built-in lookup-only tools (time, search, weather and the like) are allowed by default; tools that send messages out ask you with a card in the chat; other tools go through the fast automatic review.</string>
     <string name="orbit_tools_search">Search tools</string>
     <string name="orbit_tools_empty">No tools found</string>
     <string name="orbit_tools_folder_internal">Orbit\'s own tools</string>
@@ -9780,6 +9784,8 @@
     <string name="orbit_tools_level_allow">Always allow</string>
     <string name="orbit_tools_level_review">Auto review</string>
     <string name="orbit_tools_level_forbid">Forbid</string>
+    <string name="orbit_tools_level_ask">Ask every time</string>
+    <string name="orbit_tools_level_ask_desc">It sends things out, so each time a card in the chat waits for your OK</string>
     <string name="orbit_tools_level_default">%1$s · default</string>
     <string name="orbit_tools_level_allow_desc">Runs right away, no review</string>
     <string name="orbit_tools_level_review_desc">The fast automatic review decides first</string>
@@ -9829,6 +9835,17 @@
     <string name="orbit_approval_card_gone">This request is no longer here</string>
     <string name="orbit_approval_deny">Decline</string>
     <string name="orbit_approval_approve">Approve</string>
+    <string name="orbit_approval_allow_once">Allow once</string>
+    <string name="orbit_approval_allow_always">Always allow</string>
+    <string name="orbit_send_card_title">Send with %1$s</string>
+    <string name="orbit_send_card_tool">Tool: %1$s</string>
+    <string name="orbit_send_card_param">%1$s: %2$s</string>
+    <string name="orbit_send_running">Approved, running now. If this never changes to the tool\'s result, the app stopped while it ran: it may or may not have gone out. Check before doing it again; ask the user if unsure.</string>
+    <string name="orbit_send_ran">%1$s ran. What it returned (it says whether the message actually went out): %2$s</string>
+    <string name="orbit_send_failed">%1$s ran but failed: %2$s</string>
+    <string name="orbit_send_nothing">(nothing)</string>
+    <string name="orbit_send_no_reason">no reason given</string>
+    <string name="orbit_send_always_note">The user chose always allow for %1$s: it now runs in this Orbit\'s chats without a card.</string>
     <string name="orbit_approval_already">This request was already answered</string>
     <string name="orbit_approval_failed">Couldn\'t save. Please try again</string>
     <string name="orbit_approval_view">View details</string>

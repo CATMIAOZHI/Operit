@@ -442,6 +442,12 @@ class ToolPermissionSystem private constructor(private val context: Context) {
             onAsk = {
                 if (UnattendedChats.contains(callerChatId)) {
                     permissionDeniedBySettings(UNATTENDED_DENIAL_REASON)
+                } else if (isOrbitChat(callerChatId)) {
+                    // Orbit never waits on a prompt: a sending tool becomes a card in its chat instead.
+                    ToolPermissionDecision.Denied(
+                        source = ToolPermissionDenialSource.SETTINGS,
+                        rejection = com.ai.assistance.operit.features.orbit.OrbitConnectorSend.ask(context, callerChatId, tool),
+                    )
                 } else {
                     requestPermission(tool, reviewContext)
                 }
@@ -1198,9 +1204,10 @@ internal fun resolveEffectivePermissionLevel(
 ): PermissionLevel = toolOverride ?: masterLevel
 
 /**
- * The level a tool runs at in an Orbit's own chat, which is fixed to the automatic review. A tool
- * the user always allows or forbids keeps that choice, and one set to ask is reviewed instead, so
- * Orbit never waits on a prompt.
+ * The level a tool runs at in an Orbit's own chat. A tool the user always allows or forbids keeps
+ * that choice. A tool that sends for the user ([defaultToolLevel] ASK) is always asked about, on a
+ * card in the chat; every other tool goes through the automatic review, so Orbit never waits on a
+ * prompt.
  */
 internal fun orbitPermissionLevel(
     storedToolLevel: PermissionLevel?,
@@ -1209,7 +1216,7 @@ internal fun orbitPermissionLevel(
     when (storedToolLevel ?: defaultToolLevel) {
         PermissionLevel.ALLOW -> PermissionLevel.ALLOW
         PermissionLevel.FORBID -> PermissionLevel.FORBID
-        else -> PermissionLevel.AUTO_REVIEW
+        else -> if (defaultToolLevel == PermissionLevel.ASK) PermissionLevel.ASK else PermissionLevel.AUTO_REVIEW
     }
 
 /** Generic file tools that only read; in an Orbit's chat they run unreviewed inside its own folder. */
@@ -1317,14 +1324,17 @@ internal fun isOrbitLookupTool(toolName: String, isBuiltInPackageTool: (String) 
 /**
  * The level a tool takes in Orbit's chats when the user has not changed it in Orbit's list. With
  * [fullAccess] every tool runs unreviewed; otherwise Orbit's own tools and the built-in lookup tools
- * ([isOrbitLookupTool]) do.
+ * ([isOrbitLookupTool]) do. A tool that sends for the user is asked about even with [fullAccess],
+ * until the user chooses "always allow" for it.
  */
 internal fun orbitDefaultPermissionLevel(
     toolName: String,
     fullAccess: Boolean,
     isBuiltInPackageTool: (String) -> Boolean,
 ): PermissionLevel =
-    if (fullAccess || isOrbitInternalTool(toolName) || isOrbitLookupTool(toolName, isBuiltInPackageTool)) {
+    if (com.ai.assistance.operit.features.orbit.OrbitConnectorSend.isSendTool(toolName)) {
+        PermissionLevel.ASK
+    } else if (fullAccess || isOrbitInternalTool(toolName) || isOrbitLookupTool(toolName, isBuiltInPackageTool)) {
         PermissionLevel.ALLOW
     } else {
         PermissionLevel.AUTO_REVIEW

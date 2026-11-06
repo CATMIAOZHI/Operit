@@ -153,9 +153,10 @@ internal object OrbitSetup {
     /** The main app's chat and helper models when they are ready to use, shown as "configuration / model". */
     data class Existing(val main: String, val assistant: String)
 
-    private fun ready(config: com.ai.assistance.operit.data.model.ModelConfigData): Boolean {
+    private fun ready(context: Context, config: com.ai.assistance.operit.data.model.ModelConfigData): Boolean {
         val provider = ApiProviderType.fromProviderTypeId(config.apiProviderTypeId) ?: config.apiProviderType
-        return hasKey(config) || provider in OrbitApprovalActions.ACCOUNT_PROVIDERS ||
+        if (provider in OrbitApprovalActions.SIGN_IN_PROVIDERS) return signedIn(context, provider)
+        return hasKey(config) || provider in OrbitApprovalActions.LOCAL_PROVIDERS ||
             !com.ai.assistance.operit.data.collects.ApiProviderConfigs.requiresApiKey(config.apiProviderTypeId, config.apiEndpoint)
     }
 
@@ -172,7 +173,7 @@ internal object OrbitSetup {
     private suspend fun usable(app: Context, configs: ModelConfigManager, functions: FunctionalConfigManager,
         function: FunctionType): String? {
         val mapping = functions.getEffectiveConfigMappingForFunction(function)
-        val config = configs.getModelConfig(mapping.configId)?.takeIf(::ready) ?: return null
+        val config = configs.getModelConfig(mapping.configId)?.takeIf { ready(app, it) } ?: return null
         val index = mapping.resolveModelIndex(config.modelName).modelIndex
         val model = com.ai.assistance.operit.data.model.getModelList(config.modelName).getOrNull(index)
         val summary = configs.getAllConfigSummaries().firstOrNull { it.id == config.id } ?: return null
@@ -198,6 +199,11 @@ internal object OrbitSetup {
         check(running.compareAndSet(false, true)) { "Setup is already running" }
         val app = context.applicationContext
         try {
+            val configs = ModelConfigManager(app)
+            configs.initializeIfNeeded()
+            if (usable(app, configs, FunctionalConfigManager(app), FunctionType.CHAT) == null) {
+                throw SetupException(Problem.KEY, "The existing chat model is no longer ready")
+            }
             withContext(NonCancellable) {
                 if (!undoPending(app)) throw SetupException(Problem.OTHER, LEFTOVER)
                 prefs(app).edit().remove(KEY_PENDING_CONFIG).putString(KEY_PENDING_ORBIT, "").commit()

@@ -4359,10 +4359,19 @@ class ChatHistoryManager private constructor(private val context: Context) {
             }
         }
 
+    /**
+     * Chats already checked for old repeated rows since the app started. The repair scans the whole
+     * chat, and nothing writes such rows any more, so it runs once per chat rather than every send.
+     */
+    private val repairedRuntimeChats = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
     suspend fun loadRuntimeChatMessages(chatId: String): List<ChatMessage> {
         return withContext(Dispatchers.IO) {
             try {
-                repairRepeatedIntermediateMessages(chatId)
+                if (chatId !in repairedRuntimeChats) {
+                    repairRepeatedIntermediateMessages(chatId)
+                    repairedRuntimeChats.add(chatId)
+                }
                 val latestSummaryTimestamp = messageDao.getLatestSummaryTimestamp(chatId)
                 val messageEntities =
                     if (latestSummaryTimestamp != null) {
