@@ -35,7 +35,7 @@
         {"name": "quality", "type": "string", "required": false, "description": {"zh": "auto、low、medium 或 high", "en": "auto, low, medium, or high"}},
         {"name": "background", "type": "string", "required": false, "description": {"zh": "auto、opaque 或 transparent；有参考图时 auto 按 opaque 处理", "en": "auto, opaque, or transparent; with references, auto is sent as opaque"}},
         {"name": "file_name", "type": "string", "required": false, "description": {"zh": "保存文件名，不含路径和扩展名", "en": "Output filename without path or extension"}},
-        {"name": "chat_model", "type": "string", "required": false, "description": {"zh": "可选承载模型；默认 gpt-5.5，若服务端不支持可指定当前 Codex 模型", "en": "Optional carrier model, default gpt-5.5; change if the server rejects it"}}
+        {"name": "chat_model", "type": "string", "required": false, "description": {"zh": "可选承载模型；默认 gpt-6-luna，若服务端不支持可指定当前 Codex 模型", "en": "Optional carrier model, default gpt-6-luna; change if the server rejects it"}}
       ]
     },
     {
@@ -49,7 +49,7 @@
         {"name": "quality", "type": "string", "required": false, "description": {"zh": "auto、low、medium 或 high", "en": "auto, low, medium, or high"}},
         {"name": "background", "type": "string", "required": false, "description": {"zh": "auto、opaque 或 transparent；auto 按 opaque 处理", "en": "auto, opaque, or transparent; auto is sent as opaque"}},
         {"name": "file_name", "type": "string", "required": false, "description": {"zh": "保存文件名，不含路径和扩展名", "en": "Output filename without path or extension"}},
-        {"name": "chat_model", "type": "string", "required": false, "description": {"zh": "可选承载模型；默认 gpt-5.5", "en": "Optional carrier model, default gpt-5.5"}}
+        {"name": "chat_model", "type": "string", "required": false, "description": {"zh": "可选承载模型；默认 gpt-6-luna", "en": "Optional carrier model, default gpt-6-luna"}}
       ]
     }
   ]
