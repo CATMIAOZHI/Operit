@@ -111,12 +111,6 @@ class OrbitLearningBoundary(
             return boundary.edit(java.util.UUID.randomUUID().toString(), boundary.snapshot().generation, action = action)
         }
 
-        suspend fun forget(context: Context, spaceId: String) {
-            val boundary = forSpace(context, spaceId) ?: error("This memory space has no Orbit owner")
-            boundary.edit(java.util.UUID.randomUUID().toString(), boundary.snapshot().generation,
-                discardHistory = true) { }
-        }
-
         suspend fun filter(context: Context, spaceId: String, chatId: String,
             messages: List<com.ai.assistance.operit.data.model.ChatMessage>): Pair<Guard?, List<com.ai.assistance.operit.data.model.ChatMessage>> {
             val boundary = forSpace(context, spaceId) ?: return null to messages

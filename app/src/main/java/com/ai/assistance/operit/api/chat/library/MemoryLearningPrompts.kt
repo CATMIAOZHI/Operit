@@ -37,6 +37,8 @@ internal fun buildMemoryLearningInstructions(chatId: String, notes: Boolean, ski
             Do not invent facts or remove existing facts just because excerpts omit them.
             You have scoped learning tools only. Do not execute scripts or perform external actions.
             Do not retain credentials or transient task status.
+            When the user asks to forget something, do not record it. Within this run's scope (the documents or
+            skills you may change below), also remove what is already saved about it, including earlier in this run.
         """.trimIndent())
         if (notes) appendLine("""
             Scope: durable memory and user notes.

@@ -4,35 +4,32 @@ import android.content.Context
 import com.ai.assistance.operit.data.db.AppDatabase
 import com.ai.assistance.operit.data.preferences.LearnedSkillRepository
 import com.ai.assistance.operit.data.preferences.MemoryNotesRepository
-import com.ai.assistance.operit.data.preferences.MemoryReviewRepository
-import com.ai.assistance.operit.data.preferences.OrbitPreferences
 import com.ai.assistance.operit.data.preferences.OrbitProfile
 import com.ai.assistance.operit.data.preferences.UserProfileDocumentRepository
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
 import org.json.JSONObject
-import java.io.File
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Forget plan / confirm for one Orbit. A plan is a read-only scan of every place the information
- * lives (memory, profile, files, skills, goals, scheduled work, task outputs, boards, approvals,
- * undelivered reports, the change record); it is kept encrypted until the user answers. Confirming rescans,
- * refuses a plan that no longer covers what is there, cleans each place through its own store and
- * verifies. Nothing about the forgotten information is kept, so mentioning it again later is new.
+ * Forgetting for one Orbit: find where the information is stored, show the user, and after they agree
+ * remove it. Background learning reads the chat too; its prompts tell it to drop what the user asked
+ * to forget, so nothing here stops or rewinds it.
  */
 internal object OrbitForget {
-    const val PLAN_TTL_MS = 2 * 60 * 60_000L
-    /** A plan with more places than this is too broad to show the user; narrower terms are needed. */
-    const val MAX_PLACES = 200
-    /** Places the app does not edit by itself; the user reviews them by hand. */
+    /** Places listed to the model at most; the summary still counts them all. */
+    const val SHOWN = 100
+    /** Places the app does not edit by itself; the user changes them by hand. */
     const val USER_REVIEW = "identity"
     private val mutex = Mutex()
+    private class Plan(val id: String, val chatId: String, val createdAt: Long, val terms: List<String>)
+    /** The latest plan of each Orbit; a restart drops it and Orbit plans again. */
+    private val plans = ConcurrentHashMap<String, Plan>()
 
+    /** One place: a whole file or item, or the matching lines of one file ("path#L3,7"). */
     data class Hit(val category: String, val locator: String, val action: String) {
         fun json(): JSONObject = JSONObject().put("category", category).put("where", locator).put("action", action)
     }
@@ -47,171 +44,90 @@ internal object OrbitForget {
 
     fun normalize(text: String) = text.lowercase().replace(Regex("\\s+"), " ").trim()
 
-    private fun planStore(context: Context, orbitId: String) = OrbitSecretFile.forOrbit(context, orbitId, "forgetplan")
-
     private suspend fun space(context: Context, orbit: OrbitProfile) = OrbitMemoryScope.ensureInitialized(context, orbit)
 
-    /**
-     * What a scan found, and the places it could not read (too large, unreadable); while any are
-     * left unread, nothing can be called clean.
-     */
-    class Scan(val hits: List<Hit>, val unscanned: List<String>, val tooMany: Boolean = false)
-
-    /** The kinds of place a scan looks through, for the report. */
-    val SCANNED = listOf("memory", "profile", "files (people, groups, daily log, settings files, nightly reviews, " +
-        "alignment state, files/)", "SOUL.md", "IDENTITY.md", "skills", "goals", "scheduled",
-        "task outputs (every saved version)", "feed (with its cards), ideas and tracking", "approvals",
-        "undelivered reports", "change history")
+    /** The kinds of place a search looks through, for the report. */
+    val SCANNED = listOf("memory", "profile", "files (people, groups, daily log, nightly reviews, alignment, files/)",
+        "SOUL.md", "IDENTITY.md", "skills Orbit learned", "goals", "scheduled", "feed and ideas")
 
     /** Read-only: every place [matcher] finds the information. */
-    suspend fun scan(context: Context, orbit: OrbitProfile, matcher: Matcher): Scan = withContext(Dispatchers.IO) {
-        // Stops collecting at what a plan can show, so a common word cannot fill memory.
-        var tooMany = false
-        val hits = object : ArrayList<Hit>() {
-            override fun add(element: Hit): Boolean {
-                if (size >= MAX_PLACES) { tooMany = true; return false }
-                return super.add(element)
-            }
+    suspend fun scan(context: Context, orbit: OrbitProfile, matcher: Matcher): List<Hit> = withContext(Dispatchers.IO) {
+        val hits = mutableListOf<Hit>()
+        // One place per file, whatever the number of matching lines, so a common word cannot fill memory.
+        fun lines(category: String, path: String, text: String, action: String = "edit") {
+            val found = matcher.lines(text)
+            if (found.isEmpty()) return
+            val shown = found.take(10).joinToString(",") + if (found.size > 10) ",+${found.size - 10}" else ""
+            hits += Hit(category, "$path#L$shown", action)
         }
-        val unscanned = mutableListOf<String>()
         val spaceId = space(context, orbit)
-        MemoryNotesRepository(context, spaceId).load().markdown.let { text ->
-            matcher.lines(text).forEach { hits += Hit("memory", "memory.md#L$it", "edit") }
-        }
-        UserProfileDocumentRepository.forMemorySpace(context, spaceId).load().let { text ->
-            matcher.lines(text).forEach { hits += Hit("profile", "user.md#L$it", "edit") }
-        }
+        lines("memory", "memory.md", MemoryNotesRepository(context, spaceId).load().markdown)
+        lines("profile", "user.md", UserProfileDocumentRepository.forMemorySpace(context, spaceId).load())
         val files = OrbitFiles.of(context, orbit.id)
         // INDEX.md is rebuilt by the app from the person and group files, so it follows their cleanup.
-        // Nightly reviews and alignment state hold what the user said too, so they are scanned.
         files.list(includeReview = true).filterNot { OrbitFiles.isIndex(it.path) }.forEach { entry ->
-            val deletable = !OrbitFiles.isIndex(entry.path) && entry.path !in OrbitFiles.SINGLE &&
-                entry.path !in OrbitFiles.ALIGNMENT_DATA
-            // The name without its extension, so a term like "md" or "json" cannot match every file.
+            val deletable = entry.path !in OrbitFiles.SINGLE && entry.path !in OrbitFiles.ALIGNMENT_DATA
+            // The name without its extension, so a term like "md" cannot match every file.
             val name = entry.path.substringAfterLast('/').let { it.substringBeforeLast('.', it) }
             if (deletable && matcher.hit(name)) {
                 hits += Hit("files", entry.path, "delete")
-            } else if (OrbitFiles.isText(entry.path)) {
-                val text = if (entry.size <= OrbitFiles.MAX_TEXT) runCatching { files.read(entry.path) }.getOrNull() else null
-                if (text == null) unscanned += entry.path
-                else matcher.lines(text).forEach { hits += Hit("files", "${entry.path}#L$it", "edit") }
+            } else if (OrbitFiles.isText(entry.path) && entry.size <= OrbitFiles.MAX_TEXT) {
+                runCatching { files.read(entry.path) }.getOrNull()?.let { lines("files", entry.path, it) }
             }
         }
-        // Soul and identity are the Orbit's own voice; they are listed for the user, never auto-edited.
-        // PROMPT.md is the app's built-in handbook and holds nothing about the user.
-        val soul = runCatching { OrbitSoulRepository(context, orbit.id).snapshot().current.body }.getOrNull()
-        if (soul == null) unscanned += "SOUL.md"
-        soul?.let { matcher.lines(it) }?.forEach { hits += Hit(USER_REVIEW, "SOUL.md#L$it", "user_review") }
-        val identity = runCatching { OrbitPromptFiles.identity(context, orbit.id) }.getOrNull()
-        if (identity == null) unscanned += "IDENTITY.md"
-        identity?.let { matcher.lines(it) }?.forEach { hits += Hit(USER_REVIEW, "IDENTITY.md#L$it", "user_review") }
-        val skills = LearnedSkillRepository(context, spaceId)
-        val owned = runCatching { skills.owned(spaceId) }.getOrNull()
-        if (owned == null) unscanned += "skills"
-        owned.orEmpty().forEach { name ->
-            val paths = runCatching { skills.files(name) }.getOrNull()
-            if (paths == null) unscanned += "skills/$name"
-            paths.orEmpty().forEach { path ->
-                val text = runCatching { skills.read(name, path).text }.getOrNull()
-                if (text == null) unscanned += "skills/$name/$path"
-                else matcher.lines(text).forEach { hits += Hit("skills", "skills/$name/$path#L$it", "edit") }
-            }
-        }
-        // Skills Orbit did not learn (ones the user added, wrote or changed) are only listed: the user
-        // edits them. Files of a preinstalled skill still exactly as installed hold nothing about the user.
-        if (owned != null) {
-            val installed = runCatching {
-                com.ai.assistance.operit.core.tools.skill.SkillManager.forMemorySpace(context, spaceId).getAvailableSkills()
-            }.getOrNull()
-            if (installed == null) unscanned += "skills"
-            val pristine = runCatching { OrbitBundledSkills.installedHashes(context, orbit.id) }.getOrDefault(emptyMap())
-            installed.orEmpty().filterKeys { it !in owned }.forEach { (name, skill) ->
-                val root = skill.directory.canonicalFile
-                val files = root.walkTopDown().filter { it.isFile }.take(101).toList()
-                if (files.size > 100) unscanned += "skills/$name (more than 100 files)"
-                files.take(100).forEach { file ->
+        // Soul and identity are the Orbit's own voice: listed for the user, never edited by the app.
+        runCatching { OrbitSoulRepository(context, orbit.id).snapshot().current.body }.getOrNull()
+            ?.let { lines(USER_REVIEW, "SOUL.md", it, "user_review") }
+        runCatching { OrbitPromptFiles.identity(context, orbit.id) }.getOrNull()
+            ?.let { lines(USER_REVIEW, "IDENTITY.md", it, "user_review") }
+        // The installed skills are listed once for the whole scan; each file is then read straight from disk.
+        runCatching {
+            val installed = com.ai.assistance.operit.core.tools.skill.SkillManager.forMemorySpace(context, spaceId).getAvailableSkills()
+            LearnedSkillRepository(context, spaceId).owned(spaceId, installed).forEach { name ->
+                val root = installed[name]?.directory?.canonicalFile ?: return@forEach
+                root.walkTopDown().maxDepth(5).filter { it.isFile && it.length() <= 256_000 &&
+                    it.canonicalFile.toPath().startsWith(root.toPath()) }.take(100).forEach { file ->
                     val path = file.relativeTo(root).invariantSeparatorsPath
-                    val bytes = if (file.length() <= 256_000) runCatching { file.readBytes() }.getOrNull() else null
-                    when {
-                        bytes == null -> unscanned += "skills/$name/$path"
-                        pristine[name]?.get(path) == OrbitBundledSkills.hashOf(bytes) -> Unit
-                        else -> matcher.lines(bytes.toString(Charsets.UTF_8))
-                            .forEach { hits += Hit(USER_REVIEW, "skills/$name/$path#L$it", "user_review") }
-                    }
+                    // Only files the skill store can edit, so confirm can clean every one it lists.
+                    if (runCatching { LearnedSkillRepository.validatePath(path) }.isFailure) return@forEach
+                    runCatching { file.readText() }.getOrNull()?.let { lines("skills", "skills/$name/$path", it) }
                 }
             }
-        }
+        }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
         val dao = AppDatabase.getDatabase(context).orbitTaskDao()
         dao.goals(orbit.id).filter { matcher.hit(it.title) || matcher.hit(it.plan) }.forEach {
             hits += Hit("goals", "goal:${it.id}", if (matcher.hit(it.title)) "stop" else "edit")
         }
         dao.tasks(orbit.id).filter { matcher.hit(it.title) || matcher.hit(it.instruction) || matcher.hit(it.lastObservation) }
             .forEach { hits += Hit("scheduled", "task:${it.id}", "stop") }
-        // Every saved version of what tasks made, older ones included; a version cannot be edited, only
-        // removed. Task outputs are always saved as text, whatever their file name.
-        val root = OrbitPreferences.getInstance(context).orbitDir(orbit.id).canonicalFile
-        var offset = 0
-        while (true) {
-            val page = dao.artifacts(orbit.id, 100, offset)
-            page.forEach { version ->
-                val file = File(root, version.relativePath).canonicalFile
-                val found = matcher.hit(version.name.substringBeforeLast('.', version.name)) || run {
-                    val text = if (file.toPath().startsWith(root.toPath()) && file.isFile && file.length() <= 800_000)
-                        runCatching { file.readText() }.getOrNull() else null
-                    if (text == null && file.exists()) unscanned += "artifact:${version.id}"
-                    text != null && matcher.hit(text)
-                }
-                if (found) hits += Hit("outputs", "artifact:${version.id}", "delete")
-            }
-            if (page.size < 100) break
-            offset += page.size
-        }
         OrbitBoardRepository.Board.values().forEach { board ->
             val repository = OrbitBoardRepository(context, orbit.id, board)
-            // Expired ideas too: they are kept to teach the user's taste.
             repository.listAll().filter { item ->
                 val fields = listOf(item.title, item.body, item.extra, item.rationale) + item.notes.map { it.text } +
                     item.parts.flatMap { listOf(it.title, it.detail) } + item.sources
-                fields.any(matcher::hit) || item.card && run {
-                    val card = repository.readCard(item.id)
-                    if (card == null) unscanned += "${board.name.lowercase()}:${item.id}:card"
-                    card != null && matcher.hit(card)
-                }
+                fields.any(matcher::hit) || item.card && repository.readCard(item.id)?.let(matcher::hit) == true
             }.forEach { hits += Hit("created", "${board.name.lowercase()}:${it.id}", "delete") }
         }
-        OrbitApprovals.matching(context, orbit.id, matcher::hit).forEach { hits += Hit("approvals", "approval:$it", "edit") }
-        dao.pendingDeliveries(orbit.id).filter { matcher.hit(it.title) || matcher.hit(it.body) }
-            .forEach { hits += Hit("reports", "delivery:${it.id}", "stop") }
-        MemoryReviewRepository(context, spaceId).idsMatching(matcher::hit)
-            .forEach { hits += Hit("history", "review:$it", "edit") }
-        Scan(hits, unscanned, tooMany)
+        hits
     }
 
-    /** Saves a new plan, replacing any older one, and returns its id with the places found. */
+    /** Finds the places and keeps the plan, replacing any older one. */
     suspend fun plan(context: Context, orbit: OrbitProfile, chatId: String, terms: List<String>): Planned =
         mutex.withLock {
-            // A new plan always retires the old one, even if this one fails, so an outdated scope is never confirmed.
-            withContext(Dispatchers.IO) { planStore(context, orbit.id).delete() }
+            plans.remove(orbit.id)
             require(terms.size in 1..10 && terms.all { it.trim().length in 2..200 }) { "Give 1-10 search terms of 2-200 characters" }
-            val scan = scan(context, orbit, Matcher(terms))
-            val hits = scan.hits
-            require(!scan.tooMany && hits.size <= MAX_PLACES) {
-                "The terms match more than $MAX_PLACES places, too many to show the user. Use more specific terms and plan again."
-            }
+            val clean = terms.map { it.trim() }
+            val hits = scan(context, orbit, Matcher(clean))
             val id = UUID.randomUUID().toString().take(8)
-            withContext(Dispatchers.IO) {
-                planStore(context, orbit.id).write(JSONObject().put("id", id).put("chatId", chatId)
-                    .put("createdAt", System.currentTimeMillis()).put("terms", JSONArray(terms.map { it.trim() }))
-                    .put("hits", JSONArray(hits.map { it.json() })).toString())
-            }
-            Planned(id, hits, scan.unscanned)
+            plans[orbit.id] = Plan(id, chatId, System.currentTimeMillis(), clean)
+            Planned(id, hits)
         }
 
-    class Planned(val id: String, val hits: List<Hit>, val unscanned: List<String>)
+    class Planned(val id: String, val hits: List<Hit>)
 
-    suspend fun cancel(context: Context, orbitId: String) = mutex.withLock { withContext(Dispatchers.IO) { planStore(context, orbitId).delete() } }
+    suspend fun cancel(orbitId: String) = mutex.withLock { plans.remove(orbitId); Unit }
 
-    data class Outcome(val cleaned: Map<String, Int>, val remaining: List<Hit>, val failed: List<String>, val unscanned: List<String>)
+    data class Outcome(val cleaned: Map<String, Int>, val remaining: List<Hit>, val failed: List<String>)
 
     /**
      * Carries out plan [planId]. [lastUserMessageAt] is the newest user message in the chat that made
@@ -219,23 +135,12 @@ internal object OrbitForget {
      */
     suspend fun confirm(context: Context, orbit: OrbitProfile, chatId: String, planId: String, lastUserMessageAt: Long): Outcome =
         mutex.withLock {
-            val stored = withContext(Dispatchers.IO) { planStore(context, orbit.id).read() }
-                ?.let(::JSONObject) ?: error("There is no forget plan; make one with plan first")
-            check(stored.getString("id") == planId) { "That is not the latest plan; use the newest plan_id or make a new plan" }
-            check(stored.getString("chatId") == chatId) { "The plan was made in another chat" }
-            val createdAt = stored.getLong("createdAt")
-            check(System.currentTimeMillis() - createdAt <= PLAN_TTL_MS) { "The plan is too old; make a new plan and show it to the user again" }
-            check(lastUserMessageAt > createdAt) { "The user has not answered since the plan was made; show the plan and ask for confirmation first" }
-            val terms = stored.getJSONArray("terms").let { a -> (0 until a.length()).map { a.getString(it) } }
-            val planned = stored.getJSONArray("hits").let { a -> (0 until a.length()).map { a.getJSONObject(it).getString("where") } }.toSet()
-            val matcher = Matcher(terms)
-            val first = scan(context, orbit, matcher)
-            check(!first.tooMany) { "The terms now match more than $MAX_PLACES places; make a narrower plan and ask again" }
-            val current = first.hits
-            val fresh = current.filter { it.locator.substringBefore("#L") !in planned.map { p -> p.substringBefore("#L") } }
-            check(fresh.isEmpty()) {
-                "The information now also lives in places the plan did not cover; make a revised plan and ask again"
-            }
+            val plan = plans[orbit.id] ?: error("There is no forget plan; make one with plan first")
+            check(plan.id == planId) { "That is not the latest plan; use the newest plan_id or make a new plan" }
+            check(plan.chatId == chatId) { "The plan was made in another chat" }
+            check(lastUserMessageAt > plan.createdAt) { "The user has not answered since the plan was made; show the plan and ask for confirmation first" }
+            val matcher = Matcher(plan.terms)
+            val current = scan(context, orbit, matcher)
             val cleaned = mutableMapOf<String, Int>()
             val failed = mutableListOf<String>()
             suspend fun step(category: String, block: suspend () -> Int) {
@@ -245,17 +150,6 @@ internal object OrbitForget {
             }
             val dao = AppDatabase.getDatabase(context).orbitTaskDao()
             val spaceId = space(context, orbit)
-            // Stop a review holding old chat in its context, and keep a new one from starting, until all is removed.
-            OrbitTaskRunner.holdTask(OrbitRoutines.alignmentId(orbit.id)) {
-            try {
-                OrbitLearningBoundary.forget(context, spaceId)
-            } catch (e: IllegalStateException) {
-                // Another correction landed between the read and the write; one more try settles it.
-                OrbitLearningBoundary.forget(context, spaceId)
-            }
-            // The nightly reader applies the same boundary, including a saved unfinished window.
-            // Do not proceed with deletion if the reading boundary could not be persisted.
-            OrbitReviewReader.of(context, orbit.id).discardForgottenHistory()
             // Future work first, so nothing writes the information back while it is being removed.
             step("scheduled") {
                 val tasks = OrbitTaskRepository(context)
@@ -269,11 +163,6 @@ internal object OrbitForget {
                     1L
                 }.toInt()
             }
-            step("reports") {
-                val ids = current.filter { it.category == "reports" }.map { it.locator.removePrefix("delivery:") }.toSet()
-                dao.pendingDeliveries(orbit.id).filter { it.id in ids }.onEach { dao.updateDelivery(it.copy(state = "CANCELLED")) }.size
-            }
-            step("history") { MemoryReviewRepository(context, spaceId).forgetLines(matcher::hit).size }
             step("memory") {
                 val notes = MemoryNotesRepository(context, spaceId)
                 val snapshot = notes.load()
@@ -289,12 +178,8 @@ internal object OrbitForget {
             step("files") {
                 val files = OrbitFiles.of(context, orbit.id)
                 current.filter { it.category == "files" }.groupBy { it.locator.substringBefore("#L") }.entries.sumOf { (path, hits) ->
-                    if (hits.any { it.action == "delete" }) {
-                        files.delete(path)
-                    } else {
-                        val text = files.read(path)
-                        files.write(path, matcher.clean(text))
-                    }
+                    if (hits.any { it.action == "delete" }) files.delete(path)
+                    else files.write(path, matcher.clean(files.read(path)))
                     1L
                 }.toInt()
             }
@@ -327,27 +212,9 @@ internal object OrbitForget {
                     1L
                 }.toInt()
             }
-            step("outputs") {
-                val root = OrbitPreferences.getInstance(context).orbitDir(orbit.id).canonicalFile
-                current.filter { it.category == "outputs" }.sumOf { hit ->
-                    val id = hit.locator.removePrefix("artifact:")
-                    dao.artifact(id)?.takeIf { it.orbitId == orbit.id }?.let { version ->
-                        val file = File(root, version.relativePath).canonicalFile
-                        if (file.toPath().startsWith(root.toPath()) && file.exists()) check(file.delete()) { "Could not delete ${version.name}" }
-                        dao.deleteArtifact(id)
-                    }
-                    1L
-                }.toInt()
-            }
-            step("approvals") {
-                val ids = current.filter { it.category == "approvals" }.map { it.locator.removePrefix("approval:") }.toSet()
-                if (ids.isEmpty()) 0 else OrbitApprovals.forget(context, orbit.id, ids, matcher::clean, matcher::hit)
-            }
-            val after = scan(context, orbit, matcher)
-            val remaining = after.hits
-            val unread = after.unscanned + if (after.tooMany) listOf("more matches than could be listed") else emptyList()
-            withContext(Dispatchers.IO) { planStore(context, orbit.id).delete() }
-            Outcome(cleaned, remaining, failed, unread)
-            }
+            plans.remove(orbit.id)
+            // A new memory generation rebuilds the prompts of open chats, so none keeps the old memory.
+            step("prompt refresh") { OrbitLearningBoundary.explicitEdit(context, spaceId) {}; 0 }
+            Outcome(cleaned, scan(context, orbit, matcher), failed)
         }
 }

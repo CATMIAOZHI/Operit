@@ -47,8 +47,6 @@ object OrbitTaskRunner {
     private data class ActiveRun(
         val orbitId: String, val task: OrbitTaskEntity, val token: OrbitRunEntity,
         val job: Job, val boot: String,
-        /** Stopped by [holdTask]: it goes on at its next time even if the hold ended before it cleaned up. */
-        val stoppedByHold: java.util.concurrent.atomic.AtomicBoolean = java.util.concurrent.atomic.AtomicBoolean(false),
     )
     private val active = ConcurrentHashMap<String, ActiveRun>()
     private val processBootFallback = UUID.randomUUID().toString()
@@ -71,26 +69,6 @@ object OrbitTaskRunner {
 
     fun cancelTask(taskId: String) {
         active.values.filter { it.task.id == taskId }.forEach { it.job.cancel() }
-    }
-    /** Tasks held while something (forgetting) runs: no run starts, and they go on at their next time. */
-    private val held = ConcurrentHashMap<String, Int>()
-    private fun isHeld(taskId: String) = (held[taskId] ?: 0) > 0
-
-    /**
-     * Stops the task's current run, waits for it, and keeps any new run from starting until [block]
-     * ends. A run registering at the same moment sees the hold and stops itself before reading anything.
-     */
-    suspend fun <T> holdTask(taskId: String, block: suspend () -> T): T {
-        held.merge(taskId, 1, Int::plus)
-        try {
-            val runs = active.values.filter { it.task.id == taskId }
-            runs.forEach { it.stoppedByHold.set(true); it.job.cancel() }
-            val jobs = runs.map { it.job }
-            if (jobs.isNotEmpty()) withTimeout(60_000) { jobs.joinAll() }
-            return block()
-        } finally {
-            held.computeIfPresent(taskId) { _, n -> (n - 1).takeIf { it > 0 } }
-        }
     }
     fun cancelUnlessActive(orbitId: String?) {
         active.values.filter { it.orbitId != orbitId }.forEach { it.job.cancel() }
@@ -134,7 +112,6 @@ object OrbitTaskRunner {
         // A live lease for one task must not starve the other due tasks. A due task goes before
         // handing over reports, so a reminder is never late because a report waits for a chat.
         val token = tasks.firstNotNullOfOrNull {
-            if (isHeld(it.id)) return@firstNotNullOfOrNull null
             if (OrbitTaskRepository.prechecked(it) && dao.hasPendingResult(it.id)) return@firstNotNullOfOrNull null
             // An event put back for a busy chat or a quiet time waits until its new time.
             val event = dao.enqueueDue(it.id, now)?.takeIf { e -> e.dueAt <= now } ?: return@firstNotNullOfOrNull null
@@ -170,11 +147,6 @@ object OrbitTaskRunner {
         val job = currentCoroutineContext().job
         val state = ActiveRun(orbit.id, task, token, job, boot)
         active[chatId] = state
-        // Held after it was picked (forgetting started meanwhile): it stops before reading anything.
-        if (isHeld(task.id)) {
-            state.stoppedByHold.set(true)
-            job.cancel(CancellationException("Orbit task held"))
-        }
         runningState.value = true
         runningChatsState.update { it + (chatId to orbit.id) }
         val heartbeat = launch {
@@ -356,10 +328,7 @@ object OrbitTaskRunner {
                     com.ai.assistance.operit.util.AppLogger.w("OrbitTasks", "Temporary task chat cleanup deferred")
                 }
                 if (dao.run(token.id)?.let { OrbitWake.isWatching(it.handoffTurnId) } != true) {
-                    val stoppedAt = System.currentTimeMillis()
-                    dao.interrupt(token, stoppedAt, context.getString(com.ai.assistance.operit.R.string.orbit_run_interrupted),
-                        continueNextRunAt = if (state.stoppedByHold.get() || isHeld(task.id))
-                            OrbitTaskRepository.nextAt(task, stoppedAt) else 0)
+                    dao.interrupt(token, System.currentTimeMillis(), context.getString(com.ai.assistance.operit.R.string.orbit_run_interrupted))
                 }
                 runCatching { dao.pruneRuns(task.id) }
                 active.remove(chatId, state)
