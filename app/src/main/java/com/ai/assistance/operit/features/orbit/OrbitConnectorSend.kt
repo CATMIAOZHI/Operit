@@ -4,6 +4,7 @@ import android.content.Context
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
 import com.ai.assistance.operit.core.tools.AIToolHandler
+import com.ai.assistance.operit.core.tools.JsPackageToolExecutorMarker
 import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.model.ToolParameter
 import com.ai.assistance.operit.data.preferences.OrbitPreferences
@@ -51,13 +52,30 @@ internal object OrbitConnectorSend {
         name.replace(Regex("([A-Z]+)([A-Z][a-z])"), "$1_$2").replace(Regex("([a-z0-9])([A-Z])"), "$1_$2")
             .replace(Regex("[^A-Za-z0-9]+"), "_").lowercase()
 
-    private fun hiddenParam(name: String) = name.startsWith("__operit_")
+    private val hostContextParameters = setOf(
+        "__operit_package_chat_id", "__operit_package_caller_name", "__operit_package_caller_card_id",
+    )
+
+    internal fun publicParameters(parameters: List<ToolParameter>): List<ToolParameter> {
+        // Proxy calls already contain host context. Never persist it as part of an approval;
+        // the approved call obtains its identity from the approval's chat, not parameter values.
+        val public = parameters.filterNot { it.name in hostContextParameters }
+        require(public.none { it.name.startsWith("__operit_") }) {
+            "Not sent. Host-reserved __operit_ parameters cannot be approved. Call the named tool with its public parameters."
+        }
+        return public
+    }
 
     /**
      * Puts the card for [tool] in Orbit's chat [chatId] and returns the error text Orbit reads
      * instead of a result. A chat that is not one with the user (a helper agent) gets no card.
      */
     suspend fun ask(context: Context, chatId: String?, tool: AITool): String {
+        val parameters = try {
+            publicParameters(tool.parameters)
+        } catch (e: IllegalArgumentException) {
+            return "$PREFIX\n${e.message}"
+        }
         val english = LocaleUtils.usesEnglishPrompt(context)
         val prefs = OrbitPreferences.getInstance(context).current()
         val orbit = chatId?.let { prefs.orbitForChat(it) }
@@ -66,10 +84,9 @@ internal object OrbitConnectorSend {
                 "a chat with them, which this chat cannot show. Hand it back to the main agent with the exact text and " +
                 "recipient, so it calls ${tool.name} there."
         }
-        val shown = tool.parameters.filterNot { hiddenParam(it.name) }
         val detail = buildString {
             append(context.getString(R.string.orbit_send_card_tool, tool.name))
-            shown.forEach { append('\n').append(context.getString(R.string.orbit_send_card_param, it.name, it.value)) }
+            parameters.forEach { append('\n').append(context.getString(R.string.orbit_send_card_param, it.name, it.value)) }
         }
         if (detail.length > OrbitApprovals.MAX_DETAIL) {
             return "$PREFIX\nNot sent. This call is longer than ${OrbitApprovals.MAX_DETAIL} characters, too long for the " +
@@ -77,7 +94,7 @@ internal object OrbitConnectorSend {
         }
         val title = context.getString(R.string.orbit_send_card_title, tool.name)
         val action = JSONObject().put("type", RUN_TOOL).put("tool", tool.name).put("params", JSONArray().apply {
-            tool.parameters.forEach { put(JSONObject().put("name", it.name).put("value", it.value)) }
+            parameters.forEach { put(JSONObject().put("name", it.name).put("value", it.value)) }
         }).toString()
         val approval = try {
             OrbitApprovals.request(context, orbit.id, chatId, title.take(OrbitApprovals.MAX_TITLE), detail, action)
@@ -113,23 +130,37 @@ internal object OrbitConnectorSend {
     /** The user chose "always allow": the tool now runs in Orbit's chats without a card. */
     suspend fun allowAlways(context: Context, action: String) {
         val name = toolOf(action) ?: return
+        approvedTool(JSONObject(action))
         ToolPermissionSystem.getInstance(context).saveOrbitToolPermission(name, PermissionLevel.ALLOW)
+    }
+
+    private fun approvedTool(action: JSONObject): AITool {
+        val name = action.optString("tool")
+        require(isSendTool(name)) { "Not a sending tool" }
+        val params = action.optJSONArray("params") ?: JSONArray()
+        return AITool(name, publicParameters((0 until params.length()).map { i ->
+            params.getJSONObject(i).let { ToolParameter(it.optString("name"), it.optString("value")) }
+        }))
     }
 
     /** Runs the approved call exactly as the card showed it, and says what came of it. */
     suspend fun run(context: Context, orbit: OrbitProfile, approval: OrbitApprovals.Approval, action: JSONObject,
         english: Boolean, always: Boolean): String {
-        val name = action.optString("tool")
-        require(isSendTool(name)) { "Not a sending tool" }
-        val params = action.optJSONArray("params") ?: JSONArray()
-        val tool = AITool(name, (0 until params.length()).map { i ->
-            params.getJSONObject(i).let { ToolParameter(it.optString("name"), it.optString("value")) }
-        })
+        val tool = approvedTool(action)
+        val name = tool.name
         val runtime = ToolExecutionManager.ToolRuntimeContext(
             callerName = orbit.name.ifBlank { null }, callerChatId = approval.chatId.ifBlank { orbit.chatId },
         )
         val result = withContext(Dispatchers.IO + ToolExecutionManager.toolRuntimeContextElement(runtime)) {
-            AIToolHandler.getInstance(context).executeTool(tool)
+            val handler = AIToolHandler.getInstance(context)
+            val executor = requireNotNull(handler.getToolExecutorOrActivate(name)) { "Tool not found: $name" }
+            val contextualTool = if (executor is JsPackageToolExecutorMarker) {
+                tool.copy(parameters = tool.parameters + listOfNotNull(
+                    runtime.callerChatId?.let { ToolParameter("__operit_package_chat_id", it) },
+                    runtime.callerName?.let { ToolParameter("__operit_package_caller_name", it) },
+                ))
+            } else tool
+            handler.executeToolWithExecutor(contextualTool, executor)
         }
         // Some tools only open the phone's own send screen; what they returned says whether it went out.
         val outcome = if (result.success) {
