@@ -64,9 +64,6 @@ internal class OrbitReviewReader private constructor(private val context: Contex
         return state
     }
 
-    /** Also repairs a crash between persisting the forgetting boundary and clearing the old window. */
-    suspend fun discardForgottenHistory() = locked { state(); Unit }
-
     private fun save(state: JSONObject) {
         file.parentFile?.mkdirs()
         val temp = File.createTempFile(".reading-", ".tmp", file.parentFile)

@@ -57,12 +57,8 @@ Import does not restore the original chat, account settings, or another app's pe
 ## Forgetting information
 
 Use `orbit_forget action=plan` to inspect copies and the proposed cleanup scope.
-Explain the categories to be cleared, anything outside the tool's reach, and that deletion is irreversible, without repeating the information being forgotten.
-Use `confirm` only after the user explicitly agrees to that plan; make a new plan if its scope changes or it becomes stale.
-
-Report `remaining`, `failed`, and `unscanned` honestly.
-Only `all_clear=true` supports saying the inspectable storage scope was cleared, not “forgotten everywhere.”
-Original chat messages, content already sent externally, and the user's own backups do not disappear.
-For identity or personality matches that need manual handling, point to the relevant controls as indicated by the result.
-Do not learn the cleared information again from old context.
-After confirmed forgetting, memory learning and nightly review only read new conversation content after that moment. Unreviewed older content is skipped too; the original chats remain.
+Explain the categories to be cleared and that deletion is irreversible, without repeating the information being forgotten.
+Use `confirm` only after the user explicitly agrees, then say honestly what was cleared and what `remaining` still lists.
+Matches in SOUL.md and IDENTITY.md are for the user to edit.
+Original chat messages are not deleted; the user can delete that chat from the chat list.
+When background memory learning or the nightly review reads that the user asked to forget something, it does not record it and removes what it recorded before; the proactive check skips it and drafts nothing about it.

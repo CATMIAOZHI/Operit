@@ -38,14 +38,11 @@ internal object OrbitPrivacyTools {
             ToolParameterSchema("plan_id", description = "confirm：plan 返回的编号", required = false),
         ),
         details = """
-  - 「忘掉」是在你这里全面清理，不是改一条笔记。改错的事实、换个偏好，用记忆工具改就行，不用这个。
-  - 先 plan（只读，不改任何东西）。它会列出记忆、用户资料、文件（含每晚复盘记录和对齐状态）、技能、目标、定时任务、任务做出的成果（含旧版本）、动态（含卡片）、点子和跟踪、批准记录、还没发出的汇报、修改记录里有这条信息的地方，以及准备怎么处理（edit 整行删除、delete 整条删除、stop 停止）。还没回答的批准申请会被安静地拒绝。SOUL.md、IDENTITY.md、自定义提示词和用户自己加的技能里的命中只列出来（user_review），不会自动改，要请用户自己在 Orbit 资料页或技能设置里改。scanned 是查过的范围，unscanned 是读不了、没能检查的地方；图片、音视频只按文件名查。
-  - 用日常说法把范围告诉用户：记忆、提醒和定时任务、你做的东西、记录。说清楚删除不能撤销，再问一句是否确认。不要在回复里重复要忘掉的内容，用「那件事」指代。
-  - 用户明确同意后才 confirm。沉默、含糊、只同意一部分，都不算同意；用户改了范围就重新 plan。
-  - confirm 会重新检查，情况变了会要求重新 plan。完成后按结果汇报清掉了哪些类别、停了哪些任务、还剩什么。
-  - 聊天记录不会被清理：这次和以前的聊天里还留着原话，用户可以在聊天列表里自己删掉那些聊天。汇报时要说明这一点。
-  - 只有 all_clear 为 true 时，才能说「我存的内容里已经清干净了」；不要说成「完全忘掉了」。all_clear 为 false 时，照 remaining、failed 和 unscanned 如实说还剩哪里、哪里没能检查。
-  - 清理之后不留这条信息的任何记录；以后用户自己又提起，就当新信息正常处理。别人的邮件、日历、已经发出去的东西要另外问用户。
+  - 「忘掉」是把你存的这件事都清掉，不是改一条笔记。改错的事实、换个偏好，用记忆工具改就行。
+  - 先 plan（只读）：列出记忆、用户资料、文件、你学到的技能、目标、定时任务、动态和点子里有这件事的地方，以及怎么处理（edit 删掉那几行、delete 整条删掉、stop 停掉）。SOUL.md 和 IDENTITY.md 里的只列出来（user_review），请用户自己改。
+  - 用日常说法告诉用户范围，说清删了不能撤销，问一句是否确认。不要复述要忘掉的内容，用「那件事」指代。
+  - 用户明确同意后才 confirm；含糊或只同意一部分不算。完成后说清掉了哪些，remaining 里还剩的如实说。
+  - 聊天原话不会删，用户想删可以在聊天列表里自己删那段聊天。
 """,
     )
 
@@ -81,9 +78,6 @@ internal object OrbitPrivacyTools {
     )
 
     private fun args(tool: AITool) = tool.parameters.associate { it.name to it.value }
-    private val CANNOT_ERASE = listOf("this chat and earlier chats (the user can delete those chats from the chat list)",
-        "things already sent to outside services or other apps", "data backups the user made", "background run logs",
-        "what is inside pictures, audio, video and other non-text files (only their file names are checked)")
     private fun fail(name: String, e: Exception) = ToolResult(name, false, StringResultData(""), error = e.message ?: e.toString())
 
     private suspend fun orbitOf(context: Context): Pair<OrbitProfile, String?> {
@@ -105,33 +99,22 @@ internal object OrbitPrivacyTools {
                     val hits = planned.hits
                     JSONObject().put("plan_id", planned.id)
                         .put("summary", JSONObject(hits.groupingBy { it.category }.eachCount()))
-                        .put("places", JSONArray(hits.map { it.json() }))
+                        .put("places", JSONArray(hits.take(OrbitForget.SHOWN).map { it.json() }))
                         .put("scanned", JSONArray(OrbitForget.SCANNED))
-                        .put("unscanned", JSONArray(planned.unscanned.take(50)))
-                        .put("cannot_erase", JSONArray(CANNOT_ERASE))
-                        .put("next", when {
-                            hits.isEmpty() && planned.unscanned.isEmpty() -> "Nothing was found. Tell the user, or plan again with other terms."
-                            hits.isEmpty() -> "Nothing was found in what could be read, but the places in unscanned could not be checked; tell the user that."
-                            else -> "Tell the user the scope in everyday words, say it cannot be undone, and ask once for confirmation." +
-                                if (planned.unscanned.isNotEmpty()) " Also say some places could not be checked." else ""
-                        })
+                        .put("next", if (hits.isEmpty()) "Nothing was found. Tell the user, or plan again with other terms."
+                            else "Tell the user the scope in everyday words, say it cannot be undone, and ask once for confirmation.")
                 }
                 "confirm" -> {
                     val lastUser = ChatHistoryManager.getInstance(context).loadChatMessagesDesc(chatId, 30)
                         .firstOrNull { it.sender == "user" }?.timestamp ?: 0L
                     val outcome = OrbitForget.confirm(context, orbit, chatId, a["plan_id"]?.trim().orEmpty(), lastUser)
                     JSONObject().put("cleaned", JSONObject(outcome.cleaned as Map<*, *>))
-                        .put("remaining", JSONArray(outcome.remaining.take(OrbitForget.MAX_PLACES).map { it.json() }))
+                        .put("remaining", JSONArray(outcome.remaining.take(OrbitForget.SHOWN).map { it.json() }))
                         .put("failed", JSONArray(outcome.failed))
-                        .put("scanned", JSONArray(OrbitForget.SCANNED))
-                        .put("unscanned", JSONArray(outcome.unscanned.take(50)))
-                        .put("all_clear", outcome.remaining.isEmpty() && outcome.failed.isEmpty() && outcome.unscanned.isEmpty())
-                        .put("cannot_erase", JSONArray(CANNOT_ERASE))
-                        .put("note", "all_clear covers only what this Orbit stores, not chat history. " +
-                            "Places in unscanned could not be read, so they may still hold it. " +
-                            "Places marked user_review must be edited by the user. Report categories only; never repeat the information.")
+                        .put("note", "Chat messages are not deleted. Places marked user_review are for the user to edit. " +
+                            "Report categories only; never repeat the information.")
                 }
-                "cancel" -> { OrbitForget.cancel(context, orbit.id); JSONObject().put("cancelled", true) }
+                "cancel" -> { OrbitForget.cancel(orbit.id); JSONObject().put("cancelled", true) }
                 else -> error("Unknown action \"${a["action"].orEmpty()}\"; use plan, confirm or cancel")
             }
             ToolResult(FORGET, true, StringResultData(result.toString()))

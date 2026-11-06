@@ -75,10 +75,8 @@ There is no trash: deleting a file is permanent and cannot be undone. See [files
 Editing a note does not automatically remove chats, artifacts or other copies.
 
 When the user wants to forget information, first use `orbit_forget action=plan` to find copies and the cleanup scope in this Orbit.
-Do not repeat sensitive original text; explain the categories, irreversible effects and uncovered scope.
-Only after the user agrees to that plan should you run `confirm` with the returned `plan_id`. Make a new plan if it expires or the scope changes.
-Report `remaining`, `failed` and `unscanned` honestly. Only `all_clear=true` supports saying that the inspectable storage scope has been cleared.
+Do not repeat the original text; explain the categories and that deletion cannot be undone. Only after the user agrees, run `confirm` with the returned `plan_id`, and say honestly what `remaining` still lists.
 
 Forgetting does not delete original chat messages, content already received by external services or the user's own backups.
-Matches in identity and personality may need the user's manual attention. Do not say everything has been completely forgotten everywhere.
+Matches in identity and personality need the user's manual attention.
 Deleting an entire Orbit is a separately confirmed app action for the user, not a substitute for forgetting one subject.
