@@ -41,7 +41,7 @@ python3 -B ci/script/normalize_lint_baseline.py --check
 - 所有改动：比较 base/candidate 两棵 Git tree，只阻断 candidate 新增的本地断链；删除被文档引用的非 Markdown 文件也会检查
 - 本地化：按 locale、资源类型和 key 比较 candidate 引入或实际触碰的错误；个人发行版中此检查为信息性，不阻断合并
 - 翻译资源：运行 AAPT2 resource compile 检查资源语法，不执行 resource link 或完整 Android 构建
-- Kotlin/Java 和普通 Android 资源：运行 JVM unit tests 与 Android lint
+- Kotlin/Java 和普通 Android 资源：运行 JVM unit tests（Android lint 不默认运行）
 - Native、Gradle 和构建输入：运行 assemble、JVM unit tests 与 Android lint
 - WebChat：运行 TypeScript typecheck 与 Vite build
 - ToolPkg：重建并核对 GitHub 示例，按独立锁文件编译 WASM 示例，再构建测试集合和生产白名单集合；JSON manifest 声明的入口与 WASM 文件必须存在且进入归档

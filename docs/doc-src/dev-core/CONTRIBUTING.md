@@ -153,7 +153,7 @@ PR 会进入 [PR Check workflow](../../../.github/workflows/pr-check.yml)，并�
 - 快速检查：差异空白、冲突标记、JSON/XML/YAML、Actions、本地 Markdown 链接和门禁单元测试
 - 本地化：按 locale 和资源 key 归责类型、重复项、占位符及 locale 配置错误
 - 翻译资源：执行 AAPT2 resource compile，不启动完整 Android 构建
-- Kotlin/Java：执行 JVM 单测与 Android lint
+- Kotlin/Java：执行 JVM 单测（不默认执行 Android lint）
 - Native、Gradle 和构建输入：执行 assemble、JVM 单测与 Android lint
 - WebChat 和 ToolPkg：对应路径变化时执行专项检查，完整 Android lane 也会准备最终打包输入
 
