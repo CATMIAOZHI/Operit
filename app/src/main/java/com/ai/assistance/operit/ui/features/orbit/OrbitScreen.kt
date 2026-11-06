@@ -882,6 +882,7 @@ private fun OrbitChatPage(
             .padding(start = if (docked) ORBIT_SIDEBAR_WIDTH else 0.dp)
             .then(if (wide) Modifier.centeredMaxWidth(ORBIT_PAGE_MAX_WIDTH) else Modifier)
             .clipToBounds()
+            .then(if (settingsModal || sidebarSearch) Modifier.clearAndSetSemantics { } else Modifier)
     ) {
         val tabBack = rememberOrbitBackMotion()
         OrbitBackHandler(tabBack, enabled = tab != OrbitTab.CHAT && !showProfile && !devView && stack.isEmpty()) {
@@ -1226,7 +1227,7 @@ private fun OrbitChatPage(
         }
     }
     if (wide) {
-        // Muse's tablet sidebar: the tabs, the side chats, and settings, search and a new side chat.
+        // Tablet sidebar: the tabs, side chats, settings, search and a new side chat.
         // Drawn after the page so its search covers the whole screen. Picking something from it
         // shows that in the page and closes what was open over the page; a page with an unsaved
         // edit asks first, and the pick waits.
@@ -1281,6 +1282,9 @@ private fun OrbitChatPage(
             )
             Box(
                 Modifier.fillMaxSize()
+                    // The developer view hides the sidebar and records this same centered column.
+                    .then(if (wide) Modifier.centeredMaxWidth(ORBIT_PAGE_MAX_WIDTH) else Modifier)
+                    .clipToBounds()
                     .graphicsLayer { translationX = size.width * devLeave.value }
                     .drawBehind { drawIntoCanvas { it.nativeCanvas.drawPicture(picture) } }
             )
