@@ -246,6 +246,8 @@ internal fun OrbitTabPage(
     onDraft: (String) -> Unit,
     /** Quotes something above Orbit's main chat input box, like a reply, and shows the chat. */
     onQuote: (com.ai.assistance.operit.data.model.ChatMessage) -> Unit = {},
+    /** Puts some of Orbit's own files in its main chat input box, in place, and shows the chat. */
+    onQuoteFiles: (List<java.io.File>) -> Unit = {},
     filesVersion: Int = 0,
     onOpenFile: (String) -> Unit = {},
     /**
@@ -298,7 +300,8 @@ internal fun OrbitTabPage(
                                 OrbitTab.FEED -> OrbitFeedPage(orbit, data, onDraft, onQuote)
                                 OrbitTab.IDEAS -> OrbitIdeasPage(orbit, data, onDraft)
                                 OrbitTab.GOALS -> OrbitGoalsPage(orbit, data, onOpenTask = { openTaskId = it }, onDraft = onDraft)
-                                OrbitTab.BUILDS -> OrbitBuildsPage(orbit, data, filesVersion, onOpenTask = { openTaskId = it }, onOpenFile = onOpenFile, onDraft = onDraft)
+                                OrbitTab.BUILDS -> OrbitBuildsPage(orbit, data, filesVersion, onOpenTask = { openTaskId = it }, onOpenFile = onOpenFile,
+                                    onDraft = onDraft, onQuoteFiles = onQuoteFiles)
                             }
                         }
                     }
@@ -470,7 +473,7 @@ private fun GroupTitle(text: String) {
     )
 }
 
-private fun shortDate(time: Long): String =
+internal fun shortDate(time: Long): String =
     DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(time))
 
 private fun showToast(context: android.content.Context, text: String) =
@@ -2094,6 +2097,7 @@ private fun OrbitBuildsPage(
     onOpenTask: (String) -> Unit,
     onOpenFile: (String) -> Unit,
     onDraft: (String) -> Unit,
+    onQuoteFiles: (List<java.io.File>) -> Unit,
 ) {
     val who = orbitName(orbit)
     val context = LocalContext.current
@@ -2136,6 +2140,11 @@ private fun OrbitBuildsPage(
         else openOrbitFile(context, fileOf)
     }
     val action = rememberAction()
+    // Quotes one file in the chat; the file is found off the main thread, as opening does.
+    fun quote(fileOf: () -> java.io.File) = action {
+        val file = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { fileOf() }
+        onQuoteFiles(listOf(file))
+    }
     // Books whose copied chapters are shown under their row.
     // Saved, so a book stays open after switching to another tab and back.
     val openBooks = rememberSaveable(orbit.id, saver = listSaver(save = { it.toList() }, restore = { it.toMutableStateList() })) {
@@ -2215,6 +2224,16 @@ private fun OrbitBuildsPage(
                             DropdownMenuItem(text = { Text(stringResource(R.string.orbit_artifact_revise)) }, onClick = {
                                 close(); onDraft(resources.getString(R.string.orbit_build_continue_draft, entry.latest.name))
                             })
+                            DropdownMenuItem(text = { Text(stringResource(R.string.orbit_quote_menu)) }, onClick = {
+                                close()
+                                val version = entry.latest
+                                quote {
+                                    val root = OrbitPreferences.getInstance(context).orbitDir(orbit.id).canonicalFile
+                                    java.io.File(root, version.relativePath).canonicalFile.also {
+                                        require(it.toPath().startsWith(root.toPath())) { "Not one of Orbit's files" }
+                                    }
+                                }
+                            })
                         }
                         is BuildEntry.Made -> {
                             val file = entry.file
@@ -2244,6 +2263,8 @@ private fun OrbitBuildsPage(
                                 )
                                 DropdownMenuItem(text = { Text(stringResource(R.string.orbit_file_share)) },
                                     onClick = { close(); shareOrbitFile(context) { orbitFiles.fileFor(file.path) } })
+                                DropdownMenuItem(text = { Text(stringResource(R.string.orbit_quote_menu)) },
+                                    onClick = { close(); quote { orbitFiles.fileFor(file.path) } })
                                 DropdownMenuItem(
                                     text = { Text(stringResource(R.string.orbit_file_delete), color = MaterialTheme.colorScheme.error) },
                                     onClick = { close(); deletingMade = file.path },
@@ -2282,6 +2303,8 @@ private fun OrbitBuildsPage(
                                 onClick = { close(); viewFile { upload.file } })
                             DropdownMenuItem(text = { Text(stringResource(R.string.orbit_file_share)) },
                                 onClick = { close(); shareOrbitFile(context) { upload.file } })
+                            DropdownMenuItem(text = { Text(stringResource(R.string.orbit_quote_menu)) },
+                                onClick = { close(); onQuoteFiles(listOf(upload.file)) })
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.orbit_file_delete), color = MaterialTheme.colorScheme.error) },
                                 onClick = { close(); deletingUpload = upload },
@@ -2453,7 +2476,7 @@ private fun BuildRow(
 
 /** A file's type as shown under its name: the extension in capitals, or a word for a file without one. */
 @Composable
-private fun typeLabel(name: String): String =
+internal fun typeLabel(name: String): String =
     name.substringAfterLast('.', "").uppercase().take(6).ifEmpty { stringResource(R.string.orbit_library_other) }
 
 /**
@@ -2462,7 +2485,7 @@ private fun typeLabel(name: String): String =
  * square, its color picked from [seed] so each work keeps its own.
  */
 @Composable
-private fun FileTile(
+internal fun FileTile(
     name: String,
     image: java.io.File? = null,
     imageExpected: Boolean = false,

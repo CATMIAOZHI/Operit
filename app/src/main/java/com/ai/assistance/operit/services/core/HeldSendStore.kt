@@ -45,6 +45,7 @@ internal object HeldSendStore {
                         .put("mimeType", it.mimeType)
                         .put("fileSize", it.fileSize)
                         .put("content", it.content)
+                        .put("orbitReference", it.orbitReference)
                 )
             }
             val entry = JSONObject()
@@ -85,6 +86,7 @@ internal object HeldSendStore {
                             mimeType = a.optString("mimeType"),
                             fileSize = a.optLong("fileSize"),
                             content = a.optString("content"),
+                            orbitReference = a.optBoolean("orbitReference"),
                         )
                     },
                     reply = entry.optString("reply").takeIf { it.isNotBlank() }

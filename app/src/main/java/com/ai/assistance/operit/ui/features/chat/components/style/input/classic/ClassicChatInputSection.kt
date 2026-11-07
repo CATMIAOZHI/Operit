@@ -170,7 +170,10 @@ fun ClassicChatInputSection(
     val orbitPreferences = remember { OrbitPreferences.getInstance(context) }
     val orbitSettings by orbitPreferences.settingsFlow.collectAsState(initial = orbitPreferences.snapshot)
     val currentChatIdForPermission by actualViewModel.currentChatId.collectAsState()
-    val isOrbitChat = orbitSettings.orbitForChat(currentChatIdForPermission) != null
+    val chatOrbit = orbitSettings.orbitForChat(currentChatIdForPermission)
+    val isOrbitChat = chatOrbit != null
+    // The picker of Orbit's own files, opened from "+" in its chat.
+    var showOrbitQuote by remember { mutableStateOf(false) }
     val isProcessing =
         isLoading ||
             inputState is InputProcessingState.Connecting ||
@@ -1127,8 +1130,17 @@ fun ClassicChatInputSection(
                 onTakePhoto = onTakePhoto,
                 userQuery = userMessage.text,
                 orbit = isOrbitChat,
+                onQuoteOrbitFiles = if (isOrbitChat) ({ showOrbitQuote = true }) else null,
                 onDismiss = { setShowAttachmentPanel(false) }
             )
+
+            if (showOrbitQuote && chatOrbit != null) {
+                com.ai.assistance.operit.ui.features.orbit.OrbitQuoteFilesSheet(
+                    orbit = chatOrbit,
+                    onDismiss = { showOrbitQuote = false },
+                    onQuote = { files -> actualViewModel.attachOrbitFiles(files) },
+                )
+            }
 
             if (showFullscreenInput.value) {
                 FullscreenInputDialog(
