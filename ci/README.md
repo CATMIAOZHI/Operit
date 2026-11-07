@@ -41,14 +41,21 @@ python3 -B ci/script/normalize_lint_baseline.py --check
 - 所有改动：比较 base/candidate 两棵 Git tree，只阻断 candidate 新增的本地断链；删除被文档引用的非 Markdown 文件也会检查
 - 本地化：按 locale、资源类型和 key 比较 candidate 引入或实际触碰的错误；个人发行版中此检查为信息性，不阻断合并
 - 翻译资源：运行 AAPT2 resource compile 检查资源语法，不执行 resource link 或完整 Android 构建
-- Kotlin/Java 和普通 Android 资源：运行 JVM unit tests 与 Android lint
+- Kotlin/Java 和普通 Android 资源：运行 JVM unit tests（Android lint 不默认运行）
 - Native、Gradle 和构建输入：运行 assemble、JVM unit tests 与 Android lint
 - WebChat：运行 TypeScript typecheck 与 Vite build
 - ToolPkg：重建并核对 GitHub 示例，按独立锁文件编译 WASM 示例，再构建测试集合和生产白名单集合；JSON manifest 声明的入口与 WASM 文件必须存在且进入归档
 
 根项目、`web-chat` 和独立的 `examples/toolpkg_wasm_demo` 分别提交 `package-lock.json`，CI 使用 `npm ci` 安装确定的依赖树。
 
-PR workflow 只有 `contents: read` 权限，不读取仓库 secret，也不上传 APK/AAB。`Android Build` 是独立的可信 main/手工构建 workflow。
+PR workflow 只有 `contents: read` 权限，不读取仓库 secret，也不上传 APK/AAB。`Android Build` 是独立的可信手工构建 workflow；合并到 `personal/main` 不再重复构建调试包，发布时手动运行 `:app:assembleRelease`，可按需勾选测试与完整 Android Lint。
+
+## Workflow frequency
+
+- `PR Check`：继续按 PR 的变更范围检查，保留合并门禁；只修改 PR 标题或说明不再重复执行整套检查。将已有 PR 改投 `personal/main` 后，需要再推送提交或关闭后重新打开 PR，以触发新目标分支的检查。
+- `Dev Quality`：只在 `personal/dev` 的 Android 源码、资源或构建输入变化时运行 JVM 单元测试；纯文档改动不触发，完整 Lint 通过 `Android Build` 的手动选项运行。
+- `CodeQL`：每周一 03:23 UTC 和手动运行，不随每次 push/PR 重复扫描；保留 6 种语言，Go 仅为导出项目的示例模板，不纳入扫描。
+- Nightly 发布和 `personal/main` 到 `main` 的镜像同步保持各自职责。
 
 ## Diagnostics
 

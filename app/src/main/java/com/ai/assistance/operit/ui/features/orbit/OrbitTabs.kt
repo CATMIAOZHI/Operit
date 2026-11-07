@@ -54,6 +54,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
@@ -245,6 +246,8 @@ internal fun OrbitTabPage(
     onDraft: (String) -> Unit,
     /** Quotes something above Orbit's main chat input box, like a reply, and shows the chat. */
     onQuote: (com.ai.assistance.operit.data.model.ChatMessage) -> Unit = {},
+    /** Puts some of Orbit's own files in its main chat input box, in place, and shows the chat. */
+    onQuoteFiles: (List<java.io.File>) -> Unit = {},
     filesVersion: Int = 0,
     onOpenFile: (String) -> Unit = {},
     /**
@@ -297,7 +300,8 @@ internal fun OrbitTabPage(
                                 OrbitTab.FEED -> OrbitFeedPage(orbit, data, onDraft, onQuote)
                                 OrbitTab.IDEAS -> OrbitIdeasPage(orbit, data, onDraft)
                                 OrbitTab.GOALS -> OrbitGoalsPage(orbit, data, onOpenTask = { openTaskId = it }, onDraft = onDraft)
-                                OrbitTab.BUILDS -> OrbitBuildsPage(orbit, data, filesVersion, onOpenTask = { openTaskId = it }, onOpenFile = onOpenFile, onDraft = onDraft)
+                                OrbitTab.BUILDS -> OrbitBuildsPage(orbit, data, filesVersion, onOpenTask = { openTaskId = it }, onOpenFile = onOpenFile,
+                                    onDraft = onDraft, onQuoteFiles = onQuoteFiles)
                             }
                         }
                     }
@@ -341,24 +345,18 @@ private val LocalOrbitTabHeaderHeight = compositionLocalOf<Dp?> { null }
  * The page frame: Orbit's fixed header, a large title and an optional action on the right. [info]
  * adds a small ⓘ beside the title that says what the page is for. Without a [title] the page
  * starts right under the header with its own first item.
- * [overlay] is a page pushed over the list but under the header, so Orbit's picture stays put
- * while it slides in; it gets the top padding its own list needs.
  */
 @Composable
 private fun TabList(
     title: String?,
     action: (@Composable () -> Unit)? = null,
     info: (() -> Unit)? = null,
-    overlay: (@Composable (top: Dp) -> Unit)? = null,
     state: androidx.compose.foundation.lazy.LazyListState = androidx.compose.foundation.lazy.rememberLazyListState(),
     content: LazyListScope.() -> Unit,
 ) {
     val openDrawer = com.ai.assistance.operit.ui.main.LocalOpenAppDrawer.current
     val headerHeight = LocalOrbitTabHeaderHeight.current
     val header = headerHeight
-    val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-    // The header's lower edge fades out, so the title tucks a little under it.
-    val listTop = if (headerHeight == null) statusBarTop + 8.dp else (headerHeight - 12.dp).coerceAtLeast(0.dp)
     Box(Modifier.fillMaxSize()) {
         LazyColumn(
             modifier = if (header == null) Modifier.fillMaxSize().statusBarsPadding() else Modifier.fillMaxSize(),
@@ -396,7 +394,6 @@ private fun TabList(
             }
             content()
         }
-        overlay?.invoke(listTop)
     }
 }
 
@@ -476,7 +473,7 @@ private fun GroupTitle(text: String) {
     )
 }
 
-private fun shortDate(time: Long): String =
+internal fun shortDate(time: Long): String =
     DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(time))
 
 private fun showToast(context: android.content.Context, text: String) =
@@ -1403,12 +1400,7 @@ private val feedCardCache = object : android.util.LruCache<String, String>(512 *
 /** Each feed card's last height in pixels, kept longer than the cards themselves. */
 private val feedCardHeights = android.util.LruCache<String, Int>(1024)
 
-/** The picture and name of each idea category, in the order they are shown. */
-private val ideaCategoryEmoji = mapOf(
-    "productivity" to "⚡", "money" to "💰", "relationships" to "🤝",
-    "health" to "💪", "shopping" to "🛍️", "other" to "✨",
-)
-
+/** The name of each idea category. */
 @Composable
 private fun ideaCategoryName(category: String): String = stringResource(
     when (category) {
@@ -1421,13 +1413,13 @@ private fun ideaCategoryName(category: String): String = stringResource(
     }
 )
 
-/** How many of the newest ideas sit on top; the rest are found in their category. */
+/** How many of the newest ideas sit on top; the rest follow under their category's heading. */
 private const val RECENT_IDEAS = 5
 
 /**
- * Muse's Ideas tab: the newest ideas on top, then the categories, each opening its own page, then
- * the ideas Orbit already did. Any idea opens its details. New ideas come from the Ideas routine
- * every morning; the button asks it for some now.
+ * The Ideas tab as one feed: the newest ideas on top, then the older ones under a large heading
+ * for each category that has any, then the ideas Orbit already did. Any idea opens its details.
+ * New ideas come from the Ideas routine every morning; the button asks it for some now.
  */
 @Composable
 private fun OrbitIdeasPage(orbit: OrbitProfile, data: OrbitTabData, onDraft: (String) -> Unit) {
@@ -1439,10 +1431,6 @@ private fun OrbitIdeasPage(orbit: OrbitProfile, data: OrbitTabData, onDraft: (St
     val ideas by data.ideas.collectAsState()
     var dismissing by remember { mutableStateOf<OrbitBoardRepository.Item?>(null) }
     var openedId by rememberSaveable(orbit.id) { mutableStateOf<String?>(null) }
-    var category by rememberSaveable(orbit.id) { mutableStateOf<String?>(null) }
-    // Keeps the category on screen while its page slides away.
-    var shownCategory by remember(orbit.id) { mutableStateOf(category) }
-    LaunchedEffect(category) { category?.let { shownCategory = it } }
     // Asks Orbit in the main chat; the request waits in the input box for the user to send.
     val askIdeas: () -> Unit = {
         onDraft(resources.getString(R.string.orbit_task_run_now_draft, resources.getString(R.string.orbit_routine_ideas)))
@@ -1454,7 +1442,13 @@ private fun OrbitIdeasPage(orbit: OrbitProfile, data: OrbitTabData, onDraft: (St
     val list = ideas
     val open = remember(list) { list.orEmpty().filter { it.state == "OPEN" } }
     val recent = remember(open) { open.sortedByDescending { it.createdAt }.take(RECENT_IDEAS) }
-    val byCategory = remember(open) { open.groupBy { OrbitBoardRepository.categoryOf(it) } }
+    // The older ideas, newest first, in the categories' fixed order; empty categories are left out.
+    val older = remember(open, recent) {
+        val shown = recent.mapTo(HashSet()) { it.id }
+        val grouped = open.filter { it.id !in shown }.sortedByDescending { it.createdAt }
+            .groupBy { OrbitBoardRepository.categoryOf(it) }
+        OrbitBoardRepository.IDEA_CATEGORIES.mapNotNull { name -> grouped[name]?.let { name to it } }
+    }
     val done = remember(list) { list.orEmpty().filter { it.state == "BUILT" }.sortedByDescending { it.builtAt }.take(10) }
     var showIntro by rememberSaveable { mutableStateOf(false) }
     if (showIntro) {
@@ -1467,21 +1461,6 @@ private fun OrbitIdeasPage(orbit: OrbitProfile, data: OrbitTabData, onDraft: (St
     TabList(
         title = stringResource(R.string.orbit_tab_ideas),
         info = { showIntro = true },
-        overlay = { top ->
-            OrbitCoverPage(visible = category != null, onDismiss = { category = null }) {
-                (category ?: shownCategory)?.let { shown ->
-                    IdeaCategoryPage(
-                        who = who,
-                        category = shown,
-                        ideas = byCategory[shown].orEmpty(),
-                        top = top,
-                        onBack = { category = null },
-                        onOpen = { openedId = it.id },
-                        onVote = ::vote,
-                    )
-                }
-            }
-        },
     ) {
         if (list == null) {
             item(key = "loading") { LinearProgressIndicator(Modifier.fillMaxWidth()) }
@@ -1503,13 +1482,15 @@ private fun OrbitIdeasPage(orbit: OrbitProfile, data: OrbitTabData, onDraft: (St
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            items(recent, key = { it.id }) { idea ->
+            items(recent, key = { it.id }, contentType = { "idea" }) { idea ->
                 IdeaRow(idea, onOpen = { openedId = idea.id }, onVote = { vote(idea, it) })
             }
         }
-        item(key = "categoriesTitle") { GroupTitle(stringResource(R.string.orbit_ideas_categories)) }
-        items(OrbitBoardRepository.IDEA_CATEGORIES, key = { "category-$it" }) { name ->
-            IdeaCategoryRow(name, byCategory[name]?.size ?: 0) { category = name }
+        older.forEach { (name, ideasInCategory) ->
+            item(key = "category-$name", contentType = "categoryTitle") { IdeaCategoryTitle(name) }
+            items(ideasInCategory, key = { it.id }, contentType = { "idea" }) { idea ->
+                IdeaRow(idea, onOpen = { openedId = idea.id }, onVote = { vote(idea, it) })
+            }
         }
         if (open.isNotEmpty()) {
             item(key = "more") {
@@ -1565,38 +1546,14 @@ private fun OrbitIdeasPage(orbit: OrbitProfile, data: OrbitTabData, onDraft: (St
     }
 }
 
-/** One category on the Ideas tab: its picture, its name and how many ideas it holds. */
+/** The large heading above one category's older ideas in the Ideas feed. */
 @Composable
-private fun IdeaCategoryRow(category: String, count: Int, onClick: () -> Unit) {
-    val colors = MaterialTheme.colorScheme
-    Column(Modifier.bleed(20.dp)) {
-        Row(
-            Modifier.fillMaxWidth().clickable(role = Role.Button, onClick = onClick)
-                .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
-                Modifier.size(44.dp).clip(CircleShape).background(colors.onSurface.copy(alpha = 0.05f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(ideaCategoryEmoji[category] ?: "✨", fontSize = 22.sp, lineHeight = 26.sp, maxLines = 1)
-            }
-            Spacer(Modifier.width(14.dp))
-            Text(
-                ideaCategoryName(category), style = MaterialTheme.typography.titleMedium,
-                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
-            )
-            Text(
-                if (count > 0) stringResource(R.string.orbit_idea_category_count, count)
-                else stringResource(R.string.orbit_idea_category_none),
-                style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant, maxLines = 1,
-            )
-            Icon(
-                orbitIcon("chevron-right"), null, Modifier.padding(start = 4.dp).size(20.dp),
-                tint = colors.onSurfaceVariant.copy(alpha = 0.6f),
-            )
-        }
-    }
+private fun IdeaCategoryTitle(category: String) {
+    Text(
+        ideaCategoryName(category), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold,
+        maxLines = 1, overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.fillMaxWidth().padding(top = 16.dp).semantics { heading() },
+    )
 }
 
 /** An idea Orbit already did: tap for its details. */
@@ -1625,43 +1582,7 @@ private fun DoneIdeaRow(idea: OrbitBoardRepository.Item, onClick: () -> Unit) {
     }
 }
 
-/** One category's ideas, pushed over the Ideas tab under Orbit's header. */
-@Composable
-private fun IdeaCategoryPage(
-    who: String,
-    category: String,
-    ideas: List<OrbitBoardRepository.Item>,
-    top: Dp,
-    onBack: () -> Unit,
-    onOpen: (OrbitBoardRepository.Item) -> Unit,
-    onVote: (OrbitBoardRepository.Item, Int) -> Unit,
-) {
-    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        LazyColumn(
-            Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = top, bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            item(key = "frame") {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 4.dp)) {
-                    OrbitCircleButton(orbitIcon("chevron-left"), stringResource(R.string.back), onBack)
-                    Spacer(Modifier.width(14.dp))
-                    Text(
-                        ideaCategoryName(category), style = MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-            if (ideas.isEmpty()) {
-                item(key = "empty") { Hint(stringResource(R.string.orbit_idea_category_empty, who)) }
-            } else {
-                items(ideas, key = { it.id }) { idea ->
-                    IdeaRow(idea, onOpen = { onOpen(idea) }, onVote = { onVote(idea, it) })
-                }
-            }
-        }
-    }
-}
+/** One idea in the feed: its picture, title and a few lines of what it is; swipe to vote. */
 @Composable
 private fun IdeaRow(idea: OrbitBoardRepository.Item, onOpen: () -> Unit, onVote: (Int) -> Unit) {
     val colors = MaterialTheme.colorScheme
@@ -2176,6 +2097,7 @@ private fun OrbitBuildsPage(
     onOpenTask: (String) -> Unit,
     onOpenFile: (String) -> Unit,
     onDraft: (String) -> Unit,
+    onQuoteFiles: (List<java.io.File>) -> Unit,
 ) {
     val who = orbitName(orbit)
     val context = LocalContext.current
@@ -2218,6 +2140,11 @@ private fun OrbitBuildsPage(
         else openOrbitFile(context, fileOf)
     }
     val action = rememberAction()
+    // Quotes one file in the chat; the file is found off the main thread, as opening does.
+    fun quote(fileOf: () -> java.io.File) = action {
+        val file = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { fileOf() }
+        onQuoteFiles(listOf(file))
+    }
     // Books whose copied chapters are shown under their row.
     // Saved, so a book stays open after switching to another tab and back.
     val openBooks = rememberSaveable(orbit.id, saver = listSaver(save = { it.toList() }, restore = { it.toMutableStateList() })) {
@@ -2297,6 +2224,16 @@ private fun OrbitBuildsPage(
                             DropdownMenuItem(text = { Text(stringResource(R.string.orbit_artifact_revise)) }, onClick = {
                                 close(); onDraft(resources.getString(R.string.orbit_build_continue_draft, entry.latest.name))
                             })
+                            DropdownMenuItem(text = { Text(stringResource(R.string.orbit_quote_menu)) }, onClick = {
+                                close()
+                                val version = entry.latest
+                                quote {
+                                    val root = OrbitPreferences.getInstance(context).orbitDir(orbit.id).canonicalFile
+                                    java.io.File(root, version.relativePath).canonicalFile.also {
+                                        require(it.toPath().startsWith(root.toPath())) { "Not one of Orbit's files" }
+                                    }
+                                }
+                            })
                         }
                         is BuildEntry.Made -> {
                             val file = entry.file
@@ -2326,6 +2263,8 @@ private fun OrbitBuildsPage(
                                 )
                                 DropdownMenuItem(text = { Text(stringResource(R.string.orbit_file_share)) },
                                     onClick = { close(); shareOrbitFile(context) { orbitFiles.fileFor(file.path) } })
+                                DropdownMenuItem(text = { Text(stringResource(R.string.orbit_quote_menu)) },
+                                    onClick = { close(); quote { orbitFiles.fileFor(file.path) } })
                                 DropdownMenuItem(
                                     text = { Text(stringResource(R.string.orbit_file_delete), color = MaterialTheme.colorScheme.error) },
                                     onClick = { close(); deletingMade = file.path },
@@ -2364,6 +2303,8 @@ private fun OrbitBuildsPage(
                                 onClick = { close(); viewFile { upload.file } })
                             DropdownMenuItem(text = { Text(stringResource(R.string.orbit_file_share)) },
                                 onClick = { close(); shareOrbitFile(context) { upload.file } })
+                            DropdownMenuItem(text = { Text(stringResource(R.string.orbit_quote_menu)) },
+                                onClick = { close(); onQuoteFiles(listOf(upload.file)) })
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.orbit_file_delete), color = MaterialTheme.colorScheme.error) },
                                 onClick = { close(); deletingUpload = upload },
@@ -2535,7 +2476,7 @@ private fun BuildRow(
 
 /** A file's type as shown under its name: the extension in capitals, or a word for a file without one. */
 @Composable
-private fun typeLabel(name: String): String =
+internal fun typeLabel(name: String): String =
     name.substringAfterLast('.', "").uppercase().take(6).ifEmpty { stringResource(R.string.orbit_library_other) }
 
 /**
@@ -2544,7 +2485,7 @@ private fun typeLabel(name: String): String =
  * square, its color picked from [seed] so each work keeps its own.
  */
 @Composable
-private fun FileTile(
+internal fun FileTile(
     name: String,
     image: java.io.File? = null,
     imageExpected: Boolean = false,
@@ -2651,7 +2592,6 @@ private fun BuildDetail(
     val resources = LocalResources.current
     var versionId by rememberSaveable(history.first().artifactId) { mutableStateOf(history.first().id) }
     val version = history.firstOrNull { it.id == versionId } ?: history.first()
-    var offset by rememberSaveable(version.id) { mutableIntStateOf(0) }
     val text by key(version.id) {
         produceState(data.artifactText?.takeIf { it.first == version.id }?.second, version.id) {
             if (value?.isSuccess == true) return@produceState
@@ -2664,9 +2604,41 @@ private fun BuildDetail(
             }.also { data.artifactText = version.id to it }
         }
     }
+    // Orbit's header (picture and name) is drawn over this page, so the page starts below it,
+    // as the tab's own list does; otherwise the picture covers the title and the buttons.
+    val headerHeight = LocalOrbitTabHeaderHeight.current
+    // While Orbit works, a line under its name is drawn into the header's lower padding without
+    // being counted in its height. With large text that line outgrows the padding; the page then
+    // starts lower by the difference.
+    val activityLine = MaterialTheme.typography.labelSmall.lineHeight.let { height ->
+        if (height.isSp) with(androidx.compose.ui.platform.LocalDensity.current) { height.toDp() } else 0.dp
+    }
+    val activityOverflow = (activityLine - 18.dp).coerceAtLeast(0.dp)
+    val markdown = remember(version.name) {
+        version.name.substringAfterLast('/').substringAfterLast('.', "").lowercase() in setOf("md", "markdown", "mdx")
+    }
+    var showFrontMatter by rememberSaveable(version.id) { mutableStateOf(false) }
+    // The formatted view is drawn, not text; the plain view is there to select and copy.
+    var showSource by rememberSaveable(version.id) { mutableStateOf(false) }
+    // Pages differ between the two views, so switching starts again at the first.
+    var page by rememberSaveable(version.id, showSource) { mutableIntStateOf(0) }
+    // Links ask before leaving for the browser, as in the feed.
+    var pendingLink by remember { mutableStateOf<String?>(null) }
+    val systemUriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+    val askingUriHandler = remember {
+        object : androidx.compose.ui.platform.UriHandler {
+            override fun openUri(uri: String) { pendingLink = uri }
+        }
+    }
+    CompositionLocalProvider(androidx.compose.ui.platform.LocalUriHandler provides askingUriHandler) {
     LazyColumn(
-        modifier = Modifier.fillMaxSize().statusBarsPadding(),
-        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 24.dp),
+        modifier = if (headerHeight == null) Modifier.fillMaxSize().statusBarsPadding() else Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(
+            start = 20.dp, end = 20.dp, bottom = 24.dp,
+            // The full header height: while Orbit works, a line under its name is drawn into the
+            // header's lower edge, so the page does not tuck under it as the tab lists do.
+            top = if (headerHeight == null) 8.dp else headerHeight + activityOverflow + 4.dp,
+        ),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
@@ -2706,18 +2678,162 @@ private fun BuildDetail(
                     result.isFailure -> Text(result.exceptionOrNull()?.message.orEmpty(), color = MaterialTheme.colorScheme.error)
                     else -> {
                         val body = result.getOrThrow()
-                        SelectionContainer { Text(body.drop(offset).take(20_000)) }
-                        Row {
-                            if (offset > 0) {
-                                TextButton(onClick = { offset = (offset - 20_000).coerceAtLeast(0) }) { Text(stringResource(R.string.orbit_previous_page)) }
+                        // A Markdown work shows as formatted text; the YAML block on top is data for
+                        // the app and Orbit, so it is folded away behind a small toggle. The plain view
+                        // shows the whole file as saved, the block included.
+                        val (frontMatter, content) = remember(body, markdown) {
+                            if (markdown) splitFrontMatter(body) else null to body
+                        }
+                        val formatted = markdown && !showSource
+                        val shown = if (formatted) content else body
+                        val pages = remember(shown, formatted) { artifactPages(shown, formatted) }
+                        val index = page.coerceIn(0, pages.lastIndex)
+                        if (markdown) Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                            if (frontMatter != null && formatted && index == 0) {
+                                TextButton(onClick = { showFrontMatter = !showFrontMatter }, contentPadding = PaddingValues(0.dp)) {
+                                    Text(stringResource(if (showFrontMatter) R.string.orbit_artifact_hide_info else R.string.orbit_artifact_show_info))
+                                }
                             }
-                            if (offset + 20_000 < body.length) {
-                                TextButton(onClick = { offset += 20_000 }) { Text(stringResource(R.string.orbit_next_page)) }
+                            TextButton(onClick = { showSource = !showSource }, contentPadding = PaddingValues(0.dp)) {
+                                Text(stringResource(if (showSource) R.string.orbit_artifact_show_formatted else R.string.orbit_artifact_show_source))
+                            }
+                        }
+                        if (frontMatter != null && formatted && index == 0 && showFrontMatter) {
+                            SelectionContainer {
+                                Text(
+                                    // A very long block is cut here; the plain view has all of it.
+                                    if (frontMatter.length > FRONT_MATTER_SHOWN) frontMatter.take(FRONT_MATTER_SHOWN) + "\n…"
+                                    else frontMatter,
+                                    style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                        val pageText = pages[index].let { it.opens + shown.substring(it.start, it.end) + it.closes }
+                        if (formatted) {
+                            com.ai.assistance.operit.ui.common.markdown.StreamMarkdownRenderer(
+                                content = pageText,
+                                backgroundColor = Color.Transparent,
+                                onLinkClick = { pendingLink = it },
+                                fillMaxWidth = true,
+                            )
+                        } else {
+                            SelectionContainer { Text(pageText) }
+                        }
+                        Row {
+                            if (index > 0) {
+                                TextButton(onClick = { page = index - 1 }) { Text(stringResource(R.string.orbit_previous_page)) }
+                            }
+                            if (index < pages.lastIndex) {
+                                TextButton(onClick = { page = index + 1 }) { Text(stringResource(R.string.orbit_next_page)) }
                             }
                         }
                     }
                 }
             }
+        }
+    }
+    }
+    pendingLink?.let { link ->
+        OrbitConfirmDialog(
+            title = stringResource(R.string.orbit_link_confirm_title),
+            message = stringResource(R.string.orbit_link_confirm_message, link),
+            confirmLabel = stringResource(R.string.orbit_link_confirm_open),
+            onConfirm = {
+                pendingLink = null
+                runCatching { systemUriHandler.openUri(link) }
+            },
+            onDismiss = { pendingLink = null },
+        )
+    }
+}
+
+/** Splits a leading `---` YAML block off a Markdown file: (the block, the rest); null when there is none. */
+private fun splitFrontMatter(text: String): Pair<String?, String> {
+    val match = Regex("""\A\uFEFF?---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|\z)""").find(text) ?: return null to text
+    return match.groupValues[1].trimEnd() to text.substring(match.range.last + 1).trimStart('\r', '\n')
+}
+
+private const val ARTIFACT_PAGE = 20_000
+private const val FRONT_MATTER_SHOWN = 4_000
+
+/**
+ * One page of a long work: [start] until [end] of the text, with [opens] put before it and [closes]
+ * after it when a code block longer than a page had to be cut, so both halves still read as code.
+ */
+private class ArtifactPage(val start: Int, val end: Int, val opens: String = "", val closes: String = "")
+
+/** An open code fence: its character, how many of them, and the whole opening line (with the language). */
+private class CodeFence(val char: Char, val length: Int, val line: String)
+
+/** The fence a trimmed line opens, or null when it is not one. */
+private fun openingFence(line: String): CodeFence? {
+    val char = line.firstOrNull()?.takeIf { it == '`' || it == '~' } ?: return null
+    val length = line.takeWhile { it == char }.length
+    if (length < 3 || (char == '`' && line.drop(length).contains('`'))) return null
+    return CodeFence(char, length, line)
+}
+
+/** Whether a trimmed line closes [fence]: the same character, at least as many, nothing after. */
+private fun closesFence(line: String, fence: CodeFence): Boolean {
+    val length = line.takeWhile { it == fence.char }.length
+    return length >= fence.length && line.substring(length).isBlank()
+}
+
+/**
+ * The pages of a long work, each at most [ARTIFACT_PAGE] characters of it. Markdown pages end at a
+ * blank line outside a code block, so a code block, table or list is not cut in two and read
+ * wrongly on the next page. Only a code block longer than a page is cut, at a line end, and closed
+ * and opened again around the cut.
+ */
+private fun artifactPages(text: String, markdown: Boolean): List<ArtifactPage> {
+    val pages = mutableListOf<ArtifactPage>()
+    var start = 0
+    // The code block the next page starts inside, if a long one was cut.
+    var carried: CodeFence? = null
+    while (true) {
+        val opens = carried?.let { it.line + "\n" }.orEmpty()
+        if (text.length - start <= ARTIFACT_PAGE) {
+            pages += ArtifactPage(start, text.length, opens)
+            return pages
+        }
+        val limit = start + ARTIFACT_PAGE
+        if (!markdown) {
+            pages += ArtifactPage(start, limit)
+            start = limit
+            continue
+        }
+        var fence = carried
+        var blankCut = -1
+        var lineCut = -1
+        var i = start
+        // Only whole lines inside this page count.
+        while (i < limit) {
+            val end = text.indexOf('\n', i).let { if (it < 0) text.length else it }
+            if (end + 1 > limit) break
+            val line = text.substring(i, end).trim()
+            val open = fence
+            if (open != null) {
+                if (closesFence(line, open)) fence = null
+            } else {
+                val opened = openingFence(line)
+                if (opened != null) fence = opened
+                else if (line.isEmpty()) blankCut = end + 1
+            }
+            lineCut = end + 1
+            i = end + 1
+        }
+        if (blankCut > start) {
+            pages += ArtifactPage(start, blankCut, opens)
+            carried = null
+            start = blankCut
+        } else {
+            val cut = if (lineCut > start) lineCut else limit
+            val open = fence
+            val closes = open?.let { (if (cut > 0 && text[cut - 1] == '\n') "" else "\n") + it.char.toString().repeat(it.length) }.orEmpty()
+            pages += ArtifactPage(start, cut, opens, closes)
+            carried = open
+            start = cut
         }
     }
 }

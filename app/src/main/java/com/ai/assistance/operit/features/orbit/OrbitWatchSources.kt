@@ -3,6 +3,7 @@ package com.ai.assistance.operit.features.orbit
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.os.SystemClock
 import android.provider.CalendarContract
 import android.provider.Telephony
 import androidx.core.content.ContextCompat
@@ -10,7 +11,11 @@ import androidx.core.app.NotificationManagerCompat
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.core.tools.system.AndroidShellExecutor
 import com.ai.assistance.operit.services.notification.OperitNotificationStore
+import com.ai.assistance.operit.util.AppLogger
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.security.MessageDigest
@@ -108,17 +113,10 @@ object OrbitWatchSources {
         check(context.packageName in NotificationManagerCompat.getEnabledListenerPackages(context)) {
             context.getString(R.string.orbit_watch_needs_notifications)
         }
-        if (!OperitNotificationStore.connected) {
-            // Access is on but the listener is not bound yet (e.g. right after a reboot): ask the system
-            // to bind it and wait a little; if it is still not there, skip this check quietly instead of
-            // reporting an empty tray as a change or the task as failed.
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) runCatching {
-                android.service.notification.NotificationListenerService.requestRebind(android.content.ComponentName(context,
-                    com.ai.assistance.operit.services.notification.OperitNotificationListenerService::class.java))
-            }
-            repeat(10) { if (!OperitNotificationStore.connected) kotlinx.coroutines.delay(600) }
-            if (!OperitNotificationStore.connected) throw NotReady(context.getString(R.string.orbit_watch_notifications_starting))
-        }
+        // Access is on but the listener may not be bound yet (e.g. right after a reboot or an update).
+        // If it cannot be brought back, skip this check quietly instead of reporting an empty tray as a
+        // change or the task as failed.
+        if (!awaitNotificationListener(context)) throw NotReady(context.getString(R.string.orbit_watch_notifications_starting))
         val wanted = packages.split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet()
         return OperitNotificationStore.snapshot(200, includeOngoing = false)
             .filter { it.packageName != context.packageName && (wanted.isEmpty() || it.packageName in wanted) }
@@ -129,6 +127,51 @@ object OrbitWatchSources {
 
     private fun granted(context: Context, permission: String) =
         ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+
+    private val listenerRecovery = Mutex()
+    private var listenerRecoveryFailedAt = 0L
+    private var listenerRestartedAt = 0L
+
+    /**
+     * Brings the notification listener back once for all tasks that need it at the same moment. After a
+     * failed attempt, tasks due shortly after skip without waiting; turning the component off and on is
+     * tried at most once per cooldown so a lasting outage does not keep toggling it.
+     */
+    private suspend fun awaitNotificationListener(context: Context): Boolean = listenerRecovery.withLock {
+        if (OperitNotificationStore.connected) return@withLock true
+        val now = SystemClock.elapsedRealtime()
+        if (listenerRecoveryFailedAt != 0L && now - listenerRecoveryFailedAt < LISTENER_RETRY_MS) return@withLock false
+        val listener = android.content.ComponentName(context,
+            com.ai.assistance.operit.services.notification.OperitNotificationListenerService::class.java)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) runCatching {
+            android.service.notification.NotificationListenerService.requestRebind(listener)
+        }
+        repeat(10) { if (!OperitNotificationStore.connected) delay(600) }
+        if (!OperitNotificationStore.connected &&
+            (listenerRestartedAt == 0L || SystemClock.elapsedRealtime() - listenerRestartedAt >= LISTENER_RESTART_COOLDOWN_MS)
+        ) {
+            // The system ignored the rebind (common after an in-place update). Turning our own listener
+            // component off and on makes it bind again; the user's notification access stays granted.
+            listenerRestartedAt = SystemClock.elapsedRealtime()
+            val pm = context.packageManager
+            try {
+                pm.setComponentEnabledSetting(listener,
+                    PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.DONT_KILL_APP)
+            } catch (e: Exception) {
+                AppLogger.w("OrbitWatchSources", "Could not restart the notification listener: ${e.message}")
+            } finally {
+                runCatching {
+                    pm.setComponentEnabledSetting(listener,
+                        PackageManager.COMPONENT_ENABLED_STATE_DEFAULT, PackageManager.DONT_KILL_APP)
+                }.onFailure { AppLogger.w("OrbitWatchSources", "Could not re-enable the notification listener: ${it.message}") }
+            }
+            repeat(10) { if (!OperitNotificationStore.connected) delay(600) }
+        }
+        OperitNotificationStore.connected.also { listenerRecoveryFailedAt = if (it) 0L else SystemClock.elapsedRealtime() }
+    }
+
+    private const val LISTENER_RETRY_MS = 2 * 60_000L
+    private const val LISTENER_RESTART_COOLDOWN_MS = 30 * 60_000L
 
     private suspend fun sms(context: Context, sender: String): String = withContext(Dispatchers.IO) {
         check(granted(context, Manifest.permission.READ_SMS)) {

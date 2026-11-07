@@ -4432,6 +4432,14 @@ class ChatHistoryManager private constructor(private val context: Context) {
     ): List<com.ai.assistance.operit.data.model.ChatMessageProcessMetadata> =
         withContext(Dispatchers.IO) { messageDao.getProcessMetadataFrom(chatId, since) }
 
+    /** The rows of [loadChatMessageProcessMetadata] from [since] to [until], oldest first. */
+    suspend fun loadChatMessageProcessMetadataBetween(
+        chatId: String,
+        since: Long,
+        until: Long,
+    ): List<com.ai.assistance.operit.data.model.ChatMessageProcessMetadata> =
+        withContext(Dispatchers.IO) { messageDao.getProcessMetadataBetween(chatId, since, until) }
+
     /** Replies of a chat that may hold tool calls or thinking, by message time. */
     suspend fun loadWorkReplyTimestamps(chatId: String): List<Long> =
         withContext(Dispatchers.IO) { messageDao.getWorkReplyTimestamps(chatId) }

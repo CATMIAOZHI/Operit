@@ -1064,6 +1064,12 @@ private fun OrbitChatPage(
                                 talkChatId = orbit.chatId
                                 tab = OrbitTab.CHAT
                             },
+                            onQuoteFiles = { files ->
+                                // In the main chat's input box, as files the user picked; only their places are sent.
+                                talkChatId = orbit.chatId
+                                tab = OrbitTab.CHAT
+                                chatViewModel.attachOrbitFiles(files)
+                            },
                             filesVersion = filesVersion, onOpenFile = { editingFile = it })
                     }
                 }

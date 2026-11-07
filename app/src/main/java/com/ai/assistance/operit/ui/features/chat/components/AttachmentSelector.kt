@@ -18,6 +18,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -47,6 +49,7 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.Description as OutlinedDescription
+import androidx.compose.material.icons.outlined.FolderOpen as OutlinedFolderOpen
 import androidx.compose.material.icons.outlined.Image as OutlinedImage
 import androidx.compose.material.icons.outlined.LocationOn as OutlinedLocationOn
 import androidx.compose.material.icons.outlined.Notifications as OutlinedNotifications
@@ -106,6 +109,8 @@ fun AttachmentSelectorPanel(
         userQuery: String = "",
         chatId: String? = null,
         orbit: Boolean = false,
+        /** Orbit's chat only: opens the picker of Orbit's own files, quoted in place. */
+        onQuoteOrbitFiles: (() -> Unit)? = null,
         onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -180,6 +185,18 @@ fun AttachmentSelectorPanel(
                         label = context.getString(R.string.orbit_attach_file),
                         onClick = { filePickerLauncher.launch("*/*") }
                     ),
+                ) + listOfNotNull(
+                    onQuoteOrbitFiles?.let { quote ->
+                        AttachmentPanelItem(
+                            icon = Icons.Outlined.OutlinedFolderOpen,
+                            label = context.getString(R.string.orbit_attach_quote),
+                            onClick = {
+                                onDismiss()
+                                quote()
+                            }
+                        )
+                    }
+                ) + listOf(
                     AttachmentPanelItem(
                         icon = Icons.Outlined.OutlinedNotifications,
                         label = context.getString(R.string.orbit_attach_notifications),
@@ -594,7 +611,8 @@ internal fun OrbitAttachmentRow(items: List<AttachmentPanelItem>) {
                     .padding(vertical = 6.dp),
             ) {
                 Box(
-                    modifier = Modifier.size(52.dp)
+                    // Six choices on a narrow phone leave less than 52dp each; the tile shrinks to fit.
+                    modifier = Modifier.widthIn(max = 52.dp).fillMaxWidth().aspectRatio(1f)
                         .clip(RoundedCornerShape(18.dp))
                         .background(MaterialTheme.colorScheme.surfaceContainerHigh),
                     contentAlignment = Alignment.Center,

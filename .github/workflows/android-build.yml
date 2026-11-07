@@ -24,48 +24,6 @@ on:
         required: false
         default: false
         type: boolean
-  push:
-    branches: [personal/main]
-    paths:
-      - .github/actions/android-checks/**
-      - .github/workflows/android-build.yml
-      - .gitmodules
-      - .npmrc
-      - app/**
-      - chat-parser/**
-      - chat-storage/**
-      - memory-storage/**
-      - build.gradle.kts
-      - ci/script/download_android_dependencies.sh
-      - ci/script/prepare_android_dependencies.py
-      - ci/script/run_android_checks.sh
-      - cmake/**
-      - examples/**
-      - gradle/**
-      - gradle.properties
-      - gradlew
-      - gradlew.bat
-      - package.json
-      - package-lock.json
-      - npm-shrinkwrap.json
-      - pnpm-workspace.yaml
-      - quickjs/**
-      - settings.gradle.kts
-      - showerclient/**
-      - terminal/**
-      - terminal
-      - tools/native_ripgrep/**
-      - tools/example_packages/packages_whitelist.txt
-      - tools/example_packages/legacy_incompatible_packages.txt
-      - tools/example_packages/sync_example_packages.py
-      - tools/adb/execute_js.bat
-      - tools/adb/execute_js.sh
-      - tools/adb/execute_js_dir.bat
-      - tools/adb/execute_js_dir.sh
-      - tools/adb/run_sandbox_script.bat
-      - tools/adb/run_sandbox_script.sh
-      - tools/sandboxpackage_dev_install_or_update.js
-      - web-chat/**
 
 concurrency:
   group: android-build-${{ github.event_name }}-${{ github.ref }}-${{ github.event.inputs.gradle_task }}
@@ -184,24 +142,15 @@ jobs:
         id: gradle-build
         env:
           DISPATCH_GRADLE_TASK: ${{ inputs.gradle_task }}
-          EVENT_NAME: ${{ github.event_name }}
           RUN_UNIT_TESTS: ${{ inputs.run_unit_tests }}
           RUN_ANDROID_LINT: ${{ inputs.run_android_lint }}
         shell: bash
         run: |
           set -euo pipefail
-          case "$EVENT_NAME" in
-            push)
-              bash ci/script/run_android_checks.sh --lane full --continue
-              ;;
-            workflow_dispatch)
-              flags=(--lane build --task "$DISPATCH_GRADLE_TASK" --continue)
-              [[ "$RUN_UNIT_TESTS" == "true" ]] && flags+=(--unit-tests)
-              [[ "$RUN_ANDROID_LINT" == "true" ]] && flags+=(--lint)
-              bash ci/script/run_android_checks.sh "${flags[@]}"
-              ;;
-            *) echo "Unsupported workflow event: $EVENT_NAME" >&2; exit 2 ;;
-          esac
+          flags=(--lane build --task "$DISPATCH_GRADLE_TASK" --continue)
+          [[ "$RUN_UNIT_TESTS" == "true" ]] && flags+=(--unit-tests)
+          [[ "$RUN_ANDROID_LINT" == "true" ]] && flags+=(--lint)
+          bash ci/script/run_android_checks.sh "${flags[@]}"
 
       - name: Verify Android artifact signatures
         shell: bash

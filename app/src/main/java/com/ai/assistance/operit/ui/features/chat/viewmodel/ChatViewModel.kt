@@ -2505,6 +2505,21 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         attachmentDelegate.discardAttachment(filePath)
     }
 
+    /** Quotes an Orbit's own files in the input box, in place (no copies). */
+    fun attachOrbitFiles(files: List<java.io.File>) {
+        if (files.isEmpty()) return
+        viewModelScope.launch {
+            try {
+                attachmentDelegate.attachOrbitFiles(files)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AppLogger.e(TAG, "Could not quote Orbit files", e)
+                uiStateDelegate.showErrorMessage(context.getString(R.string.chat_attachment_processing_failed, e.message ?: ""))
+            }
+        }
+    }
+
     /** Inserts a reference to an attachment at the current cursor position in the user's message */
     fun insertAttachmentReference(attachment: AttachmentInfo) {
         val currentMessage = userMessage.value

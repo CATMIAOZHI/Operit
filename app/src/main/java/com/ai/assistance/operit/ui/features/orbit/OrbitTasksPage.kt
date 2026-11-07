@@ -36,6 +36,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -318,7 +320,11 @@ internal fun OrbitTasksPage(
 
     historyTask?.let { id ->
         tasks?.firstOrNull { it.id == id }?.let { task ->
-            RunHistorySheet(orbitId, task, repository) { historyTask = null }
+            RunHistorySheet(
+                orbitId, task, repository,
+                // The sheet closes first, so the chat turn opens on top instead of under it.
+                onOpenProcess = onOpenProcess?.let { open -> { process -> historyTask = null; open(process) } },
+            ) { historyTask = null }
         }
     }
     resolveReceipt?.let { (taskId, id, completed) ->
@@ -369,13 +375,21 @@ private fun runIcon(run: OrbitRunEntity): String = when {
 
 /**
  * Every run of one task, newest first. A run opens to what it saw and, when it ran in the
- * background, its full transcript; a skipped or in-chat run says why there is none.
+ * background, its full transcript. A run handled in the chat shows why Orbit spoke or stayed
+ * quiet and opens the chat turn itself; a skipped run says why there is no record.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun RunHistorySheet(orbitId: String, task: OrbitTaskEntity, repository: OrbitTaskRepository, onDismiss: () -> Unit) {
+private fun RunHistorySheet(
+    orbitId: String,
+    task: OrbitTaskEntity,
+    repository: OrbitTaskRepository,
+    onOpenProcess: ((OrbitProcess) -> Unit)? = null,
+    onDismiss: () -> Unit,
+) {
     val context = LocalContext.current
     val resources = LocalResources.current
+    val orbitName = rememberOrbitName(orbitId)
     // A read that fails says so with a retry; it is never shown as "no runs" or "no record".
     var reload by remember { mutableIntStateOf(0) }
     var listFailed by remember { mutableStateOf<String?>(null) }
@@ -432,7 +446,12 @@ private fun RunHistorySheet(orbitId: String, task: OrbitTaskEntity, repository: 
                     Column(Modifier.weight(1f)) {
                         Text(format.format(Date(openRun.startedAt)), style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold)
-                        Text(runOutcome(openRun, task), style = MaterialTheme.typography.bodySmall,
+                        // A chat run that ended normally shows its reason in full below, so the line here
+                        // is just the outcome; a failed, cancelled or running one keeps its usual line.
+                        Text(
+                            if (chatRunEndedWell(openRun)) OrbitChatDecision.label(context, openRun.decision, orbitName)
+                            else runOutcome(openRun, task),
+                            style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }
                 }
@@ -443,7 +462,37 @@ private fun RunHistorySheet(orbitId: String, task: OrbitTaskEntity, repository: 
                         catch (e: Exception) { recordFailed = e.message ?: e.toString(); null }
                 }
                 val body = record
+                // Finding the chat turn belongs to this record: going back or opening another one
+                // cancels it, and a second tap while it looks does nothing.
+                var turnRequest by remember(openRun.id) { mutableIntStateOf(0) }
+                var findingTurn by remember(openRun.id) { mutableStateOf(false) }
+                if (onOpenProcess != null) LaunchedEffect(openRun.id, turnRequest) {
+                    if (turnRequest == 0) return@LaunchedEffect
+                    findingTurn = true
+                    try {
+                        val chats = listOf(task.chatId, com.ai.assistance.operit.data.preferences.OrbitPreferences
+                            .getInstance(context).snapshot.orbits.firstOrNull { it.id == orbitId }?.chatId.orEmpty())
+                        // A read that failed says so; only a read that worked and found nothing means the chat is gone.
+                        val process = try {
+                            Result.success(OrbitWork.wakeTurn(context, chats, task.title, openRun.startedAt,
+                                openRun.finishedAt.takeIf { it > 0 } ?: Long.MAX_VALUE,
+                                OrbitChatDecision.noticeOf(openRun.decision)))
+                        } catch (e: CancellationException) { throw e } catch (e: Exception) { Result.failure(e) }
+                        val found = process.getOrNull()
+                        if (found != null) onOpenProcess(found)
+                        else android.widget.Toast.makeText(context,
+                            if (process.isFailure) resources.getString(R.string.orbit_run_turn_failed)
+                            else resources.getString(R.string.orbit_run_turn_gone, orbitName),
+                            android.widget.Toast.LENGTH_SHORT).show()
+                    } finally {
+                        findingTurn = false
+                    }
+                }
                 if (body == null && recordFailed != null) TaskErrorCard(recordFailed) { reload++ }
+                else if (body != null && body.isBlank() && OrbitChatDecision.isChat(openRun.decision)) {
+                    ChatRunRecord(openRun, orbitName, finding = findingTurn,
+                        onOpen = if (onOpenProcess != null) ({ if (!findingTurn) turnRequest++ }) else null)
+                }
                 else Surface(shape = RoundedCornerShape(16.dp), color = taskCardColor(), modifier = Modifier.fillMaxWidth()) {
                     if (body == null) TaskLoading()
                     else SelectionContainer {
@@ -452,10 +501,7 @@ private fun RunHistorySheet(orbitId: String, task: OrbitTaskEntity, repository: 
                                 // No background transcript: what the run saw, and why there is nothing more.
                                 listOf(
                                     openRun.error.ifBlank { openRun.observation.takeIf { openRun.decision != OrbitRunEntity.SKIPPED }.orEmpty() },
-                                    if (OrbitChatDecision.isChat(openRun.decision))
-                                        OrbitChatDecision.describe(context, openRun.decision, rememberOrbitName(orbitId)) + "\n" +
-                                            stringResource(R.string.orbit_run_record_in_chat, rememberOrbitName(orbitId))
-                                    else stringResource(R.string.orbit_run_record_none, rememberOrbitName(orbitId)),
+                                    stringResource(R.string.orbit_run_record_none, orbitName),
                                 ).filter { it.isNotBlank() }.joinToString("\n\n")
                             },
                             style = MaterialTheme.typography.bodyMedium,
@@ -467,6 +513,50 @@ private fun RunHistorySheet(orbitId: String, task: OrbitTaskEntity, repository: 
         }
     }
 }
+
+/**
+ * A run Orbit handled in the chat: why it spoke or stayed quiet, and a way to the chat turn
+ * itself. The stock "handed to Orbit in the chat" note is left out; the outcome above says it.
+ */
+@Composable
+private fun ChatRunRecord(run: OrbitRunEntity, orbitName: String, finding: Boolean, onOpen: (() -> Unit)?) {
+    val reason = OrbitChatDecision.reason(run.decision)
+    val problem = run.error.takeIf { it.isNotBlank() }
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        if (problem != null || reason.isNotBlank()) {
+            Surface(shape = RoundedCornerShape(16.dp), color = taskCardColor(), modifier = Modifier.fillMaxWidth()) {
+                SelectionContainer {
+                    Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()).padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        if (problem != null) Text(problem, style = MaterialTheme.typography.bodyMedium,
+                            color = com.ai.assistance.operit.ui.common.readableErrorColor())
+                        if (reason.isNotBlank()) {
+                            Text(stringResource(R.string.orbit_run_why, orbitName), style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(reason, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                }
+            }
+        }
+        if (onOpen != null) TaskButton(
+            if (finding) stringResource(R.string.orbit_run_turn_finding) else stringResource(R.string.orbit_run_open_turn, orbitName),
+            "eye", enabled = !finding, onClick = onOpen,
+            // Screen readers hear the button change to "looking…" and back.
+            modifier = Modifier.semantics {
+                liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite
+            },
+        )
+        else if (problem == null && reason.isBlank()) {
+            Text(stringResource(R.string.orbit_run_turn_in_chat, orbitName), style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 4.dp))
+        }
+    }
+}
+
+/** A run handed to Orbit in the chat that ended without an error, cancel or still going. */
+private fun chatRunEndedWell(run: OrbitRunEntity): Boolean =
+    OrbitChatDecision.isChat(run.decision) && run.error.isBlank() && run.state !in setOf("RUNNING", "CANCELLED", "FAILED")
 
 /** A confirmation as a bottom sheet: a round icon, what will happen, and two full-width pills. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -798,18 +888,26 @@ private fun TaskDetail(
                     val failed = run?.state == "FAILED" && !run.error.isNullOrBlank()
                     // A skipped run keeps the previous observation; it says why it was skipped instead.
                     val skipped = run?.decision == OrbitRunEntity.SKIPPED && run.error.isBlank()
+                    // A chat run's observation is only the stock "handed over" note; its outcome says more.
+                    val chatOutcome = run?.takeIf { chatRunEndedWell(it) }
+                        ?.let { OrbitChatDecision.label(context, it.decision, rememberOrbitName(orbitId)) }
                     Text(
                         if (skipped) OrbitRoutines.skippedReason(context, task)
-                        else run?.error?.takeIf { it.isNotBlank() } ?: run?.observation?.takeIf { it.isNotBlank() }
+                        else chatOutcome ?: run?.error?.takeIf { it.isNotBlank() } ?: run?.observation?.takeIf { it.isNotBlank() }
                             ?: stringResource(R.string.orbit_task_no_result),
                         style = MaterialTheme.typography.bodyLarge,
                         color = if (failed) com.ai.assistance.operit.ui.common.readableErrorColor() else MaterialTheme.colorScheme.onSurface,
                         maxLines = 12, overflow = TextOverflow.Ellipsis,
                     )
                 }
-                run?.decision?.takeIf { it.isNotBlank() && !running && it != OrbitRunEntity.SKIPPED }?.let { decision ->
+                run?.decision?.takeIf { it.isNotBlank() && !running && it != OrbitRunEntity.SKIPPED }
+                    // The outcome of a chat run is already the line above; only its reason is added.
+                    ?.takeUnless { chatRunEndedWell(run) && OrbitChatDecision.reason(it).isBlank() }
+                    ?.let { decision ->
                     Text(stringResource(R.string.orbit_task_decision,
-                        if (OrbitChatDecision.isChat(decision)) OrbitChatDecision.describe(context, decision, rememberOrbitName(orbitId))
+                        if (OrbitChatDecision.isChat(decision))
+                            if (chatRunEndedWell(run)) OrbitChatDecision.reason(decision)
+                            else OrbitChatDecision.describe(context, decision, rememberOrbitName(orbitId))
                         else when (decision) {
                         OrbitRunEntity.UNCHANGED -> stringResource(R.string.orbit_decision_unchanged)
                         OrbitRunEntity.IN_CHAT -> stringResource(R.string.orbit_decision_in_chat, rememberOrbitName(orbitId))

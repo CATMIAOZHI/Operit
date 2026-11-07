@@ -188,6 +188,16 @@
     <string name="orbit_attach_notifications">Alerts</string>
     <string name="orbit_attach_location">Location</string>
     <string name="orbit_attach_region">Region</string>
+    <string name="orbit_attach_quote">Quote</string>
+    <string name="orbit_quote_title">Quote %1$s\'s files</string>
+    <string name="orbit_quote_hint">Only the name and location go to %1$s; it reads the file when it needs to.</string>
+    <string name="orbit_quote_search">Search files</string>
+    <string name="orbit_quote_notes">Notes</string>
+    <string name="orbit_quote_empty">Nothing here yet</string>
+    <string name="orbit_quote_no_match">No match</string>
+    <string name="orbit_quote_confirm">Quote (%1$d)</string>
+    <string name="orbit_quote_menu">Quote in chat</string>
+    <string name="orbit_quote_files_missing">%1$d file(s) no longer exist and were not quoted</string>
     <string name="orbit_floating_attach_note">To send photos or files, go back to Orbit\'s chat page</string>
     <string name="orbit_phone_card_title">Background screen</string>
     <string name="orbit_phone_card_summary">[Background screen: %1$s]</string>

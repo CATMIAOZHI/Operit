@@ -63,7 +63,7 @@ git diff --cached --check
 
 ### 资源 / 构建输入改动
 
-- 本地提交不要求完整 Lint；推送前对最终版本运行一次 `./gradlew :app:lintDebug`，有效的已通过结果不重复运行。
+- 本地提交和推送都不强制运行完整 Lint；只在用户要求、重大重构或排查静态检查问题时运行 `./gradlew :app:lintDebug`。
 - 改动图标或应用身份时：同步检查 `app/src/debug/res/` 下的 DEV 资源
 - 改动 `app/build.gradle.kts` 时：确认 `PERSONAL_DEV_UPDATE_CHANNEL` 在 `debug` 为 `true`、在 `release` 为 `false`
 
@@ -83,6 +83,7 @@ git diff --cached --check
 
 - 等待 Actions 时使用至少 60 秒轮询间隔
 - 不写入签名密钥或 Token 值到 workflow 文件
+- dev 分支推送后由 Nightly 自动构建和发布，相关路径的 JVM 测试由 Dev Quality 独立执行；Agent 无需手动触发 Android Build
 
 ## 分支相关
 
@@ -90,6 +91,7 @@ git diff --cached --check
 
 - 直接 push 即可，不需要 PR（但禁止删除和强推）
 - 可以包含开发版专属配置（包名 `.dev`、DEV 图标、Nightly 子模块等）
+- 推送后由 Nightly 自动构建并发布 APK；Dev Quality 按变更路径独立执行 JVM 单测，完整 Lint 通过 Android Build 的手动选项运行。检查结果在各自的 workflow summary 和 reports artifact 中查看
 
 ### personal/main
 

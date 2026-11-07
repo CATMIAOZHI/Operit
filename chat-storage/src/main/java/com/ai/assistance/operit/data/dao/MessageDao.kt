@@ -69,6 +69,20 @@ interface MessageDao {
     """)
     suspend fun getProcessMetadataFrom(chatId: String, since: Long): List<com.ai.assistance.operit.data.model.ChatMessageProcessMetadata>
 
+    /** The rows of [getProcessMetadata] from [since] to [until], both included, oldest first. */
+    @Query("""
+        SELECT m.timestamp, m.sender, m.displayMode,
+            COALESCE(v.sentAt, m.sentAt) AS sentAt,
+            COALESCE(v.completedAt, m.completedAt) AS completedAt,
+            COALESCE(v.waitDurationMs, m.waitDurationMs) AS waitDurationMs,
+            COALESCE(v.outputDurationMs, m.outputDurationMs) AS outputDurationMs
+        FROM messages m LEFT JOIN message_variants v
+          ON m.selectedVariantIndex > 0 AND v.chatId = m.chatId
+          AND v.messageTimestamp = m.timestamp AND v.variantIndex = m.selectedVariantIndex
+        WHERE m.chatId = :chatId AND m.timestamp >= :since AND m.timestamp <= :until ORDER BY m.timestamp ASC
+    """)
+    suspend fun getProcessMetadataBetween(chatId: String, since: Long, until: Long): List<com.ai.assistance.operit.data.model.ChatMessageProcessMetadata>
+
     /**
      * Replies in which the assistant called tools or thought first; both are stored as markup
      * (`<tool…>`, `<think…>`). A text search also finds quoted markup, so callers check the body.

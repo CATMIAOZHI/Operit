@@ -24,12 +24,12 @@
 - 原生第三方依赖（ncnn、sherpa-ncnn、WAMR、QuickJS）已固定到具体 commit SHA，锁定清单见 `cmake/NATIVE_DEPENDENCY_LOCK.md`；升级时更新该清单和对应 `CMakeLists.txt`，不要通过 `OPERIT_*_GIT_REF` 命令行参数覆盖（已不再生效）。
 - 根据改动范围运行最小充分验证：默认优先编译，只运行与本次修改直接相关的测试；没有直接相关测试时只做编译检查，小改动无明显回归风险时不额外补测试，已通过的测试不重复运行。不得仅为提高信心主动运行完整 `testDebugUnitTest`；全量测试和耗时的集成/UI 测试仅在用户明确要求、合并或 PR 最终验证、CI，或核心基础设施改动确有必要时运行。测试超时应覆盖 Gradle 冷启动和增量编译：聚焦 JVM 单测默认设置 10 分钟硬超时，其他任务按预计耗时设置明确上限；若连续 5 分钟没有新日志、CPU/进程活动或输出文件变化，应终止整个进程树并分析原因，不得仅因运行超过 60 秒判定失败。
 - 原生 Android 模块统一固定使用 SDK Manager 的 CMake 3.31.6（自带 Ninja 1.12.1）。Windows 必须启用 Win32 长路径，并移除指向旧版自定义 CMake 3.22.1 的 `local.properties` `cmake.dir`；构建后从 `build_command_*.bat` 或 `CMakeCache.txt` 核对 Gradle 实际使用 `cmake/3.31.6`。若支持长路径的工具链仍失败，再用 `subst` 将仓库根目录映射为短盘符并重试。第三方依赖产生的 CMake 兼容性弃用提示或 `CMAKE_OBJECT_PATH_MAX` 警告本身不等于构建失败。完整步骤见 `docs/agent/build-guide.md`。
-- 完整 APK 构建、release 构建和原生依赖升级后的验证优先使用 GitHub Actions（Nightly workflow 或手动触发），不要在本地执行完整 `assembleRelease`。本地构建仅用于快速迭代测试（`compileDebugKotlin`、`testDebugUnitTest`、`lintDebug`、`assembleDebug` 等），验证通过且用户授权推送后，由 CI 做完整构建。
+- 完整 APK 构建、release 构建和原生依赖升级后的验证优先使用 GitHub Actions（Nightly workflow 或手动触发），不要在本地执行完整 `assembleRelease`。本地构建仅用于快速迭代测试（`compileDebugKotlin`、`testDebugUnitTest`、`assembleDebug` 等），验证通过且用户授权推送后，由 CI 做完整构建。
 - 原生依赖 SHA 升级必须先推送 `personal/dev`，由 Nightly 构建验证 ccache 命中率和编译成功后，再考虑合并到 `personal/main`。
 - Web Chat、ToolPkg 和仓库检查命令以 `docs/doc-src/dev-core/CONTRIBUTING.md` 与 `ci/README.md` 为准。
 - 等待 GitHub Actions workflow 时使用至少 60 秒的轮询间隔并默认静默输出（PowerShell 示例：`gh run watch <run-id> --exit-status --interval 60 *> $null`）；结束后用一次 `gh run view` 查询最终结果，仅在诊断失败时读取详细 job 日志。
 - 构建可能触碰 ObjectBox 模型或占位文件。提交前检查 `git status` 和 diff，不提交无内容的行尾变化或无关生成物。
-- 本地提交不要求运行完整 Lint。推送前对最终版本运行一次完整 `:app:lintDebug`；已通过后不重复运行，只有可能影响检查结果的修改才需要重新验证。开发阶段先做必要编译和相关测试，集中处理静态检查问题，小调整优先做定向验证。编译、单测通过不代表 Lint 通过；分别说明本次实际验证范围。
+- 日常开发、本地提交、推送和晋升都不强制运行完整 Android Lint；优先做必要编译和相关测试。完整 `:app:lintDebug` 只在用户明确要求、重大重构或需要排查静态检查问题时运行，CI 的完整检查（`--lane full`）和手动触发时仍会运行。未运行 Lint 时如实说明，不得说成“Lint 通过”。
 - 组合函数内优先用 `stringResource` 等 Compose 资源 API，事件回调引用已取得的值；不为规避新增错误更新 baseline 或禁用检查。
 - 无法运行验证时，说明缺失的 SDK、依赖或环境条件，并分别报告编译、测试、Lint 和真机验证的实际状态，不得把“未运行”描述为“通过”。
 
@@ -40,6 +40,7 @@
 - `personal/main` 更新后由 `.github/workflows/sync-main-mirror.yml` 单向快进到 `main`，供仅支持 `main` 的安全工具读取。镜像使用仅授权本仓库 **Contents: read and write** 与 **Workflows: read and write** 的 `MAIN_MIRROR_TOKEN`，因为内置 `GITHUB_TOKEN` 不能推进包含 workflow 变更的提交。`main` 是只读兼容镜像，不得直接提交、合并 PR、强推或用作上游贡献分支；同步失败时先排查分叉，不得覆盖历史。
 - 上游贡献以最新 `upstream/dev` 为基线，PR 显式目标官方 `dev`；官方 `main` 用于稳定发布和维护者执行的发布同步。新建贡献分支按上游当前 `docs/doc-src/dev-core/CONTRIBUTING.md` 使用 `feat/`、`fix/`、`docs/`、`ci/`、`refactor/` 或 `test/` 前缀加简短描述，不使用 `contrib/`、代理、模型或个人身份前缀；已有分支维持原名。不得混入 Operit Ry 的品牌、服务路由或发布配置。
 - `personal/main` 是 Operit Ry 稳定发行分支，受规则保护；改动必须通过 PR 和必需检查，稳定 APK 与 `v*` Release tag 只从该分支发布。
+- `Android Build` 只手动触发，不在稳定分支每次 push 后重复构建调试包；正式发布选择 `:app:assembleRelease`。CodeQL 只保留每周与手动扫描，PR 的编译、测试及快速检查仍按变更范围执行。Dev Quality 只在开发分支的 Android 源码、资源或构建输入变化时跑 JVM 单测，完整 Android Lint 通过手动构建选项运行。
 - `personal/dev` 是所有新功能的集成与测试分支。新功能必须先进入该分支，构建并实际测试可共存的 debug APK；测试通过后，经用户同意再以只包含通用功能提交的 PR 晋升到 `personal/main`。晋升操作手册见 `docs/agent/dev-to-main-promotion.md`。不得绕过开发版验证直接向稳定分支加入新功能，也不得把开发版专属配置带入晋升 PR。
 - 上游更新先整合进 `personal/dev` 构建并测试，确认不破坏现有功能后再合并到 `personal/main`；不要用上游分支重置或覆盖任一个人分支。
 - 上游正式版本按 GitHub Release 的实际 APK 构建提交分批审查，流程与持久台账格式见 `docs/agent/upstream-release-review.md`；不得把 Release 之后尚未正式发布的 `upstream/main` 提交混入当前批次。

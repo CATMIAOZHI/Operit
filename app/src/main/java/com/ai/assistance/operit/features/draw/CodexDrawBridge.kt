@@ -64,11 +64,23 @@ object CodexDrawBridge {
         require(referencePaths.size + (if (isEdit) 1 else 0) <= MAX_REFERENCE_IMAGES) {
             "输入图片最多 $MAX_REFERENCE_IMAGES 张"
         }
-        val size = option(params, "size", "1024x1024", setOf("1024x1024", "1024x1536", "1536x1024", "auto"))
-        val quality = option(params, "quality", "auto", setOf("auto", "low", "medium", "high"))
+        // Codex sends any image-conditioned request to the edits endpoint, even when the intent is a new image.
+        val hasImageInput = isEdit || referencePaths.isNotEmpty()
+        // The edits endpoint rejects fields the generations endpoint tolerates, so image-conditioned
+        // requests mirror the official Codex body: size defaults to auto, background is only
+        // opaque or transparent, and output_format is omitted (the result format is sniffed below).
+        // Options are checked before any image is read so a bad value fails immediately.
+        val size = imageSize(params.optString("size").trim().lowercase().ifBlank { if (hasImageInput) "auto" else "1024x1024" })
+        val quality = option(params, "quality", "auto", setOf("auto", "low", "medium", "high", "xhigh", "max"))
         val background = option(params, "background", "auto", setOf("auto", "opaque", "transparent"))
-        val imageModel = option(params, "model", "gpt-image-2", setOf("gpt-image-2"))
-        val chatModel = params.optString("chat_model").trim().ifBlank { "gpt-5.5" }
+            .let { if (hasImageInput && it == "auto") "opaque" else it }
+        // The backend decides which image models an account may use; unknown names come back
+        // as an upstream error with the server's reason.
+        val imageModel = params.optString("model").trim().ifBlank { "gpt-image-2.5-flare" }
+        require(Regex("""gpt-image-[a-z0-9][a-z0-9.\-]*""").matches(imageModel)) {
+            "model 必须是 gpt-image- 开头的图片模型名，例如 gpt-image-2.5-flare 或 gpt-image-2.5-sunburst"
+        }
+        val chatModel = params.optString("chat_model").trim().ifBlank { "gpt-6-luna" }
         require(Regex("""gpt-[a-zA-Z0-9.\-]+""").matches(chatModel)) { "chat_model 格式无效" }
 
         val auth = CodexAuthManager.getInstance(context)
@@ -76,8 +88,6 @@ object CodexDrawBridge {
         val inputPaths = (if (isEdit) listOf(editPath) else emptyList()) + referencePaths
         val permittedRoots = inputImageRoots(context)
         val imageData = inputPaths.map { loadInputImage(it, permittedRoots) }
-        // Codex sends any image-conditioned request to the edits endpoint, even when the intent is a new image.
-        val hasImageInput = imageData.isNotEmpty()
 
         val direct = JSONObject()
             .put("model", imageModel)
@@ -85,11 +95,12 @@ object CodexDrawBridge {
             .put("size", size)
             .put("quality", quality)
             .put("background", background)
-            .put("output_format", "png")
         if (hasImageInput) {
             val images = JSONArray()
             imageData.forEach { images.put(JSONObject().put("image_url", it)) }
             direct.put("images", images)
+        } else {
+            direct.put("output_format", "png")
         }
         val directPath = if (hasImageInput) "/images/edits" else "/images/generations"
         val imageBase64 = auth.withAuthRecovery { account ->
@@ -161,6 +172,25 @@ object CodexDrawBridge {
         params.optString(name).trim().ifBlank { defaultValue }.also {
             require(it in allowed) { "$name 不支持：$it" }
         }
+
+    /**
+     * "auto" or WIDTHxHEIGHT within the image models' custom-size rules: each side a multiple of 16
+     * and at most 3840, the long side at most 3 times the short one, 655,360 to 8,294,400 pixels.
+     */
+    private fun imageSize(value: String): String {
+        if (value == "auto") return value
+        val match = Regex("""(\d{2,5})x(\d{2,5})""").matchEntire(value)
+            ?: throw IllegalArgumentException("size 必须是 auto 或 宽x高，例如 2048x2048、3840x2160")
+        val width = match.groupValues[1].toInt()
+        val height = match.groupValues[2].toInt()
+        require(width % 16 == 0 && height % 16 == 0) { "size 的宽和高都必须是 16 的倍数：$value" }
+        require(maxOf(width, height) <= 3840) { "size 单边最大 3840：$value" }
+        require(maxOf(width, height) <= minOf(width, height) * 3) { "size 宽高比最大 3:1：$value" }
+        require(width.toLong() * height in 655_360L..8_294_400L) {
+            "size 总像素必须在 655,360 到 8,294,400 之间（约 1K 到 4K）：$value"
+        }
+        return "${width}x$height"
+    }
 
     private fun loadInputImage(path: String, permittedRoots: List<File>): String {
         val localPath = if (path.startsWith("file://")) Uri.parse(path).path.orEmpty() else path
@@ -262,7 +292,7 @@ object CodexDrawBridge {
                     if (response.code == 401) {
                         throw CodexHttpException(401, isCodexExpiredToken(401, response.peekBody(16_384).string()))
                     }
-                    val errorBody = body.source().readUtf8Line().orEmpty().take(1000)
+                    val errorBody = response.peekBody(16_384).string()
                     return ImageResponse(response.code, null, extractError(errorBody))
                 }
                 if (!stream) {
@@ -315,9 +345,33 @@ object CodexDrawBridge {
         }
     }
 
-    private fun extractError(body: String): String =
-        try { JSONObject(body).optJSONObject("error")?.optString("message").orEmpty() }
-        catch (_: Exception) { "" }
+    /**
+     * Surfaces the server's reason whether it uses OpenAI's `error` shape or ChatGPT's `detail`
+     * shape. Only reason text is kept: whole objects can echo request fields such as image data.
+     */
+    internal fun extractError(body: String): String {
+        val text = body.trim()
+        if (text.isEmpty()) return ""
+        val root = try { JSONObject(text) } catch (_: Exception) { null }
+            ?: return cleanReason(text)
+        fun messageOf(value: Any?): String = when (value) {
+            is String -> value
+            is JSONObject -> listOf("message", "msg", "detail", "error")
+                .firstNotNullOfOrNull { key -> messageOf(value.opt(key)).takeIf { it.isNotBlank() } }
+                .orEmpty()
+            is JSONArray -> (0 until value.length()).joinToString("; ") { messageOf(value.opt(it)) }
+            null, JSONObject.NULL -> ""
+            else -> ""
+        }
+        return cleanReason(messageOf(root))
+    }
+
+    private fun cleanReason(text: String): String = text
+        .take(4_000)
+        .replace(Regex("""data:[\w.+/-]+;base64,[A-Za-z0-9+/=]*"""), "[图片数据]")
+        .replace(Regex("""\s+"""), " ")
+        .trim()
+        .take(500)
 
     private fun upstreamError(response: ImageResponse): IOException =
         IOException("Codex 生图请求失败（HTTP ${response.status}）${response.error?.takeIf { it.isNotBlank() }?.let { "：$it" }.orEmpty()}")

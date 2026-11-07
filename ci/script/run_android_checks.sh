@@ -60,7 +60,8 @@ done
 tasks=()
 case "$LANE" in
     jvm)
-        tasks=(":app:testDebugUnitTest" ":app:lintDebug")
+        # Lint is opt-in here (--lint); the full lane still runs it.
+        tasks=(":app:testDebugUnitTest")
         ;;
     full)
         tasks=(":app:assembleDebug" ":app:testDebugUnitTest" ":app:lintDebug")
