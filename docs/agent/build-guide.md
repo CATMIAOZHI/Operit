@@ -189,7 +189,7 @@ python3 ./tools/example_packages/sync_example_packages.py --no-hot-reload
 # 需要 local.properties 中配置签名
 ```
 
-发布稳定版的完整流程（触发 CI release 构建、校验产物非 debuggable、打包资产与创建 Release）见 [dev → main 晋升操作手册](./dev-to-main-promotion.md) 第 9 节。注意 `personal/main` 的 push 构建只产出 `:app:assembleDebug`，不能作为发布包。
+发布稳定版的完整流程（触发 CI release 构建、校验产物非 debuggable、打包资产与创建 Release）见 [dev → main 晋升操作手册](./dev-to-main-promotion.md) 第 9 节。`Android Build` 仅手动触发；发布必须选择 `:app:assembleRelease`，调试包不能作为发布包。
 
 ## 最小验证命令
 
@@ -202,8 +202,8 @@ python3 ./tools/example_packages/sync_example_packages.py --no-hot-reload
 # 单元测试
 ./gradlew :app:testDebugUnitTest
 
-# Lint
-./gradlew :app:lintDebug
+# 本地 Lint 仅在用户明确要求时执行。
+# ./gradlew :app:lintDebug
 
 # WebChat 类型检查
 npm --prefix web-chat run typecheck
@@ -215,14 +215,14 @@ git diff --exit-code -- examples/github.js
 
 ## CI 构建（Nightly）
 
-Nightly 构建由 `OperitNightlyRelease` 仓库的 `personal-dev-update.yml` workflow 自动执行。`personal/dev` 的 push 通过本仓库的 `trigger-nightly-build.yml` 即时发送 `repository_dispatch` 事件通知 nightly；每小时第 7 分钟的 `cron` 仅作为漏触发兜底。不再使用每 5 分钟轮询，因为 GitHub Actions 的定时调度在高峰期会被丢弃，实测只能达到约每小时一次。
+Nightly 构建由 `OperitNightlyRelease` 仓库的 `personal-dev-update.yml` workflow 执行。开发分支通过 `trigger-nightly-build.yml` 在 push 后发送 `repository_dispatch` 事件，接收端也支持手动触发，不依赖定时轮询。
 
-Nightly 统一负责 dev 分支的**验证与发布**：
+Nightly 负责 dev 分支的**构建与发布**：
 
 - `assembleDebug`（硬门控，失败不发布）
-- `testDebugUnitTest` + `lintDebug`（非阻断，失败仍发布，结果写入 step summary）
-- 单测和 Lint 报告上传为 `operit-ry-dev-reports-<run>` artifact（保留 14 天）
 - 包名验证、签名验证、差分更新发布
+
+JVM 单测由本仓库的 `Dev Quality` 在 Android 源码、资源及构建输入变化时独立执行，报告上传为 `operit-dev-quality-reports-<run>`（保留 14 天），不阻塞 Nightly 发布。完整 Android Lint 通过 `Android Build` 的手动选项按需执行。
 
 Agent 推送 `personal/dev` 后**直接结束**，无需手动触发 Android Build 或等待 Nightly。检查结果在 workflow run summary 和 reports artifact 中查看。
 

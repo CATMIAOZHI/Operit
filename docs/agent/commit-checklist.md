@@ -83,7 +83,7 @@ git diff --cached --check
 
 - 等待 Actions 时使用至少 60 秒轮询间隔
 - 不写入签名密钥或 Token 值到 workflow 文件
-- dev 分支推送后由 Nightly 自动完成云端验证和发布，Agent 推送后直接结束，无需手动触发 Android Build
+- dev 分支推送后由 Nightly 自动构建和发布，相关路径的 JVM 测试由 Dev Quality 独立执行；Agent 无需手动触发 Android Build
 
 ## 分支相关
 
@@ -91,7 +91,7 @@ git diff --cached --check
 
 - 直接 push 即可，不需要 PR（但禁止删除和强推）
 - 可以包含开发版专属配置（包名 `.dev`、DEV 图标、Nightly 子模块等）
-- 推送后由 Nightly 自动完成云端验证（assembleDebug + 单测 + Lint）并发布 APK，检查结果在 workflow run summary 和 reports artifact 中查看
+- 推送后由 Nightly 自动构建并发布 APK；Dev Quality 按变更路径独立执行 JVM 单测，完整 Lint 通过 Android Build 的手动选项运行。检查结果在各自的 workflow summary 和 reports artifact 中查看
 
 ### personal/main
 

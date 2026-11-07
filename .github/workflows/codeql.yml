@@ -1,10 +1,7 @@
 name: CodeQL
 
 on:
-  push:
-    branches: [personal/dev, personal/main]
-  pull_request:
-    branches: [personal/dev, personal/main]
+  # Keep full scans off the per-commit path; urgent scans can still target any ref manually.
   schedule:
     - cron: '23 3 * * 1'
   workflow_dispatch:
@@ -34,8 +31,7 @@ jobs:
             build-mode: none
           - language: c-cpp
             build-mode: none
-          - language: go
-            build-mode: autobuild
+          # Go is only an exported project template, not an Operit build target.
           # Kotlin requires a traced Android build; CodeQL autobuild lacks the NDK.
           - language: java-kotlin
             build-mode: manual
