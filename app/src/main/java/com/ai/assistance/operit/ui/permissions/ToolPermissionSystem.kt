@@ -1289,6 +1289,7 @@ internal val ORBIT_DEFAULT_ALLOW_TOOLS: Set<String> = buildSet {
     pkg("super_admin", "shell_wait")
     pkg("codex_draw", "read_skill")
     pkg("grok_draw", "read_skill")
+    pkg("grok_video", "read_skill")
     // The app's own tools (not from a package).
     addAll(listOf(
         "calculate", "sleep", "device_info", "ffmpeg_info", "music_status",
