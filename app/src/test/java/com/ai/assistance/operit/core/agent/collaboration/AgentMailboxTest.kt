@@ -12,7 +12,19 @@ class AgentMailboxTest {
 
     @Test fun aSenderIdIsWrittenBetweenTheSenderAndThePayload() {
         val message = AgentMessage("id", "/root/worker", "/root", AgentMessageKind.MESSAGE, "hi", senderId = "child-7")
-        assertTrue(message.render().contains("Sender: /root/worker\nSender ID: child-7\nPayload:\nhi"))
+        assertTrue(message.render().contains("Sender: /root/worker\nSender ID: child-7\nRoles: "))
+        assertTrue(message.render().endsWith("Payload:\nhi"))
+    }
+
+    @Test fun theEnvelopeSaysWhenItWasSentAndWhoIsWho() {
+        val toChild = AgentMessage("id", "/root", "/root/worker", AgentMessageKind.NEW_TASK, "go", sentAt = 0L)
+        val text = toChild.render()
+        assertTrue(Regex("\nSent at: \\[1970-01-0\\d \\w{3} \\d{2}:\\d{2}:\\d{2} UTC[^\\n]+]\n").containsMatchIn(text))
+        assertTrue(text.contains("Roles: sender /root is the main agent, your parent; you (/root/worker) are a subagent\nPayload:\ngo"))
+        val report = AgentMessage("id", "/root/worker", "/root", AgentMessageKind.FINAL_ANSWER, "done")
+        assertTrue(report.render().contains("Roles: sender /root/worker is your subagent; you (/root) are the main agent\n"))
+        val peer = AgentMessage("id", "/root/a", "/root/b", AgentMessageKind.MESSAGE, "hi")
+        assertTrue(peer.render().contains("Roles: sender /root/a is another subagent; you (/root/b) are a subagent\n"))
     }
     private val initial = CollaborationState(agents = listOf(
         CollaborationAgent("chat-a", "/root", "chat-a"),

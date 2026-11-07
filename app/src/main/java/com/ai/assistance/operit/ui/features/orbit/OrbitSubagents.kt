@@ -143,6 +143,34 @@ internal object OrbitSubagents {
     private fun isWorker(run: SubagentRunEntity) = run.externalOwnerType in OWNERS &&
         run.agentProfileId != com.ai.assistance.operit.core.agent.AgentProfileRepository.PERMISSION_REVIEWER_ID
 
+    /**
+     * Where a subagent still working was started from: the top chat of its tree and when the main
+     * agent asked for the work it is doing (see CollaborationAgent.workSince). Each live agent counts
+     * on its own, since a follow-up can set any agent of the tree going from a later turn.
+     */
+    data class LiveOwner(val chatId: String, val startedAt: Long)
+
+    /**
+     * Every subagent still working, traced up to the chat its tree began in (a talk chat or a
+     * background run's chat), so work whose own answer is done still counts as going on.
+     */
+    suspend fun liveOwners(context: Context): List<LiveOwner> = withContext(Dispatchers.IO) {
+        val dao = AppDatabase.getDatabase(context).subagentRunDao()
+        val live = dao.getByStatuses(LIVE.toList()).filter(::isWorker)
+        if (live.isEmpty()) return@withContext emptyList()
+        val collaboration = com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(context)
+        live.map { run ->
+            val since = collaboration.workSince(run.childChatId) ?: run.startedAt ?: run.createdAt
+            var top = run
+            // Up to the chat the tree began in; the tree is shallow.
+            repeat(4) {
+                top = dao.getByChildChatId(top.parentChatId)?.takeIf(::isWorker)
+                    ?: return@map LiveOwner(top.parentChatId, since)
+            }
+            LiveOwner(top.parentChatId, since)
+        }.distinct()
+    }
+
     /** Its place in the tree, like /root/browse_github, or the run's title for a v1 task. */
     fun pathOf(run: SubagentRunEntity): String =
         run.externalOwnerId?.takeIf { it.startsWith("/") } ?: run.title.removePrefix("v2 ").trim()

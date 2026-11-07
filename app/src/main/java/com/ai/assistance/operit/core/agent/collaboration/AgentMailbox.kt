@@ -17,10 +17,34 @@ data class AgentMessage(
      * the ID cannot, so a reply sent to it reaches the agent that wrote, or fails if it is gone.
      */
     val senderId: String? = null,
+    /** When it was sent (epoch ms). Written into the envelope so the reader knows the time, like a user message. */
+    val sentAt: Long? = null,
+    /** The phone's time zone when it was sent, so the time reads the same however often it is rendered. */
+    val sentZone: String? = null,
 ) {
     fun render(): String =
         "Message ID: $id\nMessage Type: $kind\nTask name: $recipient\n" +
-            "Sender: $sender\n" + (senderId?.let { "Sender ID: $it\n" } ?: "") + "Payload:\n$text"
+            "Sender: $sender\n" + (senderId?.let { "Sender ID: $it\n" } ?: "") +
+            (sentAt?.let { "Sent at: ${sentAtLabel(it)}\n" } ?: "") +
+            "Roles: ${roles()}\n" + "Payload:\n$text"
+
+    /** Who sent it and who reads it, so an agent never mistakes itself for the main agent. */
+    fun roles(): String {
+        val from = when {
+            sender == AgentPath.ROOT ->
+                if (recipient.substringBeforeLast('/') == sender) "the main agent, your parent" else "the main agent"
+            recipient.substringBeforeLast('/') == sender -> "your parent agent"
+            sender.substringBeforeLast('/') == recipient -> "your subagent"
+            else -> "another subagent"
+        }
+        val you = if (recipient == AgentPath.ROOT) "the main agent" else "a subagent"
+        return "sender $sender is $from; you ($recipient) are $you"
+    }
+
+    private fun sentAtLabel(at: Long): String {
+        val zone = sentZone?.let { runCatching { java.time.ZoneId.of(it) }.getOrNull() } ?: java.time.ZoneId.systemDefault()
+        return com.ai.assistance.operit.features.orbit.OrbitMessageTime.label(at, zone)
+    }
 }
 
 @Serializable
@@ -61,6 +85,12 @@ data class CollaborationAgent(
      * addressed or counted for names, so its name can be used again; its chat stays known.
      */
     val archived: Boolean = false,
+    /**
+     * When the main agent last asked for the work this agent is doing: the time /root spawned or
+     * followed it up, or, for work a subagent passed on, the time of that subagent's own request.
+     * Lets a running agent count toward the main chat's turn that set it going.
+     */
+    val workSince: Long? = null,
 )
 
 /**

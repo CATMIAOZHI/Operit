@@ -9351,6 +9351,7 @@
     <string name="orbit_task_watch_run">看看它正在做什么</string>
     <string name="orbit_profile_running_untitled">正在回复</string>
     <string name="orbit_profile_running_chat">正在聊天里处理，点开看每一步</string>
+    <string name="orbit_profile_running_agents">子代理还在做，点开看进度</string>
     <string name="orbit_profile_approval_records">批准记录</string>
     <string name="orbit_profile_action_prepared">准备中</string>
     <string name="orbit_profile_action_started">执行中</string>
@@ -9578,6 +9579,9 @@
     <string name="orbit_files_help">这些是 %1$s 自己的文件，你和它都能看，大多数还能直接改。</string>
     <string name="orbit_files_made">%1$s 生成的文件</string>
     <string name="orbit_file_open_in_browser">用浏览器打开</string>
+    <string name="orbit_file_preview_web">预览网页</string>
+    <string name="orbit_file_view_source">查看源码</string>
+    <string name="orbit_file_reload_page">刷新</string>
     <string name="orbit_task_decision">为什么：%1$s</string>
     <string name="orbit_watch_notifications">看手机上的通知</string>
     <string name="orbit_watch_notifications_apps">看这些应用的通知：%1$s</string>

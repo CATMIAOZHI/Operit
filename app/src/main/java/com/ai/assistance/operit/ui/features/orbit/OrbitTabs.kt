@@ -2253,10 +2253,16 @@ private fun OrbitBuildsPage(
                                 subtitle = typeLabel(name) + " · " + shortDate(file.modifiedAt),
                                 pinned = pinned,
                                 onClick = {
-                                    if (com.ai.assistance.operit.features.orbit.OrbitFiles.isText(file.path)) onOpenFile(file.path)
+                                    // A web page opens as a page; its source is in the menu.
+                                    if (OrbitWebPreview.canShow(file.path)) viewFile { orbitFiles.fileFor(file.path) }
+                                    else if (com.ai.assistance.operit.features.orbit.OrbitFiles.isText(file.path)) onOpenFile(file.path)
                                     else viewFile { orbitFiles.fileFor(file.path) }
                                 },
                             ) { close ->
+                                if (OrbitWebPreview.canShow(file.path)) {
+                                    DropdownMenuItem(text = { Text(stringResource(R.string.orbit_file_view_source)) },
+                                        onClick = { close(); onOpenFile(file.path) })
+                                }
                                 DropdownMenuItem(
                                     text = { Text(stringResource(if (pinned) R.string.orbit_library_unpin else R.string.orbit_library_pin)) },
                                     onClick = { close(); action { orbitFiles.setPinned(file.path, !pinned); filesReload++ } },
@@ -2617,6 +2623,12 @@ private fun BuildDetail(
     val markdown = remember(version.name) {
         version.name.substringAfterLast('/').substringAfterLast('.', "").lowercase() in setOf("md", "markdown", "mdx")
     }
+    // A web page work also opens as the page itself, inside the app.
+    val isPage = remember(version.name, version.relativePath) {
+        OrbitWebPreview.canShow(version.name) || OrbitWebPreview.canShow(version.relativePath)
+    }
+    var previewPage by remember(version.id) { mutableStateOf<java.io.File?>(null) }
+    val pageScope = rememberCoroutineScope()
     var showFrontMatter by rememberSaveable(version.id) { mutableStateOf(false) }
     // The formatted view is drawn, not text; the plain view is there to select and copy.
     var showSource by rememberSaveable(version.id) { mutableStateOf(false) }
@@ -2652,12 +2664,28 @@ private fun BuildDetail(
             }
         }
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 PillButton(stringResource(R.string.orbit_artifact_source), "list", { onOpenTask(version.taskId) })
                 // Revisions are asked of Orbit in chat; the prompt waits in the chat box.
                 PillButton(stringResource(R.string.orbit_artifact_revise), "pencil", {
                     onDraft(resources.getString(R.string.orbit_build_continue_draft, version.name))
                 })
+                if (isPage) {
+                    PillButton(stringResource(R.string.orbit_file_preview_web), "globe", {
+                        pageScope.launch {
+                            val file = runCatching {
+                                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                    val root = OrbitPreferences.getInstance(context).orbitDir(orbit.id).canonicalFile
+                                    java.io.File(root, version.relativePath).canonicalFile.also {
+                                        require(it.toPath().startsWith(root.toPath())) { "Not one of Orbit's files" }
+                                    }
+                                }
+                            }.getOrNull()
+                            if (file != null && file.isFile) previewPage = file
+                            else android.widget.Toast.makeText(context, R.string.orbit_file_open_failed, android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    })
+                }
             }
         }
         if (history.size > 1) {
@@ -2734,6 +2762,7 @@ private fun BuildDetail(
         }
     }
     }
+    previewPage?.let { file -> OrbitWebPreview.Screen(file) { previewPage = null } }
     pendingLink?.let { link ->
         OrbitConfirmDialog(
             title = stringResource(R.string.orbit_link_confirm_title),
