@@ -9374,6 +9374,7 @@
     <string name="orbit_task_watch_run">See what it is doing</string>
     <string name="orbit_profile_running_untitled">Replying</string>
     <string name="orbit_profile_running_chat">Working in the chat. Tap to see each step.</string>
+    <string name="orbit_profile_running_agents">Subagents are still working. Tap to see progress.</string>
     <string name="orbit_profile_approval_records">Approval records</string>
     <string name="orbit_profile_action_prepared">Preparing</string>
     <string name="orbit_profile_action_started">Running</string>
@@ -9601,6 +9602,9 @@
     <string name="orbit_files_help">These are %1$s\'s own files. Both of you can read them and edit most of them.</string>
     <string name="orbit_files_made">Files %1$s made</string>
     <string name="orbit_file_open_in_browser">Open in browser</string>
+    <string name="orbit_file_preview_web">Preview page</string>
+    <string name="orbit_file_view_source">View source</string>
+    <string name="orbit_file_reload_page">Reload</string>
     <string name="orbit_task_decision">Why: %1$s</string>
     <string name="orbit_watch_notifications">Watches notifications on the phone</string>
     <string name="orbit_watch_notifications_apps">Watches notifications from: %1$s</string>

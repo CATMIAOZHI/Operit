@@ -317,6 +317,10 @@ internal fun OrbitMadeFilePage(files: OrbitFiles, path: String, who: String, onB
     val context = LocalContext.current
     val resources = LocalResources.current
     val editor = rememberOrbitFileEditor(files, path)
+    val isPage = OrbitWebPreview.canShow(path)
+    // The page is drawn inside the app: phone browsers often cannot open a file kept inside it.
+    var previewPage by remember(path) { mutableStateOf<java.io.File?>(null) }
+    val scope = rememberCoroutineScope()
     OrbitFilePage(
         title = path.substringAfterLast('/'),
         note = stringResource(R.string.orbit_user_file_note, who),
@@ -326,10 +330,15 @@ internal fun OrbitMadeFilePage(files: OrbitFiles, path: String, who: String, onB
         onBack = onBack,
         interceptBack = interceptBack,
         actions = listOfNotNull(
-            // A web page Orbit exported is read in a browser; the editor only shows its source.
-            if (path.substringAfterLast('.').lowercase() in setOf("html", "htm")) {
-                OrbitFileAction(stringResource(R.string.orbit_file_open_in_browser), "globe", endsEditing = false) {
-                    openOrbitFile(context) { files.fileFor(path) }
+            // The editor only shows a web page's source; the preview shows the page itself.
+            if (isPage) {
+                OrbitFileAction(stringResource(R.string.orbit_file_preview_web), "globe", endsEditing = false) {
+                    scope.launch {
+                        val file = runCatching {
+                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { files.fileFor(path) }
+                        }.getOrNull()
+                        if (file != null && file.isFile) previewPage = file else toast(context, R.string.orbit_file_open_failed)
+                    }
                 }
             } else null,
             OrbitFileAction(stringResource(R.string.orbit_file_share), "share-2", endsEditing = false) {
@@ -342,6 +351,7 @@ internal fun OrbitMadeFilePage(files: OrbitFiles, path: String, who: String, onB
         ),
         maxChars = OrbitFiles.MAX_TEXT,
     )
+    previewPage?.let { file -> OrbitWebPreview.Screen(file) { previewPage = null } }
 }
 
 /** Open, share or delete a file Orbit made that is not text, such as a picture or a voice message. */

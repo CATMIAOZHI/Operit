@@ -36,7 +36,8 @@ internal data class CollaborationDisplayMessage(
 /** The envelope a collaboration row carries, anchored so quoted text cannot pose as one. */
 private val collaborationEnvelopeHeader = Regex(
     "^Message ID: [0-9a-f-]{36}\\nMessage Type: (MESSAGE|NEW_TASK|FINAL_ANSWER|STATUS)\\n" +
-        "Task name: [^\\n]+\\nSender: ([^\\n]+)\\n(?:Sender ID: ([^\\n]+)\\n)?Payload:\\n",
+        "Task name: [^\\n]+\\nSender: ([^\\n]+)\\n(?:Sender ID: ([^\\n]+)\\n)?(?:Sent at: [^\\n]+\\n)?" +
+        "(?:Roles: [^\\n]+\\n)?Payload:\\n",
 )
 
 /** The label [CollaborationCoordinator.finish] puts in front of a status line's reason. */
