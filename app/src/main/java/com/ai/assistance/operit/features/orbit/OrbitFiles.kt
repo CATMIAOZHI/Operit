@@ -102,8 +102,11 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
     /**
      * Every file, including the fixed files that are still empty templates (size -1). With
      * [includeReview], also the nightly reviews (dreams/) and the alignment state the review keeps.
+     * Without [titles], each title is just the file name, so no file is opened (a list of names only).
      */
-    suspend fun list(includeReview: Boolean = false): List<Entry> = io {
+    suspend fun list(includeReview: Boolean = false, titles: Boolean = true): List<Entry> = io {
+        // Shadows the member below for this listing only; the member reads the title.
+        fun entry(p: String, f: File) = if (titles) this@OrbitFiles.entry(p, f) else Entry(p, f.length(), f.lastModified(), f.name)
         val found = mutableListOf<Entry>()
         SINGLE.forEach { p ->
             val f = File(root, p)
@@ -117,7 +120,7 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
             File(root, "dreams").listFiles()?.filter { it.isFile && DREAM.matches("dreams/${it.name}") }
                 ?.forEach { found += entry("dreams/${it.name}", it) }
         }
-        found += peopleLocked()
+        found += peopleLocked(titles)
         File(root, "memory").listFiles()?.filter { it.isFile && DAILY.matches("memory/${it.name}") }
             ?.forEach { found += entry("memory/${it.name}", it) }
         val filesRoot = File(root, "files")
@@ -134,9 +137,9 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         peopleLocked().filter { runCatching { inside(File(root, it.path)) }.isSuccess }
     }
 
-    private fun peopleLocked(): List<Entry> = listOf("memory/people", "memory/groups").flatMap { dir ->
+    private fun peopleLocked(titles: Boolean = true): List<Entry> = listOf("memory/people", "memory/groups").flatMap { dir ->
         File(root, dir).listFiles()?.filter { it.isFile && it.name.endsWith(".md") }
-            ?.map { entry("$dir/${it.name}", it) }.orEmpty()
+            ?.map { if (titles) entry("$dir/${it.name}", it) else Entry("$dir/${it.name}", it.length(), it.lastModified(), it.name) }.orEmpty()
     }
 
     suspend fun read(path: String): String = io {

@@ -50,11 +50,21 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
     private val _toastEvent = MutableSharedFlow<String>(extraBufferCapacity = 1)
     val toastEvent: SharedFlow<String> = _toastEvent
 
-    /** Adds multiple attachments in one shot (dedup by filePath) */
+    /**
+     * Adds multiple attachments in one shot (dedup by filePath). When a path is already in the box,
+     * the one kept is a quote if either is: a quoted Orbit file must never lose that mark, or its ✕
+     * would delete it as an unsent upload.
+     */
     fun addAttachments(attachments: List<AttachmentInfo>): List<AttachmentInfo> {
         if (attachments.isEmpty()) return emptyList()
         synchronized(attachmentListLock) {
-            val currentList = _attachments.value
+            val quoted = attachments.filter { it.orbitReference }.mapTo(mutableSetOf()) { it.filePath }
+            // An older copy of the same attachment (a queued message, say) still thinks it is an
+            // unsent upload; marking it here keeps its ✕ and other cleanups from deleting it.
+            quoted.forEach { com.ai.assistance.operit.features.orbit.OrbitUploads.markReferenced(it) }
+            val currentList = _attachments.value.map {
+                if (it.filePath in quoted && !it.orbitReference) it.copy(orbitReference = true) else it
+            }
             val existingPaths = currentList.mapTo(mutableSetOf()) { it.filePath }
             val usedFileNames = currentList.mapTo(mutableSetOf()) { it.fileName }
             val toAdd =
@@ -71,7 +81,7 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
                             }
                         }
                     }
-            if (toAdd.isNotEmpty()) {
+            if (toAdd.isNotEmpty() || currentList != _attachments.value) {
                 _attachments.value = currentList + toAdd
             }
             return toAdd
@@ -185,6 +195,27 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
 
     suspend fun attachPackage(packageName: String) =
             withContext(Dispatchers.IO) { attachPackageInternal(packageName) }
+
+    /**
+     * Quotes an Orbit's own files in the input box. The files themselves are attached, not copies:
+     * the message only tells Orbit where they are, and it reads them when it needs to.
+     */
+    suspend fun attachOrbitFiles(files: List<java.io.File>) =
+            withContext(Dispatchers.IO) {
+                val found = files.filter { it.isFile }
+                // A file already in the box (an upload not yet sent, say) becomes a quote too; see addAttachments.
+                addAttachments(found.map { file ->
+                    AttachmentInfo(
+                            filePath = file.absolutePath,
+                            fileName = file.name,
+                            mimeType = getMimeTypeFromPath(file.absolutePath) ?: "application/octet-stream",
+                            fileSize = file.length(),
+                            orbitReference = true,
+                    )
+                })
+                val missing = files.size - found.size
+                if (missing > 0) _toastEvent.emit(context.getString(R.string.orbit_quote_files_missing, missing))
+            }
 
     /** Handles a file or image attachment selected by the user 确保在IO线程执行所有文件操作 */
     suspend fun handleAttachment(filePath: String) =
@@ -597,10 +628,16 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
     /**
      * The user took an attachment out of the input box. Besides [removeAttachment], an upload an
      * Orbit kept for it goes too: it was never sent. (Moving attachments into the send queue uses
-     * [removeAttachment] alone, so queued files stay.)
+     * [removeAttachment] alone, so queued files stay.) A quoted Orbit file is the file itself and
+     * is never deleted here; nor is a path no longer in the box (a second tap on its ✕).
      */
     fun discardAttachment(filePath: String) {
-        removeAttachment(filePath)
+        val upload = synchronized(attachmentListLock) {
+            val attachment = _attachments.value.firstOrNull { it.filePath == filePath }
+            _attachments.value = _attachments.value.filter { it.filePath != filePath }
+            attachment != null && !attachment.orbitReference
+        }
+        if (!upload || com.ai.assistance.operit.features.orbit.OrbitUploads.isReferenced(filePath)) return
         discardScope.launch {
             try {
                 com.ai.assistance.operit.features.orbit.OrbitUploads.discard(context, filePath)

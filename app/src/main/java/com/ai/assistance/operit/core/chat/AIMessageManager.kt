@@ -240,7 +240,7 @@ object AIMessageManager {
                         attachment = attachment,
                         readInstruction = context.getString(R.string.ai_message_image_attached_on_demand_notice)
                     )
-                } else if (enableDirectAudioProcessing && attachment.mimeType.startsWith("audio/", ignoreCase = true)) {
+                } else if (!attachment.orbitReference && enableDirectAudioProcessing && attachment.mimeType.startsWith("audio/", ignoreCase = true)) {
                     try {
                         val audioId = MediaPoolManager.addMedia(attachment.filePath, attachment.mimeType)
                         if (audioId == "error") {
@@ -259,7 +259,7 @@ object AIMessageManager {
                         }
                         "<attachment $attributes>${attachment.content}</attachment>"
                     }
-                } else if (enableDirectVideoProcessing && attachment.mimeType.startsWith("video/", ignoreCase = true)) {
+                } else if (!attachment.orbitReference && enableDirectVideoProcessing && attachment.mimeType.startsWith("video/", ignoreCase = true)) {
                     try {
                         val videoId = MediaPoolManager.addMedia(attachment.filePath, attachment.mimeType)
                         if (videoId == "error") {
@@ -279,7 +279,8 @@ object AIMessageManager {
                         "<attachment $attributes>${attachment.content}</attachment>"
                     }
                 } else {
-                    // 非图片或未启用直接图片处理，使用普通附件格式
+                    // 非图片或未启用直接图片处理，使用普通附件格式。
+                    // An Orbit file quoted in place lands here too: only its name and path, Orbit reads it when needed.
                     val attributes = buildString {
                         append("id=\"${attachment.filePath}\" ")
                         append("filename=\"${attachment.fileName}\" ")

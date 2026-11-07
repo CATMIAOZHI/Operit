@@ -26,6 +26,18 @@ object OrbitUploads {
     private val FOLDER_NAME = Regex("(\\d{1,15})-[0-9a-f]{8}")
     private val lock = Any()
 
+    /**
+     * Uploads quoted into a chat since the app started. [discard] leaves these alone: the
+     * user chose to keep using them, so a stale ✕ or a WeChat disconnect must not delete them.
+     */
+    private val referenced: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
+    fun markReferenced(path: String) {
+        referenced += File(path).absolutePath
+    }
+
+    fun isReferenced(path: String): Boolean = File(path).absolutePath in referenced
+
     data class Upload(val file: File, val name: String, val size: Long, val addedAt: Long)
 
     /** The Library's room and whether full means deleting the oldest; sent chat copies follow it too. */
@@ -124,9 +136,11 @@ object OrbitUploads {
      * left alone. Blocking IO.
      */
     fun discard(context: Context, path: String) {
+        if (isReferenced(path)) return
         val file = File(path)
         val orbits = File(context.filesDir, "orbit").canonicalFile
         val canonical = runCatching { file.canonicalFile }.getOrNull() ?: return
+        if (isReferenced(canonical.path)) return
         // orbit/<UUID>/uploads/<folder>/<name>
         val folder = canonical.parentFile ?: return
         val uploads = folder.parentFile ?: return
