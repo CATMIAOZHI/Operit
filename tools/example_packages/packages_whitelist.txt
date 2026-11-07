@@ -2,6 +2,7 @@
 code_runner.js
 codex_draw.js
 grok_draw.js
+grok_video.js
 codex_search.js
 grok_search.js
 crossref.js

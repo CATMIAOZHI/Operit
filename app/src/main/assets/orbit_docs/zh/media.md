@@ -16,6 +16,7 @@ Orbit 自身没有独立的内置生图接口；具体能力由当前工具包�
 
 `grok_draw` 使用应用内的 Grok 账号登录（Grok Imagine），也不需要 API Key，但账号要有生图权限（SuperGrok 等付费订阅；免费版和 X Basic 不行）。
 未登录时，用 `orbit_vault action=request_account_login provider=grok` 放登录卡片，结束本轮等待。返回 HTTP 403 说明账号没有生图权限，如实告诉用户，不要反复重试。
+`grok_video` 用同一个 Grok 账号登录生成 Grok Imagine 视频。视频需要 SuperGrok 或 X Premium+ 等付费订阅；返回 HTTP 403 说明账号没有视频权限。
 
 `siliconflow_draw` 需要 `SILICONFLOW_API_KEY`。
 用 `orbit_vault action=request_api_key`，填 `provider=SiliconFlow`、`package_name=siliconflow_draw` 和 `env_name=SILICONFLOW_API_KEY`。
@@ -39,6 +40,12 @@ Orbit 自身没有独立的内置生图接口；具体能力由当前工具包�
 不要把一个包的参数照搬给另一个包，也不要把接口参数当成所有服务模型都支持的保证。
 
 ## 视频
+
+使用 `grok_video` 时，先调用 `grok_video:read_skill`。
+`grok_video:generate_video` 必填 `prompt`：只给提示词是文字生成，`image_path` 是让一张本地图片动起来，`referenced_image_paths`（最多 7 张，不能和 `image_path` 同时用）是按参考图生成。
+`duration` 是 1 到 15 的整数秒（默认 8，用参考图时最多 10），`aspect_ratio` 可选 16:9（默认）、9:16、1:1、4:3、3:4、3:2、2:3，`resolution` 是 720p（默认）或 480p。
+`grok_video:edit_video` 修改视频并保持原长度；`grok_video:extend_video` 往后续写，`duration` 是 1 到 10（默认 6）。两者都用 `video` 参数：优先填上次结果的 `file_path`（本地 MP4，小于 20 MB）；`video_url` 是临时地址。
+生成要 1 到几分钟，工具最多等 10 分钟，返回本地 MP4 路径。没有音轨或配乐参数。
 
 `siliconflow_draw:draw_video` 支持文本生成视频，必填 `prompt`。
 图生视频可提供 `image_path` 或 `image_url`；本地图片会转换并上传给服务。

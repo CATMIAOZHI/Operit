@@ -86,6 +86,7 @@ object ToolExecutionManager {
             "various_search",
             "codex_draw",
             "grok_draw",
+            "grok_video",
             "openai_draw",
             "qwen_draw",
             "nanobanana_draw",

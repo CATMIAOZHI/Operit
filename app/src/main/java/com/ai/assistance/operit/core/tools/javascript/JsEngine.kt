@@ -1892,6 +1892,14 @@ class JsEngine(private val context: Context) {
             }
         }
 
+        /** [mode] is "generate", "edit" or "extend". */
+        @JavascriptInterface
+        fun executeGrokVideoAsync(callId: String, callbackId: String, mode: String, parametersJson: String) {
+            runAccountSearch(callId, callbackId, "grok_video", "Grok 视频") {
+                com.ai.assistance.operit.features.draw.GrokVideoBridge.execute(context, mode, parametersJson)
+            }
+        }
+
         /** Runs a search bridge for its own package only, cancelled with the tool call like the draw bridges. */
         private fun runAccountSearch(
             callId: String,

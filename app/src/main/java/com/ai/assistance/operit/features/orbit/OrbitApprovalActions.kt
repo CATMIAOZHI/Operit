@@ -112,7 +112,7 @@ internal object OrbitApprovalActions {
     private val CHATGPT_PACKAGES = setOf("codex_draw", "codex_search")
 
     /** Packages that use the app's Grok account login instead of a key. */
-    private val GROK_PACKAGES = setOf("grok_draw", "grok_search")
+    private val GROK_PACKAGES = setOf("grok_draw", "grok_video", "grok_search")
 
     fun type(action: String): String = runCatching { JSONObject(action).optString("type") }.getOrDefault("")
 

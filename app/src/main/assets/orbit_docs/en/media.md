@@ -16,6 +16,7 @@ If signed out, put a login card in chat with `orbit_vault action=request_chatgpt
 
 `grok_draw` uses the app's Grok account login (Grok Imagine) and also needs no API key, but the account must include image generation (a paid plan such as SuperGrok; not Free or X Basic).
 If signed out, put a login card in chat with `orbit_vault action=request_account_login provider=grok`, then end the turn and wait. HTTP 403 means the account has no image access; tell the user plainly and do not keep retrying.
+`grok_video` uses the same Grok account login for Grok Imagine video. Video needs a paid plan such as SuperGrok or X Premium+; HTTP 403 means the account has no video access.
 
 `siliconflow_draw` requires `SILICONFLOW_API_KEY`.
 Use `orbit_vault action=request_api_key` with `provider=SiliconFlow`, `package_name=siliconflow_draw` and `env_name=SILICONFLOW_API_KEY`.
@@ -39,6 +40,12 @@ With `codex_draw`, `background=transparent` requests transparency; use the tool 
 Do not copy parameters between packages or treat an interface parameter as a guarantee that every service model supports it.
 
 ## Video
+
+With `grok_video`, first call `grok_video:read_skill`.
+`grok_video:generate_video` needs `prompt`: prompt only makes a video from text, `image_path` animates one local image, and `referenced_image_paths` (up to 7, not combined with `image_path`) guides it with reference images.
+`duration` is 1 to 15 whole seconds (default 8; at most 10 with reference images), `aspect_ratio` is 16:9 (default), 9:16, 1:1, 4:3, 3:4, 3:2 or 2:3, and `resolution` is 720p (default) or 480p.
+`grok_video:edit_video` changes a video and keeps its length; `grok_video:extend_video` continues one, with `duration` 1 to 10 (default 6). Both take `video`: prefer a previous `file_path` (local MP4 under 20 MB); a `video_url` is temporary.
+A video takes one to several minutes; the tool waits up to 10 minutes and returns a local MP4 path. There is no audio or music parameter.
 
 `siliconflow_draw:draw_video` supports text-to-video with required `prompt`.
 For image-to-video, supply `image_path` or `image_url`; local images are converted and uploaded to the service.
