@@ -48,7 +48,14 @@ python3 -B ci/script/normalize_lint_baseline.py --check
 
 根项目、`web-chat` 和独立的 `examples/toolpkg_wasm_demo` 分别提交 `package-lock.json`，CI 使用 `npm ci` 安装确定的依赖树。
 
-PR workflow 只有 `contents: read` 权限，不读取仓库 secret，也不上传 APK/AAB。`Android Build` 是独立的可信 main/手工构建 workflow。
+PR workflow 只有 `contents: read` 权限，不读取仓库 secret，也不上传 APK/AAB。`Android Build` 是独立的可信手工构建 workflow；合并到 `personal/main` 不再重复构建调试包，发布时手动运行 `:app:assembleRelease`，可按需勾选测试与完整 Android Lint。
+
+## Workflow frequency
+
+- `PR Check`：继续按 PR 的变更范围检查，保留合并门禁；只修改 PR 标题或说明不再重复执行整套检查。将已有 PR 改投 `personal/main` 后，需要再推送提交或关闭后重新打开 PR，以触发新目标分支的检查。
+- `Dev Quality`：只在 `personal/dev` 的 Android 源码、资源或构建输入变化时运行 JVM 单元测试；纯文档改动不触发，完整 Lint 通过 `Android Build` 的手动选项运行。
+- `CodeQL`：每周一 03:23 UTC 和手动运行，不随每次 push/PR 重复扫描；保留 6 种语言，Go 仅为导出项目的示例模板，不纳入扫描。
+- Nightly 发布和 `personal/main` 到 `main` 的镜像同步保持各自职责。
 
 ## Diagnostics
 

@@ -196,10 +196,10 @@ test -f app/src/debug/res/drawable/ic_launcher_dev_badge.xml \
 # 单元测试
 ./gradlew :app:testDebugUnitTest
 
-# Lint
-./gradlew :app:lintDebug
+# 仅在用户明确要求时执行本地 Lint；日常晋升不主动运行。
+# ./gradlew :app:lintDebug
 
-# release APK 的构建与发布见第 9 节；PR Check 只验证编译、测试与 lint
+# release APK 的构建与发布见第 9 节；PR Check 按变更范围运行检查。
 ```
 
 ### 7. 推送并创建 PR
@@ -236,7 +236,7 @@ gh pr merge <pr> --repo CATMIAOZHI/Operit --auto --merge
 
 晋升 PR 合并后发布稳定版。发布包只能来自 `workflow_dispatch` 手动触发的 `:app:assembleRelease`；本机不执行完整 `assembleRelease`：
 
-- push 到 `personal/main` 触发的 Android Build 走 `--lane full`，只构建 `:app:assembleDebug`（另跑 `:app:testDebugUnitTest` 与 `:app:lintDebug`），产物 `app-debug.apk` 带 `application-debuggable`，不得作为发布包；
+- `Android Build` 不随 `personal/main` 的 push 自动运行，避免合并后的调试包构建与正式发布重复；
 - `workflow_dispatch` 按输入的 `gradle_task` 构建，选 `:app:assembleRelease` 才产出 `app-release.apk`。
 
 ```bash
@@ -470,4 +470,4 @@ git push --atomic origin personal/dev "$CHECKPOINT"
 - **不要省略测试**：晋升以「CI 必需检查（`Fast checks`）通过 + 本地 `:app:compileDebugKotlin` 与 `:app:testDebugUnitTest` 通过」为准，`Full Android checks` 的基础设施类失败不阻塞晋升，判定与自动合并见第 8 节。
 - **上游更新方向相反**：上游更新走 `upstream/main → personal/dev`（先测试）→ `personal/main`，晋升走 `personal/dev → personal/main`，两条路径都经过 dev 验证，不要混用。
 - **一个发布轮次一个晋升 PR**：检查点之后的所有通用改动一次性晋升，`personal/main` 每轮只推进一个稳定版本号。说明按功能域分组，每个功能仍保留自己的提交边界，需要回滚时只 revert 该功能的提交，不必放弃整轮。
-- **发布资产必须来自 `:app:assembleRelease`**：`personal/main` 的 push 构建只构建 `:app:assembleDebug`（另跑单测与 lint），其 `app-debug.apk` 带 `application-debuggable`，不能当作发布包；发布步骤见第 9 节。
+- **发布资产必须来自 `:app:assembleRelease`**：手动触发 `Android Build` 并选择该任务，调试包不能当作发布包；发布步骤见第 9 节。

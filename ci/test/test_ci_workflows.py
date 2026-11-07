@@ -31,8 +31,10 @@ class WorkflowContractTest(unittest.TestCase):
 
         self.assertEqual(pr_workflow.count("uses: ./.github/actions/android-checks"), 2)
         self.assertIn("uses: ./.github/actions/android-checks", build_workflow)
-        self.assertIn("run_android_checks.sh --lane full", build_workflow)
+        self.assertIn('bash ci/script/run_android_checks.sh "${flags[@]}"', build_workflow)
         self.assertIn("--lane build --task", build_workflow)
+        self.assertIn("workflow_dispatch:", build_workflow)
+        self.assertNotRegex(build_workflow, r"(?m)^  push:")
 
     def test_pr_dependency_caches_are_explicitly_read_only(self) -> None:
         workflow = PR_WORKFLOW.read_text(encoding="utf-8")
