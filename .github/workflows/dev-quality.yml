@@ -4,6 +4,41 @@ on:
   push:
     branches:
       - personal/dev
+    paths:
+      - '.github/workflows/dev-quality.yml'
+      - '.gitmodules'
+      - 'app/**'
+      - 'accessibility-provider/**'
+      - 'chat-parser/**'
+      - 'chat-storage/**'
+      - 'memory-storage/**'
+      - 'terminal'
+      - 'terminal/**'
+      - 'quickjs/**'
+      - 'showerclient/**'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - 'gradle.properties'
+      - 'gradlew'
+      - 'gradlew.bat'
+      - 'gradle/**'
+      - 'cmake/**'
+      - 'tools/native_ripgrep/**'
+      - 'tools/adb/execute_js.bat'
+      - 'tools/adb/execute_js.sh'
+      - 'tools/adb/execute_js_dir.bat'
+      - 'tools/adb/execute_js_dir.sh'
+      - 'tools/adb/run_sandbox_script.bat'
+      - 'tools/adb/run_sandbox_script.sh'
+      - 'tools/sandboxpackage_dev_install_or_update.js'
+      - 'tools/example_packages/packages_whitelist.txt'
+      - 'tools/example_packages/legacy_incompatible_packages.txt'
+      - 'tools/example_packages/sync_example_packages.py'
+      - 'examples/java_bridge.js'
+      - 'examples/types/java-bridge.d.ts'
+      - 'ci/script/run_android_checks.sh'
+      - 'ci/script/download_android_dependencies.sh'
+      - 'ci/script/prepare_android_dependencies.py'
 
 concurrency:
   group: dev-quality-${{ github.ref }}
@@ -20,7 +55,7 @@ env:
 
 jobs:
   quality:
-    name: Lint and unit tests
+    name: JVM unit tests
     runs-on: ubuntu-24.04
     timeout-minutes: 120
 
@@ -105,15 +140,15 @@ jobs:
             --archives "$MANUAL_DEPS_DIR" \
             --repository "$GITHUB_WORKSPACE"
 
-      - name: Run unit tests and lint
+      - name: Run unit tests
         id: dev-checks
         shell: bash
         run: |
           set -euo pipefail
           chmod +x ./gradlew
-          ./gradlew :app:testDebugUnitTest :app:lintDebug --continue --stacktrace
+          bash ci/script/run_android_checks.sh --lane jvm --continue
 
-      - name: Upload test and lint reports
+      - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
@@ -136,8 +171,8 @@ jobs:
             echo ""
             echo "| Check | Outcome |"
             echo "| --- | --- |"
-            echo "| Unit tests + Lint | $outcome |"
+            echo "| Unit tests | $outcome |"
           } >> "$GITHUB_STEP_SUMMARY"
           if [[ "$outcome" == "failure" ]]; then
-            echo "::warning::Unit tests or lint failed. Download the reports artifact to review."
+            echo "::warning::Unit tests failed. Download the reports artifact to review."
           fi
