@@ -40,6 +40,7 @@ private data class QuoteItem(
     val file: File,
     val time: Long,
     val size: Long,
+    val directory: String = "",
     val work: Boolean = false,
     val seed: String = name,
 )
@@ -85,7 +86,9 @@ internal fun OrbitQuoteFilesSheet(orbit: OrbitProfile, onDismiss: () -> Unit, on
             val all = loaded?.get(section).orEmpty()
             val shown = remember(all, query) {
                 val q = query.trim()
-                if (q.isEmpty()) all else all.filter { it.name.contains(q, ignoreCase = true) }
+                if (q.isEmpty()) all else all.filter {
+                    it.name.contains(q, ignoreCase = true) || it.directory.contains(q, ignoreCase = true)
+                }
             }
             // The header scrolls with the list, so with the keyboard up or large text the button below stays.
             LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp)) {
@@ -160,7 +163,10 @@ private suspend fun loadQuoteLists(context: android.content.Context, orbitId: St
     val entries = orbitFiles.list(titles = false).filter { it.size >= 0 }
     fun item(prefix: String, entry: OrbitFiles.Entry): QuoteItem? {
         val file = runCatching { orbitFiles.fileFor(entry.path) }.getOrNull()?.takeIf { it.isFile } ?: return null
-        return QuoteItem(prefix + entry.path, entry.path.substringAfterLast('/'), file, entry.modifiedAt, entry.size)
+        return QuoteItem(
+            prefix + entry.path, entry.path.substringAfterLast('/'), file, entry.modifiedAt, entry.size,
+            directory = entry.path.substringBeforeLast('/', ""),
+        )
     }
     val (madeEntries, noteEntries) = entries.partition { it.path.startsWith("files/") }
     val made = (works + madeEntries.mapNotNull { item("file:", it) }).sortedByDescending { it.time }
@@ -215,6 +221,13 @@ private fun QuoteRow(item: QuoteItem, picked: Boolean, onToggle: () -> Unit) {
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             Text(item.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (item.directory.isNotEmpty()) {
+                Text(
+                    item.directory,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             Text(
                 (if (item.work) stringResource(R.string.orbit_builds_work) else typeLabel(item.name)) + " · " +
                     android.text.format.Formatter.formatShortFileSize(context, item.size) + " · " + shortDate(item.time),
