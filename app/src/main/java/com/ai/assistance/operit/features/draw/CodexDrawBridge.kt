@@ -70,11 +70,8 @@ object CodexDrawBridge {
         // requests mirror the official Codex body: size defaults to auto, background is only
         // opaque or transparent, and output_format is omitted (the result format is sniffed below).
         // Options are checked before any image is read so a bad value fails immediately.
-        val size = option(
-            params, "size", if (hasImageInput) "auto" else "1024x1024",
-            setOf("1024x1024", "1024x1536", "1536x1024", "auto"),
-        )
-        val quality = option(params, "quality", "auto", setOf("auto", "low", "medium", "high"))
+        val size = imageSize(params.optString("size").trim().lowercase().ifBlank { if (hasImageInput) "auto" else "1024x1024" })
+        val quality = option(params, "quality", "auto", setOf("auto", "low", "medium", "high", "xhigh", "max"))
         val background = option(params, "background", "auto", setOf("auto", "opaque", "transparent"))
             .let { if (hasImageInput && it == "auto") "opaque" else it }
         // The backend decides which image models an account may use; unknown names come back
@@ -175,6 +172,25 @@ object CodexDrawBridge {
         params.optString(name).trim().ifBlank { defaultValue }.also {
             require(it in allowed) { "$name 不支持：$it" }
         }
+
+    /**
+     * "auto" or WIDTHxHEIGHT within the image models' custom-size rules: each side a multiple of 16
+     * and at most 3840, the long side at most 3 times the short one, 655,360 to 8,294,400 pixels.
+     */
+    private fun imageSize(value: String): String {
+        if (value == "auto") return value
+        val match = Regex("""(\d{2,5})x(\d{2,5})""").matchEntire(value)
+            ?: throw IllegalArgumentException("size 必须是 auto 或 宽x高，例如 2048x2048、3840x2160")
+        val width = match.groupValues[1].toInt()
+        val height = match.groupValues[2].toInt()
+        require(width % 16 == 0 && height % 16 == 0) { "size 的宽和高都必须是 16 的倍数：$value" }
+        require(maxOf(width, height) <= 3840) { "size 单边最大 3840：$value" }
+        require(maxOf(width, height) <= minOf(width, height) * 3) { "size 宽高比最大 3:1：$value" }
+        require(width.toLong() * height in 655_360L..8_294_400L) {
+            "size 总像素必须在 655,360 到 8,294,400 之间（约 1K 到 4K）：$value"
+        }
+        return "${width}x$height"
+    }
 
     private fun loadInputImage(path: String, permittedRoots: List<File>): String {
         val localPath = if (path.startsWith("file://")) Uri.parse(path).path.orEmpty() else path

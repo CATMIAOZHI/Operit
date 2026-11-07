@@ -31,8 +31,8 @@
       "parameters": [
         {"name": "prompt", "type": "string", "required": true, "description": {"zh": "绘图要求", "en": "Image prompt"}},
         {"name": "referenced_image_paths", "type": "array", "required": false, "description": {"zh": "仅作参考的本地 PNG、JPEG 或 WebP 图片路径数组，最多 5 张；不会覆盖原图", "en": "Up to 5 local PNG, JPEG, or WebP paths used only as references; original files are preserved"}},
-        {"name": "size", "type": "string", "required": false, "description": {"zh": "1024x1024、1024x1536、1536x1024 或 auto；不填时无参考图用 1024x1024，有参考图用 auto", "en": "1024x1024, 1024x1536, 1536x1024, or auto; defaults to 1024x1024 without references and auto with references"}},
-        {"name": "quality", "type": "string", "required": false, "description": {"zh": "auto、low、medium 或 high", "en": "auto, low, medium, or high"}},
+        {"name": "size", "type": "string", "required": false, "description": {"zh": "auto 或 宽x高。常用：1024x1024、1536x1024、1024x1536、2048x2048、2048x1152、3840x2160、2160x3840；可自定义：宽高为 16 的倍数、单边不超过 3840、宽高比不超过 3:1、总像素 655,360～8,294,400。不填时无参考图用 1024x1024，有参考图用 auto", "en": "auto or WIDTHxHEIGHT. Common: 1024x1024, 1536x1024, 1024x1536, 2048x2048, 2048x1152, 3840x2160, 2160x3840. Custom: sides multiples of 16, at most 3840, ratio up to 3:1, 655,360 to 8,294,400 pixels. Defaults to 1024x1024 without references and auto with references"}},
+        {"name": "quality", "type": "string", "required": false, "description": {"zh": "auto、low、medium、high、xhigh 或 max", "en": "auto, low, medium, high, xhigh, or max"}},
         {"name": "background", "type": "string", "required": false, "description": {"zh": "auto、opaque 或 transparent；有参考图时 auto 按 opaque 处理", "en": "auto, opaque, or transparent; with references, auto is sent as opaque"}},
         {"name": "model", "type": "string", "required": false, "description": {"zh": "可选图片模型，默认 gpt-image-2.5-flare；需要更高画质时用 gpt-image-2.5-sunburst；须以 gpt-image- 开头", "en": "Optional image model, default gpt-image-2.5-flare; use gpt-image-2.5-sunburst for higher quality; must start with gpt-image-"}},
         {"name": "file_name", "type": "string", "required": false, "description": {"zh": "保存文件名，不含路径和扩展名", "en": "Output filename without path or extension"}},
@@ -46,8 +46,8 @@
         {"name": "prompt", "type": "string", "required": true, "description": {"zh": "图片修改要求", "en": "Image editing prompt"}},
         {"name": "image_path", "type": "string", "required": true, "description": {"zh": "本地 PNG、JPEG 或 WebP 图片路径", "en": "Local PNG, JPEG, or WebP path"}},
         {"name": "referenced_image_paths", "type": "array", "required": false, "description": {"zh": "额外参考图的本地路径数组；加上编辑目标最多 5 张", "en": "Additional local reference image paths; at most 5 images including the edit target"}},
-        {"name": "size", "type": "string", "required": false, "description": {"zh": "1024x1024、1024x1536、1536x1024 或 auto；默认 auto", "en": "1024x1024, 1024x1536, 1536x1024, or auto; defaults to auto"}},
-        {"name": "quality", "type": "string", "required": false, "description": {"zh": "auto、low、medium 或 high", "en": "auto, low, medium, or high"}},
+        {"name": "size", "type": "string", "required": false, "description": {"zh": "auto 或 宽x高，规则同 draw_image；默认 auto", "en": "auto or WIDTHxHEIGHT, same rules as draw_image; defaults to auto"}},
+        {"name": "quality", "type": "string", "required": false, "description": {"zh": "auto、low、medium、high、xhigh 或 max", "en": "auto, low, medium, high, xhigh, or max"}},
         {"name": "background", "type": "string", "required": false, "description": {"zh": "auto、opaque 或 transparent；auto 按 opaque 处理", "en": "auto, opaque, or transparent; auto is sent as opaque"}},
         {"name": "model", "type": "string", "required": false, "description": {"zh": "可选图片模型，默认 gpt-image-2.5-flare；需要更高画质时用 gpt-image-2.5-sunburst；须以 gpt-image- 开头", "en": "Optional image model, default gpt-image-2.5-flare; use gpt-image-2.5-sunburst for higher quality; must start with gpt-image-"}},
         {"name": "file_name", "type": "string", "required": false, "description": {"zh": "保存文件名，不含路径和扩展名", "en": "Output filename without path or extension"}},
@@ -72,6 +72,12 @@ const IMAGEGEN_SKILL = `# 图片创作
 ## 选择图片模型
 
 不填 model 时默认用 gpt-image-2.5-flare：速度快，适合日常生图、快速预览和批量出图。gpt-image-2.5-sunburst 是更好的模型，画质、细节、复杂提示词、人物一致性和精细局部修改都更强，但更慢，两者单价相同。用户要求高质量，或在做角色立绘、复杂角色设计、只改局部的精细编辑时，可以传 model: "gpt-image-2.5-sunburst"。用户指定了模型就按用户的来。
+
+## 尺寸与画质
+
+size 用 auto 或“宽x高”。常用 1K：1024x1024、1536x1024（横）、1024x1536（竖）；2K：2048x2048、2048x1152（16:9）；4K：3840x2160（16:9）、2160x3840（9:16）。也可以自定义：宽和高都是 16 的倍数，单边不超过 3840，宽高比不超过 3:1，总像素在 655,360 到 8,294,400 之间。超过 2560x1440 的尺寸属于实验支持，效果可能不稳。用户没提尺寸时别自己放大；要壁纸、海报等大图再用 2K 或 4K。
+
+quality 可选 auto、low、medium、high、xhigh、max。越高越细、越慢、越贵；分辨率高不等于细节多，要细节时同时提高 quality。较旧的图片模型可能不支持大尺寸或 xhigh、max，报错时按错误信息换回支持的值。
 
 ## 组织提示词
 
