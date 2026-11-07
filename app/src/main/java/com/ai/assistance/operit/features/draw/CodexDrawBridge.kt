@@ -79,9 +79,9 @@ object CodexDrawBridge {
             .let { if (hasImageInput && it == "auto") "opaque" else it }
         // The backend decides which image models an account may use; unknown names come back
         // as an upstream error with the server's reason.
-        val imageModel = params.optString("model").trim().ifBlank { "gpt-image-2" }
+        val imageModel = params.optString("model").trim().ifBlank { "gpt-image-2.5-flare" }
         require(Regex("""gpt-image-[a-z0-9][a-z0-9.\-]*""").matches(imageModel)) {
-            "model 必须是 gpt-image- 开头的图片模型名，例如 gpt-image-2"
+            "model 必须是 gpt-image- 开头的图片模型名，例如 gpt-image-2.5-flare 或 gpt-image-2.5-sunburst"
         }
         val chatModel = params.optString("chat_model").trim().ifBlank { "gpt-6-luna" }
         require(Regex("""gpt-[a-zA-Z0-9.\-]+""").matches(chatModel)) { "chat_model 格式无效" }

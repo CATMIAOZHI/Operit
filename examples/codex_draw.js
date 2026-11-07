@@ -34,7 +34,7 @@
         {"name": "size", "type": "string", "required": false, "description": {"zh": "1024x1024、1024x1536、1536x1024 或 auto；不填时无参考图用 1024x1024，有参考图用 auto", "en": "1024x1024, 1024x1536, 1536x1024, or auto; defaults to 1024x1024 without references and auto with references"}},
         {"name": "quality", "type": "string", "required": false, "description": {"zh": "auto、low、medium 或 high", "en": "auto, low, medium, or high"}},
         {"name": "background", "type": "string", "required": false, "description": {"zh": "auto、opaque 或 transparent；有参考图时 auto 按 opaque 处理", "en": "auto, opaque, or transparent; with references, auto is sent as opaque"}},
-        {"name": "model", "type": "string", "required": false, "description": {"zh": "可选图片模型，默认 gpt-image-2；须以 gpt-image- 开头，用户没指定时不要填", "en": "Optional image model, default gpt-image-2; must start with gpt-image-; leave empty unless the user asks"}},
+        {"name": "model", "type": "string", "required": false, "description": {"zh": "可选图片模型，默认 gpt-image-2.5-flare；需要更高画质时用 gpt-image-2.5-sunburst；须以 gpt-image- 开头", "en": "Optional image model, default gpt-image-2.5-flare; use gpt-image-2.5-sunburst for higher quality; must start with gpt-image-"}},
         {"name": "file_name", "type": "string", "required": false, "description": {"zh": "保存文件名，不含路径和扩展名", "en": "Output filename without path or extension"}},
         {"name": "chat_model", "type": "string", "required": false, "description": {"zh": "可选承载模型；默认 gpt-6-luna，若服务端不支持可指定当前 Codex 模型", "en": "Optional carrier model, default gpt-6-luna; change if the server rejects it"}}
       ]
@@ -49,7 +49,7 @@
         {"name": "size", "type": "string", "required": false, "description": {"zh": "1024x1024、1024x1536、1536x1024 或 auto；默认 auto", "en": "1024x1024, 1024x1536, 1536x1024, or auto; defaults to auto"}},
         {"name": "quality", "type": "string", "required": false, "description": {"zh": "auto、low、medium 或 high", "en": "auto, low, medium, or high"}},
         {"name": "background", "type": "string", "required": false, "description": {"zh": "auto、opaque 或 transparent；auto 按 opaque 处理", "en": "auto, opaque, or transparent; auto is sent as opaque"}},
-        {"name": "model", "type": "string", "required": false, "description": {"zh": "可选图片模型，默认 gpt-image-2；须以 gpt-image- 开头，用户没指定时不要填", "en": "Optional image model, default gpt-image-2; must start with gpt-image-; leave empty unless the user asks"}},
+        {"name": "model", "type": "string", "required": false, "description": {"zh": "可选图片模型，默认 gpt-image-2.5-flare；需要更高画质时用 gpt-image-2.5-sunburst；须以 gpt-image- 开头", "en": "Optional image model, default gpt-image-2.5-flare; use gpt-image-2.5-sunburst for higher quality; must start with gpt-image-"}},
         {"name": "file_name", "type": "string", "required": false, "description": {"zh": "保存文件名，不含路径和扩展名", "en": "Output filename without path or extension"}},
         {"name": "chat_model", "type": "string", "required": false, "description": {"zh": "可选承载模型；默认 gpt-6-luna", "en": "Optional carrier model, default gpt-6-luna"}}
       ]
@@ -68,6 +68,10 @@ const IMAGEGEN_SKILL = `# 图片创作
 - 用户明确要求修改已有图片：找到该图片的实际本地路径，调用 edit_image 并传入 image_path；其他参考图可放在 referenced_image_paths。用户上传图片但只说“参考这张图”时，不要擅自把它当成编辑目标；意图不清时先问清楚。
 - SVG、图标系统、流程图、UI、HTML/CSS 或 Canvas 能更准确实现的内容，使用相应代码或设计工具。
 - 没有应用内 Codex 登录时，绘图工具会明确报错；不要把 read_skill 当成生成结果。
+
+## 选择图片模型
+
+不填 model 时默认用 gpt-image-2.5-flare：速度快，适合日常生图、快速预览和批量出图。gpt-image-2.5-sunburst 是更好的模型，画质、细节、复杂提示词、人物一致性和精细局部修改都更强，但更慢，两者单价相同。用户要求高质量，或在做角色立绘、复杂角色设计、只改局部的精细编辑时，可以传 model: "gpt-image-2.5-sunburst"。用户指定了模型就按用户的来。
 
 ## 组织提示词
 
