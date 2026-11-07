@@ -203,6 +203,9 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
     suspend fun attachOrbitFiles(files: List<java.io.File>) =
             withContext(Dispatchers.IO) {
                 val found = files.filter { it.isFile }
+                found.forEach {
+                    com.ai.assistance.operit.features.orbit.OrbitUploads.retainReference(context, it.absolutePath)
+                }
                 // A file already in the box (an upload not yet sent, say) becomes a quote too; see addAttachments.
                 addAttachments(found.map { file ->
                     AttachmentInfo(
