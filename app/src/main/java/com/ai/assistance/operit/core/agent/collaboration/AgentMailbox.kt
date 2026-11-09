@@ -17,16 +17,16 @@ data class AgentMessage(
      * the ID cannot, so a reply sent to it reaches the agent that wrote, or fails if it is gone.
      */
     val senderId: String? = null,
-    /** When it was sent (epoch ms). Written into the envelope so the reader knows the time, like a user message. */
+    /** Internal send time (epoch ms); only Orbit envelopes display it. */
     val sentAt: Long? = null,
     /** The phone's time zone when it was sent, so the time reads the same however often it is rendered. */
     val sentZone: String? = null,
 ) {
-    fun render(): String =
+    fun render(orbit: Boolean = false): String =
         "Message ID: $id\nMessage Type: $kind\nTask name: $recipient\n" +
             "Sender: $sender\n" + (senderId?.let { "Sender ID: $it\n" } ?: "") +
-            (sentAt?.let { "Sent at: ${sentAtLabel(it)}\n" } ?: "") +
-            "Roles: ${roles()}\n" + "Payload:\n$text"
+            (if (orbit) (sentAt?.let { "Sent at: ${sentAtLabel(it)}\n" } ?: "") +
+                "Roles: ${roles()}\n" else "") + "Payload:\n$text"
 
     /** Who sent it and who reads it, so an agent never mistakes itself for the main agent. */
     fun roles(): String {
@@ -45,6 +45,18 @@ data class AgentMessage(
         val zone = sentZone?.let { runCatching { java.time.ZoneId.of(it) }.getOrNull() } ?: java.time.ZoneId.systemDefault()
         return com.ai.assistance.operit.features.orbit.OrbitMessageTime.label(at, zone)
     }
+}
+
+private val legacyOrbitEnvelopeInstructions = Regex(
+    """(You are the subagent /root(?:/[a-z0-9_]+)+, not the main agent /root\.)\s+""" +
+        """Each agent message states when\s+it was sent \(Sent at\) and who sent it \(Roles\); """ +
+        """/root is the main agent that talks\s+with the user\.""",
+)
+
+/** Saved host prompts may contain both this agent's and inherited parents' old instructions. */
+internal fun collaborationSystemPromptForScope(prompt: String, orbit: Boolean): String {
+    if (orbit) return prompt
+    return legacyOrbitEnvelopeInstructions.replace(prompt) { it.groupValues[1] }
 }
 
 @Serializable

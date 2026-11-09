@@ -18,7 +18,7 @@ object OrbitSubagentNotice {
 
     fun text(english: Boolean, reports: List<AgentMessage>): String {
         val names = reports.map { it.sender.substringAfterLast('/') }.distinct().joinToString(", ").take(80)
-        val body = reports.joinToString("\n\n") { it.render() }
+        val body = reports.joinToString("\n\n") { it.render(orbit = true) }
         val quiet = OrbitReactionNotice.NOTHING_TO_DO
         return if (english) buildString {
             append("$MARKER Subagent reported: $names\n")
