@@ -260,6 +260,7 @@ class CollaborationCoordinator private constructor(context: Context) {
         require(message.isNotBlank()) { "Empty task message" }
         val orbitTask = com.ai.assistance.operit.features.orbit.OrbitTaskExecution.resolve(appContext, chatId)
         val parent = caller(chatId)
+        val orbitEnvelope = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(appContext, parent.rootChatId) != null
         val generation = synchronized(lock) { stopGate.generation(parent.rootChatId) }
         val path = AgentPath.child(parent.path, taskName)
         val limits = limitsFor(parent.rootChatId)
@@ -324,7 +325,7 @@ class CollaborationCoordinator private constructor(context: Context) {
             PACKAGE_SYSTEM_GUIDELINES_SECTION
             ACTIVE_PACKAGES_SECTION
             AVAILABLE_TOOLS_SECTION
-        """.trimIndent()
+        """.trimIndent().let { collaborationSystemPromptForScope(it, orbitEnvelope) }
         try {
             val inheritedHistory = CollaborationPromptHistory.inheritedPrefix(
                 inherited.filter { it.kind != PromptTurnKind.SYSTEM.name }, path,
@@ -337,7 +338,7 @@ class CollaborationCoordinator private constructor(context: Context) {
                 try {
                     val result = runner.runTask(SubagentTaskRequest(
                         parentChatId = chatId, parentToolCallId = callId,
-                        parentAgentName = parent.path, title = "v2 $path", prompt = assignment.render(),
+                        parentAgentName = parent.path, title = "v2 $path", prompt = assignment.render(orbitEnvelope),
                         subagentType = profileId, parentModelConfigId = modelConfigId,
                         parentModelIndex = modelIndex,
                         externalOwnerType = OWNER_TYPE, externalOwnerId = path,
@@ -471,6 +472,7 @@ class CollaborationCoordinator private constructor(context: Context) {
         val job = scope.launch(start = CoroutineStart.LAZY) {
             try {
                 val orbitTask = com.ai.assistance.operit.features.orbit.OrbitTaskExecution.resolve(appContext, agent.chatId)
+                val orbitEnvelope = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(appContext, agent.rootChatId) != null
                 val result = runner.runTask(SubagentTaskRequest(
                     parentChatId = requireNotNull(synchronized(lock) {
                         agent.parentPath?.let { state.find(agent.rootChatId, it) }
@@ -478,12 +480,12 @@ class CollaborationCoordinator private constructor(context: Context) {
                     parentToolCallId = null,
                     parentAgentName = inputs.map { it.sender }.distinct().joinToString(", "),
                     title = "v2 ${agent.path}",
-                    prompt = if (inputs.size == 1) inputs.single().render()
+                    prompt = if (inputs.size == 1) inputs.single().render(orbitEnvelope)
                         else "Collaboration message batch (${inputs.size}):\n\n" +
-                            inputs.joinToString("\n\n") { it.render() },
+                            inputs.joinToString("\n\n") { it.render(orbitEnvelope) },
                     subagentType = agent.profileId, taskId = agent.runId,
                     parentModelConfigId = agent.modelConfigId, parentModelIndex = agent.modelIndex,
-                    collaborationSystemPrompt = agent.systemPrompt,
+                    collaborationSystemPrompt = collaborationSystemPromptForScope(agent.systemPrompt, orbitEnvelope),
                     collaborationHistory = agent.inheritedHistory.map { it.toPromptTurn() },
                     collaborationHistoryCutoff = agent.historyCutoff,
                     collaborationRoleCardId = agent.roleCardId,
@@ -581,7 +583,8 @@ class CollaborationCoordinator private constructor(context: Context) {
             val agent = synchronized(lock) { state.agents.firstOrNull { it.chatId == chatId && !it.archived } }
             if (agent != null) {
                 reconcileMailbox(agent)
-                offerPending(chatId)
+                val orbitEnvelope = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(appContext, agent.rootChatId) != null
+                offerPending(chatId, orbitEnvelope)
                 if (agent.parentPath == null) wakeIdleRoot(chatId)
             }
         }
@@ -710,19 +713,19 @@ class CollaborationCoordinator private constructor(context: Context) {
         }
     }
 
-    private fun offerPending(chatId: String? = null) {
+    private fun offerPending(chatId: String, orbitEnvelope: Boolean) {
         synchronized(lock) {
             val delegate = core.getMessageProcessingDelegate()
             state.agents.forEach { agent ->
                 if (agent.archived) return@forEach
                 if (stopGate.isStopping(agent.rootChatId)) return@forEach
-                if (chatId != null && agent.chatId != chatId) return@forEach
+                if (agent.chatId != chatId) return@forEach
                 val turn = delegate.steeringTurnId(agent.chatId) ?: return@forEach
                 agent.messages.forEach messageLoop@ { message ->
                     if (!deliveries.add(message.id)) return@messageLoop
                     possiblyPersisted.add(message.id)
                     val accepted = delegate.trySteerMessage(agent.chatId, turn, TurnInputInbox.Input(
-                        text = message.render(),
+                        text = message.render(orbitEnvelope),
                         agentPath = message.sender,
                         startsAgentTurn = message.kind == AgentMessageKind.NEW_TASK,
                         consumed = {

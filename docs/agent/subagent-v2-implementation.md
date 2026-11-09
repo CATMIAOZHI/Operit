@@ -280,3 +280,11 @@ the real request path rather than only checking stored timestamps.
 Build `:app:assembleDebugAndroidTest`, install the main and test APKs using
 `adb install -r`, and invoke the single class with `am instrument`. Leave the
 test package installed. Do not use `connectedAndroidTest` or clear app data.
+
+## 消息信封作用域
+
+发送时间（`Sent at`）与父子/同级关系（`Roles`）仅在 Orbit 所属代理树中输出。
+普通聊天保留消息 ID、类型、任务路径、发送者及稳定发送者 ID。作用域由宿主按根聊天的
+Orbit 归属判断，覆盖首次任务、继续任务、运行中消息和最终回报；已有普通代理恢复时
+也移除旧宿主提示词中关于这两个字段的说明。内部发送时间仍保留用于任务计时，
+不改写已保存的聊天历史。
