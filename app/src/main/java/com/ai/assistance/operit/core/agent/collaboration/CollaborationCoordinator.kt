@@ -56,8 +56,6 @@ class CollaborationCoordinator private constructor(context: Context) {
     private val stopGate = CollaborationStopGate()
     /** Root chats a hidden wake turn is being arranged for. */
     private val waking = mutableSetOf<String>()
-    /** One wake send at a time, so two wakes never race for the same idle chat. */
-    private val wakeSendLock = Mutex()
 
     private fun key(root: String, path: String) = "$root:$path"
     private val _composerPredictionRevision = kotlinx.coroutines.flow.MutableStateFlow(0L)
@@ -607,9 +605,8 @@ class CollaborationCoordinator private constructor(context: Context) {
     }
 
     /**
-     * A child's report reached a root whose turn already ended. Left alone it would wait in the
-     * mailbox until the user typed again; instead the root gets a turn of its own with the report,
-     * once its chat is quiet. A root that is still working gets reports by steering instead.
+     * Only an Orbit talk chat may start a new turn for a child's report. Ordinary chats keep the
+     * report for the next user turn; roots that are still working receive it through steering.
      */
     private fun wakeIdleRoot(chatId: String) {
         val start = synchronized(lock) {
@@ -634,10 +631,13 @@ class CollaborationCoordinator private constructor(context: Context) {
         }
     }
 
-    /** Sends the root's reports as soon as its chat is quiet. False when it gave up waiting. */
+    /** Sends an Orbit root's reports when quiet. False when ineligible or it gave up waiting. */
     private suspend fun runWake(chatId: String): Boolean {
         val deadline = android.os.SystemClock.elapsedRealtime() + WAKE_WAIT_MS
         while (true) {
+            // Check before claiming mail: a normal chat must neither auto-run nor lose its report.
+            val orbit = com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(appContext).current()
+                .orbitForChat(chatId)?.takeIf { chatId in it.talkChatIds } ?: return false
             val left = deadline - android.os.SystemClock.elapsedRealtime()
             if (left <= 0) return false
             val batch = synchronized(lock) {
@@ -673,60 +673,16 @@ class CollaborationCoordinator private constructor(context: Context) {
                 }
             }
             try {
-                sendWake(chatId, batch, left, claim, sent)
+                val english = com.ai.assistance.operit.util.LocaleUtils.usesEnglishPrompt(appContext)
+                com.ai.assistance.operit.features.orbit.OrbitWake.tell(
+                    appContext, orbit, chatId,
+                    com.ai.assistance.operit.features.orbit.OrbitSubagentNotice.text(english, batch),
+                    idleWaitMs = left, totalWaitMs = left, ready = claim, onSent = sent,
+                )
             } finally {
                 if (claimed && !acknowledged) synchronized(lock) { deliveries.removeAll(ids) }
             }
             if (!acknowledged) delay(WAKE_RETRY_MS)
-        }
-    }
-
-    /**
-     * Starts the hidden turn. An Orbit chat goes through Orbit's own wake, which also shows the
-     * reply as a notification when the app is in the background; any other chat gets the reports
-     * as the same collaboration rows a running turn would show.
-     */
-    private suspend fun sendWake(
-        chatId: String,
-        batch: List<AgentMessage>,
-        waitMs: Long,
-        claim: suspend () -> Boolean,
-        sent: suspend () -> Unit,
-    ) {
-        val orbit = com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(appContext).current()
-            .orbitForChat(chatId)?.takeIf { chatId in it.talkChatIds }
-        if (orbit != null) {
-            val english = com.ai.assistance.operit.util.LocaleUtils.usesEnglishPrompt(appContext)
-            com.ai.assistance.operit.features.orbit.OrbitWake.tell(
-                appContext, orbit, chatId,
-                com.ai.assistance.operit.features.orbit.OrbitSubagentNotice.text(english, batch),
-                idleWaitMs = waitMs, totalWaitMs = waitMs, ready = claim, onSent = sent,
-            )
-            return
-        }
-        val holder = ChatRuntimeHolder.getInstance(appContext)
-        val cores = listOf(holder.getCore(ChatRuntimeSlot.MAIN), holder.getCore(ChatRuntimeSlot.FLOATING))
-        fun quiet() = cores.all {
-            chatId !in it.activeStreamingChatIds.value && !it.isSummarizingChat(chatId)
-        }
-        withTimeoutOrNull(waitMs) { while (!quiet()) delay(1_000) } ?: return
-        wakeSendLock.withLock {
-            if (!quiet() || !claim()) return
-            val text = if (batch.size == 1) batch.single().render()
-                else "Collaboration message batch (${batch.size}):\n\n" + batch.joinToString("\n\n") { it.render() }
-            val ok = withContext(Dispatchers.Main.immediate) {
-                core.trySendUserMessageToExistingChat(
-                    chatId = chatId,
-                    messageText = text,
-                    turnOptions = com.ai.assistance.operit.data.model.ChatTurnOptions(
-                        useComposerReply = false, deliveredByTool = true, collaborationEvent = true,
-                        // A summary first would only start it; the report must be sent before it is acknowledged.
-                        disableSummary = true,
-                        userRoleNameOverride = batch.map { it.sender }.distinct().joinToString(", "),
-                    ),
-                )
-            }
-            if (ok) sent()
         }
     }
 

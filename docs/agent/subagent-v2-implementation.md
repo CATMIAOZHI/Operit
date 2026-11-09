@@ -19,6 +19,9 @@ Reference: local `codex`, OpenAI `main` commit
   reach the caller it returns an explicit idle result instead of idling to the
   timeout. Completion messages are delivered to the parent, with sender and
   recipient identity.
+- Automatic new turns for completion or failure reports are limited to Orbit
+  talk chats. An ordinary parent that already ended its turn keeps the report in
+  its mailbox until its next turn; a running parent still receives it by steering.
 - Context forking supports all, none and a positive turn count. Preserve parent
   model settings when inherited; expose explicit model selection consistently
   with Operit's configured models.
