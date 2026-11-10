@@ -9529,6 +9529,11 @@
     <string name="orbit_builds_made">构件</string>
     <string name="orbit_builds_uploads">文件库</string>
     <string name="orbit_builds_work">构件</string>
+    <string name="orbit_builds_system">系统文件</string>
+    <string name="orbit_system_hint">%1$s 自己的全部文件都在这里。这里只能查看，想改什么直接跟 %1$s 说。</string>
+    <string name="orbit_system_empty">这个文件夹是空的。</string>
+    <string name="orbit_system_folder">文件夹</string>
+    <string name="orbit_system_copy_path">复制路径</string>
     <string name="orbit_builds_book_text">书的原文 · %1$d 章</string>
     <string name="orbit_builds_book_text_show">展开章节</string>
     <string name="orbit_builds_book_text_hide">收起章节</string>
