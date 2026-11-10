@@ -84,8 +84,10 @@ internal object OrbitDataExport {
             put("README.txt", readme(orbit))
             if (root.isDirectory) {
                 val base = root.toPath().toRealPath()
+                // workspace/ is Orbit's scratch (clones, drafts) and can be huge; it is not the user's data.
+                val workspace = File(root, com.ai.assistance.operit.features.orbit.OrbitFiles.WORKSPACE)
                 root.walkTopDown()
-                    .onEnter { dir -> dir == root || (!dir.name.startsWith(".") && !Files.isSymbolicLink(dir.toPath())) }
+                    .onEnter { dir -> dir == root || (dir != workspace && !dir.name.startsWith(".") && !Files.isSymbolicLink(dir.toPath())) }
                     .filter { it.isFile && !it.name.startsWith(".") && !Files.isSymbolicLink(it.toPath()) }
                     .filter { runCatching { it.toPath().toRealPath().startsWith(base) }.getOrDefault(false) }
                     .forEach { file ->
@@ -144,6 +146,7 @@ internal object OrbitDataExport {
         Exported ${time(System.currentTimeMillis())}
 
         orbit/      Orbit's own folder: SOUL.md, IDENTITY.md, user.md, memory/, skills/, files/ and its boards
+                    (not workspace/, Orbit's scratch space)
         records/    tasks, goals and the history of background runs
         chat.md     the Orbit chat
         side-chats/ Orbit's side chats, one file each

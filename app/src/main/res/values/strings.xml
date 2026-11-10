@@ -5998,7 +5998,7 @@
 
     <string name="backup_raw_snapshot_title">文件快照备份（实验）</string>
     <string name="backup_raw_snapshot_subtitle">以文件/目录为单位的整体压缩备份与恢复</string>
-    <string name="backup_raw_snapshot_desc">将打包会随“清除数据”一起删除的应用数据：内部 files/shared_prefs/datastore/databases，以及 Android/data/包名/files（终端 Linux 环境体积很大，默认不备份）。恢复会覆盖当前数据，并且需要重启应用生效。部分加密数据在换机/重装后可能无法使用。</string>
+    <string name="backup_raw_snapshot_desc">将打包会随“清除数据”一起删除的应用数据：内部 files/shared_prefs/datastore/databases，以及 Android/data/包名/files（终端 Linux 环境体积很大，默认不备份；Orbit 的工作区也不备份）。恢复会覆盖当前数据，并且需要重启应用生效。部分加密数据在换机/重装后可能无法使用。</string>
     <string name="backup_raw_snapshot_backup_now">立即备份</string>
     <string name="backup_raw_snapshot_restore_from_file">从文件恢复</string>
     <string name="backup_raw_snapshot_backing_up">正在生成文件快照备份...</string>
@@ -9547,6 +9547,8 @@
     <string name="orbit_storage_made_desc">%1$s 做的和存下的文件</string>
     <string name="orbit_storage_sent">聊天里的文件</string>
     <string name="orbit_storage_sent_desc">聊天里发出的文件，各留一份不会变的副本</string>
+    <string name="orbit_storage_workspace">工作区</string>
+    <string name="orbit_storage_workspace_desc">%1$s 干活用的地方，比如下载的代码和草稿，不会自动删除，也不随导出或备份</string>
     <string name="orbit_storage_limit">文件库大小</string>
     <string name="orbit_storage_limit_desc">开启自动删除后，文件库和聊天里的文件各自按这个大小清理最早的；最新 100 个一直留着，所以实际占用可能超过这个大小</string>
     <string name="orbit_storage_gb">%1$d GB</string>

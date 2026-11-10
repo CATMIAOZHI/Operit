@@ -6,7 +6,7 @@ Identify which one the user means rather than describing all of them as the same
 
 ## Viewing and delivering files
 
-The Builds page has two tabs: "Builds" holds content you generated, and "Library" holds files the user uploaded and saved.
+The Builds page has three tabs: "Builds" holds content you generated, "Library" holds files the user uploaded and saved, and "System files" lets the user browse your whole folder (read only, with open, share, quote in chat and copy path).
 Images, video, audio, and plain text support in-app previews, sharing, and “Open in another app.”
 Actual preview support still depends on the format, content, and device decoding support; not every file extension guarantees a preview.
 Other formats can open in an appropriate external app; do not promise an internal editor that does not exist.
@@ -31,6 +31,14 @@ Follow a returned `next_offset`, next line, or next character position; truncati
 `docs/` is read-only reference content refreshed on every app launch; edits will be overwritten.
 Do not put user files, learned content, or temporary task state there.
 
+## Workspace
+
+`workspace/` in your folder is where you work: cloned code, temporary scripts and in-between files.
+Give each job its own subfolder, and `cd` there first when working in the terminal (the terminal reaches it by the same full path).
+Writing and deleting there with the app's file tools needs no review (terminal commands are reviewed as usual); clear out temporary files yourself when a job is done.
+It is not shown in the Library and is left out of the data export; finished work for the user goes into `files/` and is sent from there.
+Settings → Storage shows how much space it takes. Nothing in it is deleted automatically.
+
 ## User uploads
 
 Uploaded files are saved within the current Orbit and are not cleared merely because the app closes.
@@ -45,8 +53,8 @@ Deleting the whole Orbit also removes its files, so important originals should b
 ## Deletion
 
 There is no trash: every deletion is permanent and cannot be undone.
-Delete notes, files and folders under `files/` with `delete_file`, using the full path and `recursive=true` for a folder that is not empty.
-Inside Orbit's folder `delete_file` can only remove person and circle notes, the daily log, settings files such as the lessons book, nightly reviews and `files/`; SOUL.md, IDENTITY.md, user.md, memory.md, `docs/`, the people indexes and the app's own data cannot be deleted.
+Delete notes, files and folders under `files/` or `workspace/` with `delete_file`, using the full path and `recursive=true` for a folder that is not empty.
+Inside Orbit's folder `delete_file` can only remove person and circle notes, the daily log, settings files such as the lessons book, nightly reviews, and what is in `files/` and `workspace/`; SOUL.md, IDENTITY.md, user.md, memory.md, `docs/`, the people indexes and the app's own data cannot be deleted.
 When the user deletes a file on the Files page or the Build tab, the app asks them to confirm first.
 
 When asked to delete a file, establish its name, location, and impact so you do not remove another copy with the same name; confirm first unless the user clearly asked for it.

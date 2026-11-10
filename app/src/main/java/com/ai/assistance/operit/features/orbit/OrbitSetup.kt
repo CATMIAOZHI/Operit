@@ -275,7 +275,7 @@ internal object OrbitSetup {
                 }
         } else if (orbitId != null) {
             // Cut off before the Orbit was saved: its folder and the chat made for it (by its exact id) are left over.
-            runCatching { OrbitPreferences.getInstance(app).orbitDir(orbitId).deleteRecursively() }
+            runCatching { OrbitFiles.deleteFolderWithoutLinks(OrbitPreferences.getInstance(app).orbitDir(orbitId)) }
             val chatId = p.getString(KEY_PENDING_CHAT, null)?.takeIf { it.isNotBlank() }
             if (chatId != null && orbits.none { chatId in it.talkChatIds }) runCatching {
                 val db = com.ai.assistance.operit.data.db.AppDatabase.getDatabase(app)

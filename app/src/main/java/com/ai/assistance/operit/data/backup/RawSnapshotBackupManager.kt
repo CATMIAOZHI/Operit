@@ -1108,6 +1108,19 @@ object RawSnapshotBackupManager {
     ): Boolean {
         if (currentDir == baseDir) return false
         val parent = currentDir.parentFile ?: return false
+        // An Orbit's workspace/ is its scratch (cloned code, drafts): it can be huge and hold links
+        // anywhere, and it is not the user's data, so the snapshot leaves it out like the Orbit export does,
+        // also when a link elsewhere leads into it.
+        if (entryPrefix == ENTRY_FILES) {
+            if (currentDir.name == com.ai.assistance.operit.features.orbit.OrbitFiles.WORKSPACE &&
+                parent.parentFile == File(baseDir, "orbit")
+            ) return true
+            val real = runCatching { currentDir.canonicalFile }.getOrNull() ?: return true
+            val baseReal = runCatching { baseDir.canonicalFile }.getOrNull() ?: return true
+            if (real.path.startsWith(baseReal.path + File.separator) &&
+                isOrbitWorkspace(real.path.substring(baseReal.path.length + 1).replace(File.separatorChar, '/'))
+            ) return true
+        }
         if (parent != baseDir) return false
 
         val name = currentDir.name
@@ -1140,6 +1153,7 @@ object RawSnapshotBackupManager {
         }
 
         if (entryPrefix == ENTRY_FILES) {
+            if (isOrbitWorkspace(relNormalized)) return true
             if (top.startsWith("sherpa-ncnn-")) {
                 return true
             }
@@ -1163,6 +1177,13 @@ object RawSnapshotBackupManager {
         }
 
         return false
+    }
+
+    /** Whether a path under filesDir (with '/') is an Orbit's workspace/ or inside it. */
+    private fun isOrbitWorkspace(rel: String): Boolean {
+        val parts = rel.split('/')
+        return parts.size >= 3 && parts[0] == "orbit" &&
+            parts[2] == com.ai.assistance.operit.features.orbit.OrbitFiles.WORKSPACE
     }
 
     private fun totalFilesForZip(
