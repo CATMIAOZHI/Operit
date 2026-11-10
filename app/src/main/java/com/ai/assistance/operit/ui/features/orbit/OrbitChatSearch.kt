@@ -144,6 +144,11 @@ internal object OrbitChatFind {
     private const val BATCH = 10
     private const val PAGE = 40
     private const val MAX_READ_PER_PAGE = 200
+    /** How many card-bearing messages before and after a picture are read for the viewer. */
+    private const val NEAR = 150
+
+    /** The messages read each way when looking for [NEAR] pictures: a long chat with few cards stops here. */
+    private const val WINDOW = 1000
     private val audioTypes = setOf("mp3", "wav", "m4a", "aac", "ogg", "oga", "flac", "opus", "amr")
     private val videoTypes = setOf("mp4", "mov", "webm", "mkv", "3gp", "avi", "m4v")
     private val urlPattern = Regex("https?://[^\\s<>\"'`)\\]）】」，。、；！？]+", RegexOption.IGNORE_CASE)
@@ -171,6 +176,58 @@ internal object OrbitChatFind {
             }
             ids
         }
+    }
+
+    /**
+     * The pictures Orbit sent in [chatId] around the message said at [at], oldest first, for
+     * swiping through them in the picture viewer. Only [WINDOW] messages each way are looked at
+     * and [NEAR] with cards kept, so a long chat costs the same as a short one; closing the viewer
+     * stops the reading.
+     */
+    suspend fun pictures(context: Context, orbitId: String, chatId: String, at: Long): List<File> = withContext(Dispatchers.IO) {
+        val db = AppDatabase.getDatabase(context).openHelper.readableDatabase
+        val signal = android.os.CancellationSignal()
+        // The query blocks this thread, so a watcher on another one stops it when the viewer closes.
+        val watcher = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+            try {
+                kotlinx.coroutines.awaitCancellation()
+            } finally {
+                signal.cancel()
+            }
+        }
+        fun near(compare: String, order: String): List<Long> {
+            // Any [WINDOW] rows of the chat, hidden ones too, so the scan itself has an end.
+            val sql = "SELECT messageId FROM (SELECT messageId, timestamp, sender, displayMode, content FROM messages" +
+                " WHERE chatId = ? AND timestamp $compare ?" +
+                " ORDER BY timestamp $order, messageId $order LIMIT $WINDOW)" +
+                " WHERE 1$SHOWN AND sender = 'ai' AND content LIKE '%${OrbitChatCards.KEY}%'" +
+                " ORDER BY timestamp $order, messageId $order LIMIT $NEAR"
+            return db.query(SimpleSQLiteQuery(sql, arrayOf<Any>(chatId, at)), signal).use { cursor ->
+                val ids = ArrayList<Long>()
+                while (cursor.moveToNext()) ids += cursor.getLong(0)
+                ids
+            }
+        }
+        val ids = try {
+            near("<=", "DESC").reversed() + near(">", "ASC")
+        } finally {
+            watcher.cancel()
+        }
+        val dao = AppDatabase.getDatabase(context).chatContentDao()
+        val files = OrbitFiles.of(context, orbitId)
+        val out = LinkedHashMap<String, File>()
+        ids.chunked(BATCH).forEach { batch ->
+            ensureActive()
+            val byId = dao.getMessagesByIds(batch).associateBy { it.messageId }
+            batch.mapNotNull { byId[it] }.forEach { row ->
+                OrbitSpeech.splitCards(OrbitSpeech.of(row.content)).second.forEach { card ->
+                    val o = runCatching { JSONObject(card) }.getOrNull() ?: return@forEach
+                    if (o.optString("kind") != OrbitChatCards.IMAGE) return@forEach
+                    files.chatFile(o.optString("path"))?.let { out.putIfAbsent(it.path, it) }
+                }
+            }
+        }
+        out.values.toList()
     }
 
     /**

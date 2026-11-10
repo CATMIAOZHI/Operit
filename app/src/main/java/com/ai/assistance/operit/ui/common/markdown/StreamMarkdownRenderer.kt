@@ -1003,8 +1003,9 @@ fun StreamMarkdownRenderer(
 
     // A cold large message must not measure as zero-height: a lazy parent would then
     // compose and parse many off-screen messages before the first parse completes.
+    // Many short lines (a page of a long document) count as large too.
     val pendingHeight =
-        if (pendingStaticParse && renderNodes.isEmpty() && content.length > 4096) {
+        if (pendingStaticParse && renderNodes.isEmpty() && (content.length > 4096 || content.count { it == '\n' } >= 100)) {
             LocalConfiguration.current.screenHeightDp.coerceAtLeast(320).dp
         } else 0.dp
     Surface(modifier = modifier.heightIn(min = pendingHeight), color = Color.Transparent, shape = RoundedCornerShape(4.dp)) {

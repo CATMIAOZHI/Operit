@@ -1171,8 +1171,9 @@ private fun FeedPostRow(
 
 /**
  * A post's pictures, at most nine, laid out like a moments post: one large, two or four in a
- * 2-column grid, otherwise three to a row. Tapping one opens it full screen. [folded] shows the
- * first row only, its last picture marked "+N"; tapping that one opens the post ([onMore]).
+ * 2-column grid, otherwise three to a row. Tapping one opens it full screen, where a swipe goes
+ * on to the post's other pictures. [folded] shows the first row only, its last picture marked
+ * "+N"; tapping that one opens the post ([onMore]).
  */
 @Composable
 private fun FeedImages(files: List<java.io.File>, title: String, folded: Boolean, onMore: () -> Unit) {
@@ -1218,7 +1219,7 @@ private fun FeedImages(files: List<java.io.File>, title: String, folded: Boolean
             }
         }
     }
-    viewing?.let { file -> OrbitImageViewer(file, label(file)) { viewing = null } }
+    viewing?.let { file -> OrbitImageViewer(files, files.indexOf(file), { label(it) }, { viewing = null }) }
 }
 
 /** How many pictures a feed post puts in a row: one large, two or four in two columns, else three. */
@@ -2778,19 +2779,28 @@ private fun BuildDetail(
 }
 
 /** Splits a leading `---` YAML block off a Markdown file: (the block, the rest); null when there is none. */
-private fun splitFrontMatter(text: String): Pair<String?, String> {
+internal fun splitFrontMatter(text: String): Pair<String?, String> {
     val match = Regex("""\A\uFEFF?---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|\z)""").find(text) ?: return null to text
     return match.groupValues[1].trimEnd() to text.substring(match.range.last + 1).trimStart('\r', '\n')
 }
 
 private const val ARTIFACT_PAGE = 20_000
+
+/**
+ * Lines outside code blocks after which a Markdown page ends at its next blank line, so a page of
+ * many short headings or pictures stays light to draw while a table or list is not cut in two.
+ */
+private const val ARTIFACT_LINES = 300
+
+/** Lines after which a Markdown page ends even without a blank line (a very long table). */
+private const val ARTIFACT_LINES_MAX = 1500
 private const val FRONT_MATTER_SHOWN = 4_000
 
 /**
  * One page of a long work: [start] until [end] of the text, with [opens] put before it and [closes]
  * after it when a code block longer than a page had to be cut, so both halves still read as code.
  */
-private class ArtifactPage(val start: Int, val end: Int, val opens: String = "", val closes: String = "")
+internal class ArtifactPage(val start: Int, val end: Int, val opens: String = "", val closes: String = "")
 
 /** An open code fence: its character, how many of them, and the whole opening line (with the language). */
 private class CodeFence(val char: Char, val length: Int, val line: String)
@@ -2810,47 +2820,67 @@ private fun closesFence(line: String, fence: CodeFence): Boolean {
 }
 
 /**
- * The pages of a long work, each at most [ARTIFACT_PAGE] characters of it. Markdown pages end at a
- * blank line outside a code block, so a code block, table or list is not cut in two and read
- * wrongly on the next page. Only a code block longer than a page is cut, at a line end, and closed
- * and opened again around the cut.
+ * The pages of a long work, each at most [ARTIFACT_PAGE] characters of it; a Markdown page also ends
+ * at the first blank line after [ARTIFACT_LINES] lines outside code blocks, or at
+ * [ARTIFACT_LINES_MAX] lines. Markdown pages end at a blank line outside a code
+ * block, so a code block, table or list is not cut in two and read wrongly on the next page. Only a
+ * code block longer than a page is cut, at a line end, and closed and opened again around the cut.
  */
-private fun artifactPages(text: String, markdown: Boolean): List<ArtifactPage> {
+internal fun artifactPages(text: String, markdown: Boolean): List<ArtifactPage> {
     val pages = mutableListOf<ArtifactPage>()
     var start = 0
     // The code block the next page starts inside, if a long one was cut.
     var carried: CodeFence? = null
     while (true) {
         val opens = carried?.let { it.line + "\n" }.orEmpty()
-        if (text.length - start <= ARTIFACT_PAGE) {
-            pages += ArtifactPage(start, text.length, opens)
-            return pages
-        }
-        val limit = start + ARTIFACT_PAGE
         if (!markdown) {
+            if (text.length - start <= ARTIFACT_PAGE) {
+                pages += ArtifactPage(start, text.length)
+                return pages
+            }
+            val limit = start + ARTIFACT_PAGE
             pages += ArtifactPage(start, limit)
             start = limit
             continue
         }
+        val limit = minOf(start + ARTIFACT_PAGE, text.length)
         var fence = carried
         var blankCut = -1
         var lineCut = -1
+        var lines = 0
+        // Whether this page is full before the end of the text.
+        var full = false
         var i = start
         // Only whole lines inside this page count.
-        while (i < limit) {
-            val end = text.indexOf('\n', i).let { if (it < 0) text.length else it }
-            if (end + 1 > limit) break
+        while (i < text.length) {
+            val newline = text.indexOf('\n', i)
+            val end = if (newline < 0) text.length else newline
+            val next = if (newline < 0) text.length else end + 1
+            if (next > limit) {
+                full = true
+                break
+            }
             val line = text.substring(i, end).trim()
             val open = fence
             if (open != null) {
                 if (closesFence(line, open)) fence = null
             } else {
+                lines++
                 val opened = openingFence(line)
                 if (opened != null) fence = opened
-                else if (line.isEmpty()) blankCut = end + 1
+                else if (line.isEmpty()) blankCut = next
             }
-            lineCut = end + 1
-            i = end + 1
+            lineCut = next
+            i = next
+            val atBlank = fence == null && blankCut == next
+            if (i < text.length && ((lines >= ARTIFACT_LINES && atBlank) || lines >= ARTIFACT_LINES_MAX)) {
+                full = true
+                break
+            }
+        }
+        if (!full) {
+            pages += ArtifactPage(start, text.length, opens)
+            return pages
         }
         if (blankCut > start) {
             pages += ArtifactPage(start, blankCut, opens)
