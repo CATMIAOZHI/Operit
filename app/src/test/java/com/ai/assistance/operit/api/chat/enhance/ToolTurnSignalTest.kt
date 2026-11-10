@@ -23,4 +23,16 @@ class ToolTurnSignalTest {
         assertEquals(ToolTurnSignal.INTERRUPTED, resolveToolTurnSignal(listOf(completed, denied)))
         assertEquals(ToolTurnSignal.INTERRUPTED, resolveToolTurnSignal(listOf(denied, completed)))
     }
+
+    @Test
+    fun `a failed finishing tool goes back to the model only a few times`() {
+        val failed = listOf(result(false, false))
+        assertEquals(true, terminalToolMayRetry(failed, 0))
+        assertEquals(true, terminalToolMayRetry(failed, TERMINAL_TOOL_RETRY_LIMIT - 1))
+        assertEquals(false, terminalToolMayRetry(failed, TERMINAL_TOOL_RETRY_LIMIT))
+        // A saved result, or a tool that asked to stop, ends the turn as before.
+        assertEquals(false, terminalToolMayRetry(listOf(result(true, false)), 0))
+        assertEquals(false, terminalToolMayRetry(listOf(result(false, true)), 0))
+        assertEquals(false, terminalToolMayRetry(emptyList(), 0))
+    }
 }

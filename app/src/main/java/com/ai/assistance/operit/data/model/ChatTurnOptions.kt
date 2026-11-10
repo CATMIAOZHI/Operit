@@ -46,7 +46,11 @@ data class ChatTurnOptions(
     val toolsEnabled: Boolean = true,
     /** When set, exposes only these tools and bypasses the ordinary global/tool-selector list. */
     val isolatedToolPrompts: List<ToolPrompt>? = null,
-    /** Tools that finish the turn immediately after their result is persisted. */
+    /**
+     * Tools that finish the turn once their result is persisted. A failed call saved nothing, so
+     * its error goes back to the model, which may call the tool again a few times before the turn
+     * ends anyway.
+     */
     val terminalToolNames: Set<String> = emptySet(),
     /** False isolates internal turns from every global prompt/history composition hook. */
     val promptHooksEnabled: Boolean = true,

@@ -15,6 +15,7 @@ import com.ai.assistance.operit.api.chat.enhance.MultiServiceManager
 import com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
 import com.ai.assistance.operit.api.chat.enhance.ToolTurnSignal
 import com.ai.assistance.operit.api.chat.enhance.resolveToolTurnSignal
+import com.ai.assistance.operit.api.chat.enhance.terminalToolMayRetry
 import com.ai.assistance.operit.api.chat.llmprovider.AIService
 import com.ai.assistance.operit.api.chat.llmprovider.withFunctionalReasoning
 import com.ai.assistance.operit.core.chat.logMessageTiming
@@ -531,6 +532,8 @@ class EnhancedAIService private constructor(
         val chatReasoningLevel: Int? = null,
         val toolSequence: AssistantToolSequence = AssistantToolSequence(toolTimingScopeId),
         val emittedReplayCharCount: AtomicInteger = AtomicInteger(0),
+        /** Failed calls of a finishing tool in this turn whose error went back to the model. */
+        val terminalToolFailures: AtomicInteger = AtomicInteger(0),
         val subagentToolLoopGuard: ToolExecutionManager.SubagentToolLoopGuard =
             ToolExecutionManager.SubagentToolLoopGuard(),
         var modelExecutionSnapshot: ModelExecutionSnapshot? = null,
@@ -2909,11 +2912,18 @@ class EnhancedAIService private constructor(
                             ?: "Tool execution interrupted this turn: ${interrupted.toolName}"
                     )
                 }
-                if (
-                    turnSignal == ToolTurnSignal.COMPLETE ||
+                val terminalCall =
                     toolInvocations.singleOrNull()?.let {
                         com.ai.assistance.operit.core.tools.ToolCallRepairRouter.terminalToolName(it)
                     } in context.terminalToolNames
+                // A finishing tool that failed goes back to the model to be called again, a few times.
+                val retryTerminalCall =
+                    terminalCall && turnSignal != ToolTurnSignal.COMPLETE &&
+                        terminalToolMayRetry(allToolResults, context.terminalToolFailures.get())
+                if (retryTerminalCall) context.terminalToolFailures.incrementAndGet()
+                if (
+                    turnSignal == ToolTurnSignal.COMPLETE ||
+                    (terminalCall && !retryTerminalCall)
                 ) {
                     finalizeAssistantResponse(
                         context = context,

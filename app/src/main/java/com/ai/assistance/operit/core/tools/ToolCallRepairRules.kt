@@ -24,6 +24,7 @@ internal object ToolCallRepairRules {
 
     // Name normalization precedes canonical-name rules. One pass, no retry loop.
     val ordered = listOf(
+        ToolCallRepairRule(ToolCallRepairRouter.SPILLED_PARAMETER) { call -> splitSpilledParameter(call) },
         ToolCallRepairRule(ToolCallRepairRouter.MEMORY_FINISH_ALIAS) { call ->
             if (call.targetName != "memory_learning_action" || call.proxyParameters != null ||
                 call.arguments.any { it.name !in setOf("action","arguments") } ||
@@ -117,6 +118,46 @@ internal object ToolCallRepairRules {
             })
         },
     )
+}
+
+/**
+ * Tools this was seen on. Their values are short notes written by the model, never file content
+ * or commands, where such tags can be the text itself. Add a tool only with the same evidence.
+ */
+private val SPILLED_PARAMETER_TOOLS = setOf("orbit_submit_monitor_result")
+
+/** The value's own closing tag, then the next parameter opened, and nothing after it. */
+private fun spilledParameterTail(name: String) = Regex(
+    "</" + Regex.escape(name) + ">\\s*<parameter\\s+name=\"([A-Za-z_][A-Za-z0-9_]{0,63})\"" +
+        "(?:\\s+[A-Za-z_][A-Za-z0-9_-]*=\"[^\"<>]*\")*\\s*>\\s*\\z")
+
+/**
+ * A model that loses the call format at the end of a long value closes the value itself and opens
+ * the next parameter as text: `...</observation>\n<parameter name="userMessage">`. That parameter
+ * then never arrives. Only this exact end is repaired: the tags come off the value, and the
+ * parameter they name, which must not be in the call, is added empty, as it arrived. Text after
+ * the opening tag, the tags anywhere else in a value, or the same end twice over is left alone.
+ */
+private fun splitSpilledParameter(call: ToolRepairCall): ToolRepairCall? {
+    if (call.targetName !in SPILLED_PARAMETER_TOOLS) return null
+    if (call.arguments.groupBy { it.name }.any { it.value.size != 1 }) return null
+    val names = call.arguments.mapTo(hashSetOf()) { it.name }
+    val arguments = ArrayList<ToolRepairArgument>(call.arguments.size + 1)
+    for (argument in call.arguments) {
+        val text = (argument.value as? JsonPrimitive)?.takeIf { it.isString }?.content
+        // Nearly every value stops at the first check, before a pattern is built for it.
+        val pattern = text?.takeIf { "<parameter" in it }?.let { spilledParameterTail(argument.name) }
+        val tail = pattern?.find(checkNotNull(text))
+        val head = tail?.let { checkNotNull(text).substring(0, it.range.first).trimEnd() }
+        // One repair leaves nothing for a second one: a value that would still end this way is not touched.
+        if (tail == null || head == null || pattern.find(head) != null || !names.add(tail.groupValues[1])) {
+            arguments += argument
+            continue
+        }
+        arguments += argument.copy(value = JsonPrimitive(head))
+        arguments += ToolRepairArgument(tail.groupValues[1], JsonPrimitive(""))
+    }
+    return if (arguments.size == call.arguments.size) null else call.copy(arguments = arguments)
 }
 
 private const val MEMORY_ACTION_FIELD = "action"

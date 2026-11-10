@@ -67,6 +67,43 @@ class ToolCallRepairRouterTest {
             rawText = "original provider response", responseLocation = 4..12,
             callId = "call-7", invocationIndex = 2)
 
+    @Test fun parameterOpenedAtTheEndOfTheOneBeforeIsRestoredOnlyInItsExactShape() {
+        // The two shapes seen on a device: the next parameter opened as text, with nothing after it.
+        for (tag in listOf("<parameter name=\"userMessage\">", "<parameter name=\"userMessage\" string=\"true\">")) {
+            val repair = ToolCallRepairRouter.route(call("orbit_submit_monitor_result",
+                "observation" to "daily 已记 2026-11-08。</observation>\n$tag", "decision" to "quiet"))!!
+            assertEquals(listOf(ToolCallRepairRouter.SPILLED_PARAMETER), repair.rules)
+            assertEquals(listOf(ToolParameter("observation", "daily 已记 2026-11-08。"),
+                ToolParameter("userMessage", ""), ToolParameter("decision", "quiet")),
+                repair.invocation.tool.parameters)
+            assertEquals("call-7", repair.invocation.callId)
+            assertNull(ToolCallRepairRouter.route(repair.invocation))
+        }
+        // Left alone: the parameter is already there, the closing tag is not the value's own, text
+        // follows the opening tag, the tags are only mentioned, or the call repeats a name.
+        for (params in listOf(
+            listOf("observation" to "x</observation><parameter name=\"userMessage\">", "userMessage" to "hi"),
+            listOf("observation" to "x</content><parameter name=\"userMessage\">"),
+            listOf("observation" to "x</observation><parameter name=\"userMessage\">hello"),
+            listOf("observation" to "x</observation><parameter name=\"userMessage\">hello</parameter>"),
+            listOf("observation" to "x</observation><parameter name=\"userMessage\"></observation><parameter name=\"evidence\">",
+                "decision" to "quiet"),
+            listOf("observation" to "x</observation> and then <parameter name=\"userMessage\">"),
+            listOf("observation" to "write <parameter name=\"userMessage\"> after it"),
+            listOf("observation" to "x</observation><parameter name=\"bad name\">"),
+            listOf("observation" to "x</observation><parameter name=\"u\">", "observation" to "y"),
+        )) assertNull(ToolCallRepairRouter.route(call("orbit_submit_monitor_result", *params.toTypedArray())))
+        // Any other tool keeps its values as they are: there the tags can be the content itself.
+        assertNull(ToolCallRepairRouter.route(call("write_file", "path" to "/tmp/a.md",
+            "content" to "<content>x</content><parameter name=\"append\">")))
+        assertNull(ToolCallRepairRouter.route(call("write_file", "path" to "/tmp/a.md",
+            "content" to "<content>x</content><parameter name=\"append\">true</parameter>")))
+        // A value split off never needs a second pass of the earlier rules.
+        val read = ToolCallRepairRouter.route(call("read_file",
+            "path" to "/tmp/a.txt</path><parameter name=\"start_line\">"))
+        assertNull(read)
+    }
+
     @Test fun lineReadPreservesValuesAndProviderIdentity() {
         val original = call("read_file", "path" to "/tmp/a.txt", "environment" to "linux",
             "start_line" to "20", "end_line" to "30")
