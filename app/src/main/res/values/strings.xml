@@ -8744,6 +8744,7 @@
     <string name="tool_repairs_flattened_proxy">从 params 文本中还原出被并入的 tool_name</string>
     <string name="tool_repairs_memory_argument">将记忆工具误写的 new_text 参数改为 content</string>
     <string name="tool_repairs_memory_finish">将误放在 action 中的结束操作改为独立结束工具</string>
+    <string name="tool_repairs_spilled_parameter">把混进上一个参数里的下一个参数拆了出来</string>
     <string name="tool_repairs_invalid_record">记录格式无效，点击查看原始记录</string>
     <string name="tool_repairs_refresh">刷新</string>
     <string name="tool_errors_totals">%1$d 条记录 · %2$d 个工具</string>
@@ -9469,7 +9470,7 @@
 
 
     <string name="orbit_run_interrupted">执行意外中断，已暂停。请先核实此前工具是否已完成操作，再继续；不会自动从头重做。</string>
-    <string name="orbit_run_timed_out">“%1$s”这次运行超过 %2$d 分钟，已停下并暂停。请先核实已经做了哪些操作，再继续；不会自动从头重做。</string>
+    <string name="orbit_run_timed_out">运行超过 %2$d 分钟，已停下并暂停：“%1$s”。请先核实已经做了哪些操作，再继续；不会自动从头重做。</string>
     <string name="orbit_permission_keep_alive_title">让 %1$s 在后台醒着</string>
     <string name="orbit_permission_keep_alive_sub">打开后，提醒和后台任务能按时进行</string>
     <string name="orbit_permission_all_on">都已开启，后台任务可以按时进行</string>

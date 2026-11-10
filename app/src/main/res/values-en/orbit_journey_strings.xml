@@ -3,6 +3,7 @@
     <string name="orbit_decision_chat_failed">%1$s\'s reply failed this time (most likely a model problem)</string>
     <string name="orbit_reminder_fallback">Reminder: %1$s\n(%2$s couldn\'t reply this time; the model may have failed.)</string>
     <string name="orbit_run_model_failed_skipped">This run didn\'t go through: %1$s It will try again at the next scheduled time.</string>
+    <string name="orbit_run_no_result_skipped">The model didn\'t hand in a result this time. Skipped; it will try again at the next scheduled time.</string>
     <string name="orbit_run_model_failed_paused">This run didn\'t go through and the task is paused: %1$s Once it\'s fixed, resume it from the task.</string>
     <string name="orbit_page_card_weixin_title">Connect WeChat</string>
     <string name="orbit_page_card_weixin_sub">Scan a code, then you can reach me in WeChat</string>

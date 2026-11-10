@@ -8768,6 +8768,7 @@
     <string name="tool_repairs_flattened_proxy">Recovered the tool_name that was folded into the params text</string>
     <string name="tool_repairs_memory_argument">Renamed the memory tool\'s new_text argument to content</string>
     <string name="tool_repairs_memory_finish">Routed an empty finish action to the separate finish tool</string>
+    <string name="tool_repairs_spilled_parameter">Split out a parameter that was written inside the one before it</string>
     <string name="tool_repairs_invalid_record">Invalid record format; tap to view the raw record</string>
     <string name="tool_repairs_refresh">Refresh</string>
     <string name="tool_errors_totals">%1$d records · %2$d tools</string>
@@ -9492,7 +9493,7 @@
 
 
     <string name="orbit_run_interrupted">Execution was interrupted and paused. Verify earlier tool effects before continuing; the turn will not replay automatically.</string>
-    <string name="orbit_run_timed_out">“%1$s” ran past %2$d minutes, so it was stopped and paused. Verify what it already did before continuing; it will not replay automatically.</string>
+    <string name="orbit_run_timed_out">Ran past %2$d minutes, so it was stopped and paused: “%1$s”. Verify what it already did before continuing; it will not replay automatically.</string>
     <string name="orbit_permission_keep_alive_title">Keep %1$s awake in the background</string>
     <string name="orbit_permission_keep_alive_sub">So reminders and background tasks run on time</string>
     <string name="orbit_permission_all_on">All on; background tasks can run on time</string>

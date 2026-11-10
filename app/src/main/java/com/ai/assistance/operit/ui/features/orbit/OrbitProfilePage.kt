@@ -1055,7 +1055,8 @@ private fun RunRow(
 private fun runDetail(run: OrbitActivityRow): String = when (run.state) {
     "RUNNING" -> stringResource(R.string.orbit_task_running)
     "CANCELLED" -> stringResource(R.string.orbit_run_cancelled)
-    "INTERRUPTED" -> stringResource(R.string.orbit_profile_run_interrupted)
+    // A run that was only skipped says so itself; "paused" is for one that left no reason.
+    "INTERRUPTED" -> run.error.ifBlank { stringResource(R.string.orbit_profile_run_interrupted) }
     "FAILED" -> run.error.ifBlank { stringResource(R.string.orbit_run_failed_unknown) }
     else -> run.observation.ifBlank { stringResource(R.string.orbit_task_no_result) }
 }.let(OrbitWork::listLine)

@@ -275,9 +275,7 @@ object OrbitTaskRunner {
                     OrbitPreferences.getInstance(context).rememberChatOwner(chatId, orbit.id)
                     OrbitTaskExecution.bindRoot(context, chatId, token)
                     runModel(context, chatId, task, checkpoint, timeoutMinutes)
-                    check(dao.run(token.id)?.state in setOf("COMPLETED", "WAITING_USER", "UNKNOWN")) {
-                        "The model did not submit a result"
-                    }
+                    if (dao.run(token.id)?.state !in setOf("COMPLETED", "WAITING_USER", "UNKNOWN")) throw NoResultSubmitted()
                     // The model answered: a failure of this model told before is over.
                     modelWorked(context, state)
                     if (task.source == OrbitRoutines.ALIGNMENT_SOURCE && dao.run(token.id)?.state == "COMPLETED" &&
@@ -298,7 +296,8 @@ object OrbitTaskRunner {
         } catch (e: Exception) {
             // Cut short by used-up allowances: the task waits and tries again, it is not paused.
             // A review that stopped without its result keeps what it wrote down and goes on later.
-            // A model that failed (network, key, balance) skips only this run of a repeating task.
+            // A model that failed (network, key, balance), or ended its turn without handing in a
+            // result, skips only this run of a repeating task.
             if (!stopForQuota(context, state) && !continueReview(context, state) && !skipForModelFailure(context, state, e)) {
                 dao.interrupt(token, System.currentTimeMillis(), (e as? ModelTurnFailed)?.let {
                     context.getString(com.ai.assistance.operit.R.string.orbit_run_model_failed_paused, it.reason(context))
@@ -397,6 +396,9 @@ object OrbitTaskRunner {
         fun reason(context: Context): String = OrbitSetup.describe(context, OrbitSetup.problemOf(detail))
     }
 
+    /** The model's turn ended without a saved result: it never called [FINISH], or every call failed. */
+    private class NoResultSubmitted : Exception("The model did not submit a result")
+
     /**
      * Tells Orbit once that background work stopped working because of its model, so a user who
      * chats as usual still hears about it; told again only after that model worked once more
@@ -426,18 +428,23 @@ object OrbitTaskRunner {
     private fun modelWorked(context: Context, state: ActiveRun) = OrbitNotices.clear(context, state.orbitId, modelKey(state))
 
     /**
-     * A repeating task whose model failed (no network, a wrong key, no balance) gives up only this
-     * run and goes on at its next time, with the reason kept on the run; it is not paused, so a model
-     * that works again needs no resume. A one-time task, or a run with an unconfirmed effect, returns
-     * false and is paused for the user to check, with the same reason.
+     * A repeating task whose model failed (no network, a wrong key, no balance), or whose model
+     * ended the turn without a result, gives up only this run and goes on at its next time, with the
+     * reason kept on the run; it is not paused, so a model that works again needs no resume. A
+     * one-time task, or a run with an unconfirmed effect, returns false and is paused for the user
+     * to check, with the same reason.
      */
     private suspend fun skipForModelFailure(context: Context, state: ActiveRun, e: Exception): Boolean {
-        val failure = e as? ModelTurnFailed ?: return false
+        val message = when (e) {
+            is ModelTurnFailed -> context.getString(
+                com.ai.assistance.operit.R.string.orbit_run_model_failed_skipped, e.reason(context))
+            is NoResultSubmitted -> context.getString(com.ai.assistance.operit.R.string.orbit_run_no_result_skipped)
+            else -> return false
+        }
         return try {
             val now = System.currentTimeMillis()
             AppDatabase.getDatabase(context).orbitTaskDao().stopForQuota(
-                state.token, now + QUOTA_RETRY_MS, OrbitTaskRepository.nextAt(state.task, now), now,
-                context.getString(com.ai.assistance.operit.R.string.orbit_run_model_failed_skipped, failure.reason(context)))
+                state.token, now + QUOTA_RETRY_MS, OrbitTaskRepository.nextAt(state.task, now), now, message)
         } catch (c: CancellationException) {
             throw c
         } catch (x: Exception) {
@@ -723,8 +730,8 @@ object OrbitTaskRunner {
         val state = caller?.let { active[it] } ?: error("No active Orbit task owns this call")
         val observation = tool.parameters.firstOrNull { it.name == "observation" }?.value
             ?: error("Missing observation: a short checkpoint of what you found, at most 4000 characters")
-        val message = tool.parameters.firstOrNull { it.name == "userMessage" }?.value
-            ?: error("Missing userMessage: the draft for the user, or an empty string to stay quiet")
+        // Left out means the same as empty: stay quiet. A finished check is not thrown away for it.
+        val message = tool.parameters.firstOrNull { it.name == "userMessage" }?.value.orEmpty()
         val decision = tool.parameters.firstOrNull { it.name == "decision" }?.value?.trim()?.takeIf { it.isNotEmpty() }
             ?: error("Missing decision: say in a sentence why you drafted something for the user or stayed quiet")
         // Values starting with '@' are the app's own run markers.
