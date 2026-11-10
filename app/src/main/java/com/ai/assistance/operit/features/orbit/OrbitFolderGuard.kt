@@ -132,10 +132,11 @@ object OrbitFolderGuard {
             OrbitFiles.isIndex(p) ->
                 "INDEX.md is kept by the app. Delete the person or group note instead; the index updates itself."
             p == "files" -> "files/ itself cannot be deleted; delete the files or folders inside it."
-            p.startsWith("files/") || OrbitFiles.allowed(p) -> null
+            p == OrbitFiles.WORKSPACE -> "workspace/ itself cannot be deleted; delete the files or folders inside it."
+            p.startsWith("files/") || OrbitFiles.isWorkspace(p) || OrbitFiles.allowed(p) -> null
             else -> "$p is Orbit's internal data; delete_file cannot remove it. Only Orbit's notes " +
-                "(memory/people, memory/groups, the daily log, LESSONS.md and the other settings files) " +
-                "and files/ can be deleted."
+                "(memory/people, memory/groups, the daily log, LESSONS.md and the other settings files), " +
+                "files/ and workspace/ can be deleted."
         }
     }
 }
