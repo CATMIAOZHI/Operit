@@ -9,7 +9,6 @@ import com.ai.assistance.operit.util.AppLogger
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -32,6 +31,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -42,12 +42,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -59,6 +56,8 @@ import androidx.compose.ui.window.DialogProperties
 import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.ui.common.ZoomBox
+import com.ai.assistance.operit.ui.common.ZoomState
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
@@ -254,9 +253,10 @@ private fun FullScreenImageDialog(imageUrl: String, imageAlt: String, onDismiss:
     var isSaving by remember { mutableStateOf(false) }
     var savedSuccess by remember { mutableStateOf<Boolean?>(null) }
 
-    // 缩放和平移状态
-    var scale by remember { mutableStateOf(1f) }
-    var offset by remember { mutableStateOf(Offset.Zero) }
+    // 缩放和平移状态：手势读在不动的外框上，放大才跟手
+    val zoom = remember { ZoomState() }
+    // 只在“放没放大”变化时重组，缩放过程中不逐帧重组
+    val zoomed by remember { derivedStateOf { zoom.zoomed } }
 
     OrbitAwareDialog(
             onDismissRequest = onDismiss,
@@ -270,6 +270,7 @@ private fun FullScreenImageDialog(imageUrl: String, imageAlt: String, onDismiss:
         Surface(modifier = Modifier.fillMaxSize(), color = Color.Black.copy(alpha = 0.9f)) {
             Box(modifier = Modifier.fillMaxSize()) {
                 // 图片内容
+                ZoomBox(zoom, Modifier.fillMaxSize(), onTap = { if (!isSaving) onDismiss() }) {
                 SubcomposeAsyncImage(
                         model =
                                 ImageRequest.Builder(context)
@@ -277,50 +278,8 @@ private fun FullScreenImageDialog(imageUrl: String, imageAlt: String, onDismiss:
                                         .crossfade(true)
                                         .build(),
                         contentDescription = imageAlt,
-                        modifier =
-                                Modifier.fillMaxSize()
-                                        .graphicsLayer(
-                                                scaleX = scale,
-                                                scaleY = scale,
-                                                translationX = offset.x,
-                                                translationY = offset.y
-                                        )
-                                        .pointerInput(Unit) {
-                                            detectTransformGestures { _, pan, zoom, _ ->
-                                                // 限制缩放范围
-                                                scale = (scale * zoom).coerceIn(0.5f, 3f)
-
-                                                // 修复缩放限制计算错误
-                                                // 根据缩放计算最大偏移值，使用绝对值确保正数
-                                                val maxX =
-                                                        (size.width * (scale - 1) / 2)
-                                                                .coerceAtLeast(0f)
-                                                val maxY =
-                                                        (size.height * (scale - 1) / 2)
-                                                                .coerceAtLeast(0f)
-
-                                                // 使用安全的范围限制
-                                                offset =
-                                                        Offset(
-                                                                x =
-                                                                        if (maxX > 0)
-                                                                                (offset.x + pan.x)
-                                                                                        .coerceIn(
-                                                                                                -maxX,
-                                                                                                maxX
-                                                                                        )
-                                                                        else 0f,
-                                                                y =
-                                                                        if (maxY > 0)
-                                                                                (offset.y + pan.y)
-                                                                                        .coerceIn(
-                                                                                                -maxY,
-                                                                                                maxY
-                                                                                        )
-                                                                        else 0f
-                                                        )
-                                            }
-                                        },
+                        modifier = Modifier.fillMaxSize(),
+                        onSuccess = { zoom.content = it.painter.intrinsicSize },
                         contentScale = ContentScale.Fit,
                         loading = {
                             Box(
@@ -346,6 +305,7 @@ private fun FullScreenImageDialog(imageUrl: String, imageAlt: String, onDismiss:
                             }
                         }
                 )
+                }
 
                 // 顶部工具栏
                 Box(
@@ -421,12 +381,9 @@ private fun FullScreenImageDialog(imageUrl: String, imageAlt: String, onDismiss:
                 }
 
                 // 重置缩放按钮
-                if (scale != 1f || offset != Offset.Zero) {
+                if (zoomed) {
                     IconButton(
-                            onClick = {
-                                scale = 1f
-                                offset = Offset.Zero
-                            },
+                            onClick = { zoom.reset() },
                             modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp)
                     ) {
                         Icon(

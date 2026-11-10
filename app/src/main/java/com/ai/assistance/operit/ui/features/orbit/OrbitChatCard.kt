@@ -8,8 +8,6 @@ import android.provider.MediaStore
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -26,6 +24,21 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerDefaults
+import androidx.compose.foundation.pager.PagerState
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.ui.platform.LocalViewConfiguration
+import kotlinx.coroutines.delay
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.Velocity
+import kotlin.math.abs
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Icon
@@ -33,18 +46,21 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -59,8 +75,12 @@ import coil.compose.AsyncImage
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.features.orbit.OrbitChatCards
 import com.ai.assistance.operit.features.orbit.OrbitFiles
+import com.ai.assistance.operit.features.orbit.OrbitReactions
 import com.ai.assistance.operit.features.orbit.OrbitVault
+import com.ai.assistance.operit.ui.common.ZoomBox
+import com.ai.assistance.operit.ui.common.ZoomState
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -474,6 +494,10 @@ private fun AttachmentCard(card: JSONObject) {
     if (isImage && current != null) {
         var viewing by remember { mutableStateOf(false) }
         val label = stringResource(R.string.orbit_chat_image_desc, name)
+        val resources = context.resources
+        // In the Orbit chat the viewer swipes on to the other pictures Orbit sent around this one.
+        val host = LocalOrbitMessageHost.current
+        val saidAt = remember(card) { OrbitReactions.timeOf(card.optString(OrbitChatCards.PIECE_KEY)) }
         Surface(
             shape = RoundedCornerShape(18.dp),
             color = MaterialTheme.colorScheme.surface,
@@ -488,7 +512,20 @@ private fun AttachmentCard(card: JSONObject) {
                 modifier = imageSize(ratio).clip(RoundedCornerShape(18.dp)),
             )
         }
-        if (viewing) OrbitImageViewer(current, label) { viewing = false }
+        if (viewing) {
+            OrbitImageViewer(
+                files = listOf(current),
+                start = 0,
+                label = { file ->
+                    if (file.path == current.path) label
+                    else resources.getString(R.string.orbit_chat_image_desc, file.name)
+                },
+                onDismiss = { viewing = false },
+                more = if (host != null && saidAt > 0L) {
+                    { OrbitChatFind.pictures(context, host.orbitId, host.chatId, saidAt) }
+                } else null,
+            )
+        }
         return
     }
     var previewing by remember { mutableStateOf(false) }
@@ -531,88 +568,199 @@ private fun AttachmentCard(card: JSONObject) {
 
 private class Found(val done: Boolean, val file: File?)
 
+/** One picture full screen; see the viewer below. */
+@Composable
+internal fun OrbitImageViewer(file: File, label: String, onDismiss: () -> Unit) =
+    OrbitImageViewer(listOf(file), 0, { label }, onDismiss)
+
 /**
- * The picture full screen, like a chat app's photo viewer: pinch to zoom, drag when zoomed, tap or
- * back to close, and a save button at the bottom.
+ * Pictures full screen, like a chat app's photo viewer: swipe sideways for the one before or
+ * after, pinch or double tap to zoom, drag when zoomed, tap or back to close, and a save button
+ * at the bottom. It opens on [files] at [start]. [more] is read once the viewer is open and gives
+ * the whole run of pictures the opened one belongs to (a chat's), so opening never waits for it.
  */
 @Composable
-internal fun OrbitImageViewer(file: File, label: String, onDismiss: () -> Unit) {
+internal fun OrbitImageViewer(
+    files: List<File>,
+    start: Int,
+    label: (File) -> String,
+    onDismiss: () -> Unit,
+    more: (suspend () -> List<File>)? = null,
+) {
+    if (files.isEmpty()) return
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var saving by remember { mutableStateOf(false) }
-    var scale by remember { mutableStateOf(1f) }
-    var offset by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+    var pages by remember { mutableStateOf(files) }
+    var first by remember { mutableIntStateOf(start.coerceIn(0, files.lastIndex)) }
+    // The pager on screen, read here so a longer list opens on the same picture and waits while
+    // a finger is down, the pager is turning, or a tap may still become a double tap.
+    var shownPager by remember { mutableStateOf<PagerState?>(null) }
+    var held by remember { mutableStateOf(false) }
+    // Counts touches, so a tap made during the quiet wait below starts the wait again.
+    var touches by remember { mutableIntStateOf(0) }
+    var shownZoom by remember { mutableStateOf<ZoomState?>(null) }
+    // The zoom of the picture on screen when the longer list comes in, handed to the same picture
+    // in the new pager so a zoomed picture stays as it is.
+    val carried = remember { arrayOfNulls<Pair<String, ZoomState>>(1) }
+    if (more != null) {
+        val tapWait = LocalViewConfiguration.current.doubleTapTimeoutMillis
+        LaunchedEffect(Unit) {
+            val all = try {
+                more()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                return@LaunchedEffect
+            }
+            if (all.size < 2) return@LaunchedEffect
+            fun busy() = held ||
+                shownPager?.let { it.isScrollInProgress || abs(it.currentPageOffsetFraction) > 1e-4f } == true
+            while (true) {
+                snapshotFlow { busy() }.first { !it }
+                val seen = touches
+                delay(tapWait + 50)
+                if (!busy() && touches == seen) break
+            }
+            val now = pages[(shownPager?.currentPage ?: first).coerceIn(0, pages.lastIndex)]
+            val at = all.indexOfFirst { it.path == now.path }
+            if (at < 0) return@LaunchedEffect
+            carried[0] = shownZoom?.let { now.path to it }
+            first = at
+            pages = all
+        }
+    }
     OrbitModalWindow(
         onDismissRequest = onDismiss,
         dismissEnabled = !saving,
         properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
     ) {
+        // Only watches fingers, anywhere in the window, so the list is never swapped under one.
         Box(
-            Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color.Black)
-                .pointerInput(Unit) { detectTapGestures(onTap = { if (!saving) onDismiss() }) },
+            Modifier.fillMaxSize().pointerInput(Unit) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                    held = true
+                    touches++
+                    try {
+                        do {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                        } while (event.changes.any { it.pressed })
+                    } finally {
+                        held = false
+                    }
+                }
+            },
         ) {
-            AsyncImage(
-                model = file,
-                contentDescription = label,
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxSize()
-                    .graphicsLayer(scaleX = scale, scaleY = scale, translationX = offset.x, translationY = offset.y)
-                    .pointerInput(Unit) {
-                        detectTransformGestures { _, pan, zoom, _ ->
-                            scale = (scale * zoom).coerceIn(1f, 4f)
-                            val maxX = size.width * (scale - 1) / 2
-                            val maxY = size.height * (scale - 1) / 2
-                            offset = androidx.compose.ui.geometry.Offset(
-                                (offset.x + pan.x).coerceIn(-maxX, maxX),
-                                (offset.y + pan.y).coerceIn(-maxY, maxY),
+            // A new list starts a new pager, already on the opened picture.
+            key(pages) {
+                val pager = rememberPagerState(initialPage = first) { pages.size }
+                DisposableEffect(pager) {
+                    shownPager = pager
+                    onDispose { if (shownPager === pager) shownPager = null }
+                }
+                // A zoomed picture dragged past its edge hands the drag and its fling on to the pager;
+                // the default connection would drop the fling, leaving a quick flick unturned.
+                val base = PagerDefaults.pageNestedScrollConnection(pager, Orientation.Horizontal)
+                val pageScroll = remember(base) {
+                    object : NestedScrollConnection by base {
+                        override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity = Velocity.Zero
+                    }
+                }
+                val file = pages[pager.currentPage.coerceIn(0, pages.lastIndex)]
+                Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color.Black)) {
+                    HorizontalPager(
+                        state = pager,
+                        modifier = Modifier.fillMaxSize(),
+                        pageSpacing = 16.dp,
+                        userScrollEnabled = !saving,
+                        pageNestedScrollConnection = pageScroll,
+                    ) { page ->
+                        val zoom = remember {
+                            carried[0]?.takeIf { it.first == pages[page].path }?.second?.also { carried[0] = null } ?: ZoomState()
+                        }
+                        if (pager.currentPage == page) {
+                            DisposableEffect(zoom) {
+                                shownZoom = zoom
+                                onDispose { if (shownZoom === zoom) shownZoom = null }
+                            }
+                        }
+                        // A picture swiped away is whole again when the user comes back to it; it is
+                        // reset only once the pager rests on another page, never while still half in sight.
+                        val away by remember(pager, page) {
+                            derivedStateOf {
+                                pager.currentPage != page && !pager.isScrollInProgress &&
+                                    abs(pager.currentPageOffsetFraction) < 1e-4f
+                            }
+                        }
+                        LaunchedEffect(away) { if (away) zoom.reset() }
+                        ZoomBox(zoom, Modifier.fillMaxSize(), onTap = { if (!saving) onDismiss() }) {
+                            AsyncImage(
+                                model = pages[page],
+                                contentDescription = label(pages[page]),
+                                contentScale = ContentScale.Fit,
+                                onSuccess = { zoom.content = it.painter.intrinsicSize },
+                                modifier = Modifier.fillMaxSize(),
                             )
                         }
-                    },
-            )
-            Surface(
-                onClick = onDismiss,
-                enabled = !saving,
-                shape = androidx.compose.foundation.shape.CircleShape,
-                color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.5f),
-                modifier = Modifier.align(Alignment.TopStart).statusBarsPadding().padding(16.dp).size(44.dp),
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(androidx.compose.material.icons.Icons.Default.Close, stringResource(R.string.common_close),
-                        Modifier.size(22.dp), tint = androidx.compose.ui.graphics.Color.White)
-                }
-            }
-            Row(Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(16.dp)) {
-                OrbitViewerButton(orbitIcon("share-2"), stringResource(R.string.orbit_file_share)) { shareOrbitFile(context) { file } }
-                Spacer(Modifier.width(10.dp))
-                OrbitViewerButton(orbitIcon("external-link"), stringResource(R.string.orbit_chat_text_open_other)) {
-                    openOrbitFile(context) { file }
-                }
-            }
-            Surface(
-                onClick = {
-                    saving = true
-                    scope.launch {
-                        val ok = saveToGallery(context, file)
-                        saving = false
-                        Toast.makeText(context, if (ok) R.string.orbit_chat_image_saved else R.string.orbit_chat_image_save_failed,
-                            Toast.LENGTH_SHORT).show()
                     }
-                },
-                enabled = !saving,
-                shape = RoundedCornerShape(50),
-                color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.5f),
-                modifier = Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(20.dp).heightIn(min = 44.dp),
-            ) {
-                Row(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    if (saving) {
-                        androidx.compose.material3.CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp,
-                            color = androidx.compose.ui.graphics.Color.White)
-                    } else {
-                        Icon(orbitIcon("download"), null, Modifier.size(18.dp), tint = androidx.compose.ui.graphics.Color.White)
+                    Surface(
+                        onClick = onDismiss,
+                        enabled = !saving,
+                        shape = androidx.compose.foundation.shape.CircleShape,
+                        color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.5f),
+                        modifier = Modifier.align(Alignment.TopStart).statusBarsPadding().padding(16.dp).size(44.dp),
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(androidx.compose.material.icons.Icons.Default.Close, stringResource(R.string.common_close),
+                                Modifier.size(22.dp), tint = androidx.compose.ui.graphics.Color.White)
+                        }
                     }
-                    Spacer(Modifier.width(8.dp))
-                    Text(stringResource(if (saving) R.string.orbit_chat_image_saving else R.string.orbit_chat_image_save_short),
-                        style = MaterialTheme.typography.labelLarge, color = androidx.compose.ui.graphics.Color.White)
+                    if (pages.size > 1) {
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.5f),
+                            modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 24.dp),
+                        ) {
+                            Text("${pager.currentPage + 1} / ${pages.size}", style = MaterialTheme.typography.labelLarge,
+                                color = androidx.compose.ui.graphics.Color.White,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
+                        }
+                    }
+                    Row(Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(16.dp)) {
+                        OrbitViewerButton(orbitIcon("share-2"), stringResource(R.string.orbit_file_share)) { shareOrbitFile(context) { file } }
+                        Spacer(Modifier.width(10.dp))
+                        OrbitViewerButton(orbitIcon("external-link"), stringResource(R.string.orbit_chat_text_open_other)) {
+                            openOrbitFile(context) { file }
+                        }
+                    }
+                    Surface(
+                        onClick = {
+                            saving = true
+                            scope.launch {
+                                val ok = saveToGallery(context, file)
+                                saving = false
+                                Toast.makeText(context, if (ok) R.string.orbit_chat_image_saved else R.string.orbit_chat_image_save_failed,
+                                    Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        enabled = !saving,
+                        shape = RoundedCornerShape(50),
+                        color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.5f),
+                        modifier = Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(20.dp).heightIn(min = 44.dp),
+                    ) {
+                        Row(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                            if (saving) {
+                                androidx.compose.material3.CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp,
+                                    color = androidx.compose.ui.graphics.Color.White)
+                            } else {
+                                Icon(orbitIcon("download"), null, Modifier.size(18.dp), tint = androidx.compose.ui.graphics.Color.White)
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            Text(stringResource(if (saving) R.string.orbit_chat_image_saving else R.string.orbit_chat_image_save_short),
+                                style = MaterialTheme.typography.labelLarge, color = androidx.compose.ui.graphics.Color.White)
+                        }
+                    }
                 }
             }
         }
