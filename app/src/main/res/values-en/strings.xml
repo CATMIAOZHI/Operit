@@ -9552,6 +9552,11 @@
     <string name="orbit_builds_made">Builds</string>
     <string name="orbit_builds_uploads">Library</string>
     <string name="orbit_builds_work">Build</string>
+    <string name="orbit_builds_system">System files</string>
+    <string name="orbit_system_hint">All of %1$s\'s own files are here. You can look through them; to change something, ask %1$s.</string>
+    <string name="orbit_system_empty">This folder is empty.</string>
+    <string name="orbit_system_folder">Folder</string>
+    <string name="orbit_system_copy_path">Copy path</string>
     <string name="orbit_builds_book_text">Book text · %1$d chapters</string>
     <string name="orbit_builds_book_text_show">Show chapters</string>
     <string name="orbit_builds_book_text_hide">Hide chapters</string>

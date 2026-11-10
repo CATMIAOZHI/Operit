@@ -102,6 +102,7 @@ import kotlin.math.roundToInt
 import kotlin.math.sign
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.catch
@@ -232,6 +233,9 @@ private class OrbitTabData(context: android.content.Context, orbitId: String, pr
     var pins: List<String> = emptyList()
     var uploads: Result<List<OrbitUploads.Upload>>? = null
     var artifactText: Pair<String, Result<String>>? = null
+    // The system files tab: the last folder read, and the list's place in each folder, kept for a quick return.
+    var systemRows: Pair<String, Result<List<SystemEntry>>>? = null
+    val folderPlaces = mutableMapOf<String, Pair<Int, Int>>()
 }
 
 /**
@@ -2087,8 +2091,9 @@ private sealed interface BuildEntry {
 }
 
 /**
- * The Builds tab, like Muse: on top a switch between what Orbit made (its works and files) and the
- * Library, the files the user sent Orbit in chat. Every row has a ⋮ for its actions.
+ * The Builds tab, like Muse: on top a switch between what Orbit made (its works and files), the
+ * Library (the files the user sent Orbit in chat) and System files (all of Orbit's own folder, to
+ * look through). Every row has a ⋮ for its actions.
  */
 @Composable
 private fun OrbitBuildsPage(
@@ -2105,8 +2110,65 @@ private fun OrbitBuildsPage(
     val resources = LocalResources.current
     val versions by data.versions.collectAsState()
     var openArtifact by rememberSaveable(orbit.id) { mutableStateOf<String?>(null) }
-    // 0: what Orbit made; 1: the Library of what the user sent.
+    // 0: what Orbit made; 1: the Library of what the user sent; 2: all of Orbit's own folder, to look through.
     var section by rememberSaveable(orbit.id) { mutableIntStateOf(0) }
+    // The folder shown in section 2, relative to Orbit's folder; "" is the top.
+    var folder by rememberSaveable(orbit.id) { mutableStateOf("") }
+    var folderReload by remember { mutableIntStateOf(0) }
+    // Which folder the rows belong to, so another folder's rows never show under this one's path.
+    val folderRows by produceState(data.systemRows, orbit.id, folder, folderReload, filesVersion, section) {
+        if (section != 2) return@produceState
+        val shown = folder
+        value = shown to try {
+            Result.success(listOrbitFolder(OrbitPreferences.getInstance(context).orbitDir(orbit.id), shown))
+        } catch (e: CancellationException) { throw e } catch (e: Exception) { Result.failure(e) }
+            .also { data.systemRows = shown to it }
+    }
+    // Back goes up one folder, the rows following the swipe.
+    val folderBack = rememberOrbitBackMotion()
+    // The list's place in each folder, so going back up returns to where the user was; a new folder starts at the top.
+    val tabList = androidx.compose.foundation.lazy.rememberLazyListState()
+    // Kept with the page, and saved too, so every folder's place comes back after the system closed the app.
+    val folderPlaces = rememberSaveable(
+        orbit.id,
+        saver = listSaver<MutableMap<String, Pair<Int, Int>>, Any>(
+            // Only the shown folder and those above it are saved: those are the ones going back reaches.
+            save = { places ->
+                places.filterKeys { it.isEmpty() || it == folder || folder.startsWith("$it/") }
+                    .flatMap { (path, at) -> listOf(path, at.first, at.second) }
+            },
+            restore = { saved ->
+                data.folderPlaces.apply {
+                    if (isEmpty()) saved.chunked(3).forEach { (path, index, offset) -> put(path as String, index as Int to offset as Int) }
+                }
+            },
+        ),
+    ) { data.folderPlaces }
+    fun openFolder(next: String) {
+        if (next == folder) return
+        // A folder entered fresh starts at the top; one gone back up to keeps its own place.
+        if (next.length > folder.length || next !in folderPlaces) folderPlaces[next] = 0 to 0
+        folder = next
+    }
+    // Only a folder read successfully takes part; an error page keeps the old place for after a retry.
+    val folderReady = section == 2 && folderRows?.first == folder && folderRows?.second?.isSuccess == true
+    // Shown, a folder goes to its place and keeps it up to date, also for switching to another section and back.
+    // With no place kept (the app was closed by the system meanwhile), the list stays where it was saved.
+    LaunchedEffect(folder, folderReady) {
+        if (!folderReady) return@LaunchedEffect
+        folderPlaces[folder]?.let { (index, offset) -> tabList.scrollToItem(index, offset) }
+        val shown = folder
+        androidx.compose.runtime.snapshotFlow { tabList.firstVisibleItemIndex to tabList.firstVisibleItemScrollOffset }
+            .collect { folderPlaces[shown] = it }
+    }
+    OrbitBackHandler(folderBack, enabled = section == 2 && folder.isNotEmpty()) {
+        openFolder(folder.substringBeforeLast('/', ""))
+    }
+    val folderMotion = Modifier.graphicsLayer {
+        val p = folderBack.progress
+        translationX = p * 48.dp.toPx()
+        alpha = 1f - 0.3f * p
+    }
     // files/ in Orbit's folder: things made for the user (reports, voice messages, shared files).
     val orbitFiles = remember(orbit.id) { com.ai.assistance.operit.features.orbit.OrbitFiles.of(context, orbit.id) }
     var filesReload by remember { mutableIntStateOf(0) }
@@ -2176,7 +2238,7 @@ private fun OrbitBuildsPage(
     SideEffect { if (!history.isNullOrEmpty()) shownHistory = history }
     // The list stays under an open work's page, hidden from screen readers while covered.
     Box(Modifier.fillMaxSize().then(if (!history.isNullOrEmpty()) Modifier.clearAndSetSemantics { } else Modifier)) {
-    TabList(title = null) {
+    TabList(title = null, state = tabList) {
         item(key = "sections") { BuildSections(section) { section = it } }
         if (section == 0) {
             val works = versions
@@ -2281,7 +2343,7 @@ private fun OrbitBuildsPage(
                     }
                 }
             }
-        } else {
+        } else if (section == 1) {
             val result = uploads
             val list = result?.getOrNull()
             when {
@@ -2316,6 +2378,60 @@ private fun OrbitBuildsPage(
                                 text = { Text(stringResource(R.string.orbit_file_delete), color = MaterialTheme.colorScheme.error) },
                                 onClick = { close(); deletingUpload = upload },
                             )
+                        }
+                    }
+                }
+            }
+        } else {
+            item(key = "system-path") {
+                Column(folderMotion, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (folder.isEmpty()) {
+                        Text(stringResource(R.string.orbit_system_hint, who), style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    SystemPath(who, folder) { openFolder(it) }
+                }
+            }
+            val rows = folderRows?.takeIf { it.first == folder }?.second
+            val list = rows?.getOrNull()
+            when {
+                rows == null -> item(key = "system-loading") { LinearProgressIndicator(folderMotion.fillMaxWidth()) }
+                list == null -> item(key = "system-failed") {
+                    Column(folderMotion.fillMaxWidth().padding(vertical = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(stringResource(R.string.orbit_file_load_failed), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        TextButton(onClick = { folderReload++ }) { Text(stringResource(R.string.orbit_memory_retry)) }
+                    }
+                }
+                list.isEmpty() -> item(key = "system-empty") { Box(folderMotion) { Hint(stringResource(R.string.orbit_system_empty)) } }
+                else -> items(list, key = { "system:" + it.path }) { entry ->
+                    val isImage = !entry.folder && com.ai.assistance.operit.features.orbit.OrbitFiles.kindOf(entry.name) ==
+                        com.ai.assistance.operit.features.orbit.OrbitFiles.Kind.IMAGE
+                    Box(folderMotion) {
+                        BuildRow(
+                            tile = { if (entry.folder) FolderTile() else FileTile(entry.name, image = entry.file.takeIf { isImage }, imageExpected = isImage) },
+                            title = entry.name,
+                            subtitle = if (entry.folder) {
+                                stringResource(R.string.orbit_system_folder) + " · " + shortDate(entry.modifiedAt)
+                            } else {
+                                typeLabel(entry.name) + " · " + android.text.format.Formatter.formatShortFileSize(context, entry.size) +
+                                    " · " + shortDate(entry.modifiedAt)
+                            },
+                            onClick = { if (entry.folder) openFolder(entry.path) else viewFile { entry.file } },
+                        ) { close ->
+                            if (!entry.folder) {
+                                DropdownMenuItem(text = { Text(stringResource(R.string.orbit_file_open)) },
+                                    onClick = { close(); viewFile { entry.file } })
+                                DropdownMenuItem(text = { Text(stringResource(R.string.orbit_file_share)) },
+                                    onClick = { close(); shareOrbitFile(context) { entry.file } })
+                                DropdownMenuItem(text = { Text(stringResource(R.string.orbit_quote_menu)) },
+                                    onClick = { close(); onQuoteFiles(listOf(entry.file)) })
+                            }
+                            DropdownMenuItem(text = { Text(stringResource(R.string.orbit_system_copy_path)) }, onClick = {
+                                close()
+                                context.getSystemService(android.content.ClipboardManager::class.java)
+                                    ?.setPrimaryClip(android.content.ClipData.newPlainText("path", entry.file.absolutePath))
+                                showToast(context, resources.getString(R.string.copied_to_clipboard))
+                            })
                         }
                     }
                 }
@@ -2377,7 +2493,7 @@ private fun OrbitBuildsPage(
     previewFile?.let { file -> OrbitMediaPreview.Screen(file) { previewFile = null } }
 }
 
-/** The switch at the top of the Builds tab: what Orbit made, or the Library of what the user sent. */
+/** The switch at the top of the Builds tab: what Orbit made, the Library of what the user sent, or Orbit's own files. */
 @Composable
 private fun BuildSections(selected: Int, onSelect: (Int) -> Unit) {
     val colors = MaterialTheme.colorScheme
@@ -2387,7 +2503,7 @@ private fun BuildSections(selected: Int, onSelect: (Int) -> Unit) {
         modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
     ) {
         Row(Modifier.padding(6.dp)) {
-            listOf(R.string.orbit_builds_made, R.string.orbit_builds_uploads).forEachIndexed { index, label ->
+            listOf(R.string.orbit_builds_made, R.string.orbit_builds_uploads, R.string.orbit_builds_system).forEachIndexed { index, label ->
                 val chosen = index == selected
                 Surface(
                     onClick = { onSelect(index) },
@@ -2405,6 +2521,83 @@ private fun BuildSections(selected: Int, onSelect: (Int) -> Unit) {
                 }
             }
         }
+    }
+}
+
+/** One file or folder in Orbit's own folder. [path] is relative to it. */
+internal class SystemEntry(
+    val name: String,
+    val path: String,
+    val file: java.io.File,
+    val folder: Boolean,
+    val size: Long,
+    val modifiedAt: Long,
+)
+
+/** Lists [relative] inside Orbit's folder [root]: folders first, then files, each by name. Never reads outside [root]. */
+internal suspend fun listOrbitFolder(root: java.io.File, relative: String): List<SystemEntry> =
+    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val base = root.canonicalFile
+        val dir = (if (relative.isEmpty()) base else java.io.File(base, relative)).canonicalFile
+        require(dir.toPath().startsWith(base.toPath()) && dir.isDirectory) { "Not one of Orbit's folders: $relative" }
+        val children = dir.listFiles() ?: throw java.io.IOException("Cannot read $relative")
+        // Leaving the folder stops reading a big one part way.
+        val context = kotlinx.coroutines.currentCoroutineContext()
+        val rows = children.mapNotNull { child ->
+            context.ensureActive()
+            // A link pointing out of Orbit's folder is left out.
+            val real = runCatching { child.canonicalFile }.getOrNull() ?: return@mapNotNull null
+            if (!real.toPath().startsWith(base.toPath())) return@mapNotNull null
+            val isFolder = real.isDirectory
+            SystemEntry(
+                name = child.name,
+                path = if (relative.isEmpty()) child.name else "$relative/${child.name}",
+                file = real,
+                folder = isFolder,
+                size = if (isFolder) 0L else real.length(),
+                modifiedAt = real.lastModified(),
+            )
+        }
+        context.ensureActive()
+        rows.sortedWith(compareByDescending<SystemEntry> { it.folder }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.name })
+    }
+
+/** Where the system files list is: Orbit's name, then each folder; tapping one goes back up to it. */
+@Composable
+private fun SystemPath(who: String, folder: String, onGo: (String) -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val parts = if (folder.isEmpty()) emptyList() else folder.split('/')
+    // A new path starts scrolled to its end, wherever the last one was dragged to.
+    val scroll = remember(folder) { androidx.compose.foundation.ScrollState(0) }
+    // Scrolled from the end, so the deepest folder stays in sight.
+    Row(Modifier.fillMaxWidth().horizontalScroll(scroll, reverseScrolling = true), verticalAlignment = Alignment.CenterVertically) {
+        (listOf(who) + parts).forEachIndexed { index, name ->
+            if (index > 0) {
+                Icon(orbitIcon("chevron-right"), null, Modifier.size(16.dp), tint = colors.onSurfaceVariant)
+            }
+            val last = index == parts.size
+            Text(
+                name,
+                style = MaterialTheme.typography.titleSmall,
+                color = if (last) colors.onSurface else colors.onSurfaceVariant,
+                maxLines = 1,
+                modifier = Modifier.clip(RoundedCornerShape(8.dp))
+                    .then(if (last) Modifier else Modifier.clickable { onGo(parts.take(index).joinToString("/")) })
+                    .padding(horizontal = 6.dp, vertical = 6.dp),
+            )
+        }
+    }
+}
+
+/** The tile in front of a folder. */
+@Composable
+private fun FolderTile() {
+    val colors = MaterialTheme.colorScheme
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier.size(48.dp).clip(RoundedCornerShape(12.dp)).background(colors.primary.copy(alpha = 0.12f)),
+    ) {
+        Icon(orbitIcon("folder"), null, Modifier.size(24.dp), tint = colors.primary)
     }
 }
 
