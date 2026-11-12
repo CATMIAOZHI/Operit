@@ -248,12 +248,13 @@ internal object OrbitRoutines {
         task.id == alignmentId(task.orbitId) || task.id == proactiveScanId(task.orbitId)
 
     /** Why a skipped run was skipped: the goal briefing and the alignment review skip for their own reasons. */
-    fun skippedReason(context: Context, task: OrbitTaskEntity): String = context.getString(
+    fun skippedReason(context: Context, task: OrbitTaskEntity, observation: String = ""): String = context.getString(
         when (task.source) {
             GOALS_SOURCE -> R.string.orbit_decision_no_active_goals
             ALIGNMENT_SOURCE -> R.string.orbit_decision_no_new_talk
             PROACTIVE_SOURCE -> R.string.orbit_decision_proactive_skipped
-            else -> R.string.orbit_watch_notifications_starting
+            else -> if (OrbitReadingWatch.isReading(task.source)) OrbitReadingWatch.skipReason(observation)
+                else R.string.orbit_watch_notifications_starting
         }
     )
 

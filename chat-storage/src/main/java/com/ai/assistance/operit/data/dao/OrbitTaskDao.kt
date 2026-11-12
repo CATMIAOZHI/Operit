@@ -549,6 +549,39 @@ interface OrbitTaskDao {
     )
     suspend fun capIntervalWait(id: String, now: Long): Int
 
+    /**
+     * Runs a waiting task's next turn now (a reading watch the user's reading has made due). The
+     * version stays, so nothing in progress is cancelled; a task already due or changed is left alone.
+     */
+    @Query(
+        "UPDATE orbit_tasks SET nextRunAt = :now WHERE id = :id AND version = :version AND " +
+            "state = 'ACTIVE' AND nextRunAt > :now"
+    )
+    suspend fun bringForward(id: String, version: Long, now: Long): Int
+
+    /**
+     * Forgets what the Orbit's reading watches last woke it for, so a chapter that stops being ready
+     * (its comments deleted, its skip mark taken off) wakes Orbit again even if it was missing before.
+     * Their runs forget it too, so one finishing or acknowledged later cannot put the old baseline back.
+     */
+    @Transaction
+    suspend fun forgetReadingFingerprints(orbitId: String, kind: String) {
+        forgetReadingTaskFingerprints(orbitId, kind)
+        forgetReadingRunFingerprints(orbitId, kind)
+    }
+
+    @Query(
+        "UPDATE orbit_tasks SET lastFingerprint = '' WHERE orbitId = :orbitId AND kind = :kind AND " +
+            "(source = 'reading' OR source LIKE 'reading:%')"
+    )
+    suspend fun forgetReadingTaskFingerprints(orbitId: String, kind: String): Int
+
+    @Query(
+        "UPDATE orbit_runs SET fingerprint = '' WHERE fingerprint != '' AND taskId IN (SELECT id FROM orbit_tasks " +
+            "WHERE orbitId = :orbitId AND kind = :kind AND (source = 'reading' OR source LIKE 'reading:%'))"
+    )
+    suspend fun forgetReadingRunFingerprints(orbitId: String, kind: String): Int
+
     /** Drops a retired phrase of a built-in routine's steps from the chats its past runs used. */
     @Query(
         "UPDATE messages SET content = REPLACE(content, :phrase, '') WHERE content LIKE '%' || :phrase || '%' AND " +

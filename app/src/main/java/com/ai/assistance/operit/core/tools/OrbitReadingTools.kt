@@ -9,6 +9,7 @@ import com.ai.assistance.operit.data.model.ToolResult
 import com.ai.assistance.operit.features.orbit.OrbitFiles
 import com.ai.assistance.operit.features.orbit.OrbitMemoryScope
 import com.ai.assistance.operit.features.orbit.OrbitReading
+import com.ai.assistance.operit.features.orbit.OrbitReadingWatch
 import com.ai.assistance.operit.features.orbit.forModel
 import com.ai.assistance.operit.features.reading.ReaderProviderException
 import org.json.JSONArray
@@ -32,11 +33,11 @@ internal object OrbitReadingTools {
     val prompt = ToolPrompt(
         name = NAME,
         description = "Read along with the user in Legado (阅读) and leave paragraph comments that Legado shows under your name. " +
-            "和用户一起在「阅读」App 里读书：看用户读到哪、读章节原文、把原文拷进自己的文件夹、写/删段评。先读 docs/reading.md。",
+            "和用户一起在「阅读」App 里读书：看用户读到哪、读章节原文、把原文拷进自己的文件夹、写/删段评、标记不用写的章节。先读 docs/reading.md。",
         parametersStructured = listOf(
-            ToolParameterSchema("action", description = "where / books / catalog / read / copy / write_comments / list_comments / delete_comments", required = true),
+            ToolParameterSchema("action", description = "where / books / catalog / read / copy / write_comments / list_comments / delete_comments / skip_chapter", required = true),
             ToolParameterSchema("book_id", description = "Book id from books or where. Default: the book the user has open", required = false),
-            ToolParameterSchema("chapter", "integer", "Chapter number, from 1 (read, write_comments, list_comments, delete_comments; catalog and copy: the first chapter, default the user's)", false),
+            ToolParameterSchema("chapter", "integer", "Chapter number, from 1 (read, write_comments, list_comments, delete_comments, skip_chapter; catalog and copy: the first chapter, default the user's)", false),
             ToolParameterSchema("from", "integer", "read: first paragraph, from 1. Default 1", false),
             ToolParameterSchema("to", "integer", "read: last paragraph. Default the end, cut at about $MAX_READ_CHARS characters", required = false),
             ToolParameterSchema("offset", "integer", "read: start this many characters into paragraph from; only to go on with a paragraph cut short (next_offset)", false),
@@ -45,12 +46,15 @@ internal object OrbitReadingTools {
             ToolParameterSchema("mode", description = "write_comments: add (default, keeps the chapter's other comments) or replace (the chapter keeps only these)", required = false),
             ToolParameterSchema("ids", description = "delete_comments: comment ids from list_comments, comma separated", required = false),
             ToolParameterSchema("all", "boolean", "delete_comments: true deletes every comment of chapter", false),
+            ToolParameterSchema("undo", "boolean", "skip_chapter: true takes the skip mark off", false),
         ),
         details = """
-  - where: the open book and chapter, which paragraphs the user's page shows (page_paragraphs; exact=false means guessed), and how many chapters ahead already have your comments.
+  - where: the open book and chapter, which paragraphs the user's page shows (page_paragraphs; exact=false means guessed), and chapters_ahead_ready: how many chapters after this one in a row are ready (have your comments, are skipped, or are volume headings).
+  - books, where: book_key is the short key a reading watch takes (orbit_task WATCH, watch=reading:<chapters ahead>:<book_key>).
   - read: paragraphs come as "[n] text"; n is the paragraph number to comment on. "*" after [n] means you already commented there. You may read any chapter, also ones the user has not reached.
   - copy: saves chapters' text into your folder, one file a chapter under files/reading/<book-name-and-id>/text/, lines "[n] text" with the same numbers as read. Use reading_folder from the result for this book's notes and summaries; do not guess it from the title. Then read them with read_file or read_file_part and look things up with grep_code (environment=android, paths under absolute_folder from the result). Chapters Legado has not saved are fetched from the book's website, so copy a few at a time and go on with next_chapter.
   - write_comments: first read or copy the chapter in this chat/task so its version can be checked. If the version is no longer known or has changed, read or copy it again before writing. The result says what was saved and where.
+  - skip_chapter: you read the chapter and have nothing worth saying (an author's note, a short bridge). It then counts as ready, so where and a reading watch go past it. Volume headings count as ready already.
   - Comments are kept per Orbit and shown in Legado right away. Notes, summaries and where you stopped are yours to keep under files/reading/ (write_file to create, edit_file to change).
 """,
     )
@@ -70,9 +74,14 @@ internal object OrbitReadingTools {
             "copy" -> copy(context, orbit.id, reading, args)
             "write_comments" -> write(reading, args)
             "list_comments" -> list(reading, args)
-            "delete_comments" -> delete(reading, args)
+            "skip_chapter" -> skip(reading, args).also {
+                if (it.optBoolean("changed") && !it.optBoolean("skipped")) OrbitReadingWatch.chapterUnready(context, orbit.id)
+            }
+            "delete_comments" -> delete(reading, args).also {
+                if (it.optInt("deleted") > 0) OrbitReadingWatch.chapterUnready(context, orbit.id)
+            }
             else -> throw IllegalArgumentException(
-                "action must be where, books, catalog, read, copy, write_comments, list_comments or delete_comments; got \"$action\"")
+                "action must be where, books, catalog, read, copy, write_comments, list_comments, delete_comments or skip_chapter; got \"$action\"")
         }
         ToolResult(NAME, true, StringResultData(result.toString()))
     } catch (e: kotlinx.coroutines.CancellationException) {
@@ -90,10 +99,15 @@ internal object OrbitReadingTools {
     private suspend fun bookId(reading: OrbitReading, args: Map<String, String>): String =
         args["book_id"]?.takeIf { it.isNotEmpty() } ?: reading.readingState(null).book.id
 
+    /** The chapter list, asked again when the kept one is shorter than chapter [number] or than Legado says the book is. */
+    private suspend fun catalogFor(reading: OrbitReading, bookId: String, number: Int, total: Int = 0) =
+        reading.catalog(bookId).let { if (number > it.size || total > it.size) reading.catalog(bookId, fresh = true) else it }
+
     /** Chapter number from 1 in [args], checked against the book; returns Legado's index from 0. */
     private suspend fun chapterIndex(reading: OrbitReading, bookId: String, args: Map<String, String>): Int {
         val number = requireNotNull(int(args, "chapter")) { "Give chapter, a chapter number from 1" }
-        val total = reading.catalog(bookId).size
+        // The kept chapter list may predate chapters the book got since.
+        val total = reading.catalog(bookId).size.takeIf { number <= it } ?: reading.catalog(bookId, fresh = true).size
         require(number in 1..total) { "chapter must be 1 to $total; got $number" }
         return number - 1
     }
@@ -101,18 +115,19 @@ internal object OrbitReadingTools {
     private suspend fun where(reading: OrbitReading, args: Map<String, String>): JSONObject {
         val state = reading.readingState(args["book_id"]?.takeIf { it.isNotEmpty() })
         val bookId = state.book.id
-        val catalog = reading.catalog(bookId)
+        val catalog = catalogFor(reading, bookId, state.chapterIndex + 1, state.book.totalChapterCount)
         val index = state.chapterIndex
-        val commented = reading.commentedIndexes(bookId)
+        val ready = reading.readyIndexes(bookId, catalog)
         var ahead = 0
-        while (index + 1 + ahead in commented) ahead++
+        while (index + 1 + ahead in ready) ahead++
         val out = JSONObject()
             .put("book", JSONObject().put("book_id", bookId).put("name", state.book.name).put("author", state.book.author)
-                .put("chapters", catalog.size))
+                .put("chapters", catalog.size).put("book_key", OrbitReading.bookKey(bookId)))
             .put("chapter", index + 1)
             .put("chapter_title", state.chapterTitle ?: catalog.getOrNull(index)?.title.orEmpty())
             .put("this_chapter_comments", reading.comments(bookId, index)?.comments?.size ?: 0)
-            .put("chapters_ahead_with_comments", ahead)
+            .apply { if (index in reading.skippedIndexes(bookId)) put("this_chapter_skipped", true) }
+            .put("chapters_ahead_ready", ahead)
             .put("last_read_at", state.book.lastReadAt)
         val chapter = runCatching { reading.chapter(bookId, index) }.getOrNull()
         val page = chapter?.let { OrbitReading.locate(it.paragraphs, reading.readable(bookId, index)) }
@@ -128,23 +143,27 @@ internal object OrbitReadingTools {
     private suspend fun books(reading: OrbitReading): JSONObject = JSONObject().put("books", JSONArray().apply {
         reading.books().sortedByDescending { it.lastReadAt }.forEach { book ->
             put(JSONObject().put("book_id", book.id).put("name", book.name).put("author", book.author)
-                .put("chapters", book.totalChapterCount).put("last_read_at", book.lastReadAt))
+                .put("chapters", book.totalChapterCount).put("last_read_at", book.lastReadAt)
+                .put("book_key", OrbitReading.bookKey(book.id)))
         }
     })
 
     private suspend fun catalog(reading: OrbitReading, args: Map<String, String>): JSONObject {
         val bookId = bookId(reading, args)
-        val chapters = reading.catalog(bookId)
         val count = (int(args, "count") ?: DEFAULT_CATALOG).coerceIn(1, MAX_CATALOG)
-        val first = (int(args, "chapter") ?: (reading.readingState(bookId).chapterIndex + 1)).coerceIn(1, maxOf(1, chapters.size))
+        val wanted = int(args, "chapter") ?: (reading.readingState(bookId).chapterIndex + 1)
+        val chapters = catalogFor(reading, bookId, wanted)
+        val first = wanted.coerceIn(1, maxOf(1, chapters.size))
         val commented = reading.commentedIndexes(bookId)
+        val skipped = reading.skippedIndexes(bookId)
         val shown = chapters.drop(first - 1).take(count)
         return JSONObject().put("book_id", bookId).put("chapters_total", chapters.size)
             .put("chapters", JSONArray().apply {
                 shown.forEach { c ->
                     put(JSONObject().put("chapter", c.index + 1).put("title", c.title)
                         .apply { if (c.isVolume) put("volume", true) }
-                        .apply { if (c.index in commented) put("has_comments", true) })
+                        .apply { if (c.index in commented) put("has_comments", true) }
+                        .apply { if (c.index in skipped) put("skipped", true) })
                 }
             })
             .apply { if (first - 1 + shown.size < chapters.size) put("next_chapter", first + shown.size) }
@@ -186,6 +205,7 @@ internal object OrbitReadingTools {
         }
         // Noted only once the text is ready to hand over, so a rejected read changes nothing.
         reading.markSeen(chapter)
+        reading.saveSeen()
         return JSONObject().put("book_id", bookId).put("chapter", index + 1).put("title", chapter.title)
             .put("paragraphs_total", total).put("from", from).put("to", last)
             .put("text", text.toString())
@@ -205,9 +225,9 @@ internal object OrbitReadingTools {
     private suspend fun copy(context: Context, orbitId: String, reading: OrbitReading, args: Map<String, String>): JSONObject {
         val bookId = bookId(reading, args)
         val state = reading.readingState(bookId)
-        val catalog = reading.catalog(bookId)
-        require(catalog.isNotEmpty()) { "This book has no chapters in Legado" }
         val first = int(args, "chapter") ?: (state.chapterIndex + 1)
+        val catalog = catalogFor(reading, bookId, first, state.book.totalChapterCount)
+        require(catalog.isNotEmpty()) { "This book has no chapters in Legado" }
         require(first in 1..catalog.size) { "chapter must be 1 to ${catalog.size}; got $first" }
         val count = int(args, "count") ?: DEFAULT_COPY
         require(count in 1..MAX_COPY) { "count must be 1 to $MAX_COPY per call; got $count" }
@@ -241,6 +261,7 @@ internal object OrbitReadingTools {
                 copied.put(JSONObject().put("chapter", number).put("title", title).put("path", path)
                     .put("paragraphs", chapter.paragraphs.size))
             } catch (e: kotlinx.coroutines.CancellationException) {
+                reading.saveSeen()
                 throw e
             } catch (e: Exception) {
                 if (firstError == null) firstError = e
@@ -248,6 +269,7 @@ internal object OrbitReadingTools {
                     .put("error", (e as? ReaderProviderException)?.forModel() ?: e.message ?: e.toString()))
             }
         }
+        reading.saveSeen()
         firstError?.takeIf { copied.length() == 0 }?.let { throw it }
         return JSONObject().put("book_id", bookId).put("book", state.book.name).put("folder", folder)
             .put("reading_folder", readingFolder)
@@ -351,6 +373,26 @@ internal object OrbitReadingTools {
                 else if (!current) put("note", "Chapter ${index + 1} now comes from a different source in Legado, so these " +
                     "comments (saved_paragraph is their old number) may not show. Delete them with delete_comments if they no longer fit.")
             }
+    }
+
+    /** Marks a chapter Orbit read and left without comments as ready, or takes the mark off with undo. */
+    private suspend fun skip(reading: OrbitReading, args: Map<String, String>): JSONObject {
+        val bookId = bookId(reading, args)
+        val index = chapterIndex(reading, bookId, args)
+        val undo = args["undo"].equals("true", ignoreCase = true)
+        if (!undo) requireNotNull(reading.seen(bookId, index)) {
+            "You have not read chapter ${index + 1} in this chat/task. Nothing was marked. Read or copy it first, then skip_chapter if it has nothing worth a comment."
+        }
+        val changed = reading.setSkipped(bookId, index, !undo)
+        val title = reading.catalog(bookId).getOrNull(index)?.title.orEmpty()
+        return JSONObject().put("book_id", bookId).put("chapter", index + 1).put("title", title)
+            .put("skipped", !undo).put("changed", changed)
+            .put("note", when {
+                undo && changed -> "Chapter ${index + 1} is no longer marked skipped; it counts as ready again only once it has comments."
+                undo -> "Chapter ${index + 1} was not marked skipped; nothing changed."
+                changed -> "Chapter ${index + 1} is marked skipped: it counts as ready, so where and a reading watch go past it."
+                else -> "Chapter ${index + 1} was already marked skipped; nothing changed."
+            })
     }
 
     private suspend fun delete(reading: OrbitReading, args: Map<String, String>): JSONObject {
