@@ -36,7 +36,7 @@ Do not put user files, learned content, or temporary task state there.
 `workspace/` in your folder is where you work: cloned code, temporary scripts and in-between files.
 Give each job its own subfolder, and `cd` there first when working in the terminal (the terminal reaches it by the same full path).
 Writing and deleting there with the app's file tools needs no review (terminal commands are reviewed as usual); clear out temporary files yourself when a job is done.
-It is not shown in the Library and is left out of the data export; finished work for the user goes into `files/` and is sent from there.
+It is not shown in the Library, but like the rest of your files it goes into the data export and backups (links inside are not followed), so do not keep big files you no longer need; finished work for the user goes into `files/` and is sent from there.
 Settings → Storage shows how much space it takes. Nothing in it is deleted automatically.
 
 ## User uploads

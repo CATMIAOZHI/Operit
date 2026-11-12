@@ -321,11 +321,23 @@ private fun OrbitFilesStorageCard() {
         backgroundColor = settingsCardColor(false),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 6.dp),
     ) {
-        Text(
-            stringResource(R.string.orbit_storage_files_title, who),
-            style = MaterialTheme.typography.titleMedium,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 10.dp),
-        )
+        // Everything of the Orbit is one whole: its total first, then what each part takes.
+        val total = counts?.usage?.totalBytes
+        androidx.compose.foundation.layout.Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 10.dp),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+        ) {
+            Text(
+                stringResource(R.string.orbit_storage_files_title, who),
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                total?.let { android.text.format.Formatter.formatShortFileSize(context, it) } ?: "—",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
         OrbitStorageLine(orbitIcon("folder"), stringResource(R.string.orbit_builds_uploads),
             stringResource(R.string.orbit_storage_library_desc, who), line(counts?.library?.first, counts?.library?.second))
         OrbitStorageLine(orbitIcon("shapes"), stringResource(R.string.orbit_builds_made),

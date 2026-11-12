@@ -75,26 +75,104 @@ internal object OrbitDataExport {
         val history = ChatHistoryManager.getInstance(context)
         val root = OrbitPreferences.getInstance(context).orbitDir(orbit.id)
         kotlinx.coroutines.currentCoroutineContext().ensureActive()
-        ZipOutputStream(zip.outputStream().buffered()).use { out ->
+        // A zip cut short (cancelled, or a file that could not be read) is not left behind.
+        val raw = zip.outputStream()
+        val exportJob = kotlinx.coroutines.currentCoroutineContext()
+        // Every write to the file checks for cancel, so even writing the zip's index at the end stops.
+        val sink = object : java.io.FilterOutputStream(raw) {
+            override fun write(b: Int) {
+                exportJob.ensureActive()
+                out.write(b)
+            }
+
+            override fun write(b: ByteArray, off: Int, len: Int) {
+                exportJob.ensureActive()
+                out.write(b, off, len)
+            }
+        }
+        val out = ZipOutputStream(java.io.BufferedOutputStream(sink, 64 * 1024))
+        try { run {
             fun put(name: String, text: String) {
                 out.putNextEntry(ZipEntry(name))
                 out.write(text.toByteArray(Charsets.UTF_8))
                 out.closeEntry()
             }
             put("README.txt", readme(orbit))
-            if (root.isDirectory) {
+            // Only a missing folder is skipped; one whose details cannot be read fails the export.
+            val rootAttrs = try {
+                Files.readAttributes(
+                    root.toPath(), java.nio.file.attribute.BasicFileAttributes::class.java,
+                    java.nio.file.LinkOption.NOFOLLOW_LINKS,
+                )
+            } catch (e: java.nio.file.NoSuchFileException) {
+                null
+            }
+            if (rootAttrs?.isDirectory == true) {
                 val base = root.toPath().toRealPath()
-                // workspace/ is Orbit's scratch (clones, drafts) and can be huge; it is not the user's data.
-                val workspace = File(root, com.ai.assistance.operit.features.orbit.OrbitFiles.WORKSPACE)
-                root.walkTopDown()
-                    .onEnter { dir -> dir == root || (dir != workspace && !dir.name.startsWith(".") && !Files.isSymbolicLink(dir.toPath())) }
-                    .filter { it.isFile && !it.name.startsWith(".") && !Files.isSymbolicLink(it.toPath()) }
-                    .filter { runCatching { it.toPath().toRealPath().startsWith(base) }.getOrDefault(false) }
-                    .forEach { file ->
-                        out.putNextEntry(ZipEntry("orbit/" + file.relativeTo(root).invariantSeparatorsPath))
-                        file.inputStream().use { it.copyTo(out) }
-                        out.closeEntry()
+                // Everything of the Orbit goes, workspace/ too. In workspace/ names starting with "."
+                // (a cloned project's .git) are kept; elsewhere they are the app's own state. Links are not followed.
+                fun keep(p: java.nio.file.Path): Boolean {
+                    val rel = base.relativize(p)
+                    val inWorkspace = rel.nameCount > 1 &&
+                        rel.getName(0).toString() == com.ai.assistance.operit.features.orbit.OrbitFiles.WORKSPACE
+                    return !p.fileName.toString().startsWith(".") || inWorkspace
+                }
+                val job = kotlinx.coroutines.currentCoroutineContext()
+                val buffer = ByteArray(64 * 1024)
+                // Only a file or folder deleted while exporting is left out; any other read error
+                // (a folder or file that cannot be read) fails the export, so it never quietly misses files.
+                Files.walkFileTree(base, object : java.nio.file.SimpleFileVisitor<java.nio.file.Path>() {
+                    override fun preVisitDirectory(
+                        dir: java.nio.file.Path,
+                        attrs: java.nio.file.attribute.BasicFileAttributes,
+                    ): java.nio.file.FileVisitResult {
+                        job.ensureActive()
+                        return if (dir == base || keep(dir)) java.nio.file.FileVisitResult.CONTINUE
+                        else java.nio.file.FileVisitResult.SKIP_SUBTREE
                     }
+
+                    override fun visitFile(
+                        file: java.nio.file.Path,
+                        attrs: java.nio.file.attribute.BasicFileAttributes,
+                    ): java.nio.file.FileVisitResult {
+                        job.ensureActive()
+                        // Links are not followed (a link is seen as itself, not a regular file).
+                        if (!attrs.isRegularFile || !keep(file)) return java.nio.file.FileVisitResult.CONTINUE
+                        val input = try {
+                            Files.newInputStream(file, java.nio.file.LinkOption.NOFOLLOW_LINKS)
+                        } catch (e: java.nio.file.NoSuchFileException) {
+                            return java.nio.file.FileVisitResult.CONTINUE // deleted while exporting
+                        }
+                        input.use {
+                            out.putNextEntry(ZipEntry("orbit/" + base.relativize(file).joinToString("/")))
+                            // A big file in workspace/ stops part way too when the export is cancelled.
+                            while (true) {
+                                job.ensureActive()
+                                val read = it.read(buffer)
+                                if (read < 0) break
+                                out.write(buffer, 0, read)
+                            }
+                            out.closeEntry()
+                        }
+                        return java.nio.file.FileVisitResult.CONTINUE
+                    }
+
+                    override fun visitFileFailed(
+                        file: java.nio.file.Path,
+                        exc: java.io.IOException,
+                    ): java.nio.file.FileVisitResult {
+                        if (exc is java.nio.file.NoSuchFileException) return java.nio.file.FileVisitResult.CONTINUE
+                        throw exc
+                    }
+
+                    override fun postVisitDirectory(
+                        dir: java.nio.file.Path,
+                        exc: java.io.IOException?,
+                    ): java.nio.file.FileVisitResult {
+                        if (exc != null && exc !is java.nio.file.NoSuchFileException) throw exc
+                        return java.nio.file.FileVisitResult.CONTINUE
+                    }
+                })
             }
             put("records/tasks.json", JSONArray(tasks.map { taskJson(context, it) }).toString(2))
             put("records/goals.json", JSONArray(goals.map(::goalJson)).toString(2))
@@ -132,6 +210,14 @@ internal object OrbitDataExport {
                 val name = side.title.replace(Regex("[\\\\/:*?\"<>|\\s]+"), "_").trim('_').ifEmpty { "chat" }.take(40)
                 chatMarkdown("side-chats/${index + 1}-$name.md", "${orbit.name} · ${side.title}", side.chatId)
             }
+            out.close()
+            exportJob.ensureActive()
+        } } catch (e: Throwable) {
+            // The file is closed first, so a zip cut short does not get its index written, then removed.
+            runCatching { raw.close() }
+            runCatching { out.close() }
+            zip.delete()
+            throw e
         }
         zip
     } }
@@ -145,8 +231,8 @@ internal object OrbitDataExport {
         Orbit export: ${orbit.name}
         Exported ${time(System.currentTimeMillis())}
 
-        orbit/      Orbit's own folder: SOUL.md, IDENTITY.md, user.md, memory/, skills/, files/ and its boards
-                    (not workspace/, Orbit's scratch space)
+        orbit/      Orbit's own folder: SOUL.md, IDENTITY.md, user.md, memory/, skills/, files/, workspace/
+                    and its boards
         records/    tasks, goals and the history of background runs
         chat.md     the Orbit chat
         side-chats/ Orbit's side chats, one file each

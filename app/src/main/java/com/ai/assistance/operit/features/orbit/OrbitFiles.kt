@@ -413,23 +413,33 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
     }.onFailure { com.ai.assistance.operit.util.AppLogger.w("OrbitFiles", "Chat file not readable: ${it.javaClass.simpleName}") }
         .getOrNull()
 
-    /** How many files and bytes are under files/ (what Orbit made) and sent/ (copies sent in the chat). */
+    /**
+     * How many files and bytes are under files/ (what Orbit made), sent/ (copies sent in the chat) and
+     * workspace/, and [totalBytes], every file in the Orbit's folder (notes, memory, skills, the Library,
+     * leftovers of a copy cut short), what it really takes on the phone.
+     */
     data class Usage(
         val madeFiles: Int, val madeBytes: Long, val sentFiles: Int, val sentBytes: Long,
-        val workFiles: Int, val workBytes: Long,
+        val workFiles: Int, val workBytes: Long, val totalBytes: Long,
     )
 
     /**
      * Files and bytes under [dir], links never followed. [hidden] counts dot files too; [alive]
-     * stops the walk part way once the caller is gone.
+     * stops the walk part way once the caller is gone; folders in [skip] are left out.
      */
-    private fun count(dir: File, hidden: Boolean = false, alive: () -> Boolean = { true }): Pair<Int, Long> {
+    private fun count(
+        dir: File, hidden: Boolean = false, skip: Set<java.nio.file.Path> = emptySet(), alive: () -> Boolean = { true },
+    ): Pair<Int, Long> {
         if (!Files.isDirectory(dir.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)) return 0 to 0L
         var files = 0
         var bytes = 0L
         Files.walkFileTree(dir.toPath(), object : java.nio.file.SimpleFileVisitor<java.nio.file.Path>() {
             override fun preVisitDirectory(d: java.nio.file.Path, attrs: java.nio.file.attribute.BasicFileAttributes) =
-                if (alive()) java.nio.file.FileVisitResult.CONTINUE else java.nio.file.FileVisitResult.TERMINATE
+                when {
+                    !alive() -> java.nio.file.FileVisitResult.TERMINATE
+                    d in skip -> java.nio.file.FileVisitResult.SKIP_SUBTREE
+                    else -> java.nio.file.FileVisitResult.CONTINUE
+                }
             override fun visitFile(file: java.nio.file.Path, attrs: java.nio.file.attribute.BasicFileAttributes): java.nio.file.FileVisitResult {
                 if (!alive()) return java.nio.file.FileVisitResult.TERMINATE
                 if (attrs.isRegularFile && (hidden || !file.fileName.toString().startsWith("."))) { files++; bytes += attrs.size() }
@@ -443,13 +453,16 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
 
     suspend fun usage(): Usage {
         val (made, sent) = io { count(File(root, "files")) to count(File(root, SENT)) }
-        // workspace/ can hold big repositories; counted outside the lock the notes share, every file
-        // (dot files included, they take space too), and stopped when the page is left.
-        val work = withContext(Dispatchers.IO) {
+        // workspace/ can hold big repositories; it and the rest are counted outside the lock the notes
+        // share, every file (dot files included, they take space too), and stopped when the page is left.
+        val (work, rest) = withContext(Dispatchers.IO) {
             val job = coroutineContext
-            count(File(root, WORKSPACE), hidden = true) { job.isActive }.also { job.ensureActive() }
+            val work = count(File(root, WORKSPACE), hidden = true) { job.isActive }
+            val rest = count(root, hidden = true, skip = setOf(File(root, WORKSPACE).toPath())) { job.isActive }
+            job.ensureActive()
+            work to rest
         }
-        return Usage(made.first, made.second, sent.first, sent.second, work.first, work.second)
+        return Usage(made.first, made.second, sent.first, sent.second, work.first, work.second, work.second + rest.second)
     }
 
     /** Saves a binary file under files/, keeping an existing one by adding a number to the name. */
