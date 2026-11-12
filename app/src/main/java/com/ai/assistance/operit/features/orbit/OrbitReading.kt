@@ -5,6 +5,7 @@ import com.ai.assistance.operit.data.preferences.OrbitPreferences
 import com.ai.assistance.operit.features.reading.AnnotationChapterContent
 import com.ai.assistance.operit.features.reading.LegadoReaderProvider
 import com.ai.assistance.operit.features.reading.ReadableChapterContent
+import com.ai.assistance.operit.features.reading.ReaderChapter
 import com.ai.assistance.operit.features.reading.ReaderProvider
 import com.ai.assistance.operit.features.reading.ReaderProviderException
 import com.ai.assistance.operit.features.reading.ReadingCompanionFileStore
@@ -14,8 +15,10 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -57,7 +60,23 @@ internal class OrbitReading(
 
     suspend fun books() = reader.getBooks()
 
-    suspend fun catalog(bookId: String) = reader.getChapters(bookId)
+    /**
+     * The book's chapters. Legado sends the whole list each time, which is large for a long book, so
+     * it is kept a couple of minutes; [fresh] asks Legado again (a chapter number past the kept list).
+     */
+    suspend fun catalog(bookId: String, fresh: Boolean = false): List<ReaderChapter> {
+        val now = System.currentTimeMillis()
+        if (!fresh) synchronized(catalogCache) {
+            catalogCache[bookId]?.takeIf { now - it.first < CATALOG_CACHE_MS }?.second
+        }?.let { return it }
+        val chapters = reader.getChapters(bookId)
+        synchronized(catalogCache) {
+            catalogCache.remove(bookId)
+            catalogCache[bookId] = now to chapters
+            while (catalogCache.size > CATALOG_CACHE_SIZE) catalogCache.remove(catalogCache.keys.first())
+        }
+        return chapters
+    }
 
     suspend fun readable(bookId: String, index: Int): ReadableChapterContent? =
         runCatching { reader.getReadableChapterContent(bookId, index) }
@@ -95,21 +114,82 @@ internal class OrbitReading(
 
     /**
      * Notes the layout of a chapter whose text was just given to Orbit (read or copied), so a comment
-     * written later is checked against what Orbit actually saw.
+     * written later is checked against what Orbit actually saw. [saveSeen] keeps it on disk, so a
+     * restart does not make Orbit read the chapter again.
      */
     fun markSeen(chapter: Chapter) {
         val key = seenKey(chapter.bookId, chapter.index)
-        synchronized(seenHashes) {
-            seenHashes.remove(key)
-            seenHashes[key] = chapter.contractHash
-            while (seenHashes.size > SEEN_SIZE) seenHashes.remove(seenHashes.keys.first())
+        remember(key, chapter.contractHash)
+        synchronized(unsaved) { unsaved.getOrPut(chapter.bookId) { LinkedHashMap() }[chapter.index] = chapter.contractHash }
+    }
+
+    /** Writes what [markSeen] noted since the last save; a cancelled tool call still keeps it. */
+    suspend fun saveSeen() = withContext(NonCancellable) {
+        val pending = synchronized(unsaved) { unsaved.toMap().also { unsaved.clear() } }
+        for ((bookId, chapters) in pending) lock(bookId).withLock {
+            val file = File(bookDir(bookId), SEEN_FILE)
+            val all = readSeen(file)
+            chapters.forEach { (index, hash) ->
+                val key = "$scopeTag:$index"
+                all.remove(key)
+                all[key] = hash
+            }
+            while (all.size > SEEN_PER_BOOK) all.remove(all.keys.first())
+            runCatching { atomicWrite(file, all.entries.joinToString("\n") { "${it.key}\t${it.value}" }) }
         }
     }
 
-    /** The layout version of the chapter as Orbit last read or copied it in this run, or null; never asks Legado. */
-    fun seen(bookId: String, index: Int): String? = synchronized(seenHashes) { seenHashes[seenKey(bookId, index)] }
+    /**
+     * The layout version of the chapter as Orbit last read or copied it in this chat or task, or
+     * null; never asks Legado.
+     */
+    fun seen(bookId: String, index: Int): String? {
+        val key = seenKey(bookId, index)
+        synchronized(seenHashes) { seenHashes[key] }?.let { return it }
+        return readSeen(File(bookDir(bookId), SEEN_FILE))["$scopeTag:$index"]?.also { remember(key, it) }
+    }
 
-    private fun seenKey(bookId: String, index: Int) = "$orbitId\u0000$readScope\u0000$bookId\u0000$index"
+    private val scopeTag = sha256(readScope).take(12)
+
+    private val unsaved = HashMap<String, MutableMap<Int, String>>()
+
+    private fun seenKey(bookId: String, index: Int) = "$orbitId\u0000$scopeTag\u0000$bookId\u0000$index"
+
+    private fun remember(key: String, hash: String) = synchronized(seenHashes) {
+        seenHashes.remove(key)
+        seenHashes[key] = hash
+        while (seenHashes.size > SEEN_SIZE) seenHashes.remove(seenHashes.keys.first())
+    }
+
+    // ---- Chapters Orbit has dealt with ----
+
+    private fun skippedFile(bookId: String) = File(bookDir(bookId), SKIPPED_FILE)
+
+    /** Chapter indexes (from 0) Orbit has read and chose to leave without comments. */
+    fun skippedIndexes(bookId: String): Set<Int> = runCatching {
+        val file = skippedFile(bookId)
+        if (!file.isFile) return emptySet()
+        val list = JSONArray(file.readText())
+        (0 until list.length()).mapTo(HashSet()) { list.getInt(it) }
+    }.getOrDefault(emptySet())
+
+    /** Marks chapter [index] as read with nothing to say, or takes the mark off; returns whether it changed. */
+    suspend fun setSkipped(bookId: String, index: Int, skipped: Boolean): Boolean = lock(bookId).withLock {
+        val now = skippedIndexes(bookId).toSortedSet()
+        val changed = if (skipped) now.add(index) else now.remove(index)
+        if (changed) {
+            val file = skippedFile(bookId)
+            if (now.isEmpty()) file.delete() else atomicWrite(file, JSONArray(now.toList()).toString())
+        }
+        changed
+    }
+
+    /**
+     * Chapters that need nothing more from Orbit before the user gets there: ones with comments, ones
+     * Orbit skipped, and volume headings, which have no text to comment on.
+     */
+    fun readyIndexes(bookId: String, catalog: List<ReaderChapter>): Set<Int> =
+        commentedIndexes(bookId) + skippedIndexes(bookId) + catalog.filter { it.isVolume }.map { it.index }
 
     // ---- Comments ----
 
@@ -207,14 +287,34 @@ internal class OrbitReading(
         const val MAX_COMMENTS_PER_CHAPTER = 60
         private const val CHAPTER_CACHE_SIZE = 6
         private const val CHAPTER_CACHE_MS = 10 * 60_000L
+        private const val CATALOG_CACHE_SIZE = 4
+        private const val CATALOG_CACHE_MS = 2 * 60_000L
+        private const val SEEN_FILE = "seen.txt"
+        private const val SKIPPED_FILE = "skipped.json"
+        /** Read versions kept per book, across this Orbit's chats and tasks; the oldest go first. */
+        private const val SEEN_PER_BOOK = 2_000
 
         private val locks = ConcurrentHashMap<String, Mutex>()
         private val chapterCache = LinkedHashMap<String, Pair<Long, Chapter>>()
+        private val catalogCache = LinkedHashMap<String, Pair<Long, List<ReaderChapter>>>()
         /** Last seen layout version per chapter; small strings, so many are kept. */
         private val seenHashes = LinkedHashMap<String, String>()
         private const val SEEN_SIZE = 5_000
 
         private fun lock(bookId: String) = locks.computeIfAbsent(bookId) { Mutex() }
+
+        /** "scope:index<TAB>version" lines, oldest first. */
+        private fun readSeen(file: File): LinkedHashMap<String, String> {
+            val out = LinkedHashMap<String, String>()
+            if (!file.isFile) return out
+            runCatching {
+                file.readLines().forEach { line ->
+                    val tab = line.indexOf('\t')
+                    if (tab > 0 && tab < line.length - 1) out[line.substring(0, tab)] = line.substring(tab + 1)
+                }
+            }
+            return out
+        }
 
         fun bookKey(bookId: String): String = sha256(bookId).take(16)
 

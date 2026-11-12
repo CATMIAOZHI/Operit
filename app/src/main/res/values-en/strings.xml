@@ -9621,6 +9621,7 @@
     <string name="orbit_watch_sms">Watches received text messages</string>
     <string name="orbit_watch_sms_from">Watches text messages from %1$s</string>
     <string name="orbit_watch_calendar">Watches the calendar for the next %1$d days</string>
+    <string name="orbit_watch_reading">Reads along, keeping comments ready %1$d chapters ahead</string>
     <string name="orbit_watch_script">Runs the script %1$s and watches its output</string>
     <string name="orbit_decision_unchanged">Nothing changed, so Orbit stayed quiet</string>
     <string name="orbit_decision_in_chat">Handed to %1$s in the chat; it decides what to tell you</string>
@@ -9673,6 +9674,10 @@
     <string name="orbit_decision_no_active_goals">No active goals, so nothing to align this time</string>
     <string name="orbit_decision_no_new_talk">No new chats since the last review, so nothing to review</string>
     <string name="orbit_decision_proactive_skipped">No new chats since the last check, so nothing to check</string>
+    <string name="orbit_decision_reading_ready">Enough comments are ready ahead, so nothing to write this time</string>
+    <string name="orbit_decision_reading_no_book">No book is open in Legado yet, so nothing to write this time</string>
+    <string name="orbit_decision_reading_other_book">You are reading another book now, so nothing to write this time</string>
+    <string name="orbit_decision_reading_no_chapters">This book has no chapters in Legado yet, so nothing to write this time</string>
     <string name="orbit_item_told">%1$s told you: %2$s</string>
     <string name="orbit_item_skipped">%1$s didn\'t interrupt you: %2$s</string>
     <string name="orbit_item_reason_time_sensitive">it has a deadline</string>

@@ -86,6 +86,8 @@ class ReadingCompanionAnnotationProvider : ContentProvider() {
         if (enabled) {
             ReadingCompanionAutoCommentary.schedule(appContext)
         }
+        // Orbit's reading watch, when there is one, checks the comments ahead on its own.
+        com.ai.assistance.operit.features.orbit.OrbitReadingWatch.onProgress(appContext)
         return Bundle().apply { putBoolean("scheduled", enabled) }
     }
 

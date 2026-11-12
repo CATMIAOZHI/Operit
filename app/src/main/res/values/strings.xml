@@ -9598,6 +9598,7 @@
     <string name="orbit_watch_sms">看收到的短信</string>
     <string name="orbit_watch_sms_from">看 %1$s 发来的短信</string>
     <string name="orbit_watch_calendar">看未来 %1$d 天的日程</string>
+    <string name="orbit_watch_reading">陪你读书，提前写好后面 %1$d 章的段评</string>
     <string name="orbit_watch_script">运行小脚本 %1$s 看结果</string>
     <string name="orbit_decision_unchanged">和上次一样，就没有打扰你</string>
     <string name="orbit_decision_in_chat">交给 %1$s 在聊天里处理，由它决定怎么跟你说</string>
@@ -9650,6 +9651,10 @@
     <string name="orbit_decision_no_active_goals">没有进行中的目标，这次不用对齐</string>
     <string name="orbit_decision_no_new_talk">上次复盘后没有新的聊天，这次不用复盘</string>
     <string name="orbit_decision_proactive_skipped">上次巡检后没有新聊天，这次不用巡检</string>
+    <string name="orbit_decision_reading_ready">后面的段评还够读，这次不用写</string>
+    <string name="orbit_decision_reading_no_book">「阅读」里还没打开书，这次先不写</string>
+    <string name="orbit_decision_reading_other_book">你现在在读另一本书，这次先不写</string>
+    <string name="orbit_decision_reading_no_chapters">这本书在「阅读」里还没有章节，这次先不写</string>
     <string name="orbit_item_told">%1$s 告诉了你：%2$s</string>
     <string name="orbit_item_skipped">%1$s 没有打扰你：%2$s</string>
     <string name="orbit_item_reason_time_sensitive">有截止时间</string>

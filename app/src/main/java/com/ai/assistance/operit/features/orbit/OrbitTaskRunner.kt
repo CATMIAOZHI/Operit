@@ -194,6 +194,18 @@ object OrbitTaskRunner {
                                     return@withTimeout
                                 }
                                 result.observation()
+                            } else if (OrbitReadingWatch.isReading(task.source)) {
+                                // Enough comments ahead: nothing for Orbit to do, and no row in the activity list.
+                                val ahead = OrbitReadingWatch.check(context, task.orbitId, task.source)
+                                if (!ahead.wake) {
+                                    // Noted as what was seen, so a later "something is missing" counts as a change.
+                                    check(dao.checkpoint(token, ahead.observation.take(20_000), sha(ahead.observation), boot,
+                                        System.currentTimeMillis(), SystemClock.elapsedRealtime()))
+                                    complete(context, state, ahead.observation, "", "", OrbitRunEntity.SKIPPED,
+                                        triggerFollowers = false)
+                                    return@withTimeout
+                                }
+                                ahead.observation
                             } else OrbitWatchSources.read(context, task.orbitId, task.source)
                             OrbitGeofence.KIND -> {
                                 val place = OrbitGeofenceDefinition.parse(task.source)
@@ -255,7 +267,8 @@ object OrbitTaskRunner {
                     checkpoint = checkNotNull(dao.run(token.id))
                 }
                 if (OrbitTaskRepository.prechecked(task) && !OrbitWatchSources.isScript(task.source) &&
-                    checkpoint.fingerprint == task.lastFingerprint &&
+                    // An empty fingerprint was forgotten on purpose (see forgetReadingFingerprints), never a match.
+                    checkpoint.fingerprint.isNotEmpty() && checkpoint.fingerprint == task.lastFingerprint &&
                     task.notifyPolicy == "CHANGES") {
                     complete(context, state, task.lastObservation, "", "", OrbitRunEntity.UNCHANGED)
                 } else if (!task.useSubagent) {
@@ -370,7 +383,7 @@ object OrbitTaskRunner {
         }
     }
 
-    private fun sha(text: String): String = MessageDigest.getInstance("SHA-256")
+    internal fun sha(text: String): String = MessageDigest.getInstance("SHA-256")
         .digest(text.toByteArray()).joinToString("") { "%02x".format(it) }
 
     /**
