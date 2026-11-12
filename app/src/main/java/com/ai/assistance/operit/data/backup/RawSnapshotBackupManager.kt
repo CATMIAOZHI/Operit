@@ -27,6 +27,7 @@ import java.util.zip.ZipOutputStream
 import kotlin.system.measureTimeMillis
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -81,6 +82,7 @@ object RawSnapshotBackupManager {
 
     enum class ExportProgress {
         PREPARING,
+        ZIPPING_WORKSPACES,
         SCANNING_FILES,
         ZIPPING_FILES,
         ZIPPING_EXTERNAL_FILES,
@@ -122,15 +124,210 @@ object RawSnapshotBackupManager {
     ): File = withContext(Dispatchers.IO) {
         mutex.withLock {
             check(!processRestartRequired) { "Application restart required before another snapshot operation" }
-            TokenStatSpool.withExclusiveSnapshotAccess(context, drainBefore = true) {
-                exportToBackupDirLocked(
-                    context,
-                    options,
-                    onProgress,
-                    requireDatabaseCheckpoint = true,
-                )
+            // Orbit workspaces (maybe big cloned projects) are packed first, before the stats lock is
+            // taken: they are not token stats or databases, and new model requests wait on that lock.
+            val zip = openSnapshotZip()
+            try {
+                withContext(Dispatchers.Main) { onProgress?.invoke(ExportProgressInfo(ExportProgress.PREPARING)) }
+                // Shown only once a workspace file is being packed, so a phone with none never sees it.
+                addOrbitWorkspacesToZip(context, zip.zos) { packed ->
+                    if (onProgress != null) {
+                        mainHandler.post {
+                            onProgress.invoke(ExportProgressInfo(stage = ExportProgress.ZIPPING_WORKSPACES, scannedFiles = packed))
+                        }
+                    }
+                }
+            } catch (e: Throwable) {
+                zip.discard()
+                throw e
+            }
+            try {
+                TokenStatSpool.withExclusiveSnapshotAccess(context, drainBefore = true) {
+                    exportToBackupDirLocked(
+                        context,
+                        options,
+                        onProgress,
+                        requireDatabaseCheckpoint = true,
+                        opened = zip,
+                    )
+                }
+                // Writing the zip's index for every workspace file and moving it into place happen after
+                // the stats lock is let go, so new model requests do not wait for them.
+                finishSnapshotZip(zip, onProgress)
+            } catch (e: Throwable) {
+                zip.discard()
+                throw e
             }
         }
+    }
+
+    /** A snapshot zip being written: the zip goes to [tmpFile] and is renamed to [outFile] when done. */
+    private class OpenedZip(
+        val outFile: File,
+        val tmpFile: File,
+        private val raw: FileOutputStream,
+        val zos: ZipOutputStream,
+    ) {
+        /** Drops a zip cut short: the file is closed first, so no index is written for it, then deleted. */
+        fun discard() {
+            runCatching { raw.close() }
+            runCatching { zos.close() } // only frees the compressor; writing fails on the closed file
+            tmpFile.delete()
+        }
+    }
+
+    private suspend fun finishSnapshotZip(zip: OpenedZip, onProgress: ((ExportProgressInfo) -> Unit)?): File {
+        val job = kotlin.coroutines.coroutineContext
+        withContext(Dispatchers.Main) { onProgress?.invoke(ExportProgressInfo(ExportProgress.FINALIZING)) }
+        // Writing the index stops too when cancelled: the file underneath checks on every write.
+        zip.zos.close()
+        job.ensureActive()
+        val outFile = zip.outFile
+        if (outFile.exists()) {
+            outFile.delete()
+        }
+        if (!zip.tmpFile.renameTo(outFile)) {
+            try {
+                zip.tmpFile.inputStream().use { input ->
+                    FileOutputStream(outFile).use { output ->
+                        val buffer = ByteArray(64 * 1024)
+                        while (true) {
+                            job.ensureActive()
+                            val read = input.read(buffer)
+                            if (read < 0) break
+                            output.write(buffer, 0, read)
+                        }
+                    }
+                }
+            } catch (e: Throwable) {
+                outFile.delete()
+                throw e
+            }
+            zip.tmpFile.delete()
+        }
+        AppLogger.i(TAG, "export done: ${outFile.absolutePath} (${outFile.length()} bytes)")
+        return outFile
+    }
+
+    private suspend fun openSnapshotZip(): OpenedZip {
+        val job = kotlin.coroutines.coroutineContext
+        val exportDir = OperitBackupDirs.rawSnapshotDir()
+        val timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss"))
+        val outFile = File(exportDir, "$ZIP_PREFIX$timestamp.zip")
+        val tmpFile = File(exportDir, "${outFile.name}.tmp")
+        if (tmpFile.exists()) {
+            tmpFile.delete()
+        }
+        val raw = FileOutputStream(tmpFile)
+        // Every write to the file checks for cancel, so even writing the index at the end stops.
+        val sink = object : java.io.FilterOutputStream(raw) {
+            override fun write(b: Int) {
+                job.ensureActive()
+                out.write(b)
+            }
+
+            override fun write(b: ByteArray, off: Int, len: Int) {
+                job.ensureActive()
+                out.write(b, off, len)
+            }
+        }
+        return OpenedZip(outFile, tmpFile, raw, ZipOutputStream(BufferedOutputStream(sink, 64 * 1024)))
+    }
+
+    /**
+     * Adds every Orbit's workspace/ under files/orbit/ to [zos]. No link is followed, so a cloned
+     * project that links back to itself or elsewhere is packed once, as it is. Stops when cancelled.
+     * Only a file or folder deleted while packing is left out; any other read error fails the backup,
+     * so a backup that succeeds never misses part of a workspace. [onPacked] gets null when the first
+     * file starts (it may be a big one), then the count of packed files now and then.
+     */
+    private suspend fun addOrbitWorkspacesToZip(context: Context, zos: ZipOutputStream, onPacked: (Int?) -> Unit) {
+        val job = kotlin.coroutines.coroutineContext
+        val orbitRoot = File(context.filesDir, "orbit")
+        val noFollow = java.nio.file.LinkOption.NOFOLLOW_LINKS
+        // Only a missing folder is skipped; one whose details cannot be read fails the backup.
+        fun attrsOrNull(path: java.nio.file.Path) = try {
+            java.nio.file.Files.readAttributes(
+                path, java.nio.file.attribute.BasicFileAttributes::class.java, noFollow
+            )
+        } catch (e: java.nio.file.NoSuchFileException) {
+            null
+        }
+        if (attrsOrNull(orbitRoot.toPath())?.isDirectory != true) return
+        val buffer = ByteArray(64 * 1024)
+        var packed = 0
+        var reportedAt = 0L
+        var started = false
+        fun gone(e: Throwable) = e is java.nio.file.NoSuchFileException ||
+            (e is java.nio.file.DirectoryIteratorException && e.cause is java.nio.file.NoSuchFileException)
+        // A folder that cannot be listed fails the backup instead of looking empty.
+        val orbitDirs = java.nio.file.Files.newDirectoryStream(orbitRoot.toPath()).use { stream ->
+            stream.map { it.toFile() }.sortedBy { it.name }
+        }
+        orbitDirs.forEach { orbitDir ->
+            val workspace = File(orbitDir, com.ai.assistance.operit.features.orbit.OrbitFiles.WORKSPACE)
+            // A link is seen as itself (not a folder) here, so it is not followed.
+            if (attrsOrNull(orbitDir.toPath())?.isDirectory != true) return@forEach
+            val attrs = attrsOrNull(workspace.toPath()) ?: return@forEach
+            if (!attrs.isDirectory) return@forEach
+            val prefix = ENTRY_FILES + "orbit/${orbitDir.name}/${workspace.name}/"
+            java.nio.file.Files.walkFileTree(workspace.toPath(), object : java.nio.file.SimpleFileVisitor<java.nio.file.Path>() {
+                override fun preVisitDirectory(
+                    dir: java.nio.file.Path,
+                    attrs: java.nio.file.attribute.BasicFileAttributes
+                ): java.nio.file.FileVisitResult {
+                    job.ensureActive()
+                    return java.nio.file.FileVisitResult.CONTINUE
+                }
+
+                override fun visitFile(
+                    file: java.nio.file.Path,
+                    attrs: java.nio.file.attribute.BasicFileAttributes
+                ): java.nio.file.FileVisitResult {
+                    job.ensureActive()
+                    if (!attrs.isRegularFile) return java.nio.file.FileVisitResult.CONTINUE
+                    val rel = workspace.toPath().relativize(file).joinToString("/")
+                    val input = try {
+                        // Read straight in 64 KB chunks; no extra buffer per file.
+                        java.nio.file.Files.newInputStream(file, java.nio.file.LinkOption.NOFOLLOW_LINKS)
+                    } catch (e: java.nio.file.NoSuchFileException) {
+                        return java.nio.file.FileVisitResult.CONTINUE
+                    }
+                    if (!started) {
+                        started = true
+                        onPacked(null)
+                    }
+                    input.use {
+                        zos.putNextEntry(ZipEntry(prefix + rel))
+                        while (true) {
+                            job.ensureActive()
+                            val read = it.read(buffer)
+                            if (read <= 0) break
+                            zos.write(buffer, 0, read)
+                        }
+                        zos.closeEntry()
+                    }
+                    packed++
+                    val now = System.currentTimeMillis()
+                    if (now - reportedAt >= 250L) {
+                        reportedAt = now
+                        onPacked(packed)
+                    }
+                    return java.nio.file.FileVisitResult.CONTINUE
+                }
+
+                override fun visitFileFailed(file: java.nio.file.Path, exc: java.io.IOException): java.nio.file.FileVisitResult {
+                    if (gone(exc)) return java.nio.file.FileVisitResult.CONTINUE
+                    throw exc
+                }
+
+                override fun postVisitDirectory(dir: java.nio.file.Path, exc: java.io.IOException?): java.nio.file.FileVisitResult {
+                    if (exc != null && !gone(exc)) throw exc
+                    return java.nio.file.FileVisitResult.CONTINUE
+                }
+            })
+        }
+        if (packed > 0) onPacked(packed)
     }
 
     private suspend fun exportToBackupDirLocked(
@@ -138,18 +335,28 @@ object RawSnapshotBackupManager {
         options: SnapshotOptions,
         onProgress: ((ExportProgressInfo) -> Unit)?,
         performDatabaseCheckpoint: Boolean = true,
-        requireDatabaseCheckpoint: Boolean = false
+        requireDatabaseCheckpoint: Boolean = false,
+        // A zip already holding the Orbit workspaces; without it one is opened and they are packed first.
+        opened: OpenedZip? = null,
     ): File = TokenStatsResetCoordinator.withCleanupSnapshotAccess {
             AppLogger.i(TAG, "export start (includeTerminalData=${options.includeTerminalData})")
             withContext(Dispatchers.Main) { onProgress?.invoke(ExportProgressInfo(ExportProgress.PREPARING)) }
-            val exportDir = OperitBackupDirs.rawSnapshotDir()
-            val timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss"))
-            val outFile = File(exportDir, "$ZIP_PREFIX$timestamp.zip")
-            val tmpFile = File(exportDir, "${outFile.name}.tmp")
-
-            if (tmpFile.exists()) {
-                tmpFile.delete()
+            // Without a zip that already holds the workspaces (the safety snapshot before a migration),
+            // they are packed here first, the same strict way; the files/ walk then leaves them out.
+            val zip = opened ?: openSnapshotZip().also { fresh ->
+                try {
+                    addOrbitWorkspacesToZip(context, fresh.zos) {}
+                } catch (e: Throwable) {
+                    fresh.discard()
+                    throw e
+                }
             }
+            // Any failure from here closes the zip and removes the half-written .tmp, on every entry
+            // point (the safety snapshot before a migration calls this directly).
+            try {
+            val workspaces = WorkspaceMode.SKIP
+            val job = kotlin.coroutines.coroutineContext
+            val alive = { job.ensureActive() }
 
             val dataDir = context.dataDir
             val externalFilesDir = requireNotNull(context.getExternalFilesDir(null)) {
@@ -183,7 +390,8 @@ object RawSnapshotBackupManager {
                 includeTerminalData = options.includeTerminalData
             )
 
-            ZipOutputStream(BufferedOutputStream(FileOutputStream(tmpFile))).use { zos ->
+            // Not closed here: closing writes the index of every entry, done by finishSnapshotZip.
+            zip.zos.let { zos ->
                 zos.putNextEntry(ZipEntry(ENTRY_MANIFEST))
                 zos.write(json.encodeToString(manifest).toByteArray(Charsets.UTF_8))
                 zos.closeEntry()
@@ -202,6 +410,8 @@ object RawSnapshotBackupManager {
                     dir = context.filesDir,
                     entryPrefix = ENTRY_FILES,
                     excludedTopLevelDirNames = excludedNames,
+                    workspaces = workspaces,
+                    alive = alive,
                     onScannedCountChanged = { scanned ->
                         if (onProgress != null) {
                             mainHandler.post {
@@ -226,7 +436,7 @@ object RawSnapshotBackupManager {
                     try {
                         com.ai.assistance.operit.core.agent.collaboration.CollaborationStore(context)
                             .copyForBackup(collaborationSnapshot)
-                        addDirToZip(zos, collaborationSnapshot, ENTRY_FILES)
+                        addDirToZip(zos, collaborationSnapshot, ENTRY_FILES, alive = alive)
                     } finally {
                         collaborationSnapshot.deleteRecursively()
                     }
@@ -236,6 +446,8 @@ object RawSnapshotBackupManager {
                         entryPrefix = ENTRY_FILES,
                         excludedTopLevelDirNames = excludedNames,
                         totalFiles = filesTotalCount,
+                        workspaces = workspaces,
+                        alive = alive,
                         onPercentChanged = { percent ->
                             if (onProgress != null) {
                                 mainHandler.post {
@@ -251,7 +463,8 @@ object RawSnapshotBackupManager {
                 val externalFilesTotalCount = totalFilesForZip(
                     dir = externalFilesDir,
                     entryPrefix = ENTRY_EXTERNAL_FILES,
-                    excludedTopLevelDirNames = emptySet()
+                    excludedTopLevelDirNames = emptySet(),
+                    alive = alive,
                 )
                 withContext(Dispatchers.Main) {
                     onProgress?.invoke(ExportProgressInfo(ExportProgress.ZIPPING_EXTERNAL_FILES, 0))
@@ -262,6 +475,7 @@ object RawSnapshotBackupManager {
                         dir = externalFilesDir,
                         entryPrefix = ENTRY_EXTERNAL_FILES,
                         totalFiles = externalFilesTotalCount,
+                        alive = alive,
                         onPercentChanged = { percent ->
                             if (onProgress != null) {
                                 mainHandler.post {
@@ -279,30 +493,25 @@ object RawSnapshotBackupManager {
                 AppLogger.i(TAG, "export add external_files done in ${externalFilesMs}ms")
 
                 withContext(Dispatchers.Main) { onProgress?.invoke(ExportProgressInfo(ExportProgress.ZIPPING_SHARED_PREFS)) }
-                val sharedPrefsMs = measureTimeMillis { addDirToZip(zos, sharedPrefsDir, ENTRY_SHARED_PREFS) }
+                val sharedPrefsMs = measureTimeMillis { addDirToZip(zos, sharedPrefsDir, ENTRY_SHARED_PREFS, alive = alive) }
                 AppLogger.i(TAG, "export add shared_prefs done in ${sharedPrefsMs}ms")
 
                 withContext(Dispatchers.Main) { onProgress?.invoke(ExportProgressInfo(ExportProgress.ZIPPING_DATASTORE)) }
-                val datastoreMs = measureTimeMillis { addDirToZip(zos, datastoreDir, ENTRY_DATASTORE) }
+                val datastoreMs = measureTimeMillis { addDirToZip(zos, datastoreDir, ENTRY_DATASTORE, alive = alive) }
                 AppLogger.i(TAG, "export add datastore done in ${datastoreMs}ms")
 
                 withContext(Dispatchers.Main) { onProgress?.invoke(ExportProgressInfo(ExportProgress.ZIPPING_DATABASES)) }
-                val databasesMs = measureTimeMillis { addDirToZip(zos, databasesDir, ENTRY_DATABASES) }
+                val databasesMs = measureTimeMillis { addDirToZip(zos, databasesDir, ENTRY_DATABASES, alive = alive) }
                 AppLogger.i(TAG, "export add databases done in ${databasesMs}ms")
             }
 
-            withContext(Dispatchers.Main) { onProgress?.invoke(ExportProgressInfo(ExportProgress.FINALIZING)) }
-            if (outFile.exists()) {
-                outFile.delete()
+            // The normal backup finishes the zip after letting go of the stats lock; the safety
+            // snapshot before a migration (no zip handed in) finishes it here.
+            if (opened == null) finishSnapshotZip(zip, onProgress) else zip.outFile
+            } catch (e: Throwable) {
+                zip.discard()
+                throw e
             }
-
-            if (!tmpFile.renameTo(outFile)) {
-                tmpFile.copyTo(outFile, overwrite = true)
-                tmpFile.delete()
-            }
-
-            AppLogger.i(TAG, "export done: ${outFile.absolutePath} (${outFile.length()} bytes)")
-            outFile
     }
 
     fun isOfficialOperitMigrationCompleted(context: Context): Boolean =
@@ -1047,6 +1256,8 @@ object RawSnapshotBackupManager {
         entryPrefix: String,
         excludedTopLevelDirNames: Set<String> = emptySet(),
         totalFiles: Int = 0,
+        workspaces: WorkspaceMode = WorkspaceMode.INCLUDE,
+        alive: () -> Unit = {},
         onPercentChanged: ((Int) -> Unit)? = null
     ) {
         if (!dir.exists() || !dir.isDirectory) return
@@ -1059,12 +1270,15 @@ object RawSnapshotBackupManager {
         var lastPercent = -1
 
         dir.walkTopDown().onEnter { currentDir ->
-            !shouldPruneDirForZip(currentDir, dir, entryPrefix, excludedTopLevelDirNames)
+            alive()
+            !shouldPruneDirForZip(currentDir, dir, baseCanonical, entryPrefix, excludedTopLevelDirNames, workspaces)
         }.forEach { f ->
+            alive()
             if (!f.isFile) return@forEach
+            if (entryPrefix == ENTRY_FILES && isLinkInOrbitWorkspace(f, dir, baseCanonical)) return@forEach
 
             val canonical = f.canonicalFile
-            if (shouldSkipForZip(canonical, baseCanonical, entryPrefix, excludedTopLevelDirNames)) {
+            if (shouldSkipForZip(canonical, baseCanonical, entryPrefix, excludedTopLevelDirNames, workspaces)) {
                 if (canonical.name == "lock.mdb" && canonical.parentFile?.name?.startsWith("objectbox") == true) {
                     AppLogger.w(TAG, "export skip objectbox lock file: ${canonical.absolutePath}")
                 }
@@ -1082,6 +1296,7 @@ object RawSnapshotBackupManager {
             zos.putNextEntry(ZipEntry(entryName))
             BufferedInputStream(FileInputStream(canonical)).use { input ->
                 while (true) {
+                    alive()
                     val read = input.read(buffer)
                     if (read <= 0) break
                     zos.write(buffer, 0, read)
@@ -1103,22 +1318,20 @@ object RawSnapshotBackupManager {
     private fun shouldPruneDirForZip(
         currentDir: File,
         baseDir: File,
+        baseCanonical: File,
         entryPrefix: String,
-        excludedTopLevelDirNames: Set<String>
+        excludedTopLevelDirNames: Set<String>,
+        workspaces: WorkspaceMode
     ): Boolean {
         if (currentDir == baseDir) return false
         val parent = currentDir.parentFile ?: return false
-        // An Orbit's workspace/ is its scratch (cloned code, drafts): it can be huge and hold links
-        // anywhere, and it is not the user's data, so the snapshot leaves it out like the Orbit export does,
-        // also when a link elsewhere leads into it.
         if (entryPrefix == ENTRY_FILES) {
-            if (currentDir.name == com.ai.assistance.operit.features.orbit.OrbitFiles.WORKSPACE &&
-                parent.parentFile == File(baseDir, "orbit")
-            ) return true
-            val real = runCatching { currentDir.canonicalFile }.getOrNull() ?: return true
-            val baseReal = runCatching { baseDir.canonicalFile }.getOrNull() ?: return true
-            if (real.path.startsWith(baseReal.path + File.separator) &&
-                isOrbitWorkspace(real.path.substring(baseReal.path.length + 1).replace(File.separatorChar, '/'))
+            // Workspaces packed on their own are not walked again, under any name.
+            if (workspaces == WorkspaceMode.SKIP && isInOrbitWorkspace(currentDir, baseCanonical)) return true
+            // A workspace (cloned code, drafts) is walked by its own path only: a link inside it is not
+            // followed (a cloned project can link anywhere, even back to itself), nor is a link to it.
+            if (java.nio.file.Files.isSymbolicLink(currentDir.toPath()) &&
+                (isLinkInOrbitWorkspace(currentDir, baseDir, baseCanonical) || isInOrbitWorkspace(currentDir, baseCanonical))
             ) return true
         }
         if (parent != baseDir) return false
@@ -1137,7 +1350,8 @@ object RawSnapshotBackupManager {
         canonical: File,
         baseCanonical: File,
         entryPrefix: String,
-        excludedTopLevelDirNames: Set<String>
+        excludedTopLevelDirNames: Set<String>,
+        workspaces: WorkspaceMode = WorkspaceMode.INCLUDE
     ): Boolean {
         if (!canonical.path.startsWith(baseCanonical.path + File.separator)) return true
 
@@ -1153,7 +1367,7 @@ object RawSnapshotBackupManager {
         }
 
         if (entryPrefix == ENTRY_FILES) {
-            if (isOrbitWorkspace(relNormalized)) return true
+            if (workspaces == WorkspaceMode.SKIP && isOrbitWorkspace(relNormalized)) return true
             if (top.startsWith("sherpa-ncnn-")) {
                 return true
             }
@@ -1179,6 +1393,9 @@ object RawSnapshotBackupManager {
         return false
     }
 
+    /** How a snapshot of files/ treats Orbit workspaces: walked with the rest, or left to a pass of their own. */
+    private enum class WorkspaceMode { INCLUDE, SKIP }
+
     /** Whether a path under filesDir (with '/') is an Orbit's workspace/ or inside it. */
     private fun isOrbitWorkspace(rel: String): Boolean {
         val parts = rel.split('/')
@@ -1186,10 +1403,26 @@ object RawSnapshotBackupManager {
             parts[2] == com.ai.assistance.operit.features.orbit.OrbitFiles.WORKSPACE
     }
 
+    /** Whether [file], links resolved, is an Orbit's workspace/ or inside it. */
+    private fun isInOrbitWorkspace(file: File, baseCanonical: File): Boolean {
+        val real = runCatching { file.canonicalFile }.getOrNull() ?: return false
+        if (!real.path.startsWith(baseCanonical.path + File.separator)) return false
+        return isOrbitWorkspace(real.path.substring(baseCanonical.path.length + 1).replace(File.separatorChar, '/'))
+    }
+
+    /** Whether [file] is a link that sits in an Orbit's workspace/, by the path walked or by where its folder really is. */
+    private fun isLinkInOrbitWorkspace(file: File, baseDir: File, baseCanonical: File): Boolean {
+        if (!java.nio.file.Files.isSymbolicLink(file.toPath())) return false
+        if (isOrbitWorkspace(file.relativeTo(baseDir).invariantSeparatorsPath)) return true
+        return file.parentFile?.let { isInOrbitWorkspace(it, baseCanonical) } == true
+    }
+
     private fun totalFilesForZip(
         dir: File,
         entryPrefix: String,
         excludedTopLevelDirNames: Set<String>,
+        workspaces: WorkspaceMode = WorkspaceMode.INCLUDE,
+        alive: () -> Unit = {},
         onScannedCountChanged: ((Int) -> Unit)? = null
     ): Int {
         if (!dir.exists() || !dir.isDirectory) return 0
@@ -1199,11 +1432,14 @@ object RawSnapshotBackupManager {
         var lastReported = 0
         var lastReportAtMs = 0L
         dir.walkTopDown().onEnter { currentDir ->
-            !shouldPruneDirForZip(currentDir, dir, entryPrefix, excludedTopLevelDirNames)
+            alive()
+            !shouldPruneDirForZip(currentDir, dir, baseCanonical, entryPrefix, excludedTopLevelDirNames, workspaces)
         }.forEach { f ->
+            alive()
             if (!f.isFile) return@forEach
+            if (entryPrefix == ENTRY_FILES && isLinkInOrbitWorkspace(f, dir, baseCanonical)) return@forEach
             val canonical = f.canonicalFile
-            if (shouldSkipForZip(canonical, baseCanonical, entryPrefix, excludedTopLevelDirNames)) return@forEach
+            if (shouldSkipForZip(canonical, baseCanonical, entryPrefix, excludedTopLevelDirNames, workspaces)) return@forEach
             total++
 
             if (onScannedCountChanged != null) {
@@ -1240,6 +1476,18 @@ object RawSnapshotBackupManager {
         preservedTopLevelDirNames: Set<String>
     ) {
         val baseCanonical = fromDir.canonicalFile
+        val toCanonical = toDir.canonicalFile
+        // A link now standing where the backup has a folder or file (one an Orbit workspace project
+        // made, say) is replaced, and nothing is written outside [toDir] through a linked folder.
+        fun prepare(target: File) {
+            if (java.nio.file.Files.isSymbolicLink(target.toPath())) java.nio.file.Files.delete(target.toPath())
+        }
+        fun requireInside(dir: File) {
+            val real = dir.canonicalFile
+            require(real == toCanonical || real.path.startsWith(toCanonical.path + File.separator)) {
+                "Restore target leaves the app folder: ${dir.path}"
+            }
+        }
         fromDir.walkTopDown().forEach { f ->
             val canonical = f.canonicalFile
             if (!canonical.path.startsWith(baseCanonical.path + File.separator) && canonical != baseCanonical) {
@@ -1259,9 +1507,13 @@ object RawSnapshotBackupManager {
             val target = File(toDir, rel)
 
             if (canonical.isDirectory) {
+                prepare(target)
                 target.mkdirs()
+                requireInside(target)
             } else if (canonical.isFile) {
                 target.parentFile?.mkdirs()
+                target.parentFile?.let(::requireInside)
+                prepare(target)
                 canonical.inputStream().use { input ->
                     target.outputStream().use { output ->
                         input.copyTo(output)

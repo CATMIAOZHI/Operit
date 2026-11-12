@@ -5582,7 +5582,7 @@
     
     <string name="backup_raw_snapshot_title">File Snapshot Backup (Experimental)</string>
     <string name="backup_raw_snapshot_subtitle">Archive/restore app data by file &amp; directory</string>
-    <string name="backup_raw_snapshot_desc">This archives app data that is removed by Clear data: internal files/shared_prefs/datastore/databases and Android/data/package/files (the terminal Linux environment can be very large, so it is excluded by default; Orbit workspaces are excluded too). Restoring overwrites current data and requires an app restart. Some encrypted data may not work after device migration or reinstall.</string>
+    <string name="backup_raw_snapshot_desc">This archives app data that is removed by Clear data: internal files/shared_prefs/datastore/databases and Android/data/package/files (the terminal Linux environment can be very large, so it is excluded by default). Restoring overwrites current data and requires an app restart. Some encrypted data may not work after device migration or reinstall.</string>
     <string name="backup_raw_snapshot_backup_now">Backup now</string>
     <string name="backup_raw_snapshot_restore_from_file">Restore from file</string>
     <string name="backup_raw_snapshot_backing_up">Creating file snapshot backup...</string>
@@ -5590,6 +5590,8 @@
     <string name="backup_raw_snapshot_progress_preparing">Preparing…</string>
     <string name="backup_raw_snapshot_progress_scanning_files">Scanning files…</string>
     <string name="backup_raw_snapshot_progress_scanning_files_with_count">Scanning files: %1$d</string>
+    <string name="backup_raw_snapshot_progress_zipping_workspaces">Packing Orbit workspaces: %1$d files</string>
+    <string name="backup_raw_snapshot_progress_zipping_workspaces_started">Packing Orbit workspaces…</string>
     <string name="backup_raw_snapshot_progress_zipping_files">Packaging files...</string>
     <string name="backup_raw_snapshot_progress_zipping_external_files">Packaging Android/data/package/files...</string>
     <string name="backup_raw_snapshot_progress_zipping_shared_prefs">Packaging shared_prefs...</string>
@@ -9571,7 +9573,7 @@
     <string name="orbit_storage_sent">Files in the chat</string>
     <string name="orbit_storage_sent_desc">Each file sent in the chat keeps a copy that never changes</string>
     <string name="orbit_storage_workspace">Workspace</string>
-    <string name="orbit_storage_workspace_desc">Where %1$s works, such as downloaded code and drafts; never deleted automatically, and not exported or backed up</string>
+    <string name="orbit_storage_workspace_desc">Where %1$s works, such as downloaded code and drafts; never deleted automatically</string>
     <string name="orbit_storage_limit">Library size</string>
     <string name="orbit_storage_limit_desc">With auto delete on, the Library and the chat\'s files are each cleaned down to this size, oldest first. The newest 100 always stay, so they can take more than this.</string>
     <string name="orbit_storage_gb">%1$d GB</string>
