@@ -681,6 +681,7 @@ class MessageCoordinationDelegate(
             !turnOptions.isSubTask &&
             enableGroupOrchestration &&
             shouldRunGroupOrchestration(
+                chatId = chatId,
                 promptFunctionType = promptFunctionType,
                 isContinuation = isContinuation,
                 isAutoContinuation = isAutoContinuation,
@@ -1149,6 +1150,7 @@ class MessageCoordinationDelegate(
     }
 
     private fun shouldRunGroupOrchestration(
+        chatId: String,
         promptFunctionType: PromptFunctionType,
         isContinuation: Boolean,
         isAutoContinuation: Boolean,
@@ -1164,6 +1166,11 @@ class MessageCoordinationDelegate(
         if (!proxySenderNameOverride.isNullOrBlank()) return false
         if (!messageTextOverride.isNullOrBlank()) return false
         if (!chatIdOverride.isNullOrBlank()) return false
+        // An Orbit chat always speaks as its Orbit and compacts before every request, whatever
+        // character group the rest of the app has selected.
+        if (com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context)
+                .loadedSettingsBlocking().ownerForChat(chatId) != null
+        ) return false
         val activePrompt = runBlocking { activePromptManager.getActivePrompt() }
         if (activePrompt !is ActivePrompt.CharacterGroup) return false
         return true
