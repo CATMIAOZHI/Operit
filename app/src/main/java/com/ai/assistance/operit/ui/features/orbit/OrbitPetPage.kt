@@ -385,7 +385,7 @@ private fun PetNote(text: String, modifier: Modifier = Modifier) {
 @Composable
 private fun PetSwitchRow(title: String, note: String?, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(
-        Modifier.fillMaxWidth().toggleable(checked, role = Role.Switch, onValueChange = onChange)
+        Modifier.fillMaxWidth().toggleable(checked, role = Role.Switch, onValueChange = orbitToggle(onChange))
             .padding(horizontal = 22.dp, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

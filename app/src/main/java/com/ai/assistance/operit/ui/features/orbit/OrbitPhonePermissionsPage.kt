@@ -103,7 +103,7 @@ internal fun OrbitNotificationSettingsPage(orbit: OrbitProfile, onBack: () -> Un
                 }
                 Spacer(Modifier.width(12.dp))
                 Switch(modifier = Modifier.semantics { contentDescription = label },
-                    checked = enabled, enabled = !saving, onCheckedChange = { on ->
+                    checked = enabled, enabled = !saving, onCheckedChange = orbitToggle { on ->
                         val before = enabled
                         enabled = on
                         saving = true
@@ -295,7 +295,7 @@ private fun PhonePermissionsPage(
                     }
                     Spacer(Modifier.width(12.dp))
                     Switch(modifier = Modifier.semantics { contentDescription = keepAliveLabel },
-                        checked = keepAlive == true, enabled = keepAlive != null && !savingKeepAlive, onCheckedChange = { enabled ->
+                        checked = keepAlive == true, enabled = keepAlive != null && !savingKeepAlive, onCheckedChange = orbitToggle { enabled ->
                         savingKeepAlive = true
                         scope.launch {
                             try {

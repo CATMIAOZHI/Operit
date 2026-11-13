@@ -6,7 +6,10 @@ import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
@@ -24,6 +27,10 @@ import org.json.JSONObject
 internal class OrbitReactions private constructor(private val file: File) {
     private val mutex = Mutex()
     private val state = MutableStateFlow<Map<String, Map<String, String>>?>(null)
+    private val placed = MutableSharedFlow<String>(extraBufferCapacity = 8)
+
+    /** The chat of each reaction [set] just put on or changed, for the chat on screen to feel it land. */
+    val reacted: SharedFlow<String> = placed.asSharedFlow()
 
     /** Bubble key -> emoji for one chat. */
     fun observe(chatId: String): Flow<Map<String, String>> =
@@ -32,10 +39,12 @@ internal class OrbitReactions private constructor(private val file: File) {
     suspend fun set(chatId: String, key: String, emoji: String) = mutex.withLock {
         val all = read().toMutableMap()
         val chat = all[chatId].orEmpty().toMutableMap()
+        val changed = chat[key] != emoji
         chat[key] = emoji
         // Old reactions are only decoration; keep the newest ones.
         all[chatId] = chat.entries.sortedByDescending { timeOf(it.key) }.take(MAX_PER_CHAT).associate { it.key to it.value }
         write(all)
+        if (changed) placed.tryEmit(chatId)
     }
 
     /** Sets [emoji] on a message, or takes it off when it is already the one there, like a tapback. */

@@ -597,10 +597,13 @@ private fun OrbitChatPage(
             }
         }
     }
-    val userReactions = remember(userReactionMap, currentChatId) {
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    val userReactions = remember(userReactionMap, currentChatId, haptic) {
         com.ai.assistance.operit.ui.features.chat.components.OrbitUserReactions(userReactionMap) { key, emoji, said ->
             // Taking a tapback off says nothing to Orbit; putting one on lets it decide what to do.
             val adding = userReactionMap[key] != emoji
+            // Every tapback the user gives passes here (menu, picker, double tap, cards), so it is felt the same.
+            if (adding) OrbitHaptics.reaction(haptic) else OrbitHaptics.reactionRemoved(haptic)
             val chatId = currentChatId
             reactionScope.launch {
                 try {
@@ -655,6 +658,14 @@ private fun OrbitChatPage(
         lifecycleState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
     LaunchedEffect(currentChatId, unreadChats, chatOnScreen) {
         if (chatOnScreen && currentChatId in unreadChats) com.ai.assistance.operit.features.orbit.OrbitDelivery.markSeen(currentChatId)
+    }
+    // Orbit's tapback on one of the user's messages lands with a tap, while that chat is in view.
+    // The developer view can show one of the chat's subagents instead; its own chat is not in view then.
+    val reactionFelt = rememberUpdatedState(chatOnScreen && !(devView && devSubChatId != null))
+    LaunchedEffect(orbit.id, currentChatId) {
+        com.ai.assistance.operit.features.orbit.OrbitReactions.of(context, orbit.id).reacted.collect { chatId ->
+            if (chatId == currentChatId && reactionFelt.value) OrbitHaptics.reaction(haptic)
+        }
     }
     val hasUnread = unreadChats.any { (it != currentChatId || !chatOnScreen) && it in orbit.talkChatIds }
     // The tab pages keep one header; it reads the newest unread state from here.
