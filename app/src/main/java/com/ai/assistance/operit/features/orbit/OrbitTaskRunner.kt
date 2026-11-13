@@ -715,7 +715,10 @@ object OrbitTaskRunner {
                 turnOptions = ChatTurnOptions(persistTurn = true, notifyReply = false,
                     deliveredByTool = true, disableSummary = true, useComposerReply = false,
                     toolsEnabled = true,
-                    terminalToolNames = setOf(FINISH, OrbitTaskActionTools.WAIT)),
+                    terminalToolNames = setOf(FINISH, OrbitTaskActionTools.WAIT),
+                    // It runs with Orbit's own prompt, so its replies carry Orbit's name, not the default card's.
+                    assistantRoleNameOverride = OrbitPreferences.getInstance(context).current().orbits
+                        .firstOrNull { it.id == task.orbitId }?.name?.takeIf { it.isNotBlank() }),
                 responseStreamAcquireTimeoutMs = 30_000, responseTimeoutMs = timeoutMinutes * 60_000L,
             )) }
             val started = (result as? ChatTurnDispatchResult.Started)?.session

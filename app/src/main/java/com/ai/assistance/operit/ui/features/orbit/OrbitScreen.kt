@@ -981,6 +981,19 @@ private fun OrbitChatPage(
                         if (!devView && currentChatId == orbit.chatId && !forkingMessage && orbit.canAddSideChat)
                             ::forkMessage else null,
                     com.ai.assistance.operit.ui.features.chat.components.LocalShowHiddenChatRows provides devView,
+                    com.ai.assistance.operit.ui.features.chat.components.LocalOrbitOwnAvatar provides
+                        // Only in Orbit's own chats and its task runs: a subagent may share its name.
+                        (devSubChatId ?: currentChatId).takeIf { shown ->
+                            devView && orbit.name.isNotBlank() &&
+                                (shown in orbit.talkChatIds || shown.startsWith("orbit-task-"))
+                        }?.let {
+                            val orbitNow = rememberUpdatedState(orbit)
+                            remember(orbit.name) {
+                                com.ai.assistance.operit.ui.features.chat.components.OrbitOwnAvatar(orbit.name.trim()) {
+                                    OrbitAvatar(orbitNow.value, 32, petVisible = false)
+                                }
+                            }
+                        },
                     // A long screenshot only scrolls the chat while nothing covers it.
                     com.ai.assistance.operit.ui.features.chat.components.LocalLongScreenshotEnabled provides
                         (chatOnScreen && stack.isEmpty() && editingFile == null),
