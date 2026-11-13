@@ -105,6 +105,12 @@ val LocalOrbitReactions = compositionLocalOf<Map<String, String>> { emptyMap() }
 val LocalShowHiddenChatRows = compositionLocalOf { false }
 
 /**
+ * Set while opening Orbit's developer view: told whether the transcript's replies are still being
+ * prepared, so the view is recorded for its slide-in only once they show.
+ */
+val LocalTranscriptPreparing = compositionLocalOf<androidx.compose.runtime.MutableState<Boolean>?> { null }
+
+/**
  * In Orbit's developer view: Orbit's own picture, drawn beside replies signed with its [name]
  * (its chats and its background runs), so they never look like a role card's.
  */

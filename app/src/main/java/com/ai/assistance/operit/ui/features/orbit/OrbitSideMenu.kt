@@ -375,10 +375,6 @@ internal fun OrbitSideMenu(
                 closeMenu()
                 onOpenSettings()
             },
-            onLeaveOrbit = {
-                closeMenu()
-                onLeaveOrbit()
-            },
             onClose = { searching = false },
         )
     }
@@ -459,16 +455,18 @@ private fun MenuContent(
         )
     }
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 16.dp)) {
+        // The tablet sidebar is narrow: a round button there leaves the Orbit's name its room.
+        val sidebar = selectedTab != null
         Row(Modifier.fillMaxWidth().padding(top = 12.dp, start = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(
                 orbit.name.ifBlank { stringResource(R.string.nav_orbit) },
                 style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold,
                 maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
             )
-            Spacer(Modifier.width(12.dp))
-            OrbitBackToOperitPill(onLeaveOrbit)
+            Spacer(Modifier.width(if (sidebar) 8.dp else 12.dp))
+            OrbitBackToOperitPill(onLeaveOrbit, compact = sidebar)
         }
-        Spacer(Modifier.height(20.dp))
+        Spacer(Modifier.height(if (sidebar) 16.dp else 20.dp))
         // A chat counts as shown only while the chat tab is.
         val onChat = selectedTab == null || selectedTab == OrbitTab.CHAT
         val tabRows: @Composable () -> Unit = {
@@ -485,6 +483,7 @@ private fun MenuContent(
                         title = stringResource(if (tab == OrbitTab.CHAT) R.string.orbit_chats_main else tab.label),
                         selected = selectedTab == tab && (tab != OrbitTab.CHAT || currentChatId == orbit.chatId),
                         unread = tab == OrbitTab.CHAT && orbit.chatId in unread,
+                        compact = true,
                         onClick = { onSelectTab(tab) },
                     )
                 }
@@ -529,6 +528,7 @@ private fun MenuContent(
                     ChatRow(
                         icon = "message-circle", title = side.title, selected = onChat && currentChatId == side.chatId,
                         unread = side.chatId in unread, pinned = side.pinned, highlighted = menu,
+                        compact = sidebar,
                         onClick = { onOpen(side.chatId) }, onLongClick = { menu = true },
                         longClickLabel = stringResource(R.string.orbit_library_more_actions),
                     )
@@ -718,20 +718,25 @@ private fun EmptySideChats(onNew: () -> Unit, enabled: Boolean) {
     }
 }
 
-/** "Back to Operit", where Muse has "Invite"; on the menu and the search page. */
+/** "Back to Operit", where Muse has "Invite", on the menu; [compact] is a round button for the narrow tablet sidebar. */
 @Composable
-internal fun OrbitBackToOperitPill(onClick: () -> Unit) {
+internal fun OrbitBackToOperitPill(onClick: () -> Unit, compact: Boolean = false) {
+    val label = stringResource(R.string.orbit_menu_back_to_operit)
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(50),
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
         shadowElevation = 2.dp,
+        modifier = if (compact) Modifier.size(40.dp).semantics { contentDescription = label } else Modifier,
     ) {
-        Row(Modifier.heightIn(min = 44.dp).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (compact) Box(contentAlignment = Alignment.Center) {
+            // Leaving, not a back arrow that could read as folding the sidebar away.
+            Icon(orbitIcon("log-out"), null, Modifier.size(18.dp))
+        } else Row(Modifier.heightIn(min = 44.dp).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(orbitIcon("arrow-left"), null, Modifier.size(18.dp))
             Spacer(Modifier.width(6.dp))
-            Text(stringResource(R.string.orbit_menu_back_to_operit), style = MaterialTheme.typography.labelLarge)
+            Text(label, style = MaterialTheme.typography.labelLarge)
         }
     }
 }
@@ -767,6 +772,8 @@ private fun ChatRow(
     unread: Boolean,
     pinned: Boolean = false,
     highlighted: Boolean = false,
+    /** The tablet sidebar's denser rows, like Muse's. */
+    compact: Boolean = false,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
     longClickLabel: String? = null,
@@ -774,11 +781,11 @@ private fun ChatRow(
     val unreadLabel = stringResource(R.string.orbit_chats_unread)
     val pinnedLabel = stringResource(R.string.orbit_chats_pinned)
     Row(
-        Modifier.fillMaxWidth().heightIn(min = 56.dp).clip(RoundedCornerShape(50))
+        Modifier.fillMaxWidth().heightIn(min = if (compact) 44.dp else 56.dp).clip(RoundedCornerShape(50))
             .background(if (selected || highlighted) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.07f) else Color.Transparent)
             .combinedClickable(onClick = onClick, onLongClick = onLongClick, onLongClickLabel = longClickLabel)
             .semantics { this.selected = selected }
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .padding(horizontal = 16.dp, vertical = if (compact) 6.dp else 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(orbitIcon(icon), null, Modifier.size(22.dp))
