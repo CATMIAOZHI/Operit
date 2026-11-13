@@ -110,7 +110,7 @@ object SystemToolPrompts {
         tools = listOf(
             ToolPrompt(
                 name = "sleep",
-                description = "Demonstration tool that pauses briefly.",
+                description = "Pauses for a while. A new message arriving in this chat ends it early; the result then says so.",
                 parametersStructured = listOf(
                     ToolParameterSchema(name = "duration_ms", type = "integer", description = "milliseconds, default 1000, >= 0", required = false, default = "1000")
                 )
@@ -135,7 +135,7 @@ object SystemToolPrompts {
         tools = listOf(
             ToolPrompt(
                 name = "sleep",
-                description = "演示工具，短暂暂停。",
+                description = "暂停一段时间。期间这个聊天来了新消息会提前结束，结果里会说明。",
                 parametersStructured = listOf(
                     ToolParameterSchema(name = "duration_ms", type = "integer", description = "毫秒，默认1000，>= 0", required = false, default = "1000")
                 )

@@ -5526,6 +5526,7 @@
     <string name="xml_block">XML Block</string>
     <string name="tool_call_block">Tool Call</string>
     <string name="tool_result_block">Tool Result</string>
+    <string name="tool_sleep_woken_by_message">Woke early for a new message (%1$d of %2$d ms)</string>
     <string name="thinking_process_block">Thinking Process</string>
     <string name="search_content_block">Search Content</string>
     <string name="status_info_block">Status Info</string>

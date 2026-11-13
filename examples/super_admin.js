@@ -16,8 +16,8 @@ METADATA
         {
             "name": "terminal",
             "description": {
-                "zh": "在持久 Ubuntu 会话执行命令，保留目录、变量和函数。默认等待10秒，未结束返回running和runId，用terminal_wait查询或terminal_cancel取消。yieldMs仅限制本次等待；timeoutMs是执行总上限，默认30分钟。output为日志尾部快照，screen为可替换的当前终端画面（可能包含先前输出），不要重复拼接。completed仅表示结束；exitCode为0才表示命令成功，非0为失败，null为未知。sessionExitCode仅表示会话进程退出码，不能当作命令码。大日志请重定向到文件。不要在复用会话直接exit，需要时用子Shell。",
-                "en": "Run in a persistent Ubuntu shell, preserving cwd, variables and functions. Waits 10s by default; running and runId mean it continues. Poll with terminal_wait or cancel with terminal_cancel. yieldMs bounds this wait; timeoutMs bounds execution (default 30 minutes). output is a log tail; screen is a replaceable current terminal display and may include earlier output. Do not concatenate snapshots. completed means ended; exitCode=0 means command success, nonzero means failure, null means unknown. sessionExitCode describes only the session process. Redirect large logs to a file. Use a subshell instead of exiting the persistent shell."
+                "zh": "在持久 Ubuntu 会话执行命令，保留目录、变量和函数。command、background、timeoutMs、yieldMs 四个参数每次都必须传，缺一个就报错，例如 background=\"false\"、timeoutMs=\"1800000\"、yieldMs=\"10000\"。yieldMs内未结束返回running和runId，用terminal_wait查询或terminal_cancel取消。yieldMs仅限制本次等待；timeoutMs是执行总上限。output为日志尾部快照，screen为可替换的当前终端画面（可能包含先前输出），不要重复拼接。completed仅表示结束；exitCode为0才表示命令成功，非0为失败，null为未知。sessionExitCode仅表示会话进程退出码，不能当作命令码。大日志请重定向到文件。不要在复用会话直接exit，需要时用子Shell。",
+                "en": "Run in a persistent Ubuntu shell, preserving cwd, variables and functions. Pass all four parameters on every call (command, background, timeoutMs, yieldMs); a missing one is an error. Typical values: background=\"false\", timeoutMs=\"1800000\", yieldMs=\"10000\". If it has not finished within yieldMs, running and runId mean it continues. Poll with terminal_wait or cancel with terminal_cancel. yieldMs bounds this wait; timeoutMs bounds execution. output is a log tail; screen is a replaceable current terminal display and may include earlier output. Do not concatenate snapshots. completed means ended; exitCode=0 means command success, nonzero means failure, null means unknown. sessionExitCode describes only the session process. Redirect large logs to a file. Use a subshell instead of exiting the persistent shell."
             },
             "parameters": [
                 {
@@ -32,29 +32,29 @@ METADATA
                 {
                     "name": "background",
                     "description": {
-                        "zh": "true：独立后台会话，立即返回可查询的runId。",
-                        "en": "true: use a separate background session and immediately return a queryable runId."
+                        "zh": "必填，\"true\" 或 \"false\"。true：独立后台会话，立即返回可查询的runId（不等 yieldMs）；false：在本聊天的持久会话里执行。",
+                        "en": "Required, \"true\" or \"false\". true: use a separate background session and immediately return a queryable runId (yieldMs is not waited); false: run in this chat's persistent session."
                     },
                     "type": "string",
-                    "required": false
+                    "required": true
                 },
                 {
                     "name": "timeoutMs",
                     "description": {
-                        "zh": "执行总上限（毫秒，至少3000），默认1800000；与短等待yieldMs分开。",
-                        "en": "Execution deadline in ms, minimum 3000, default 1800000; independent of yieldMs."
+                        "zh": "必填，执行总上限（毫秒，至少3000），一般用1800000（30分钟）；与短等待yieldMs分开。",
+                        "en": "Required. Execution deadline in ms, minimum 3000; usually 1800000 (30 minutes). Independent of yieldMs."
                     },
                     "type": "string",
-                    "required": false
+                    "required": true
                 },
                 {
                     "name": "yieldMs",
                     "description": {
-                        "zh": "本次等待毫秒数，0–30000，默认10000。",
-                        "en": "Wait for this call in ms, 0–30000, default 10000."
+                        "zh": "必填，本次等待毫秒数，0–30000，一般用10000；background为true时不等待。",
+                        "en": "Required. Wait for this call in ms, 0–30000; usually 10000. Not waited when background is true."
                     },
                     "type": "string",
-                    "required": false
+                    "required": true
                 }
             ]
         },
@@ -260,14 +260,26 @@ const superAdmin = (function () {
         return parsed;
     }
     async function terminal(params) {
-        if (!params.command?.trim())
-            throw new Error("command is required");
-        const timeoutMs = params.timeoutMs === undefined ? 1800000 : Number(params.timeoutMs);
+        // Every parameter is required: a call never runs on values the model did not choose.
+        const missing = ["command", "background", "timeoutMs", "yieldMs"].filter(name => {
+            const value = params?.[name];
+            return value === undefined || value === null || String(value).trim() === "";
+        });
+        if (missing.length > 0) {
+            throw new Error(`terminal needs all of command, background, timeoutMs and yieldMs; missing: ${missing.join(", ")}. ` +
+                "For example background=\"false\", timeoutMs=\"1800000\", yieldMs=\"10000\".");
+        }
+        const backgroundText = String(params.background).trim().toLowerCase();
+        if (backgroundText !== "true" && backgroundText !== "false") {
+            throw new Error("background must be \"true\" or \"false\"");
+        }
+        const timeoutMs = Number(params.timeoutMs);
         if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 3000) {
             throw new Error("timeoutMs must be an integer of at least 3000");
         }
-        const background = params.background === "true";
-        const yieldMs = background ? 0 : waitMs(params.yieldMs);
+        const background = backgroundText === "true";
+        const requestedYieldMs = waitMs(String(params.yieldMs));
+        const yieldMs = background ? 0 : requestedYieldMs;
         const session = await Tools.System.terminal.create(background ? getBackgroundTerminalSessionName() : getDefaultTerminalSessionName());
         const result = await Tools.System.terminal.start(session.sessionId, params.command, { timeoutMs, yieldMs });
         return { ...result, command: params.command, background, timeoutMsUsed: timeoutMs,
