@@ -11,6 +11,7 @@ import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.kotlin.mock
@@ -44,10 +45,14 @@ class OrbitReadingTest {
         reading.write(one, listOf(1 to "first", 2 to "second"), replace = false)
         val (saved, _) = reading.write(one, listOf(3 to "only"), replace = true)
         assertEquals(listOf("only"), saved.comments.map { it.text })
-        val id = saved.comments.single().id
-        val gone = reading.delete("book", setOf(id, "5-missing"))
-        assertEquals(listOf(id), gone.map { it.second.id })
+        assertEquals(1, reading.deleteParagraphs(one, setOf(3, 2)))
         assertNull(reading.comments("book", 4))
+        // Numbers from another layout of the chapter do not delete anything.
+        reading.write(one, listOf(1 to "kept"), replace = false)
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking { reading.deleteParagraphs(chapter(listOf("a", "b", "c"), "h2"), setOf(1)) }
+        }
+        assertEquals(1, reading.deleteChapter("book", 4))
         reading.write(one, listOf(1 to "again"), replace = false)
         assertEquals(1, reading.deleteChapter("book", 4))
         assertTrue(reading.commentedIndexes("book").isEmpty())
@@ -172,18 +177,31 @@ class OrbitReadingTest {
     }
 
     @Test
-    fun anotherChatCannotReplaceTheChapterVersionSeenByThisChat() {
-        val root = Files.createTempDirectory("orbit-reading-scopes").toFile()
+    fun theReadVersionIsKeptOnDiskForTheWholeOrbit(): Unit = runBlocking {
+        val root = Files.createTempDirectory("orbit-reading-seen").toFile()
         try {
-            val a = OrbitReading(mock<Context>(), "o1", mock<ReaderProvider>(), root, readScope = "chat-a")
-            val b = OrbitReading(mock<Context>(), "o1", mock<ReaderProvider>(), root, readScope = "chat-b")
-            val otherOrbit = OrbitReading(mock<Context>(), "o2", mock<ReaderProvider>(), root, readScope = "chat-a")
-            a.markSeen(chapter(listOf("original"), "h1"))
-            b.markSeen(chapter(listOf("changed"), "h2"))
-            otherOrbit.markSeen(chapter(listOf("different orbit"), "h3"))
-            assertEquals("h1", a.seen("book", 4))
-            assertEquals("h2", b.seen("book", 4))
-            assertEquals("h3", otherOrbit.seen("book", 4))
+            reading(root).markSeen("book", mapOf(4 to "h1"))
+            // A new instance stands for another chat, a background task or a restart.
+            assertEquals("h1", reading(root).seen("book", 4))
+            reading(root).markSeen("book", mapOf(4 to "h2"))
+            assertEquals("h2", reading(root).seen("book", 4))
+            assertNull(reading(root).seen("book", 5))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun aParagraphKeepsAHandfulOfComments(): Unit = runBlocking {
+        val root = Files.createTempDirectory("orbit-reading-paragraph").toFile()
+        try {
+            val one = chapter(listOf("a", "b"), "h1")
+            reading(root).write(one, (1..OrbitReading.MAX_COMMENTS_PER_PARAGRAPH).map { 1 to "c$it" }, replace = false)
+            assertThrows(IllegalArgumentException::class.java) {
+                runBlocking { reading(root).write(one, listOf(1 to "one more"), replace = false) }
+            }
+            assertEquals(1, reading(root).write(one, listOf(2 to "elsewhere"), replace = false).first
+                .comments.count { it.paragraph == 2 })
         } finally {
             root.deleteRecursively()
         }

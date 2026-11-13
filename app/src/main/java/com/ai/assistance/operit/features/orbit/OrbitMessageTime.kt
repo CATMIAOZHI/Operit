@@ -12,7 +12,7 @@ import java.util.Locale
 
 /**
  * In an Orbit's own chats, every message from the user reaches the model starting with when it was
- * sent and the time zone then, e.g. `[2026-11-03 Tue 19:42 UTC+08:00 Asia/Taipei]`. The label is
+ * sent and the time zone then, e.g. `[2026-11-03 Tue 19:42:05 UTC+08:00 Asia/Taipei]`. The label is
  * built from the chat row's own time and the zone recorded for that moment, so an old message reads
  * the same in every request, also after the phone moves to another zone, and the provider can keep
  * reusing the conversation it already has.
@@ -23,7 +23,7 @@ object OrbitMessageTime {
     private const val STAMPED = "orbit_time_stamped"
     private const val PREFS = "orbit_message_zones"
     private const val KEY_LOG = "log"
-    private val FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd EEE HH:mm", Locale.ENGLISH)
+    private val FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd EEE HH:mm:ss", Locale.ENGLISH)
     private val lock = Any()
     /** Each zone the phone used, from when it was first seen: (since epoch ms, zone id), oldest first. */
     private var zoneLog: List<Pair<Long, String>>? = null

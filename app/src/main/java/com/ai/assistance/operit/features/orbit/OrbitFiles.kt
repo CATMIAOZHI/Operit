@@ -4,6 +4,8 @@ import android.content.Context
 import com.ai.assistance.operit.data.preferences.OrbitPreferences
 import com.ai.assistance.operit.util.LocaleUtils
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -77,15 +79,21 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         return base.relativize(parent.resolve(f.name)).toString().replace('\\', '/')
     }
 
-    /** Deletes a folder without following links inside it. Returns how many files (and links) went. */
-    private fun deleteTree(dir: File): Int {
+    /**
+     * Deletes a folder without following links inside it. Returns how many files (and links) went.
+     * Stops part way, keeping what is left, once [alive] says the caller is gone.
+     */
+    private fun deleteTree(dir: File, alive: () -> Boolean = { true }): Int {
         val start = dir.toPath()
         if (!Files.exists(start, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return 0
         if (Files.isSymbolicLink(start)) { Files.delete(start); return 1 }
         var count = 0
         Files.walkFileTree(start, object : java.nio.file.SimpleFileVisitor<java.nio.file.Path>() {
+            override fun preVisitDirectory(d: java.nio.file.Path, attrs: java.nio.file.attribute.BasicFileAttributes) =
+                if (alive()) java.nio.file.FileVisitResult.CONTINUE else java.nio.file.FileVisitResult.TERMINATE
             override fun visitFile(file: java.nio.file.Path, attrs: java.nio.file.attribute.BasicFileAttributes) =
-                java.nio.file.FileVisitResult.CONTINUE.also { Files.delete(file); count++ }
+                if (!alive()) java.nio.file.FileVisitResult.TERMINATE
+                else java.nio.file.FileVisitResult.CONTINUE.also { Files.delete(file); count++ }
             override fun postVisitDirectory(d: java.nio.file.Path, e: java.io.IOException?) =
                 java.nio.file.FileVisitResult.CONTINUE.also { Files.delete(d) }
         })
@@ -293,27 +301,46 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
     /** Deletes a file for good. Returns its short path. */
     suspend fun delete(path: String): String = io {
         val p = normalize(path)
-        require(allowed(p) && !isIndex(p)) { "This file cannot be deleted: $path" }
+        require((allowed(p) && !isIndex(p)) || isWorkspace(p)) { "This file cannot be deleted: $path" }
         val f = inside(File(root, p))
         require(f.isFile) { "No such file: $p" }
         val real = realShortPath(f)
-        require(allowed(real) && !isIndex(real)) { "This file cannot be deleted: $path" }
+        require((allowed(real) && !isIndex(real)) || isWorkspace(real)) { "This file cannot be deleted: $path" }
         Files.delete(f.toPath())
         afterChange(real)
         p
     }
 
     /**
-     * Deletes a folder under files/ for good, without following links inside it. A folder that is
-     * not empty is deleted only with [recursive]. Returns how many files were in it.
+     * Deletes a folder under files/ or workspace/ for good, without following links inside it. A folder that is
+     * not empty is deleted only with [recursive]. Returns how many files were in it. A workspace/ folder
+     * (maybe a big cloned repository) is deleted outside the lock the notes share, and stops when cancelled.
      */
-    suspend fun deleteFolder(path: String, recursive: Boolean): Int = io {
+    suspend fun deleteFolder(path: String, recursive: Boolean): Int {
         val p = normalize(path).trimEnd('/')
-        require(p.startsWith("files/")) { "Only folders under files/ can be deleted: $path" }
+        return if (isWorkspace(p)) {
+            withContext(Dispatchers.IO) {
+                val job = coroutineContext
+                deleteFolderNow(p, path, recursive) { job.isActive }.also { job.ensureActive() }
+            }
+        } else {
+            io { deleteFolderNow(p, path, recursive) { true } }
+        }
+    }
+
+    private fun deleteFolderNow(p: String, path: String, recursive: Boolean, alive: () -> Boolean): Int {
+        fun deletable(s: String) = s.startsWith("files/") || isWorkspace(s)
+        require(deletable(p)) { "Only folders under files/ or workspace/ can be deleted: $path" }
         val dir = inside(File(root, p))
         require(!Files.isSymbolicLink(dir.toPath()) && dir.isDirectory) { "No such folder: $p" }
-        require(realShortPath(dir).startsWith("files/")) { "Only folders under files/ can be deleted: $path" }
-        if (recursive) return@io deleteTree(dir)
+        val real = realShortPath(dir)
+        require(deletable(real)) { "Only folders under files/ or workspace/ can be deleted: $path" }
+        // The lock was picked by the path given; a link from files/ into workspace/ (or back) must not change it.
+        require(isWorkspace(real) == isWorkspace(p)) {
+            "$p is reached through a link into ${if (isWorkspace(real)) "workspace/" else "files/"}. " +
+                "Nothing was deleted. Delete it by its real path: ${File(root, real).absolutePath}"
+        }
+        if (recursive) return deleteTree(dir, alive)
         // The file system refuses a folder that is not empty, even one that just got a file.
         try {
             Files.delete(dir.toPath())
@@ -321,7 +348,7 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
             throw IllegalArgumentException(
                 "$p is not empty. Nothing was deleted. Pass recursive=true to delete the folder and everything in it.")
         }
-        0
+        return 0
     }
 
     /**
@@ -386,28 +413,56 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
     }.onFailure { com.ai.assistance.operit.util.AppLogger.w("OrbitFiles", "Chat file not readable: ${it.javaClass.simpleName}") }
         .getOrNull()
 
-    /** How many files and bytes are under files/ (what Orbit made) and sent/ (copies sent in the chat). */
-    data class Usage(val madeFiles: Int, val madeBytes: Long, val sentFiles: Int, val sentBytes: Long)
+    /**
+     * How many files and bytes are under files/ (what Orbit made), sent/ (copies sent in the chat) and
+     * workspace/, and [totalBytes], every file in the Orbit's folder (notes, memory, skills, the Library,
+     * leftovers of a copy cut short), what it really takes on the phone.
+     */
+    data class Usage(
+        val madeFiles: Int, val madeBytes: Long, val sentFiles: Int, val sentBytes: Long,
+        val workFiles: Int, val workBytes: Long, val totalBytes: Long,
+    )
 
-    suspend fun usage(): Usage = io {
-        fun count(dir: File): Pair<Int, Long> {
-            if (!Files.isDirectory(dir.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)) return 0 to 0L
-            var files = 0
-            var bytes = 0L
-            // Links are counted as themselves, never followed.
-            Files.walkFileTree(dir.toPath(), object : java.nio.file.SimpleFileVisitor<java.nio.file.Path>() {
-                override fun visitFile(file: java.nio.file.Path, attrs: java.nio.file.attribute.BasicFileAttributes) =
-                    java.nio.file.FileVisitResult.CONTINUE.also {
-                        if (attrs.isRegularFile && !file.fileName.toString().startsWith(".")) { files++; bytes += attrs.size() }
-                    }
-                override fun visitFileFailed(file: java.nio.file.Path, exc: java.io.IOException) =
-                    java.nio.file.FileVisitResult.CONTINUE
-            })
-            return files to bytes
+    /**
+     * Files and bytes under [dir], links never followed. [hidden] counts dot files too; [alive]
+     * stops the walk part way once the caller is gone; folders in [skip] are left out.
+     */
+    private fun count(
+        dir: File, hidden: Boolean = false, skip: Set<java.nio.file.Path> = emptySet(), alive: () -> Boolean = { true },
+    ): Pair<Int, Long> {
+        if (!Files.isDirectory(dir.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)) return 0 to 0L
+        var files = 0
+        var bytes = 0L
+        Files.walkFileTree(dir.toPath(), object : java.nio.file.SimpleFileVisitor<java.nio.file.Path>() {
+            override fun preVisitDirectory(d: java.nio.file.Path, attrs: java.nio.file.attribute.BasicFileAttributes) =
+                when {
+                    !alive() -> java.nio.file.FileVisitResult.TERMINATE
+                    d in skip -> java.nio.file.FileVisitResult.SKIP_SUBTREE
+                    else -> java.nio.file.FileVisitResult.CONTINUE
+                }
+            override fun visitFile(file: java.nio.file.Path, attrs: java.nio.file.attribute.BasicFileAttributes): java.nio.file.FileVisitResult {
+                if (!alive()) return java.nio.file.FileVisitResult.TERMINATE
+                if (attrs.isRegularFile && (hidden || !file.fileName.toString().startsWith("."))) { files++; bytes += attrs.size() }
+                return java.nio.file.FileVisitResult.CONTINUE
+            }
+            override fun visitFileFailed(file: java.nio.file.Path, exc: java.io.IOException) =
+                java.nio.file.FileVisitResult.CONTINUE
+        })
+        return files to bytes
+    }
+
+    suspend fun usage(): Usage {
+        val (made, sent) = io { count(File(root, "files")) to count(File(root, SENT)) }
+        // workspace/ can hold big repositories; it and the rest are counted outside the lock the notes
+        // share, every file (dot files included, they take space too), and stopped when the page is left.
+        val (work, rest) = withContext(Dispatchers.IO) {
+            val job = coroutineContext
+            val work = count(File(root, WORKSPACE), hidden = true) { job.isActive }
+            val rest = count(root, hidden = true, skip = setOf(File(root, WORKSPACE).toPath())) { job.isActive }
+            job.ensureActive()
+            work to rest
         }
-        val made = count(File(root, "files"))
-        val sent = count(File(root, SENT))
-        Usage(made.first, made.second, sent.first, sent.second)
+        return Usage(made.first, made.second, sent.first, sent.second, work.first, work.second, work.second + rest.second)
     }
 
     /** Saves a binary file under files/, keeping an existing one by adding a number to the name. */
@@ -448,6 +503,11 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
      * file tools (read_file, edit_file) find a file with its sections in place.
      */
     suspend fun ensureTemplates() = io {
+        // workspace/ is there from the start, so Orbit and the user both see where work goes.
+        runCatching {
+            val work = File(root, WORKSPACE)
+            if (!Files.exists(work.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)) { inside(work); work.mkdirs() }
+        }
         (SINGLE + ALIGNMENT_DATA).forEach { p ->
             runCatching {
                 val f = File(root, p)
@@ -561,6 +621,8 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         private const val OLD_TRASH = ".trash"
         /** Copies of files sent in the chat; see [snapshotForChat]. */
         private const val SENT = "sent"
+        /** Orbit's place to work in: clones, drafts, in-between files. Not shown in the Library. */
+        const val WORKSPACE = "workspace"
         private val SENT_FOLDER = Regex("\\d{8}-\\d{6}-[0-9a-f]{8}")
         /** The "yyyyMMdd-HHmmss" start of a sent folder's name. */
         private const val SECOND_PREFIX = 15
@@ -628,14 +690,39 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         fun normalize(path: String): String {
             val p = path.trim().replace('\\', '/').trimStart('/')
             val parts = p.split('/')
+            // A cloned repository in workspace/ has dot files (.git, .env) Orbit may need to clear;
+            // only "." and ".." stay refused there.
+            val dotsAllowed = parts.firstOrNull() == WORKSPACE
             require(p.isNotEmpty() && p.none { it < ' ' } &&
-                parts.none { it.isBlank() || it.startsWith(".") }) { "Bad path: $path" }
+                parts.none { it.isBlank() || if (dotsAllowed) it == "." || it == ".." else it.startsWith(".") }) { "Bad path: $path" }
             return p
         }
 
         fun allowed(p: String) = p in SINGLE || PEOPLE.matches(p) || DAILY.matches(p) || FILES.matches(p) ||
             p in ALIGNMENT_DATA || DREAM.matches(p)
         fun isIndex(p: String) = PEOPLE.matches(p) && p.endsWith("/$INDEX")
+        /** Whether [p] is something inside workspace/ (not the folder itself). */
+        fun isWorkspace(p: String) = p.startsWith("$WORKSPACE/") && p.length > WORKSPACE.length + 1
+
+        /**
+         * Deletes a whole Orbit folder. Unlike File.deleteRecursively, a link inside (a cloned repository
+         * in workspace/ may have one) is removed itself, never what it points to. True when nothing is left.
+         */
+        fun deleteFolderWithoutLinks(dir: File): Boolean {
+            val start = dir.toPath()
+            if (!Files.exists(start, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return true
+            return runCatching {
+                if (Files.isSymbolicLink(start)) Files.delete(start)
+                else Files.walkFileTree(start, object : java.nio.file.SimpleFileVisitor<java.nio.file.Path>() {
+                    override fun visitFile(file: java.nio.file.Path, attrs: java.nio.file.attribute.BasicFileAttributes) =
+                        java.nio.file.FileVisitResult.CONTINUE.also { runCatching { Files.delete(file) } }
+                    override fun visitFileFailed(file: java.nio.file.Path, exc: java.io.IOException) =
+                        java.nio.file.FileVisitResult.CONTINUE.also { runCatching { Files.delete(file) } }
+                    override fun postVisitDirectory(d: java.nio.file.Path, e: java.io.IOException?) =
+                        java.nio.file.FileVisitResult.CONTINUE.also { runCatching { Files.delete(d) } }
+                })
+            }.isSuccess && !Files.exists(start, java.nio.file.LinkOption.NOFOLLOW_LINKS)
+        }
         fun isText(p: String) = p.substringAfterLast('.', "").lowercase() in TEXT_EXTENSIONS
 
         private const val ALIGNMENT_ZH = "# 对齐总结\n\n你和这位用户怎么相处。每晚的对齐复盘会重写它，每次聊天都会全文带上。\n\n" +

@@ -36,14 +36,16 @@ internal object OrbitMediaPreview {
     private fun ext(name: String) = name.substringAfterLast('.', "").lowercase()
     fun isImage(name: String) = ext(name) in IMAGE
 
-    /** True when the file opens in one of Orbit's own viewers (picture, player or plain text). */
-    fun canPreview(name: String) = ext(name) in IMAGE || ext(name) in PLAYABLE || OrbitTextPreview.canShow(name)
+    /** True when the file opens in one of Orbit's own viewers (picture, player, web page or plain text). */
+    fun canPreview(name: String) =
+        ext(name) in IMAGE || ext(name) in PLAYABLE || OrbitWebPreview.canShow(name) || OrbitTextPreview.canShow(name)
 
     @Composable
     fun Screen(file: File, onDismiss: () -> Unit) {
         when {
             isImage(file.name) -> OrbitImageViewer(file, file.name, onDismiss)
             ext(file.name) in PLAYABLE -> Player(file, onDismiss)
+            OrbitWebPreview.canShow(file.name) -> OrbitWebPreview.Screen(file, onDismiss)
             else -> OrbitTextPreview.Screen(file, onDismiss)
         }
     }

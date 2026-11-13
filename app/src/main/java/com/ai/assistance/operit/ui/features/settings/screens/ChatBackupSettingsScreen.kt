@@ -1132,6 +1132,14 @@ private fun ChatBackupSettingsContent() {
                                                     RawSnapshotBackupManager.ExportProgress.PREPARING ->
                                                         context.getString(R.string.backup_raw_snapshot_progress_preparing)
 
+                                                    RawSnapshotBackupManager.ExportProgress.ZIPPING_WORKSPACES ->
+                                                        progress.scannedFiles?.let { packed ->
+                                                            context.getString(
+                                                                R.string.backup_raw_snapshot_progress_zipping_workspaces,
+                                                                packed
+                                                            )
+                                                        } ?: context.getString(R.string.backup_raw_snapshot_progress_zipping_workspaces_started)
+
                                                     RawSnapshotBackupManager.ExportProgress.SCANNING_FILES ->
                                                         progress.scannedFiles?.let { scanned ->
                                                             context.getString(

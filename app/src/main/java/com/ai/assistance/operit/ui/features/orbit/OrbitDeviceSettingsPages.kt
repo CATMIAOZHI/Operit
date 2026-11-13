@@ -269,6 +269,24 @@ internal fun OrbitStoragePage(onBack: () -> Unit, onOpenComponents: () -> Unit, 
     }
 }
 
+/** The sizes the storage card shows, kept two minutes so reopening the page does not count again. */
+private data class OrbitStorageCounts(
+    val library: Pair<Int, Long>,
+    val usage: com.ai.assistance.operit.features.orbit.OrbitFiles.Usage,
+) {
+    companion object {
+        private const val KEEP_MS = 2 * 60_000L
+        private val recent = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, OrbitStorageCounts>>()
+
+        fun cached(id: String): OrbitStorageCounts? =
+            recent[id]?.takeIf { android.os.SystemClock.elapsedRealtime() - it.first < KEEP_MS }?.second
+
+        fun remember(id: String, counts: OrbitStorageCounts) {
+            recent[id] = android.os.SystemClock.elapsedRealtime() to counts
+        }
+    }
+}
+
 /**
  * Orbit's own files: the Library (what the user sent it), its builds, and the copies kept in the
  * chat, with the Library's size and whether a full Library deletes its oldest files.
@@ -283,14 +301,17 @@ private fun OrbitFilesStorageCard() {
     val who = orbit?.name?.takeIf { it.isNotBlank() } ?: "Orbit"
     val limitGb = settings?.libraryLimitGb ?: com.ai.assistance.operit.data.preferences.OrbitSettings.DEFAULT_LIBRARY_LIMIT_GB
     val autoDelete = settings?.libraryAutoDelete ?: true
-    data class Counts(val library: Pair<Int, Long>, val usage: com.ai.assistance.operit.features.orbit.OrbitFiles.Usage)
-    val counts by androidx.compose.runtime.produceState<Counts?>(null, orbit?.id) {
+    val counts by androidx.compose.runtime.produceState<OrbitStorageCounts?>(null, orbit?.id) {
         val id = orbit?.id ?: return@produceState
-        value = runCatching {
-            val uploads = com.ai.assistance.operit.features.orbit.OrbitUploads.list(context, id)
-            Counts(uploads.size to uploads.sumOf { it.size },
-                com.ai.assistance.operit.features.orbit.OrbitFiles.of(context, id).usage())
-        }.getOrNull()
+        // A workspace can hold a big cloned repository: reuse a recent count, and give up after a minute.
+        OrbitStorageCounts.cached(id)?.let { value = it; return@produceState }
+        value = kotlinx.coroutines.withTimeoutOrNull(60_000) {
+            runCatching {
+                val uploads = com.ai.assistance.operit.features.orbit.OrbitUploads.list(context, id)
+                OrbitStorageCounts(uploads.size to uploads.sumOf { it.size },
+                    com.ai.assistance.operit.features.orbit.OrbitFiles.of(context, id).usage())
+            }.getOrNull()
+        }?.also { OrbitStorageCounts.remember(id, it) }
     }
     fun line(files: Int?, bytes: Long?): String =
         if (files == null || bytes == null) "—"
@@ -300,17 +321,31 @@ private fun OrbitFilesStorageCard() {
         backgroundColor = settingsCardColor(false),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 6.dp),
     ) {
-        Text(
-            stringResource(R.string.orbit_storage_files_title, who),
-            style = MaterialTheme.typography.titleMedium,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 10.dp),
-        )
+        // Everything of the Orbit is one whole: its total first, then what each part takes.
+        val total = counts?.usage?.totalBytes
+        androidx.compose.foundation.layout.Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 10.dp),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+        ) {
+            Text(
+                stringResource(R.string.orbit_storage_files_title, who),
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                total?.let { android.text.format.Formatter.formatShortFileSize(context, it) } ?: "—",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
         OrbitStorageLine(orbitIcon("folder"), stringResource(R.string.orbit_builds_uploads),
             stringResource(R.string.orbit_storage_library_desc, who), line(counts?.library?.first, counts?.library?.second))
         OrbitStorageLine(orbitIcon("shapes"), stringResource(R.string.orbit_builds_made),
             stringResource(R.string.orbit_storage_made_desc, who), line(counts?.usage?.madeFiles, counts?.usage?.madeBytes))
         OrbitStorageLine(orbitIcon("message-circle"), stringResource(R.string.orbit_storage_sent),
             stringResource(R.string.orbit_storage_sent_desc), line(counts?.usage?.sentFiles, counts?.usage?.sentBytes))
+        OrbitStorageLine(orbitIcon("terminal"), stringResource(R.string.orbit_storage_workspace),
+            stringResource(R.string.orbit_storage_workspace_desc, who), line(counts?.usage?.workFiles, counts?.usage?.workBytes))
         com.ai.assistance.operit.ui.features.settings.components.SettingsRowDivider(inset = false)
         var picking by remember { mutableStateOf(false) }
         Box {

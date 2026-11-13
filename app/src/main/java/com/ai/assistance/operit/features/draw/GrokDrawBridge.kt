@@ -154,7 +154,7 @@ object GrokDrawBridge {
         return "$hint（HTTP ${response.status}）$detail"
     }
 
-    private fun outputDir() = File(OperitPaths.pluginConfigDir("draw"), "grok_draw/draws")
+    internal fun outputDir() = File(OperitPaths.pluginConfigDir("draw"), "grok_draw/draws")
 
     private suspend fun save(bytes: ByteArray, requestedName: String): File = withContext(Dispatchers.IO) {
         val dir = outputDir()
@@ -177,7 +177,7 @@ object GrokDrawBridge {
     }
 
     /** A reference image as a data URL, shrunk to what Imagine accepts. */
-    private fun loadReference(path: String, roots: List<File>): String {
+    internal fun loadReference(path: String, roots: List<File>): String {
         val local = if (path.startsWith("file://")) Uri.parse(path).path.orEmpty() else path
         val file = CodexDrawBridge.resolveScriptImagePath(local, roots)
         require(file.length() in 1..MAX_INPUT_BYTES.toLong()) { "参考图必须小于 20 MB：$path" }

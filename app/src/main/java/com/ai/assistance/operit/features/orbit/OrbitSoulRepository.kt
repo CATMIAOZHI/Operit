@@ -27,7 +27,7 @@ internal class OrbitSoulRepository(private val directory: File, private val avai
         const val MAX_CHARS = 24_000
         private val locks = ConcurrentHashMap<String, Mutex>()
         suspend fun removeDirectory(directory: File) = withContext(Dispatchers.IO) {
-            locks.computeIfAbsent(directory.absolutePath) { Mutex() }.withLock { directory.deleteRecursively() }
+            locks.computeIfAbsent(directory.absolutePath) { Mutex() }.withLock { OrbitFiles.deleteFolderWithoutLinks(directory) }
         }
     }
     private val mutex = locks.computeIfAbsent(directory.absolutePath) { Mutex() }

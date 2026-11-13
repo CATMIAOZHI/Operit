@@ -5590,6 +5590,8 @@
     <string name="backup_raw_snapshot_progress_preparing">Preparing…</string>
     <string name="backup_raw_snapshot_progress_scanning_files">Scanning files…</string>
     <string name="backup_raw_snapshot_progress_scanning_files_with_count">Scanning files: %1$d</string>
+    <string name="backup_raw_snapshot_progress_zipping_workspaces">Packing Orbit workspaces: %1$d files</string>
+    <string name="backup_raw_snapshot_progress_zipping_workspaces_started">Packing Orbit workspaces…</string>
     <string name="backup_raw_snapshot_progress_zipping_files">Packaging files...</string>
     <string name="backup_raw_snapshot_progress_zipping_external_files">Packaging Android/data/package/files...</string>
     <string name="backup_raw_snapshot_progress_zipping_shared_prefs">Packaging shared_prefs...</string>
@@ -8768,6 +8770,7 @@
     <string name="tool_repairs_flattened_proxy">Recovered the tool_name that was folded into the params text</string>
     <string name="tool_repairs_memory_argument">Renamed the memory tool\'s new_text argument to content</string>
     <string name="tool_repairs_memory_finish">Routed an empty finish action to the separate finish tool</string>
+    <string name="tool_repairs_spilled_parameter">Split out a parameter that was written inside the one before it</string>
     <string name="tool_repairs_invalid_record">Invalid record format; tap to view the raw record</string>
     <string name="tool_repairs_refresh">Refresh</string>
     <string name="tool_errors_totals">%1$d records · %2$d tools</string>
@@ -9374,6 +9377,7 @@
     <string name="orbit_task_watch_run">See what it is doing</string>
     <string name="orbit_profile_running_untitled">Replying</string>
     <string name="orbit_profile_running_chat">Working in the chat. Tap to see each step.</string>
+    <string name="orbit_profile_running_agents">Subagents are still working. Tap to see progress.</string>
     <string name="orbit_profile_approval_records">Approval records</string>
     <string name="orbit_profile_action_prepared">Preparing</string>
     <string name="orbit_profile_action_started">Running</string>
@@ -9491,7 +9495,7 @@
 
 
     <string name="orbit_run_interrupted">Execution was interrupted and paused. Verify earlier tool effects before continuing; the turn will not replay automatically.</string>
-    <string name="orbit_run_timed_out">“%1$s” ran past %2$d minutes, so it was stopped and paused. Verify what it already did before continuing; it will not replay automatically.</string>
+    <string name="orbit_run_timed_out">Ran past %2$d minutes, so it was stopped and paused: “%1$s”. Verify what it already did before continuing; it will not replay automatically.</string>
     <string name="orbit_permission_keep_alive_title">Keep %1$s awake in the background</string>
     <string name="orbit_permission_keep_alive_sub">So reminders and background tasks run on time</string>
     <string name="orbit_permission_all_on">All on; background tasks can run on time</string>
@@ -9550,6 +9554,11 @@
     <string name="orbit_builds_made">Builds</string>
     <string name="orbit_builds_uploads">Library</string>
     <string name="orbit_builds_work">Build</string>
+    <string name="orbit_builds_system">System files</string>
+    <string name="orbit_system_hint">All of %1$s\'s own files are here. You can look through them; to change something, ask %1$s.</string>
+    <string name="orbit_system_empty">This folder is empty.</string>
+    <string name="orbit_system_folder">Folder</string>
+    <string name="orbit_system_copy_path">Copy path</string>
     <string name="orbit_builds_book_text">Book text · %1$d chapters</string>
     <string name="orbit_builds_book_text_show">Show chapters</string>
     <string name="orbit_builds_book_text_hide">Hide chapters</string>
@@ -9563,6 +9572,8 @@
     <string name="orbit_storage_made_desc">Files %1$s made or saved</string>
     <string name="orbit_storage_sent">Files in the chat</string>
     <string name="orbit_storage_sent_desc">Each file sent in the chat keeps a copy that never changes</string>
+    <string name="orbit_storage_workspace">Workspace</string>
+    <string name="orbit_storage_workspace_desc">Where %1$s works, such as downloaded code and drafts; never deleted automatically</string>
     <string name="orbit_storage_limit">Library size</string>
     <string name="orbit_storage_limit_desc">With auto delete on, the Library and the chat\'s files are each cleaned down to this size, oldest first. The newest 100 always stay, so they can take more than this.</string>
     <string name="orbit_storage_gb">%1$d GB</string>
@@ -9601,12 +9612,19 @@
     <string name="orbit_files_help">These are %1$s\'s own files. Both of you can read them and edit most of them.</string>
     <string name="orbit_files_made">Files %1$s made</string>
     <string name="orbit_file_open_in_browser">Open in browser</string>
+    <string name="orbit_file_preview_web">Preview page</string>
+    <string name="orbit_file_view_source">View source</string>
+    <string name="orbit_file_reload_page">Reload</string>
     <string name="orbit_task_decision">Why: %1$s</string>
     <string name="orbit_watch_notifications">Watches notifications on the phone</string>
     <string name="orbit_watch_notifications_apps">Watches notifications from: %1$s</string>
     <string name="orbit_watch_sms">Watches received text messages</string>
     <string name="orbit_watch_sms_from">Watches text messages from %1$s</string>
     <string name="orbit_watch_calendar">Watches the calendar for the next %1$d days</string>
+    <string name="orbit_watch_reading">Reads along, keeping comments ready %1$d chapters ahead</string>
+    <string name="orbit_watch_reading_not_installed">The Legado build that works with Operit is not installed, so the book you read cannot be seen</string>
+    <string name="orbit_watch_reading_unreachable">Could not reach Legado; open Legado once and it will work again</string>
+    <string name="orbit_watch_reading_failed">Could not read Legado: %1$s</string>
     <string name="orbit_watch_script">Runs the script %1$s and watches its output</string>
     <string name="orbit_decision_unchanged">Nothing changed, so Orbit stayed quiet</string>
     <string name="orbit_decision_in_chat">Handed to %1$s in the chat; it decides what to tell you</string>
@@ -9659,6 +9677,7 @@
     <string name="orbit_decision_no_active_goals">No active goals, so nothing to align this time</string>
     <string name="orbit_decision_no_new_talk">No new chats since the last review, so nothing to review</string>
     <string name="orbit_decision_proactive_skipped">No new chats since the last check, so nothing to check</string>
+    <string name="orbit_decision_reading_skipped">No comments to add right now, so Orbit was left alone</string>
     <string name="orbit_item_told">%1$s told you: %2$s</string>
     <string name="orbit_item_skipped">%1$s didn\'t interrupt you: %2$s</string>
     <string name="orbit_item_reason_time_sensitive">it has a deadline</string>

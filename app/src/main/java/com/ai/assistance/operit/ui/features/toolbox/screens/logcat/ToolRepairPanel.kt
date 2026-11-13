@@ -94,6 +94,7 @@ internal fun ToolRepairPanel(modifier: Modifier = Modifier) {
                                 ToolCallRepairRouter.PROXY_FLATTENED_TOOL_NAME -> R.string.tool_repairs_flattened_proxy
                                 ToolCallRepairRouter.MEMORY_ARGUMENT_ALIAS -> R.string.tool_repairs_memory_argument
                                 ToolCallRepairRouter.MEMORY_FINISH_ALIAS -> R.string.tool_repairs_memory_finish
+                                ToolCallRepairRouter.SPILLED_PARAMETER -> R.string.tool_repairs_spilled_parameter
                                 else -> null
                             }
                             Text(if (label == null) rule else stringResource(label))

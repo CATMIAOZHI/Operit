@@ -19,6 +19,12 @@ class OrbitWatchSourcesTest {
         assertFalse(ok("https://example.com"))
     }
 
+    @Test fun readingSourcesAreChecked() {
+        assertTrue(ok("reading"))
+        assertFalse(ok("reading:5"))
+        assertFalse(OrbitReadingWatch.isReading("readings"))
+    }
+
     @Test fun scriptsArePinnedToTheirHash() {
         val hash = OrbitWatchSources.hash("echo hi")
         assertEquals(16, hash.length)

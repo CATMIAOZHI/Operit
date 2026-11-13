@@ -549,6 +549,16 @@ interface OrbitTaskDao {
     )
     suspend fun capIntervalWait(id: String, now: Long): Int
 
+    /**
+     * Runs a waiting task's next turn now (a reading watch the user's reading has made due). The
+     * version stays, so nothing in progress is cancelled; a task already due or changed is left alone.
+     */
+    @Query(
+        "UPDATE orbit_tasks SET nextRunAt = :now WHERE id = :id AND version = :version AND " +
+            "state = 'ACTIVE' AND nextRunAt > :now"
+    )
+    suspend fun bringForward(id: String, version: Long, now: Long): Int
+
     /** Drops a retired phrase of a built-in routine's steps from the chats its past runs used. */
     @Query(
         "UPDATE messages SET content = REPLACE(content, :phrase, '') WHERE content LIKE '%' || :phrase || '%' AND " +

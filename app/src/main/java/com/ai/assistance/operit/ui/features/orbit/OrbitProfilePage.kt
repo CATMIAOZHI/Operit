@@ -188,6 +188,18 @@ internal fun OrbitProfilePage(
         }
         }
     }
+    // Subagents still working; the work that sent them stays "going on" until they finish.
+    val liveAgents by produceState(emptyList<OrbitSubagents.LiveOwner>(), showingActivity, lifecycle) {
+        if (!showingActivity) return@produceState
+        lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
+        while (showingActivity) {
+            value = try {
+                OrbitSubagents.liveOwners(context)
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { emptyList() }
+            kotlinx.coroutines.delay(3_000)
+        }
+        }
+    }
     // Back is the screen's: it lowers this page with the swipe.
 
     CompositionLocalProvider(LocalProfileVisible provides visible) {
@@ -247,7 +259,7 @@ internal fun OrbitProfilePage(
                         onClick = onOpenRawChat,
                     )
                 }
-                activitySection(who, activity, chatTurns, liveTurns, onOpenProcess)
+                activitySection(who, activity, chatTurns, liveTurns, liveAgents, onOpenProcess)
             }
             OrbitProfileTab.APPROVALS -> approvalsSection(tasks, approvals, onOpenTask) { openApproval = it }
             OrbitProfileTab.BROWSER -> browserSection(who, pages, apps, onOpenApp = { screen ->
@@ -887,12 +899,33 @@ private fun LazyListScope.activitySection(
     runs: List<OrbitActivityRow>?,
     chat: OrbitChatTurns?,
     live: List<OrbitProcess.LiveTurn>,
+    agents: List<OrbitSubagents.LiveOwner>,
     onOpenProcess: (OrbitProcess) -> Unit,
 ) {
     if (runs == null) return loading()
-    // What Orbit is doing right now goes first: background runs still going and replies being written.
-    val runningRuns = runs.filter { it.state == "RUNNING" }
-    if (runningRuns.isNotEmpty() || live.isNotEmpty()) {
+    // What Orbit is doing right now goes first: background runs still going, replies being
+    // written, and finished work whose subagents are still at it.
+    fun runHasAgents(run: OrbitActivityRow): Boolean {
+        if (agents.isEmpty()) return false
+        val chatId = OrbitProcess.TaskRun(run.id, run.generation, run.taskId, "", 0L).chatId
+        return agents.any { it.chatId == chatId }
+    }
+    // A turn owns the subagents started from its first row until the next turn of that chat
+    // begins: its reply row keeps the time it was started, so its own rows cannot bound it.
+    val turnStarts: Map<String, List<Long>> = if (agents.isEmpty()) emptyMap() else
+        (chat?.turns.orEmpty().mapNotNull { t -> t.process.timestamps.minOrNull()?.let { t.process.chatId to it } } +
+            live.map { it.chatId to it.since })
+            .groupBy({ it.first }, { it.second }).mapValues { it.value.sorted() }
+    fun turnHasAgents(turn: OrbitChatTurn): Boolean {
+        if (agents.isEmpty()) return false
+        val from = turn.process.timestamps.minOrNull() ?: return false
+        val until = turnStarts[turn.process.chatId].orEmpty().firstOrNull { it > from } ?: Long.MAX_VALUE
+        return agents.any { it.chatId == turn.process.chatId && it.startedAt >= from && it.startedAt < until }
+    }
+    val runningRuns = runs.filter { it.state == "RUNNING" || runHasAgents(it) }
+    // chat.turns already leaves out the turn being written, so an earlier turn of a busy chat stays here.
+    val waitingTurns = chat?.turns.orEmpty().filter { it.usedTools && turnHasAgents(it) }
+    if (runningRuns.isNotEmpty() || live.isNotEmpty() || waitingTurns.isNotEmpty()) {
         item(key = "running-title") { SectionTitle(stringResource(R.string.orbit_profile_running)) }
         items(live, key = { "live-${it.chatId}" }) { turn ->
             Box(Modifier.animateItem()) {
@@ -907,7 +940,19 @@ private fun LazyListScope.activitySection(
             }
         }
         items(runningRuns, key = { "running-${it.id}" }) { run ->
-            Box(Modifier.animateItem()) { RunRow(run, who, onOpenProcess) }
+            Box(Modifier.animateItem()) { RunRow(run, who, onOpenProcess, agentsWorking = run.state != "RUNNING") }
+        }
+        items(waitingTurns, key = { "waiting-${it.process.chatId}-${it.process.time}" }) { turn ->
+            Box(Modifier.animateItem()) {
+            OrbitListRow(
+                icon = orbitIcon("loader"),
+                title = turn.process.title.ifBlank { stringResource(R.string.orbit_turn_untitled, who) },
+                detail = stringResource(R.string.orbit_profile_running_agents),
+                meta = clockTime(turn.process.time),
+                showChevron = true,
+                onClick = { onOpenProcess(turn.process) },
+            )
+            }
         }
     }
     // Background runs show at once; the chat turns, read from every chat, join them when ready.
@@ -915,14 +960,16 @@ private fun LazyListScope.activitySection(
     if (chat?.failed == true) {
         item(key = "turns-failed") { EmptyHint(stringResource(R.string.orbit_activity_load_failed)) }
     }
-    val rows = (runs.filter { it.state != "RUNNING" }.map { OrbitWorkRow.Run(it) } +
-        chat?.turns.orEmpty().map { OrbitWorkRow.Turn(it) })
+    val runningIds = runningRuns.map { it.id }.toSet()
+    val waitingKeys = waitingTurns.map { it.process.chatId to it.process.time }.toSet()
+    val rows = (runs.filter { it.id !in runningIds }.map { OrbitWorkRow.Run(it) } +
+        chat?.turns.orEmpty().filter { (it.process.chatId to it.process.time) !in waitingKeys }.map { OrbitWorkRow.Turn(it) })
         .distinctBy { it.key }
         .sortedByDescending { it.time }
         .take(200)
     if (chat == null && rows.isEmpty()) return
     if (rows.isEmpty() && chat?.failed != true) {
-        if (runningRuns.isEmpty() && live.isEmpty()) {
+        if (runningRuns.isEmpty() && live.isEmpty() && waitingTurns.isEmpty()) {
             item(key = "empty") { EmptyHint(stringResource(R.string.orbit_profile_activity_empty)) }
         }
         return
@@ -973,12 +1020,18 @@ private fun LazyListScope.activitySection(
 
 /** One background run in the activity list. */
 @Composable
-private fun RunRow(run: OrbitActivityRow, who: String, onOpenProcess: (OrbitProcess) -> Unit) {
+private fun RunRow(
+    run: OrbitActivityRow,
+    who: String,
+    onOpenProcess: (OrbitProcess) -> Unit,
+    /** The run itself is over, but subagents it sent are still working. */
+    agentsWorking: Boolean = false,
+) {
     val failed = run.state == "FAILED" || run.state == "INTERRUPTED"
     OrbitListRow(
         icon = orbitIcon(
             when {
-                run.state == "RUNNING" -> "loader"
+                run.state == "RUNNING" || agentsWorking -> "loader"
                 failed -> "circle-alert"
                 run.kind == "DAILY" -> "heart-handshake"
                 run.kind == "URL_CHANGE" -> "eye"
@@ -987,13 +1040,13 @@ private fun RunRow(run: OrbitActivityRow, who: String, onOpenProcess: (OrbitProc
             }
         ),
         title = OrbitWork.listLine(run.title).ifBlank { stringResource(R.string.orbit_turn_untitled, who) },
-        detail = runDetail(run),
+        detail = if (agentsWorking) stringResource(R.string.orbit_profile_running_agents) else runDetail(run),
         meta = clockTime(run.startedAt),
-        iconTint = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+        iconTint = if (failed && !agentsWorking) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
         showChevron = true,
         onClick = {
             onOpenProcess(OrbitProcess.TaskRun(run.id, run.generation, run.taskId, OrbitWork.listLine(run.title),
-                run.startedAt, running = run.state == "RUNNING"))
+                run.startedAt, running = run.state == "RUNNING" || agentsWorking))
         },
     )
 }
@@ -1002,7 +1055,8 @@ private fun RunRow(run: OrbitActivityRow, who: String, onOpenProcess: (OrbitProc
 private fun runDetail(run: OrbitActivityRow): String = when (run.state) {
     "RUNNING" -> stringResource(R.string.orbit_task_running)
     "CANCELLED" -> stringResource(R.string.orbit_run_cancelled)
-    "INTERRUPTED" -> stringResource(R.string.orbit_profile_run_interrupted)
+    // A run that was only skipped says so itself; "paused" is for one that left no reason.
+    "INTERRUPTED" -> run.error.ifBlank { stringResource(R.string.orbit_profile_run_interrupted) }
     "FAILED" -> run.error.ifBlank { stringResource(R.string.orbit_run_failed_unknown) }
     else -> run.observation.ifBlank { stringResource(R.string.orbit_task_no_result) }
 }.let(OrbitWork::listLine)

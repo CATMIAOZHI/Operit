@@ -14,9 +14,9 @@ internal object OrbitTaskTools {
         description = "安排当前 Orbit 以后继续处理的事情。到点时默认在安排它的聊天里叫醒你本人处理；也可以交给后台子代理做完再把结果交回给你。可暂停、取消、查询执行记录或根据用户答复继续。",
         parametersStructured = listOf(
             ToolParameterSchema("action", description = "create/list/detail/update/pause/resume/cancel/run/dry_run/pending（列出在等用户答复、等核实、或最近一次运行失败的任务；waiting_for 是在等什么或失败原因，unverified_actions 是还没核实结果的操作）"),
-            ToolParameterSchema("kind", description = "ASSIST（默认）：使用现有工具推进事情；URL_CHANGE：网页变化预检查；WATCH：盯通知、短信、日历或脚本；GEOFENCE：进入/离开地点时唤醒，需 location", required = false),
+            ToolParameterSchema("kind", description = "ASSIST（默认；填了 watch 或 script 时默认 WATCH）：使用现有工具推进事情；URL_CHANGE：网页变化预检查；WATCH：盯通知、短信、日历、阅读或脚本；GEOFENCE：进入/离开地点时唤醒，需 location", required = false),
             ToolParameterSchema("location", description = "GEOFENCE 地点 JSON：{\"name\":\"家\",\"latitude\":31.2,\"longitude\":121.4,\"radius\":200,\"transition\":\"ENTER\"}。坐标用 WGS84，不直接用地图 GCJ02/BD09。或用 {\"name\":\"家\",\"current\":true,\"radius\":200,\"transition\":\"EXIT\"} 取当前位置。radius 100-10000米，默认200；ENTER进入/EXIT离开。ONCE一次（默认）/INTERVAL每次，不填 run_at；update 传完整 location。后台监测需要精准位置和始终允许定位", required = false),
-            ToolParameterSchema("watch", description = "WATCH 必填：notifications（通知栏里还在的通知）或 notifications:包名,包名；sms 或 sms:发件人；calendar 或 calendar:天数（1-30，默认7）；script（同时填 script）", required = false),
+            ToolParameterSchema("watch", description = "WATCH 必填：notifications（通知栏里还在的通知）或 notifications:包名,包名；sms 或 sms:发件人；calendar 或 calendar:天数（1-30，默认7）；reading（阅读 App 伴读，提前准备 3 章段评，见 docs/reading.md）；script（同时填 script）", required = false),
             ToolParameterSchema("script", description = "watch=script 时 shell 脚本全文，最多8000字符。沿用 Operit 当前 shell 权限（含 root/Shizuku），没有系统沙箱：必须只读，不改文件、不上传数据、不放密码，可 GET 公开接口。每轮以 silent \"理由\" '{\"数据\":1}' 或 wake \"理由\" '{}' 结束；函数已注入，无需 source，调用后立即退出。silent 不叫醒 Orbit；wake 将理由和 JSON 对象交给 Orbit。25秒超时，输出最多20000字符，JSON最多8000字符。新建/换脚本后暂停，先 dry_run 看输出，核对通过再 resume；试跑 HATCH_HOOK_DRY_RUN=1，不叫醒 Orbit", required = false),
             ToolParameterSchema("schedule_mode", description = "ONCE 一次执行（ASSIST默认，配 run_at 即日程提醒）；DAILY 每天；WEEKLY 每周；MONTHLY 每月；YEARLY 每年（这四种在 daily_time 执行）；INTERVAL 每隔 interval_minutes 执行（网页监控默认）；EVENT 指定任务成功后执行。update 时也能改，但只能在 INTERVAL/DAILY/WEEKLY/MONTHLY/YEARLY 之间改", required = false),
             ToolParameterSchema("run_at", description = "ONCE 的执行时间，本地时间 yyyy-MM-dd HH:mm；不填则立即执行。到点时你会被唤醒处理并提醒用户", required = false),
@@ -70,7 +70,9 @@ internal object OrbitTaskTools {
         require(action in ACTIONS) { "Unknown action \"$action\"; use one of ${ACTIONS.joinToString("/")}" }
         val payload: Any = when (action) {
             "create" -> {
-                val kind = arguments["kind"] ?: "ASSIST"
+                // watch or script without kind would otherwise quietly become a one-off ASSIST task.
+                val kind = arguments["kind"]
+                    ?: if (!arguments["watch"].isNullOrBlank() || !arguments["script"].isNullOrBlank()) OrbitWatchSources.KIND else "ASSIST"
                 val mode = arguments["schedule_mode"] ?: if (kind in setOf("ASSIST", OrbitGeofence.KIND)) "ONCE" else "INTERVAL"
                 val runAt = arguments["run_at"]?.takeIf { it.isNotBlank() }?.let(::parseRunAt)
                 val calendar = mode in OrbitCalendarSchedule.modes

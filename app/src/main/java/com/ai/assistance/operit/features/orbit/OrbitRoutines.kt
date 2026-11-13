@@ -253,6 +253,7 @@ internal object OrbitRoutines {
             GOALS_SOURCE -> R.string.orbit_decision_no_active_goals
             ALIGNMENT_SOURCE -> R.string.orbit_decision_no_new_talk
             PROACTIVE_SOURCE -> R.string.orbit_decision_proactive_skipped
+            OrbitReadingWatch.SOURCE -> R.string.orbit_decision_reading_skipped
             else -> R.string.orbit_watch_notifications_starting
         }
     )

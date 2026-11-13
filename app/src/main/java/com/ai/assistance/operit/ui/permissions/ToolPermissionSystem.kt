@@ -878,7 +878,7 @@ class ToolPermissionSystem private constructor(private val context: Context) {
     /**
      * Whether [tool] only touches the chat's bound workspace or, in an Orbit's chat, that Orbit's own
      * folder. Orbit reads its folder all the time, so reviewing each read only costs tokens. Writes run
-     * unreviewed only on Orbit's own notes and files ([OrbitFiles.allowed]); the rest of the folder is
+     * unreviewed only on Orbit's own notes and files ([OrbitFiles.allowed]) and in its workspace/; the rest of the folder is
      * state the app keeps (packages.json, approvals.json, the learning boundary, reactions) or documents
      * with a history of their own (Soul, identity, memory.md, skills), and a write there is reviewed.
      * This guards against slips, not against a determined model. Its vault lives elsewhere.
@@ -901,9 +901,14 @@ class ToolPermissionSystem private constructor(private val context: Context) {
         val preferences = com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context)
         val orbit = preferences.current().ownerForChat(chatId) ?: return false
         val orbitRoot = runCatching { preferences.orbitDir(orbit.id).canonicalPath }.getOrNull() ?: return false
+        // The shared policy reviews every recursive delete; in an Orbit's chat one is free only inside its
+        // workspace/ (checked below on the real path), where Orbit clears its own clones and drafts.
+        val recursiveDelete = name == "delete_file" &&
+            tool.parameters.any { it.name == "recursive" && it.value.trim().equals("true", ignoreCase = true) }
+        val scoped = if (recursiveDelete) tool.copy(parameters = tool.parameters.filter { it.name != "recursive" }) else tool
         if (!WorkspaceToolPermissionPolicy.isAutoApproved(
                 context = context,
-                tool = tool,
+                tool = scoped,
                 workspacePath = orbitRoot,
                 workspaceEnv = "android",
                 callerChatId = chatId,
@@ -912,8 +917,9 @@ class ToolPermissionSystem private constructor(private val context: Context) {
         // Inside the folder; a write is free only on one of Orbit's own notes or files.
         val relative = runCatching { java.io.File(target!!).canonicalFile.relativeTo(java.io.File(orbitRoot)).invariantSeparatorsPath }
             .getOrNull() ?: return false
-        return com.ai.assistance.operit.features.orbit.OrbitFiles.allowed(relative) &&
-            !com.ai.assistance.operit.features.orbit.OrbitFiles.isIndex(relative)
+        val files = com.ai.assistance.operit.features.orbit.OrbitFiles
+        if (recursiveDelete) return files.isWorkspace(relative)
+        return files.isWorkspace(relative) || (files.allowed(relative) && !files.isIndex(relative))
     }
 
     private suspend fun resolveCurrentPermissionRoute(
@@ -1289,6 +1295,7 @@ internal val ORBIT_DEFAULT_ALLOW_TOOLS: Set<String> = buildSet {
     pkg("super_admin", "shell_wait")
     pkg("codex_draw", "read_skill")
     pkg("grok_draw", "read_skill")
+    pkg("grok_video", "read_skill")
     // The app's own tools (not from a package).
     addAll(listOf(
         "calculate", "sleep", "device_info", "ffmpeg_info", "music_status",
