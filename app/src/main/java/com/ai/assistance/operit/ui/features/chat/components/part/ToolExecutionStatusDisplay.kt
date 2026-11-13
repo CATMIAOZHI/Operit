@@ -1596,11 +1596,20 @@ private fun resolveResultText(
         } else {
             ""
         }
-    if (success) return raw
+    if (success) {
+        // sleep's early wake is written in English for the model; the reader gets it in their language.
+        val woke = SLEEP_WOKEN_RESULT.matchEntire(raw) ?: return raw
+        val slept = woke.groupValues[1].toIntOrNull() ?: return raw
+        val requested = woke.groupValues[2].toIntOrNull() ?: return raw
+        return context.getString(R.string.tool_sleep_woken_by_message, slept, requested)
+    }
 
     val text = ChatMarkupRegex.errorTag.find(raw)?.groupValues?.getOrNull(1)?.trim() ?: raw
     return permissionDenialDisplayText(context, text)
 }
+
+/** Matches SleepResultData's text when a new message ended the sleep early. */
+private val SLEEP_WOKEN_RESULT = Regex("""\s*Woke after (\d+)ms of (\d+)ms: a new message arrived\s*""")
 
 /**
  * A permission denial carries a long English instruction written for the model, so the transcript

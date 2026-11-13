@@ -5945,6 +5945,7 @@
     <string name="xml_block">xml块</string>
     <string name="tool_call_block">工具调用</string>
     <string name="tool_result_block">工具结果</string>
+    <string name="tool_sleep_woken_by_message">收到新消息，提前醒来（%1$d / %2$d 毫秒）</string>
     <string name="thinking_process_block">思考过程</string>
     <string name="search_content_block">搜索内容</string>
     <string name="status_info_block">状态信息</string>
