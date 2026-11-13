@@ -339,18 +339,27 @@ internal object OrbitReadingTools {
                 "Read it again (or copy it again), then write."
         }
         val total = chapter.paragraphs.size
-        val entries = (0 until list.length()).map { i ->
-            val item = list.optJSONObject(i) ?: throw IllegalArgumentException("comments[$i] is not an object")
-            val paragraph = item.optInt("paragraph", -1)
-            require(paragraph in 1..total) { "comments[$i].paragraph must be 1 to $total; got ${item.opt("paragraph")}" }
-            require(chapter.paragraphs[paragraph - 1].isNotBlank()) { "comments[$i]: paragraph $paragraph is empty; pick one with text" }
-            val text = item.optString("text").trim()
-            require(text.isNotEmpty()) { "comments[$i].text is empty" }
-            require(text.length <= OrbitReading.MAX_COMMENT_CHARS) {
-                "comments[$i].text has ${text.length} characters; keep it to ${OrbitReading.MAX_COMMENT_CHARS}"
-            }
-            paragraph to text
+        // Every problem is listed at once, so one corrected call saves the whole batch.
+        val problems = mutableListOf<String>()
+        val entries = (0 until list.length()).mapNotNull { i ->
+            val item = list.optJSONObject(i)
+            val paragraph = item?.optInt("paragraph", -1) ?: -1
+            val text = item?.optString("text").orEmpty().trim()
+            when {
+                item == null -> "comments[$i] is not an object like {\"paragraph\":3,\"text\":\"...\"}"
+                !item.has("paragraph") || !item.has("text") ->
+                    // Echoes are kept short, so all problems fit in one answer.
+                    "comments[$i] needs the keys paragraph and text, like {\"paragraph\":3,\"text\":\"...\"}; got " +
+                        item.keys().asSequence().take(5).joinToString(", ", "[", "]") { it.take(20) }
+                paragraph !in 1..total -> "comments[$i].paragraph must be 1 to $total; got ${item.opt("paragraph").toString().take(20)}"
+                chapter.paragraphs[paragraph - 1].isBlank() -> "comments[$i]: paragraph $paragraph is empty; pick one with text"
+                text.isEmpty() -> "comments[$i].text is empty"
+                text.length > OrbitReading.MAX_COMMENT_CHARS ->
+                    "comments[$i].text has ${text.length} characters; keep it to ${OrbitReading.MAX_COMMENT_CHARS}"
+                else -> return@mapNotNull paragraph to text
+            }.let { problems += it; null }
         }
+        require(problems.isEmpty()) { "No comments were saved. Fix these and send the whole list again: " + problems.joinToString("; ") }
         val (saved, dropped) = reading.write(chapter, entries, replace = mode == "replace")
         val added = entries.count { (p, t) -> saved.comments.any { it.paragraph == p && it.text == t } }
         return JSONObject().put("saved", true).put("book_id", bookId).put("chapter", index + 1).put("title", chapter.title)
@@ -379,7 +388,7 @@ internal object OrbitReadingTools {
             return JSONObject().put("deleted", gone).put("chapter", index + 1)
                 .put("note", if (gone == 0) "Chapter ${index + 1} had no comments." else "Deleted all $gone comment(s) of chapter ${index + 1}.")
         }
-        val paragraphs = args["paragraphs"].orEmpty().split(',', '，', ' ', '\n').map { it.trim() }.filter { it.isNotEmpty() }
+        val paragraphs = args["paragraphs"].orEmpty().trim('[', ']', ' ').split(',', '，', ' ', '\n').map { it.trim() }.filter { it.isNotEmpty() }
             .mapTo(HashSet()) { requireNotNull(it.toIntOrNull()) { "paragraphs takes numbers like 3,5; got \"$it\"" } }
         require(paragraphs.isNotEmpty()) { "Give paragraphs (numbers from read, like 3,5), or all=true for the whole chapter" }
         // Fresh, so the numbers are matched against the layout Legado has now.
