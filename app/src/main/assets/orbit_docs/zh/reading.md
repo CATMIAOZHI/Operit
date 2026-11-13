@@ -37,7 +37,7 @@
 
 用户想「读到哪都已经有段评」时，建一个阅读看门狗（先读 `docs/scheduling-and-watching.md`）：
 
-- `orbit_task` 的 `action=create`、`kind=WATCH`、`watch=reading`、`schedule_mode=INTERVAL`，间隔按用户读书的节奏定。
+- 照这样建：`orbit_task` 填 `action=create`、`kind=WATCH`、`watch=reading`、`title=陪你读《书名》`、`instruction=按 docs/reading.md 往后补段评`。其他参数都不用填：默认每 60 分钟检查一次，用户翻页后 App 也会检查。
 - 它跟着用户正在读的书，保证当前章和后面 3 章都准备好（有你的段评、你标了不用写，或者是卷名章）。够了就安静跳过，不叫醒你，也不花 token；不够才叫醒你。用户翻页后，App 过半分钟也会检查一次。
 - 被叫醒后先 `where`，从第一章还没准备好的章开始，读、写段评（或 `skip_chapter`）、写小结，直到后面 3 章都准备好。
 
