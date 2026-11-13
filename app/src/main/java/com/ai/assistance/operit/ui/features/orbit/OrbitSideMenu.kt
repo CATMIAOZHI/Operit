@@ -455,7 +455,7 @@ private fun MenuContent(
         )
     }
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 16.dp)) {
-        // The tablet sidebar is narrow: a round button there leaves the Orbit's name its room.
+        // The tablet sidebar's rows are denser, like Muse's.
         val sidebar = selectedTab != null
         Row(Modifier.fillMaxWidth().padding(top = 12.dp, start = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(
@@ -463,8 +463,8 @@ private fun MenuContent(
                 style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold,
                 maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
             )
-            Spacer(Modifier.width(if (sidebar) 8.dp else 12.dp))
-            OrbitBackToOperitPill(onLeaveOrbit, compact = sidebar)
+            Spacer(Modifier.width(8.dp))
+            OrbitBackToOperitButton(onLeaveOrbit)
         }
         Spacer(Modifier.height(if (sidebar) 16.dp else 20.dp))
         // A chat counts as shown only while the chat tab is.
@@ -718,9 +718,12 @@ private fun EmptySideChats(onNew: () -> Unit, enabled: Boolean) {
     }
 }
 
-/** "Back to Operit", where Muse has "Invite", on the menu; [compact] is a round button for the narrow tablet sidebar. */
+/**
+ * "Back to Operit", where Muse has "Invite". A round button: the menu and the sidebar are narrow,
+ * and a labelled pill left the Orbit's name only a few characters.
+ */
 @Composable
-internal fun OrbitBackToOperitPill(onClick: () -> Unit, compact: Boolean = false) {
+internal fun OrbitBackToOperitButton(onClick: () -> Unit) {
     val label = stringResource(R.string.orbit_menu_back_to_operit)
     Surface(
         onClick = onClick,
@@ -728,15 +731,11 @@ internal fun OrbitBackToOperitPill(onClick: () -> Unit, compact: Boolean = false
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
         shadowElevation = 2.dp,
-        modifier = if (compact) Modifier.size(40.dp).semantics { contentDescription = label } else Modifier,
+        modifier = Modifier.size(40.dp).semantics { contentDescription = label },
     ) {
-        if (compact) Box(contentAlignment = Alignment.Center) {
-            // Leaving, not a back arrow that could read as folding the sidebar away.
+        Box(contentAlignment = Alignment.Center) {
+            // Leaving, not a back arrow that could read as closing the menu.
             Icon(orbitIcon("log-out"), null, Modifier.size(18.dp))
-        } else Row(Modifier.heightIn(min = 44.dp).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(orbitIcon("arrow-left"), null, Modifier.size(18.dp))
-            Spacer(Modifier.width(6.dp))
-            Text(label, style = MaterialTheme.typography.labelLarge)
         }
     }
 }
