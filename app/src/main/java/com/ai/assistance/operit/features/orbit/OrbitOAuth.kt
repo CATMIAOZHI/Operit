@@ -7,6 +7,9 @@ import androidx.browser.customtabs.CustomTabsClient
 import androidx.browser.customtabs.CustomTabsIntent
 import com.ai.assistance.operit.data.preferences.OrbitPreferences
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -28,11 +31,20 @@ internal object OrbitOAuth {
     fun redirectUri(context: Context) = "${context.packageName}.orbit-oauth://callback/oauth2"
     private fun store(context: Context, orbitId: String) = OrbitSecretFile.forOrbit(context, orbitId, "oauth")
 
-    /** Called only by the user's Continue button. Pending verifier/state survive an ordinary process restart. */
-    suspend fun start(context: Context, request: OrbitVault.Request) {
+    private val finishedState = MutableStateFlow<String?>(null)
+
+    /** The state of the last authorization that ended (connected or declined), so its sheet can close. */
+    val finished: StateFlow<String?> = finishedState.asStateFlow()
+
+    /** A started authorization: its page, and the state its callback has to bring back. */
+    class Started(val url: String, val state: String)
+
+    /**
+     * Called only when the user chooses how to sign in. Pending verifier/state survive an ordinary
+     * process restart; the callback comes back through [OrbitOAuthCallbackActivity] or a paste.
+     */
+    suspend fun prepare(context: Context, request: OrbitVault.Request): Started {
         OrbitOAuthProtocol.validate(request)
-        val browser = CustomTabsClient.getPackageName(context, null)
-            ?: error("No browser with Custom Tabs")
         val state = OrbitOAuthProtocol.random()
         val verifier = OrbitOAuthProtocol.random()
         val url = OrbitOAuthProtocol.authorizationUrl(request, redirectUri(context), state, verifier)
@@ -44,15 +56,17 @@ internal object OrbitOAuth {
                     .put("request", OrbitChatCards.vault(request)).toString())
             }
         }
-        try {
-            CustomTabsIntent.Builder().setShowTitle(true).build().apply {
-                intent.setPackage(browser)
-                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }.launchUrl(context, Uri.parse(url))
-        } catch (e: Exception) {
-            withContext(Dispatchers.IO) { pendingLock.withLock { store(context, request.orbitId).delete() } }
-            throw e
-        }
+        return Started(url, state)
+    }
+
+    /** Opens a prepared authorization in a Custom Tab; throws when there is no browser for it. */
+    fun open(context: Context, started: Started) {
+        val browser = CustomTabsClient.getPackageName(context, null)
+            ?: error("No browser with Custom Tabs")
+        CustomTabsIntent.Builder().setShowTitle(true).build().apply {
+            intent.setPackage(browser)
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }.launchUrl(context, Uri.parse(started.url))
     }
 
     /** null is a user cancellation. Invalid, expired and already-used callbacks never exchange a code. */
@@ -81,7 +95,10 @@ internal object OrbitOAuth {
             checkNotNull(found) { "OAuth session expired; tap the card again" }
         }
         val (request, verifier) = pending
-        if (callback.getQueryParameter("error") == "access_denied") return@withContext null
+        if (callback.getQueryParameter("error") == "access_denied") {
+            finishedState.value = state
+            return@withContext null
+        }
         check(callback.getQueryParameter("error") == null) { OrbitOAuthProtocol.UNSUPPORTED }
         val code = callback.getQueryParameter("code").orEmpty()
         require(code.isNotEmpty() && code.length <= 8000 && callback.getQueryParameters("code").size == 1)
@@ -92,6 +109,7 @@ internal object OrbitOAuth {
         check(orbit?.id == request.orbitId) { "Orbit no longer exists" }
         val id = OrbitVault.saveOAuth(context, request, tokens)
         OrbitVaultNotice.send(context, checkNotNull(orbit), request, id)
+        finishedState.value = state
         true
     }
 
