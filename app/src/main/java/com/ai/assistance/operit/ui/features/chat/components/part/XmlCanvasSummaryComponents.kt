@@ -90,7 +90,9 @@ internal fun CanvasToolSummaryRow(
         val gap1Px = with(density) { 8.dp.roundToPx().toFloat() }
         val gap2Px = with(density) { 8.dp.roundToPx().toFloat() }
         val titleMinWidthPx = with(density) { 80.dp.roundToPx() }
-        val titleMaxWidthPx = with(density) { 120.dp.roundToPx() }
+        // A long tool name (orbit_nothing_to_do, orbit_proactivity_select) shows whole; the
+        // summary after it keeps the rest of the line, and a tap shows all of it.
+        val titleMaxWidthPx = max(with(density) { 120.dp.roundToPx() }, (widthPx * 0.6f).toInt())
 
         val unconstrainedTitleLayout =
             textMeasurer.measure(
