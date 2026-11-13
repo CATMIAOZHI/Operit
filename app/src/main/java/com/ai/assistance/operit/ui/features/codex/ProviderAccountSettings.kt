@@ -1,7 +1,5 @@
 package com.ai.assistance.operit.ui.features.codex
 
-import android.content.Intent
-import android.net.Uri
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -120,6 +118,7 @@ fun ProviderAccountSettings(provider: AccountProvider, onAccountChanged: () -> U
     if (login) {
         var session by remember { mutableStateOf<ProviderLoginSession?>(null) }
         var completing by remember { mutableStateOf(false) }
+        val choice = remember { OAuthLoginChoice() }
         val failureText = stringResource(R.string.provider_account_login_failed)
         LaunchedEffect(provider) {
             var active: ProviderLoginSession? = null
@@ -130,9 +129,7 @@ fun ProviderAccountSettings(provider: AccountProvider, onAccountChanged: () -> U
                     }
                     session = active
                     val current = requireNotNull(active)
-                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(current.authorizationUrl))
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                    val callback = current.server.awaitCallback()
+                    val callback = choice.awaitCallback(current.server)
                     completing = true
                     manager.completeLogin(current, callback)
                     clientSecret = ""
@@ -156,10 +153,28 @@ fun ProviderAccountSettings(provider: AccountProvider, onAccountChanged: () -> U
             onDismissRequest = { session?.server?.close(); login = false },
             title = { Text(stringResource(R.string.provider_account_login)) },
             text = {
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    CircularProgressIndicator(Modifier.size(24.dp))
-                    Text(stringResource(if (completing) R.string.provider_account_completing
-                        else R.string.codex_login_waiting))
+                val current = session
+                OAuthDialogText {
+                    OAuthLoginOptions(
+                        choice = choice,
+                        working = when {
+                            completing -> stringResource(R.string.provider_account_completing)
+                            current == null -> stringResource(R.string.oauth_login_preparing)
+                            else -> null
+                        },
+                        onBrowser = {
+                            if (current != null && openOAuthInBrowser(context, current.authorizationUrl)) {
+                                choice.step = OAuthLoginChoice.Step.BROWSER
+                            }
+                        },
+                        onCopy = {
+                            if (current != null) {
+                                copyOAuthLink(context, current.authorizationUrl)
+                                choice.step = OAuthLoginChoice.Step.PASTE
+                            }
+                        },
+                        onSubmit = { if (current != null) choice.submit(current.server.redirectUri, current.state) },
+                    )
                 }
             },
             confirmButton = {},

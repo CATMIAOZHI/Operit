@@ -442,7 +442,9 @@ internal fun OrbitChatGptLoginSheet(view: com.ai.assistance.operit.ui.features.c
                 }
                 Spacer(Modifier.height(12.dp))
             }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            val options = view.options
+            if (options != null) options()
+            else Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (view.working) androidx.compose.material3.CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                 Text(view.status, style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
             }
