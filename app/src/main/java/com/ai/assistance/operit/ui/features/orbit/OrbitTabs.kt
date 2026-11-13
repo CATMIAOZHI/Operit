@@ -39,7 +39,6 @@ import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.layout
@@ -694,7 +693,7 @@ private fun SwipeVoteRow(onVote: (Int) -> Unit, modifier: Modifier = Modifier, c
             else -> 0
         }
         if (direction != armed) {
-            if (direction != 0) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            if (direction != 0) OrbitHaptics.threshold(haptic)
             armed = direction
         }
     }
@@ -3137,7 +3136,7 @@ internal fun OrbitNotificationsPage(orbitId: String, onBack: () -> Unit) {
                     Text(stringResource(R.string.orbit_notifications_help), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text(stringResource(R.string.orbit_quiet_hours), Modifier.weight(1f))
-                        Switch(checked = settings.quietEnabled, onCheckedChange = { enabled -> save { it.copy(quietEnabled = enabled) } })
+                        Switch(checked = settings.quietEnabled, onCheckedChange = orbitToggle { enabled -> save { it.copy(quietEnabled = enabled) } })
                     }
                     Text(stringResource(R.string.orbit_delivery_interval), style = MaterialTheme.typography.titleSmall)
                     listOf(0, 15, 60).forEach { minutes ->

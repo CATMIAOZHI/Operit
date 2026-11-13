@@ -507,7 +507,7 @@ private fun OrbitPackageDetailPage(
                 modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
                 Row(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp))
-                        .then(if (row.required) Modifier else Modifier.toggleable(on, role = Role.Switch, onValueChange = onToggle))
+                        .then(if (row.required) Modifier else Modifier.toggleable(on, role = Role.Switch, onValueChange = orbitToggle(onToggle)))
                         .padding(horizontal = 16.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -818,7 +818,7 @@ private fun PackageItem(row: PackageRow, on: Boolean, onToggle: (Boolean) -> Uni
         Spacer(Modifier.width(8.dp))
         Switch(
             checked = on || row.required,
-            onCheckedChange = if (row.required) null else onToggle,
+            onCheckedChange = if (row.required) null else orbitToggle(onToggle),
             enabled = !row.required,
             // Read out with the package's name, so the switch is not just "on" on its own.
             modifier = Modifier.semantics { contentDescription = row.title },
