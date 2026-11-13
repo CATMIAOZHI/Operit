@@ -61,7 +61,7 @@ Use `ASSIST` for ordinary work.
 `URL_CHANGE` makes GET checks against a specified page and suits directly readable page changes.
 For sign-in, interaction, or complex page interpretation, use an appropriate browser task; a simple check is not a full browser.
 
-`WATCH` supports notification, SMS, calendar, and reading sources; when those are insufficient, it can also use a short condition-checking script. The reading source (`watch=reading:<chapters ahead>:<book_key>`) wakes you only when too few chapters ahead of where the user reads in Legado are ready; see `docs/reading.md`.
+`WATCH` supports notification, SMS, calendar, and reading sources; when those are insufficient, it can also use a short condition-checking script. The reading source (`watch=reading`) wakes you only when the chapter the user reads in Legado or the next 3 are not ready; see `docs/reading.md`.
 A script wakes you only when its condition warrants it. A new or changed script starts paused; inspect it with `dry_run` before resuming. A dry run does not wake the chat.
 Notification, SMS, calendar, and reading sources do not need a script dry run.
 Scripts should be read-only, quick, and bounded in output; do not upload data, modify files, or handle raw credentials.

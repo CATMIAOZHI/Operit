@@ -354,7 +354,7 @@ private fun runOutcome(run: OrbitRunEntity, task: OrbitTaskEntity): String {
         run.state == "CANCELLED" -> stringResource(R.string.orbit_run_cancelled)
         run.error.isNotBlank() -> run.error
         run.state == "FAILED" -> stringResource(R.string.orbit_run_failed_unknown)
-        run.decision == OrbitRunEntity.SKIPPED -> OrbitRoutines.skippedReason(context, task, run.observation)
+        run.decision == OrbitRunEntity.SKIPPED -> OrbitRoutines.skippedReason(context, task)
         run.decision == OrbitRunEntity.UNCHANGED -> stringResource(R.string.orbit_decision_unchanged)
         OrbitChatDecision.isChat(run.decision) -> OrbitChatDecision.describe(context, run.decision, rememberOrbitName(task.orbitId))
         run.observation.isNotBlank() -> run.observation
@@ -892,7 +892,7 @@ private fun TaskDetail(
                     val chatOutcome = run?.takeIf { chatRunEndedWell(it) }
                         ?.let { OrbitChatDecision.label(context, it.decision, rememberOrbitName(orbitId)) }
                     Text(
-                        if (skipped) OrbitRoutines.skippedReason(context, task, run?.observation.orEmpty())
+                        if (skipped) OrbitRoutines.skippedReason(context, task)
                         else chatOutcome ?: run?.error?.takeIf { it.isNotBlank() } ?: run?.observation?.takeIf { it.isNotBlank() }
                             ?: stringResource(R.string.orbit_task_no_result),
                         style = MaterialTheme.typography.bodyLarge,
@@ -1244,8 +1244,7 @@ internal fun watchLabel(task: OrbitTaskEntity): String {
             else stringResource(R.string.orbit_watch_notifications_apps, appNames(arg))
         "sms" -> if (arg.isEmpty()) stringResource(R.string.orbit_watch_sms) else stringResource(R.string.orbit_watch_sms_from, arg)
         "calendar" -> stringResource(R.string.orbit_watch_calendar, arg.toIntOrNull() ?: 7)
-        "reading" -> stringResource(R.string.orbit_watch_reading,
-            arg.substringBefore(':').toIntOrNull() ?: com.ai.assistance.operit.features.orbit.OrbitReadingWatch.DEFAULT_AHEAD)
+        "reading" -> stringResource(R.string.orbit_watch_reading, com.ai.assistance.operit.features.orbit.OrbitReadingWatch.AHEAD)
         else -> stringResource(R.string.orbit_watch_script,
             com.ai.assistance.operit.features.orbit.OrbitWatchSources.SCRIPT.matchEntire(task.source)?.groupValues?.get(1)
                 ?.substringAfterLast('/')?.replace(SCRIPT_SUFFIX, "") ?: task.source)

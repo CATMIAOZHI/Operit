@@ -196,7 +196,7 @@ object OrbitTaskRunner {
                                 result.observation()
                             } else if (OrbitReadingWatch.isReading(task.source)) {
                                 // Enough comments ahead: nothing for Orbit to do, and no row in the activity list.
-                                val ahead = OrbitReadingWatch.check(context, task.orbitId, task.source)
+                                val ahead = OrbitReadingWatch.check(context, task.orbitId)
                                 if (!ahead.wake) {
                                     // Noted as what was seen, so a later "something is missing" counts as a change.
                                     check(dao.checkpoint(token, ahead.observation.take(20_000), sha(ahead.observation), boot,
@@ -267,8 +267,7 @@ object OrbitTaskRunner {
                     checkpoint = checkNotNull(dao.run(token.id))
                 }
                 if (OrbitTaskRepository.prechecked(task) && !OrbitWatchSources.isScript(task.source) &&
-                    // An empty fingerprint was forgotten on purpose (see forgetReadingFingerprints), never a match.
-                    checkpoint.fingerprint.isNotEmpty() && checkpoint.fingerprint == task.lastFingerprint &&
+                    checkpoint.fingerprint == task.lastFingerprint &&
                     task.notifyPolicy == "CHANGES") {
                     complete(context, state, task.lastObservation, "", "", OrbitRunEntity.UNCHANGED)
                 } else if (!task.useSubagent) {
