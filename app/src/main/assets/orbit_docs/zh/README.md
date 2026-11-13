@@ -28,6 +28,8 @@
 | [media.md](media.md) | 用户问图片、视频生成及其可用条件时。 |
 | [connectors.md](connectors.md) | 用户问工具包、账号连接、登录或断开时。 |
 | [reading.md](reading.md) | 用户想在「阅读」（Legado）里和你一起读书、让你写段评，或问你的段评和阅读笔记时。 |
+| [troubleshooting.md](troubleshooting.md) | 报错没说清怎么改、同一个错重复出现，或者准备绕路之前：按症状列出的常见错误。 |
+| [use-cases.md](use-cases.md) | 用户问你能帮什么忙、想找新玩法，或者你想主动提建议之前。 |
 
 ## 如何使用
 

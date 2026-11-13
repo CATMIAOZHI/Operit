@@ -28,6 +28,8 @@ Choose the document relevant to the question; you do not need to read the whole 
 | [media.md](media.md) | When the user asks about image or video generation and its availability. |
 | [connectors.md](connectors.md) | When the user asks about tool packages, account connections, sign-in or disconnection. |
 | [reading.md](reading.md) | When the user wants to read a book together in Legado (阅读), wants your paragraph comments, or asks about your comments and reading notes. |
+| [troubleshooting.md](troubleshooting.md) | When an error does not say how to fix it, the same error repeats, or you are about to work around something: known pitfalls by symptom. |
+| [use-cases.md](use-cases.md) | When the user asks what you can help with or wants new ideas, or before suggesting something yourself. |
 
 ## How to use these documents
 
