@@ -178,16 +178,74 @@ fun orbitChatTimeText(context: android.content.Context, time: Long, now: Long = 
 @Composable
 fun OrbitChatTimeLine(time: Long) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val today = rememberOrbitChatToday(context)
     androidx.compose.foundation.layout.Box(
         Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 6.dp),
         contentAlignment = Alignment.Center,
     ) {
         androidx.compose.material3.Text(
-            text = orbitChatTimeText(context, time),
+            text = orbitChatTimeText(context, time, now = today),
             style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
             color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
+}
+
+/**
+ * The day Orbit's time lines are written against. A line is drawn once, so a chat left open past
+ * midnight, or brought back the next morning, would still call yesterday "today": the day moves
+ * when the system says the date, clock or time zone changed (also after the phone slept through
+ * midnight) and is checked again whenever a screen showing the lines starts.
+ */
+internal object OrbitChatDay {
+    private val today = androidx.compose.runtime.mutableLongStateOf(startOfDay(System.currentTimeMillis()))
+    private var listening = false
+
+    val value: Long get() = today.longValue
+
+    /** Main thread only. */
+    fun refresh() {
+        val start = startOfDay(System.currentTimeMillis())
+        if (today.longValue != start) today.longValue = start
+    }
+
+    /** Main thread only; listens once for the app's whole life. */
+    fun listen(context: android.content.Context) {
+        if (listening) return
+        listening = true
+        val filter = android.content.IntentFilter().apply {
+            addAction(android.content.Intent.ACTION_DATE_CHANGED)
+            addAction(android.content.Intent.ACTION_TIME_CHANGED)
+            addAction(android.content.Intent.ACTION_TIMEZONE_CHANGED)
+        }
+        val receiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(context: android.content.Context, intent: android.content.Intent) = refresh()
+        }
+        androidx.core.content.ContextCompat.registerReceiver(
+            context.applicationContext, receiver, filter, androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+        refresh()
+    }
+
+    private fun startOfDay(at: Long): Long = java.util.Calendar.getInstance().apply {
+        timeInMillis = at
+        set(java.util.Calendar.HOUR_OF_DAY, 0); set(java.util.Calendar.MINUTE, 0)
+        set(java.util.Calendar.SECOND, 0); set(java.util.Calendar.MILLISECOND, 0)
+    }.timeInMillis
+}
+
+@Composable
+private fun rememberOrbitChatToday(context: android.content.Context): Long {
+    val owner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(owner) {
+        OrbitChatDay.listen(context)
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_START) OrbitChatDay.refresh()
+        }
+        owner.lifecycle.addObserver(observer)
+        onDispose { owner.lifecycle.removeObserver(observer) }
+    }
+    return OrbitChatDay.value
 }
 
 /** The small "hidden in chat" label used in the developer view. */

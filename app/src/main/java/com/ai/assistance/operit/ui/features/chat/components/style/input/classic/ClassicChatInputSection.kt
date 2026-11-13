@@ -235,13 +235,12 @@ fun ClassicChatInputSection(
     val maxTokens = (maxWindowSizeInK * 1024).toLong().coerceAtLeast(0L)
     val userMessageTokens = remember(userMessage.text) { ChatUtils.estimateTokenCount(userMessage.text) }
     val projectedTokens = userMessageTokens.toLong() + currentWindowSize
+    // An Orbit chat compacts before every request, and a summary written while idle waits for the
+    // next send, so its window may stand over the limit between turns without any request going
+    // past it: there only a draft too big on its own cannot fit.
+    val countedTokens = if (isOrbitChat) userMessageTokens.toLong() else projectedTokens
 
-    val isOverTokenLimit =
-        if (maxTokens > 0) {
-            projectedTokens > maxTokens
-        } else {
-            false
-        }
+    val isOverTokenLimit = maxTokens > 0 && countedTokens > maxTokens
 
     val hasDraftText = userMessage.text.isNotBlank()
     val canSendMessage = hasDraftText || attachments.isNotEmpty()
@@ -1102,7 +1101,7 @@ fun ClassicChatInputSection(
             // Token limit warning
             if (isOverTokenLimit && canSendMessage && !showQueueAction) {
                 Text(
-                    text = stringResource(R.string.token_limit_exceeded_message, projectedTokens, maxTokens),
+                    text = stringResource(R.string.token_limit_exceeded_message, countedTokens, maxTokens),
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.labelSmall,
                     modifier =
