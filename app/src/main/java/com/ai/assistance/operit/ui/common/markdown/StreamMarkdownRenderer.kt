@@ -345,7 +345,14 @@ private fun String.trimAll(): String {
  * 用于在流式渲染和静态渲染之间共享状态，避免切换时重新计算
  */
 @Stable
-class StreamMarkdownRendererState {
+class StreamMarkdownRendererState(messageKey: String? = null) {
+    /**
+     * The static renderer's identity for one message ([messageKey]). Its text can change while it
+     * is shown (a running subagent's record is read again every few seconds); the same identity
+     * keeps what the reader opened open and the page where it was, instead of building it all
+     * again, and stays the same when the message scrolls away and back. Null: by its text.
+     */
+    internal val staticId: String? = messageKey?.let { "static-renderer-m$it" }
     // 原始数据收集列表
     val nodes = mutableStateListOf<MarkdownNode>()
     // 用于UI渲染的列表
@@ -929,7 +936,8 @@ fun StreamMarkdownRenderer(
     
     // 使用流式版本相同的渲染器ID生成逻辑
     val rendererId = remember(content, rendererState) {
-        val id = "static-renderer-${content.hashCode()}"
+        // A state made for one message keeps its identity as the text changes.
+        val id = rendererState.staticId ?: "static-renderer-${content.hashCode()}"
         rendererState.updateRendererId(id)
         id
     }

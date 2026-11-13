@@ -187,7 +187,7 @@ fun BubbleAiMessageComposable(
     var linkToPreview by remember { mutableStateOf("") }
     
     // 创建并保存StreamMarkdownRenderer的状态，使用message.timestamp作为key确保同一条消息共享状态
-    val rendererState = remember(message.timestamp) { StreamMarkdownRendererState() }
+    val rendererState = remember(message.timestamp) { StreamMarkdownRendererState(message.timestamp.toString()) }
     val persistedToolExecutions =
         rememberPersistedToolExecutions(message.timestamp, message.content)
 

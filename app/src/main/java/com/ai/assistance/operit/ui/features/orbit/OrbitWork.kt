@@ -417,16 +417,14 @@ internal object OrbitWork {
                 com.ai.assistance.operit.ui.features.chat.viewmodel.messageHasExecutableToolCall("ai", it.content)
             } == true
         }
+        fun quiet(turn: Found) = bodies[turn.finalTimestamp]?.content?.let { content ->
+            content.contains("name=\"${com.ai.assistance.operit.features.orbit.OrbitReactionNotice.NOTHING_TO_DO}\"") &&
+                OrbitSpeech.of(content).isBlank()
+        } == true
         // The text search also matches a reply that only quotes markup; keep real work only.
-        return turns.filter { turn ->
+        val listed = turns.filter { turn ->
             !turn.byMarkup || bodies[turn.finalTimestamp]?.let { hasWork(it.content) } == true
-        }.filterNot { turn ->
-            // Orbit chose to stay quiet after a tapback: nothing happened worth listing.
-            bodies[turn.finalTimestamp]?.content?.let { content ->
-                content.contains("name=\"${com.ai.assistance.operit.features.orbit.OrbitReactionNotice.NOTHING_TO_DO}\"") &&
-                    OrbitSpeech.of(content).isBlank()
-            } == true
-        }.map { turn ->
+        }.mapNotNull { turn ->
             // The hidden notice that started it, named for the list: "you reacted 👍" or "scheduled: …".
             val reaction = hiddenBefore[turn.key]?.let { ts ->
                 bodies[ts]?.content?.let { content -> noticeTitle(content, reactionTitle, scheduledTitle) }?.let { ts to it }
@@ -434,6 +432,21 @@ internal object OrbitWork {
             // The nearest of the two started the turn: a tapback after the user's last message wins.
             val asked = if (reaction != null && (askedBy[turn.key] ?: Long.MIN_VALUE) < reaction.first) reaction.first
                 else askedBy[turn.key]
+            val byUser = asked != null && asked != reaction?.first
+            // Orbit stayed quiet after a tapback or a notice: nothing happened worth listing. A turn
+            // the user started stays, even when it ended quietly (a subagent's note woke Orbit
+            // after its answer, say): it holds what they asked and the agents it started.
+            val quiet = quiet(turn)
+            if (quiet && !byUser) return@mapNotNull null
+            Triple(turn, asked, reaction to quiet)
+        }
+        // A quiet ending says nothing; such a turn shows the last thing Orbit said before it.
+        val earlier = listed.filter { it.third.second }.flatMap { it.first.members }.filter { it !in bodies }
+            .takeIf { it.isNotEmpty() }
+            ?.let { manager.loadChatMessagesByTimestamps(chatId, it).associateBy { message -> message.timestamp } }
+            .orEmpty()
+        return listed.map { (turn, asked, startAndQuiet) ->
+            val (reaction, quiet) = startAndQuiet
             val title = if (reaction != null && asked == reaction.first) reaction.second
                 else asked?.let { bodies[it] }?.let { userLine(it.content, attachmentOnly) }.orEmpty()
             // A reply sent as several messages (message breaks) is saved as rows right after the
@@ -456,7 +469,12 @@ internal object OrbitWork {
                     title = title,
                     time = turn.key,
                 ),
-                reply = bodies[turn.finalTimestamp]?.let {
+                reply = if (quiet) {
+                    turn.members.sortedDescending().firstNotNullOfOrNull { ts ->
+                        (bodies[ts] ?: earlier[ts])?.takeIf { it.sender == "ai" && !it.displayMode.isCollaborationEvent }
+                            ?.let { firstLine(plain(OrbitSpeech.words(it.content, cardOnly))) }?.takeIf { it.isNotBlank() }
+                    }.orEmpty()
+                } else bodies[turn.finalTimestamp]?.let {
                     firstLine(plain(OrbitSpeech.words(it.content, cardOnly)))
                 }.orEmpty(),
                 usedTools = turn.members.any { it in usedTools },
