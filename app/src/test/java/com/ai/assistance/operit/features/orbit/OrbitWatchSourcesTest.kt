@@ -21,15 +21,7 @@ class OrbitWatchSourcesTest {
 
     @Test fun readingSourcesAreChecked() {
         assertTrue(ok("reading"))
-        assertTrue(ok("reading:5"))
-        assertTrue(ok("reading:3:0123456789abcdef"))
-        assertFalse(ok("reading:0"))
-        assertFalse(ok("reading:31"))
-        assertFalse(ok("reading:3:XYZ"))
-        assertFalse(ok("reading:3:0123456789abcdef:extra"))
-        assertEquals(OrbitReadingWatch.DEFAULT_AHEAD to null, OrbitReadingWatch.parse("reading"))
-        assertEquals(30 to "0123456789abcdef", OrbitReadingWatch.parse("reading:30:0123456789abcdef"))
-        assertTrue(OrbitReadingWatch.isReading("reading:3"))
+        assertFalse(ok("reading:5"))
         assertFalse(OrbitReadingWatch.isReading("readings"))
     }
 
