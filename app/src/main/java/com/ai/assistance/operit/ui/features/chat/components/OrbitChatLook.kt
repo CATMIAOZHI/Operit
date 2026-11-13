@@ -104,6 +104,15 @@ val LocalOrbitReactions = compositionLocalOf<Map<String, String>> { emptyMap() }
  */
 val LocalShowHiddenChatRows = compositionLocalOf { false }
 
+/**
+ * In Orbit's developer view: Orbit's own picture, drawn beside replies signed with its [name]
+ * (its chats and its background runs), so they never look like a role card's.
+ */
+@androidx.compose.runtime.Immutable
+class OrbitOwnAvatar(val name: String, val content: @Composable () -> Unit)
+
+val LocalOrbitOwnAvatar = compositionLocalOf<OrbitOwnAvatar?> { null }
+
 /** The user's messages in this Orbit chat that never reached the model, and how to send one again. */
 @androidx.compose.runtime.Immutable
 class OrbitUnsentMessages(val timestamps: Set<Long>, val resend: (ChatMessage) -> Unit)
