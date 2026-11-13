@@ -637,7 +637,9 @@ class ConversationService(
                 }.orEmpty()
 
                 // 获取自定义系统提示模板
-                val finalCustomSystemPromptTemplate =
+                // An agent's prompt starts with its parent's, which goes out exactly as the parent
+                // sent it; only the agent's own part is filled in as a template.
+                val (inheritedSystemPrompt, finalCustomSystemPromptTemplate) =
                     ConversationPromptIsolationPolicy.resolveSystemTemplate(
                         isSubTask = isSubTask,
                         requestTemplate = customSystemPromptTemplate,
@@ -648,7 +650,10 @@ class ConversationService(
                             } else {
                                 apiPreferences.customSystemPromptTemplateFlow.first()
                             },
-                    )
+                    ).let {
+                        if (isSubTask) com.ai.assistance.operit.core.agent.collaboration.CollaborationPromptHistory
+                            .splitInheritedSystem(it) else null to it
+                    }
                 val allowPersonalContext =
                     ConversationPromptIsolationPolicy.allowPersonalContext(isSubTask)
                 // Use the same space as memory tools, including a fixed role-card binding.
@@ -735,7 +740,7 @@ class ConversationService(
                 ).let {
                     // Orbit does not use the main app's attached repositories.
                     if (privateOwner != null) com.ai.assistance.operit.core.config.SystemToolPrompts.withoutRepoEnvironment(it) else it
-                }
+                }.let { own -> inheritedSystemPrompt?.let { "$it\n\n$own" } ?: own }
 
                 // 构建waifu特殊规则。Orbit 有自己的身份和性格，主应用的老婆模式规则不进 Orbit。
                 val waifuRulesText =
@@ -800,10 +805,11 @@ class ConversationService(
                         .getOrNull()?.let { owner -> owner.name.trim().ifEmpty { "Orbit" } }
                 } else null
                 val aiName = orbitName ?: activeCard?.name ?: context.getString(R.string.app_name)
-                val finalSystemPromptWithReplacements = replacePromptPlaceholders(
-                    finalSystemPrompt,
-                    aiName
-                )
+                // The inherited part was filled in by the parent already and stays as it sent it.
+                val finalSystemPromptWithReplacements =
+                    inheritedSystemPrompt?.takeIf { finalSystemPrompt.startsWith(it) }?.let {
+                        it + replacePromptPlaceholders(finalSystemPrompt.substring(it.length), aiName)
+                    } ?: replacePromptPlaceholders(finalSystemPrompt, aiName)
                 // An Orbit's prompt layers page shows what the app itself wrote into this prompt.
                 val promptSections = if (privateOwner != null && orbitParts != null) mapOf(
                     "runtime" to replacePromptPlaceholders(orbitParts.runtime, aiName),

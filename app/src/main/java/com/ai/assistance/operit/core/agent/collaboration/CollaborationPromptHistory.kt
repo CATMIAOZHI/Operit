@@ -8,6 +8,30 @@ internal object CollaborationPromptHistory {
     const val EVENT_METADATA = "operit.collaboration.event"
     const val TASK_METADATA = "operit.collaboration.new_task"
     const val INTERMEDIATE_METADATA = "operit.assistant.intermediate"
+
+    /**
+     * Ends the parent's system prompt inside an agent's prompt. The part before it was finished by
+     * the parent and is sent unchanged, so a provider can reuse the prefix it cached for the
+     * parent; only the part after it is a template filled in for the agent.
+     */
+    private const val INHERITED_SYSTEM_END = "\n\n<<operit:inherited-system-end>>\n\n"
+
+    fun withInheritedSystem(inherited: String, own: String): String =
+        if (inherited.isBlank()) own else inherited + INHERITED_SYSTEM_END + own
+
+    /** The inherited part to send as is (null when there is none), and the template after it. */
+    fun splitInheritedSystem(prompt: String): Pair<String?, String> {
+        val end = prompt.indexOf(INHERITED_SYSTEM_END)
+        return if (end < 0) null to prompt
+        else prompt.substring(0, end) to prompt.substring(end + INHERITED_SYSTEM_END.length)
+    }
+
+    /** Applies [change] to the agent's own part only, keeping the inherited part as it is. */
+    fun mapOwnSystem(prompt: String, change: (String) -> String): String {
+        val (inherited, own) = splitInheritedSystem(prompt)
+        return if (inherited == null) change(own) else withInheritedSystem(inherited, change(own))
+    }
+
     fun canMergeUserTurns(previous: PromptTurn, current: PromptTurn): Boolean =
         previous.kind == PromptTurnKind.USER && current.kind == PromptTurnKind.USER &&
             previous.toolName == current.toolName &&

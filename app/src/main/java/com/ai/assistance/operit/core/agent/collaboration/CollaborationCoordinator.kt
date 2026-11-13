@@ -284,11 +284,11 @@ class CollaborationCoordinator private constructor(context: Context) {
             pendingParents[reservation] = chatId
         }
         val created = CompletableDeferred<CollaborationAgent>()
-        val systemPrompt = """
-            ${inherited.filter { it.kind == PromptTurnKind.SYSTEM.name }.joinToString("\n\n") { it.content }}
-
-            ${if (includeProfilePrompt) profile.systemPrompt else ""}
-
+        // The parent's prompt comes first, exactly as the parent sent it, so the provider can reuse
+        // the prefix it cached for the parent. (Inside the indented block below, its first line
+        // kept the block's indent, which changed the very first characters.)
+        val inheritedSystem = inherited.filter { it.kind == PromptTurnKind.SYSTEM.name }.joinToString("\n\n") { it.content }
+        val agentRules = """
             You are $path, a v2 collaboration agent in a tree rooted at /root.
             Your parent is ${parent.path}. Complete the assigned task and send a final response.
             Your final response is automatically delivered to your parent. You can use v2
@@ -325,7 +325,11 @@ class CollaborationCoordinator private constructor(context: Context) {
             PACKAGE_SYSTEM_GUIDELINES_SECTION
             ACTIVE_PACKAGES_SECTION
             AVAILABLE_TOOLS_SECTION
-        """.trimIndent().let { collaborationSystemPromptForScope(it, orbitEnvelope) }
+        """.trimIndent()
+        val systemPrompt = CollaborationPromptHistory.withInheritedSystem(inheritedSystem,
+            listOf(if (includeProfilePrompt) profile.systemPrompt else "", agentRules)
+                .filter { it.isNotBlank() }.joinToString("\n\n")
+                .let { collaborationSystemPromptForScope(it, orbitEnvelope) })
         try {
             val inheritedHistory = CollaborationPromptHistory.inheritedPrefix(
                 inherited.filter { it.kind != PromptTurnKind.SYSTEM.name }, path,
@@ -343,6 +347,9 @@ class CollaborationCoordinator private constructor(context: Context) {
                         parentModelIndex = modelIndex,
                         externalOwnerType = OWNER_TYPE, externalOwnerId = path,
                         collaborationSystemPrompt = systemPrompt,
+                        // Asked under the main chat's identity, so the provider routes it to the
+                        // cache that already holds their shared prefix.
+                        providerSessionId = parent.rootChatId,
                         collaborationHistory = inheritedHistory.map { it.toPromptTurn() },
                         profileOverride = profile,
                         collaborationRoleCardId = roleCardId ?: parent.roleCardId,
@@ -485,7 +492,10 @@ class CollaborationCoordinator private constructor(context: Context) {
                             inputs.joinToString("\n\n") { it.render(orbitEnvelope) },
                     subagentType = agent.profileId, taskId = agent.runId,
                     parentModelConfigId = agent.modelConfigId, parentModelIndex = agent.modelIndex,
-                    collaborationSystemPrompt = collaborationSystemPromptForScope(agent.systemPrompt, orbitEnvelope),
+                    collaborationSystemPrompt = CollaborationPromptHistory.mapOwnSystem(agent.systemPrompt) {
+                        collaborationSystemPromptForScope(it, orbitEnvelope)
+                    },
+                    providerSessionId = agent.rootChatId,
                     collaborationHistory = agent.inheritedHistory.map { it.toPromptTurn() },
                     collaborationHistoryCutoff = agent.historyCutoff,
                     collaborationRoleCardId = agent.roleCardId,
