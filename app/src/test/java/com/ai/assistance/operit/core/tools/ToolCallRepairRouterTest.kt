@@ -67,6 +67,51 @@ class ToolCallRepairRouterTest {
             rawText = "original provider response", responseLocation = 4..12,
             callId = "call-7", invocationIndex = 2)
 
+    @Test fun writeFileGivenCreateFilesNewGetsItAsContent() {
+        val repair = ToolCallRepairRouter.route(call("write_file", "path" to "/a.md", "new" to "# text"))!!
+        assertEquals(listOf(ToolCallRepairRouter.WRITE_FILE_NEW_ALIAS), repair.rules)
+        assertEquals(listOf(ToolParameter("path", "/a.md"), ToolParameter("content", "# text")),
+            repair.invocation.tool.parameters)
+        assertNull(ToolCallRepairRouter.route(repair.invocation))
+        assertNull(ToolCallRepairRouter.route(call("write_file", "path" to "/a.md", "new" to "x", "content" to "y")))
+        assertNull(ToolCallRepairRouter.route(call("create_file", "path" to "/a.md", "new" to "x")))
+    }
+
+    @Test fun terminalTimeoutNextToToolNameMovesIntoParams() {
+        // Seen on a device: timeoutMs and yieldMs both written beside tool_name.
+        val repair = ToolCallRepairRouter.route(call("package_proxy", "tool_name" to "super_admin:terminal",
+            "params" to """{"command":"ls"}""", "timeoutMs" to "60000", "yieldMs" to "15000"))!!
+        assertEquals(setOf(ToolCallRepairRouter.TERMINAL_PROXY_YIELD, ToolCallRepairRouter.TERMINAL_PROXY_TIMEOUT),
+            repair.rules.toSet())
+        assertEquals(listOf("tool_name", "params"), repair.invocation.tool.parameters.map { it.name })
+        val params = JSONObject(repair.invocation.tool.parameters.single { it.name == "params" }.value)
+        assertEquals(60000L, params.getLong("timeoutMs"))
+        assertEquals(15000L, params.getLong("yieldMs"))
+        assertNull(ToolCallRepairRouter.route(repair.invocation))
+        for (value in listOf("0", "-5", "abc")) {
+            assertNull(ToolCallRepairRouter.route(call("package_proxy", "tool_name" to "super_admin:terminal",
+                "params" to """{"command":"ls"}""", "timeoutMs" to value)))
+        }
+        assertNull(ToolCallRepairRouter.route(call("package_proxy", "tool_name" to "super_admin:terminal",
+            "params" to """{"command":"ls","timeoutMs":5000}""", "timeoutMs" to "60000")))
+    }
+
+    @Test fun toolNameRepeatedInsideParamsIsDroppedOnlyWhenItIsTheSame() {
+        // Seen on a device: "Undeclared parameters: params.tool_name".
+        val repair = ToolCallRepairRouter.route(call("package_proxy", "tool_name" to "super_admin:terminal",
+            "params" to """{"command":"ls","tool_name":"super_admin:terminal"}"""))!!
+        assertEquals(listOf(ToolCallRepairRouter.REDUNDANT_PARAMS_TOOL_NAME), repair.rules)
+        val params = JSONObject(repair.invocation.tool.parameters.single { it.name == "params" }.value)
+        assertFalse(params.has("tool_name"))
+        assertEquals("ls", params.getString("command"))
+        assertNull(ToolCallRepairRouter.route(call("package_proxy", "tool_name" to "super_admin:terminal",
+            "params" to """{"command":"ls","tool_name":"other:tool"}""")))
+        assertNull(ToolCallRepairRouter.route(call("package_proxy", "tool_name" to "pkg:tool",
+            "params" to """{"tool_name":"pkg:tool"}""")))
+        // Outside a proxy, a tool's own tool_name parameter is its business.
+        assertNull(ToolCallRepairRouter.route(call("some_tool", "tool_name" to "some_tool")))
+    }
+
     @Test fun actionWrittenIntoABuiltInToolNameMovesBackToItsParameter() {
         val packageNames = ToolCallRepairRules.isPackageName
         try {

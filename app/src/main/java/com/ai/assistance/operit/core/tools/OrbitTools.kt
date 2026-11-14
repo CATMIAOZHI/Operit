@@ -75,16 +75,47 @@ internal object OrbitTools {
         val isTaskRoot = chatId?.let {
             com.ai.assistance.operit.data.db.AppDatabase.getDatabase(context).orbitTaskDao().binding(it)
         }?.let { it.chatId == it.rootChatId } == true
-        return mapOf(SET_NAME to isOrbitChat, OrbitSkillTools.NAME to hasOrbitSkills,
+        // Any other chat the Orbit owns is one its agents opened: a subagent of the chat or a task.
+        val isOrbitSubagent = hasOrbitSkills && !isOrbitChat && !isTaskRoot
+        return visibilityFor(isOrbitChat, hasOrbitSkills, isTaskRoot, isOrbitSubagent)
+    }
+
+    private fun visibilityFor(
+        isOrbitChat: Boolean, hasOrbitSkills: Boolean, isTaskRoot: Boolean, isOrbitSubagent: Boolean,
+    ): Map<String, Boolean> =
+        mapOf(SET_NAME to isOrbitChat, OrbitSkillTools.NAME to hasOrbitSkills,
             OrbitTaskTools.NAME to (isOrbitChat || isTaskRoot), OrbitSoulTools.NAME to (isOrbitChat || isTaskRoot),
             // A background routine (goal alignment) reads goals in full; the tool keeps it read-only there.
             OrbitProductTools.GOAL to (isOrbitChat || isTaskRoot), OrbitProductTools.ARTIFACT to isOrbitChat,
             OrbitBoardTools.FEED to (isOrbitChat || isTaskRoot), OrbitBoardTools.IDEA to (isOrbitChat || isTaskRoot),
             OrbitBoardTools.TRACKING to (isOrbitChat || isTaskRoot),
             com.ai.assistance.operit.features.orbit.OrbitTaskRunner.FINISH to false) +
-            OrbitExtraTools.visibility(isOrbitChat, isTaskRoot) +
+            OrbitExtraTools.visibility(isOrbitChat, isTaskRoot, isOrbitSubagent) +
             // Browsing is mostly left to subagents, and they are the ones who meet a password page.
             mapOf(OrbitBrowserHandoffTools.NAME to hasOrbitSkills, OrbitBrowserShowTools.NAME to hasOrbitSkills)
+
+    private val toolNames: Set<String> by lazy { categoryEn.tools.mapTo(hashSetOf()) { it.name } }
+
+    /**
+     * Why an Orbit's subagent may not call this Orbit tool, or null when it may (or it is not an
+     * Orbit tool, or the caller is not such a subagent). Subagents carry the Orbit's prompt and so
+     * know every Orbit tool; the ones not shown to them stay with the main agent.
+     */
+    suspend fun subagentDenial(context: Context, chatId: String?, toolName: String): String? {
+        if (toolName !in toolNames) return null
+        if (OrbitPreferences.getInstance(context).current().orbitForChat(chatId) != null) return null
+        val owner = runCatching { com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context, chatId) }
+            .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }.getOrNull()
+        if (owner == null) return null
+        val binding = chatId?.let {
+            com.ai.assistance.operit.data.db.AppDatabase.getDatabase(context).orbitTaskDao().binding(it)
+        }
+        // A task's chats get their tools from the task (OrbitTaskExecution), not from this rule.
+        if (binding != null) return null
+        // What [visibility] gives a chat the Orbit owns that is neither its own nor a task's.
+        if (visibilityFor(isOrbitChat = false, hasOrbitSkills = true, isTaskRoot = false, isOrbitSubagent = true)[toolName] != false) return null
+        return "$toolName is the main Orbit's own tool; a subagent cannot use it. " +
+            "Say what you need from it in your result, and the main agent will do it."
     }
 
     /**

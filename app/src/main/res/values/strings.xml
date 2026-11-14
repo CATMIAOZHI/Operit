@@ -8745,6 +8745,9 @@
     <string name="tool_repairs_separator">将终端工具名中重复的冒号修正为单冒号</string>
     <string name="tool_repairs_timeout">将终端 timeout 参数统一为 timeoutMs</string>
     <string name="tool_repairs_proxy_yield">将终端等待时长移入工具参数</string>
+    <string name="tool_repairs_proxy_timeout">将终端超时时长移入工具参数</string>
+    <string name="tool_repairs_params_tool_name">去掉参数里重复的 tool_name</string>
+    <string name="tool_repairs_write_file_new">把 write_file 的 new 改成 content</string>
     <string name="tool_repairs_package">移除与目标工具包一致的重复 package_name</string>
     <string name="tool_repairs_flattened_proxy">从 params 文本中还原出被并入的 tool_name</string>
     <string name="tool_repairs_memory_argument">将记忆工具误写的 new_text 参数改为 content</string>

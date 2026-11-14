@@ -13,12 +13,15 @@ internal object OrbitExtraTools {
     /**
      * [inTasks]: background task runs (the root task chat) get it too, not only the Orbit chat.
      * [stream]: a suspend version run in the tool call's coroutine, for a tool that may wait long.
+     * [inSubagents]: the Orbit's subagents get it too. They carry the Orbit's prompt, so they know
+     * every Orbit tool; the rest are left to the main agent (see OrbitTools.subagentDenial).
      */
     data class Spec(
         val prompt: ToolPrompt,
         val inTasks: Boolean,
         val run: (Context, AITool) -> ToolResult,
         val stream: (suspend (Context, AITool) -> ToolResult)? = null,
+        val inSubagents: Boolean = false,
     )
 
     val specs: List<Spec> by lazy {
@@ -43,7 +46,8 @@ internal object OrbitExtraTools {
             Spec(OrbitMcpTools.prompt, true, OrbitMcpTools::execute, OrbitMcpTools::run),
             Spec(OrbitSettingsTools.prompt, false, OrbitSettingsTools::execute),
             Spec(OrbitUsageTools.prompt, true, OrbitUsageTools::execute),
-            Spec(OrbitReadingTools.prompt, true, OrbitReadingTools::execute, OrbitReadingTools::run),
+            // Copying chapters and writing comments are handed to subagents.
+            Spec(OrbitReadingTools.prompt, true, OrbitReadingTools::execute, OrbitReadingTools::run, inSubagents = true),
             Spec(OrbitPermissionTools.prompt, false, OrbitPermissionTools::execute),
             Spec(OrbitBrowserHandoffTools.prompt, false, OrbitBrowserHandoffTools::execute),
             Spec(OrbitBrowserShowTools.prompt, false, OrbitBrowserShowTools::execute),
@@ -58,6 +62,6 @@ internal object OrbitExtraTools {
     val taskPrompts: List<ToolPrompt> get() = specs.filter { it.inTasks }.map { it.prompt }
     val taskNames: Set<String> by lazy { specs.filter { it.inTasks }.map { it.prompt.name }.toSet() }
 
-    fun visibility(isOrbitChat: Boolean, isTaskRoot: Boolean): Map<String, Boolean> =
-        specs.associate { it.prompt.name to (isOrbitChat || (it.inTasks && isTaskRoot)) }
+    fun visibility(isOrbitChat: Boolean, isTaskRoot: Boolean, isOrbitSubagent: Boolean = false): Map<String, Boolean> =
+        specs.associate { it.prompt.name to (isOrbitChat || (it.inTasks && isTaskRoot) || (it.inSubagents && isOrbitSubagent)) }
 }

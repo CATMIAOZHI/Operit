@@ -27,8 +27,8 @@ internal object OrbitProactivityTools {
         name = NAME,
         description = "后台备好的条目交给你时，先用它给每一条登记发（send）还是不发（skip）和理由，再开口；用户回应了你发过的提议，用 respond 记下来；history 查以前每条发没发、为什么、用户怎么回的。",
         parametersStructured = listOf(
-            ToolParameterSchema("action", "string", "select（默认）、respond 或 history；task 为当前到点任务登记开口的理由", false),
-            ToolParameterSchema("reason", "string", "task：这次为什么值得告诉用户，最多300字；安静结束直接用 orbit_nothing_to_do 的 reason", false),
+            ToolParameterSchema("action", "string", "select（默认）、respond、history 或 task。task 是 action 的一个取值，不是单独的参数：为当前到点任务登记开口的理由，写在 reason 里", false),
+            ToolParameterSchema("reason", "string", "action=task 时填：这次为什么值得告诉用户，最多300字；安静结束直接用 orbit_nothing_to_do 的 reason", false),
             ToolParameterSchema("offset", "integer", "history 可选：从第几条开始（从0开始，最新的在前），用上次返回的 next_offset；每次20条", false),
             ToolParameterSchema("decisions", "string",
                 "select：JSON 数组，每条 {\"item\":\"条目id\",\"decision\":\"send|skip\",\"reason\":\"理由\",\"format\":\"text|options|map_widget|list_widget|artifact（只有 send 填，默认 text）\",\"note\":\"查了什么，最多300字\"}", false),

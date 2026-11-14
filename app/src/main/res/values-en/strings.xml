@@ -8769,6 +8769,9 @@
     <string name="tool_repairs_separator">Corrected repeated colons in the terminal tool name</string>
     <string name="tool_repairs_timeout">Normalized terminal timeout to timeoutMs</string>
     <string name="tool_repairs_proxy_yield">Moved terminal yieldMs into tool parameters</string>
+    <string name="tool_repairs_proxy_timeout">Moved terminal timeoutMs into tool parameters</string>
+    <string name="tool_repairs_params_tool_name">Removed a tool_name repeated inside params</string>
+    <string name="tool_repairs_write_file_new">Renamed new to content in write_file</string>
     <string name="tool_repairs_package">Removed redundant package_name matching the target package</string>
     <string name="tool_repairs_flattened_proxy">Recovered the tool_name that was folded into the params text</string>
     <string name="tool_repairs_memory_argument">Renamed the memory tool\'s new_text argument to content</string>
