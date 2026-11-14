@@ -104,6 +104,21 @@ val LocalOrbitReactions = compositionLocalOf<Map<String, String>> { emptyMap() }
  */
 val LocalShowHiddenChatRows = compositionLocalOf { false }
 
+/**
+ * Set while opening Orbit's developer view: told whether the transcript's replies are still being
+ * prepared, so the view is recorded for its slide-in only once they show.
+ */
+val LocalTranscriptPreparing = compositionLocalOf<androidx.compose.runtime.MutableState<Boolean>?> { null }
+
+/**
+ * In Orbit's developer view: Orbit's own picture, drawn beside replies signed with its [name]
+ * (its chats and its background runs), so they never look like a role card's.
+ */
+@androidx.compose.runtime.Immutable
+class OrbitOwnAvatar(val name: String, val content: @Composable () -> Unit)
+
+val LocalOrbitOwnAvatar = compositionLocalOf<OrbitOwnAvatar?> { null }
+
 /** The user's messages in this Orbit chat that never reached the model, and how to send one again. */
 @androidx.compose.runtime.Immutable
 class OrbitUnsentMessages(val timestamps: Set<Long>, val resend: (ChatMessage) -> Unit)
@@ -825,7 +840,7 @@ fun rememberOrbitLiveSpeech(message: ChatMessage?): androidx.compose.runtime.Sta
 @Composable
 fun OrbitReactedAiMessage(timestamp: Long, content: @Composable () -> Unit) {
     val reaction = LocalOrbitUserReactions.current?.byMessage?.get(timestamp.toString())
-    if (reaction == null) {
+    if (reaction == null || !closesMessage()) {
         content()
         return
     }
@@ -834,6 +849,16 @@ fun OrbitReactedAiMessage(timestamp: Long, content: @Composable () -> Unit) {
         ReactionBadge(reaction, stringResource(R.string.orbit_user_reaction_label, reaction), Alignment.CenterStart, start = 16.dp)
     }
 }
+
+/**
+ * Whether this row draws the end of its message. A long message (every one in the developer view)
+ * is drawn as several rows, the header (time taken, who) on its own; a tapback goes under the last
+ * one only, not between them.
+ */
+@Composable
+private fun closesMessage(): Boolean =
+    LocalResponseMessageSection.current != ResponseMessageSection.HEADER &&
+        com.ai.assistance.operit.ui.common.markdown.LocalTranscriptMarkdownSlice.current?.last != false
 
 @Composable
 private fun ReactionBadge(reaction: String, label: String, alignment: Alignment, start: androidx.compose.ui.unit.Dp = 0.dp, end: androidx.compose.ui.unit.Dp = 0.dp) {
@@ -862,7 +887,7 @@ private fun ReactionBadge(reaction: String, label: String, alignment: Alignment,
 @Composable
 fun OrbitReactedUserMessage(timestamp: Long, content: @Composable () -> Unit) {
     val reaction = LocalOrbitReactions.current[timestamp.toString()]
-    if (reaction == null) {
+    if (reaction == null || !closesMessage()) {
         content()
         return
     }
@@ -1027,7 +1052,7 @@ fun OrbitSwipeToReply(
                 dragged = next
                 if (!passed && next >= trigger) {
                     passed = true
-                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                    com.ai.assistance.operit.ui.features.orbit.OrbitHaptics.threshold(haptic)
                 } else if (passed && next < trigger) {
                     passed = false
                 }

@@ -95,6 +95,10 @@ internal fun ToolRepairPanel(modifier: Modifier = Modifier) {
                                 ToolCallRepairRouter.MEMORY_ARGUMENT_ALIAS -> R.string.tool_repairs_memory_argument
                                 ToolCallRepairRouter.MEMORY_FINISH_ALIAS -> R.string.tool_repairs_memory_finish
                                 ToolCallRepairRouter.SPILLED_PARAMETER -> R.string.tool_repairs_spilled_parameter
+                                ToolCallRepairRouter.ACTION_IN_TOOL_NAME -> R.string.tool_repairs_action_in_name
+                                ToolCallRepairRouter.TERMINAL_PROXY_TIMEOUT -> R.string.tool_repairs_proxy_timeout
+                                ToolCallRepairRouter.REDUNDANT_PARAMS_TOOL_NAME -> R.string.tool_repairs_params_tool_name
+                                ToolCallRepairRouter.WRITE_FILE_NEW_ALIAS -> R.string.tool_repairs_write_file_new
                                 else -> null
                             }
                             Text(if (label == null) rule else stringResource(label))

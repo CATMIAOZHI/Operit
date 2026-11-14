@@ -174,6 +174,23 @@ object PatchUpdateInstaller {
         onEvent: (ProgressEvent) -> Unit
     ): File = withContext(Dispatchers.IO) {
         val workDir = prepareCleanWorkDir(context)
+        try {
+            preparePatchIn(context, workDir, patchUrl, metaUrl, mirrorKey, onEvent)
+        } catch (e: Throwable) {
+            // A failed patch leaves a copy of the installed APK behind; free it before any full download.
+            runCatching { workDir.deleteRecursively() }
+            throw e
+        }
+    }
+
+    private suspend fun preparePatchIn(
+        context: Context,
+        workDir: File,
+        patchUrl: String,
+        metaUrl: String,
+        mirrorKey: String,
+        onEvent: (ProgressEvent) -> Unit
+    ): File {
         val targetMetaFile = File(workDir, "target_patch_meta.json")
         val currentApk = File(workDir, "current.apk")
         val nextApk = File(workDir, "next.apk")
@@ -342,7 +359,7 @@ object PatchUpdateInstaller {
                 context.getString(R.string.full_update_ready_to_install)
             )
         )
-        outApk
+        return outApk
     }
 
     private suspend fun resolvePatchChain(
@@ -366,6 +383,20 @@ object PatchUpdateInstaller {
         val targetToVersion = targetMeta.optString("toVersion", "").trim()
         val targetToPatchIndex = if (targetMeta.has("toPatchIndex")) targetMeta.optInt("toPatchIndex", -1) else -1
 
+        val targetCandidate = parsePatchStep(
+            meta = targetMeta,
+            patchUrl = patchUrl,
+            metaUrl = metaUrl,
+            tag = targetMeta.optString("tag", "")
+        )
+        // The patch starts from the installed build: one step, no need to page through every release.
+        if (targetCandidate != null &&
+            targetCandidate.baseSha256 == currentBaseSha.trim().lowercase() &&
+            targetCandidate.targetSha256 == targetSha
+        ) {
+            return listOf(targetCandidate)
+        }
+
         val repo = parseRepoFromReleaseAssetUrl(metaUrl) ?: parseRepoFromReleaseAssetUrl(patchUrl)
             ?: throw IllegalStateException("Unsupported patch source URL")
 
@@ -383,12 +414,6 @@ object PatchUpdateInstaller {
             onEvent(ProgressEvent.ChainScanProgress(scanned = 0, total = scannableReleases.size))
         }
 
-        val targetCandidate = parsePatchStep(
-            meta = targetMeta,
-            patchUrl = patchUrl,
-            metaUrl = metaUrl,
-            tag = targetMeta.optString("tag", "")
-        )
         if (targetCandidate != null) {
             val edge = "${targetCandidate.baseSha256}->${targetCandidate.targetSha256}"
             stepsByEdge[edge] = targetCandidate
@@ -512,7 +537,8 @@ object PatchUpdateInstaller {
 
     private fun parseReleaseBodyAsPatchMeta(body: String?): JSONObject? {
         val text = body?.trim().orEmpty()
-        if (text.isBlank()) {
+        // A stable release's notes are Markdown; its patch is found from its own meta file.
+        if (!text.startsWith("{")) {
             return null
         }
         return try {
@@ -543,10 +569,12 @@ object PatchUpdateInstaller {
 
 
     private fun prepareCleanWorkDir(context: Context): File {
-        val workDir = File(context.cacheDir, WORK_DIR_NAME)
-        if (workDir.exists()) {
-            runCatching { workDir.deleteRecursively() }
+        // One folder per attempt: a cancelled attempt that is still unwinding deletes only its own.
+        val baseDir = File(context.cacheDir, WORK_DIR_NAME)
+        if (baseDir.exists()) {
+            runCatching { baseDir.deleteRecursively() }
         }
+        val workDir = File(baseDir, "attempt_${System.nanoTime()}")
         workDir.mkdirs()
         return workDir
     }

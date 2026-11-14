@@ -295,7 +295,7 @@ internal fun OrbitVaultEntrySheet(orbit: OrbitProfile, request: OrbitVault.Reque
                 Surface(shape = RoundedCornerShape(22.dp), color = colors.surface, modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(start = 18.dp, end = 12.dp, top = 12.dp, bottom = 14.dp)) {
                         Row(
-                            Modifier.fillMaxWidth().toggleable(value = allowEnv, enabled = editable, role = androidx.compose.ui.semantics.Role.Switch, onValueChange = { allowEnv = it }),
+                            Modifier.fillMaxWidth().toggleable(value = allowEnv, enabled = editable, role = androidx.compose.ui.semantics.Role.Switch, onValueChange = orbitToggle { allowEnv = it }),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(stringResource(if (login) R.string.orbit_vault_env_allow_login else R.string.orbit_vault_env_allow, orbit.name),

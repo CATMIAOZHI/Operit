@@ -39,7 +39,7 @@ import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.layout
@@ -694,7 +694,7 @@ private fun SwipeVoteRow(onVote: (Int) -> Unit, modifier: Modifier = Modifier, c
             else -> 0
         }
         if (direction != armed) {
-            if (direction != 0) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            if (direction != 0) OrbitHaptics.threshold(haptic)
             armed = direction
         }
     }
@@ -710,13 +710,20 @@ private fun SwipeVoteRow(onVote: (Int) -> Unit, modifier: Modifier = Modifier, c
     }
     val currentSettle by rememberUpdatedState(::settle)
     Box(modifier.fillMaxWidth().onSizeChanged { width = it.width }) {
-        // What the swipe uncovers. Read while drawing, so a drag never recomposes the row.
+        // What the swipe uncovers: only the strip beside the row, its color growing from nothing,
+        // so a slight drag does not flash the whole row green or red. Read while drawing, so a
+        // drag never recomposes the row.
         Box(
             Modifier.matchParentSize().drawBehind {
                 val x = offset.value
                 if (x != 0f) {
                     val progress = (abs(x) / threshold).coerceIn(0f, 1f)
-                    drawRect((if (x > 0) LikeGreen else DislikeRed).copy(alpha = 0.16f + 0.22f * progress))
+                    val strip = abs(x).coerceAtMost(size.width)
+                    drawRect(
+                        (if (x > 0) LikeGreen else DislikeRed).copy(alpha = 0.38f * progress),
+                        topLeft = androidx.compose.ui.geometry.Offset(if (x > 0) 0f else size.width - strip, 0f),
+                        size = androidx.compose.ui.geometry.Size(strip, size.height),
+                    )
                 }
             }
         )
@@ -1047,7 +1054,9 @@ private fun FeedPostRow(
             val rowTaps = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
             val toggleTaps = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
             Row(
-                Modifier.fillMaxWidth()
+                // Taps below the growing text land nowhere: the row clips them, its right margin
+                // included, so the ⓘ button keeps its full touch area.
+                Modifier.fillMaxWidth().clipToBounds()
                     .clickable(interactionSource = rowTaps, indication = null, onClick = toggle)
                     .padding(start = 12.dp, end = 20.dp, top = 16.dp, bottom = 4.dp),
             ) {
@@ -1055,7 +1064,13 @@ private fun FeedPostRow(
                 Spacer(Modifier.width(8.dp))
                 // Opening grows smoothly; folding is at once, since shrinking a long post frame by
                 // frame made the list jump and stutter.
-                Column(Modifier.weight(1f).clipToBounds().layout { measurable, constraints ->
+                // Clipped top to bottom only: the ⓘ button reaches into the margin on the right
+                // and keeps its full touch area there.
+                Column(Modifier.weight(1f).drawWithContent {
+                    clipRect(
+                        left = -size.width, right = size.width * 2, top = 0f, bottom = size.height,
+                    ) { this@drawWithContent.drawContent() }
+                }.layout { measurable, constraints ->
                     val placeable = measurable.measure(constraints)
                     val height = growth.heightFor(placeable.height, scope)
                     layout(placeable.width, height) { placeable.placeRelative(0, 0) }
@@ -1136,31 +1151,42 @@ private fun FeedPostRow(
                             }
                         }
                     }
-                    // The buttons line up with the text; their touch area reaches past it to the left.
-                    Row(Modifier.fillMaxWidth().offset(x = (-12).dp), verticalAlignment = Alignment.CenterVertically) {
-                        VoteButton("thumbs-up", stringResource(R.string.orbit_feed_like), shownVote > 0) { vote(1) }
-                        VoteButton("thumbs-down", stringResource(R.string.orbit_feed_dislike), shownVote < 0) { vote(-1) }
-                        // With large text the label shortens before the ⓘ button is squeezed.
-                        TextButton(
-                            onClick = onDiscuss, colors = ButtonDefaults.textButtonColors(contentColor = colors.onSurface),
-                            modifier = Modifier.weight(1.5f, fill = false),
-                        ) {
-                            Icon(orbitIcon("message-circle"), null, Modifier.size(20.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text(
-                                stringResource(R.string.orbit_feed_discuss), style = MaterialTheme.typography.bodyLarge,
-                                maxLines = 1, overflow = TextOverflow.Ellipsis,
-                            )
+                    // Like Muse: the buttons on the left, lined up with the text (their touch area
+                    // reaches past it); the time and ⓘ at the right edge of the text, at any width.
+                    Row(
+                        Modifier.fillMaxWidth().offset(x = (-12).dp), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        // Narrow or with large text, the discuss label shortens first, then the
+                        // time; the vote buttons and ⓘ keep their size.
+                        Row(Modifier.weight(1.5f, fill = false), verticalAlignment = Alignment.CenterVertically) {
+                            VoteButton("thumbs-up", stringResource(R.string.orbit_feed_like), shownVote > 0) { vote(1) }
+                            VoteButton("thumbs-down", stringResource(R.string.orbit_feed_dislike), shownVote < 0) { vote(-1) }
+                            TextButton(
+                                onClick = onDiscuss, colors = ButtonDefaults.textButtonColors(contentColor = colors.onSurface),
+                                modifier = Modifier.weight(1f, fill = false),
+                            ) {
+                                Icon(orbitIcon("message-circle"), null, Modifier.size(20.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    stringResource(R.string.orbit_feed_discuss), style = MaterialTheme.typography.bodyLarge,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                )
+                            }
                         }
-                        // The time takes what room is left, so the ⓘ button always keeps its full size.
-                        Text(
-                            ago(post.createdAt), style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.End,
-                            modifier = Modifier.weight(1f),
-                        )
-                        if (post.extra.isNotBlank()) {
-                            IconButton(onClick = { showWhy = !showWhy }, modifier = Modifier.offset(x = 12.dp)) {
-                                Icon(orbitIcon("info"), stringResource(R.string.orbit_feed_why), Modifier.size(22.dp))
+                        // Undoes the row's shift, so the time or the ⓘ mark itself ends at the text's right edge.
+                        Row(
+                            Modifier.weight(1f, fill = false).offset(x = if (post.extra.isNotBlank()) 25.dp else 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                ago(post.createdAt), style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false),
+                            )
+                            if (post.extra.isNotBlank()) {
+                                IconButton(onClick = { showWhy = !showWhy }) {
+                                    Icon(orbitIcon("info"), stringResource(R.string.orbit_feed_why), Modifier.size(22.dp))
+                                }
                             }
                         }
                     }
@@ -3137,7 +3163,7 @@ internal fun OrbitNotificationsPage(orbitId: String, onBack: () -> Unit) {
                     Text(stringResource(R.string.orbit_notifications_help), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text(stringResource(R.string.orbit_quiet_hours), Modifier.weight(1f))
-                        Switch(checked = settings.quietEnabled, onCheckedChange = { enabled -> save { it.copy(quietEnabled = enabled) } })
+                        Switch(checked = settings.quietEnabled, onCheckedChange = orbitToggle { enabled -> save { it.copy(quietEnabled = enabled) } })
                     }
                     Text(stringResource(R.string.orbit_delivery_interval), style = MaterialTheme.typography.titleSmall)
                     listOf(0, 15, 60).forEach { minutes ->

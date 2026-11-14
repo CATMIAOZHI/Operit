@@ -134,6 +134,12 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
             })
         }
     }
+    // `orbit_reading:where` is only read as a built-in tool plus its action when no package or
+    // MCP server really has that name (see ToolCallRepairRules).
+    ToolCallRepairRules.isPackageName = { name ->
+        val packages = handler.getOrCreatePackageManager()
+        packages.getAvailablePackages().containsKey(name) || packages.getAvailableServerPackages().containsKey(name)
+    }
     OrbitProductTools.prompts.forEach { prompt ->
         handler.registerTool(name = prompt.name, executor = { OrbitProductTools.execute(context, it) })
     }
@@ -1300,7 +1306,8 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                         tool,
                         CliToolModeSupport.buildProxyTargetUnavailableMessage(
                             resolvedInvocation.targetToolName,
-                            isEnglishLanguage()
+                            isEnglishLanguage(),
+                            cliMode = ToolExecutionManager.currentToolRuntimeContext()?.toolExposureMode == ToolExposureMode.CLI,
                         )
                     )
                 }
@@ -1610,18 +1617,35 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                                 ?: 1000
 
                 val safeDuration = durationMs.coerceAtLeast(0)
-
-                // Use runBlocking with Dispatchers.IO to ensure sleep happens on background thread
-                runBlocking(Dispatchers.IO) {
-                    delay(safeDuration.toLong())
+                // Called by the model itself, a message sent into the chat meanwhile (the user's, or an
+                // agent's) wakes it early. A sleep inside a package's script runs its full time: the
+                // call the model made there is the package's, and its steps may count on the wait.
+                val runtime = ToolExecutionManager.currentToolRuntimeContext()
+                val inbox = runtime?.takeIf { it.permissionCheckedToolName == tool.name }?.callerChatId?.let {
+                    com.ai.assistance.operit.api.chat.ChatRuntimeHolder.getInstance(context)
+                        .getCore(com.ai.assistance.operit.api.chat.ChatRuntimeSlot.MAIN)
+                        .getMessageProcessingDelegate().turnInputInbox(it)
                 }
+                val started = android.os.SystemClock.elapsedRealtime()
+                // On a background thread; stopping the turn interrupts it.
+                val woken = runBlocking(Dispatchers.IO) {
+                    if (inbox == null) {
+                        delay(safeDuration.toLong())
+                        false
+                    } else {
+                        kotlinx.coroutines.withTimeoutOrNull(safeDuration.toLong()) { inbox.awaitInput() } != null
+                    }
+                }
+                val sleptMs = if (!woken) safeDuration else
+                    (android.os.SystemClock.elapsedRealtime() - started).coerceIn(0L, safeDuration.toLong()).toInt()
 
                 ToolResult(
                         toolName = tool.name,
                         success = true,
                         result = SleepResultData(
                                 requestedMs = durationMs,
-                                sleptMs = safeDuration
+                                sleptMs = sleptMs,
+                                wokenByMessage = woken,
                         )
                 )
             }
@@ -2101,7 +2125,12 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 s(R.string.toolreg_write_file_desc, operation, path, envInfo)
             },
             executor = { tool ->
-                runBlockingIoPreservingToolRuntimeContext {
+                // Every file system (standard, debugger, root) reads a missing content as "", which
+                // would empty the file, as when a model passes create_file's `new` instead. An
+                // explicit empty content still clears it.
+                if (tool.parameters.none { it.name == "content" }) {
+                    buildToolErrorResult(tool, "content is required: the whole new text of the file. Nothing was written.")
+                } else runBlockingIoPreservingToolRuntimeContext {
                     fileSystemTools.writeFile(tool).also { com.ai.assistance.operit.features.orbit.OrbitFolderGuard.afterWrite(context, tool) }
                 }
             }

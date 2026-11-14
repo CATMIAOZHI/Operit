@@ -20,6 +20,8 @@ internal class CodexOAuthLoopbackCallbackServer private constructor(
 ) {
     val port: Int = serverSocket.localPort
     val redirectUri: String = "http://$callbackHost:$port$callbackPath"
+    /** The connection being read, so giving up on the browser can drop it mid-read. */
+    @Volatile private var client: Socket? = null
 
     suspend fun awaitCallback(): Uri = withContext(Dispatchers.IO) {
         while (!serverSocket.isClosed) {
@@ -30,23 +32,34 @@ internal class CodexOAuthLoopbackCallbackServer private constructor(
                 continue
             }
             socket.use {
+                client = socket
+                // Given up between accept and here: dropClient saw nothing to drop, so stop now.
+                currentCoroutineContext().ensureActive()
                 socket.soTimeout = REQUEST_READ_TIMEOUT_MILLIS
                 val callback = readCallbackUri(socket)
                 if (callback == null) {
                     writeResponse(socket, NOT_FOUND_RESPONSE)
                 } else {
                     writeResponse(socket, SUCCESS_RESPONSE)
+                    client = null
                     return@withContext callback
                 }
+                client = null
             }
         }
         throw IllegalStateException("Codex OAuth callback server stopped before receiving a callback")
+    }
+
+    /** Stops reading a connection in progress; the listener stays open until [close]. */
+    fun dropClient() {
+        runCatching { client?.close() }
     }
 
     fun close() {
         if (!serverSocket.isClosed) {
             serverSocket.close()
         }
+        dropClient()
     }
 
     private fun readCallbackUri(socket: Socket): Uri? {

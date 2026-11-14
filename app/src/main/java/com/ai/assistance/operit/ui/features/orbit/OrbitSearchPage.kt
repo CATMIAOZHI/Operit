@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -211,7 +212,6 @@ internal fun OrbitSearchPage(
     onQueryChange: (String) -> Unit,
     onOpenHit: (OrbitSearchHit) -> Unit,
     onOpenSettings: () -> Unit,
-    onLeaveOrbit: () -> Unit,
     onClose: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -307,14 +307,13 @@ internal fun OrbitSearchPage(
                 .statusBarsPadding().navigationBarsPadding().imePadding(),
         ) {
             Row(
-                Modifier.fillMaxWidth().padding(start = 24.dp, end = 16.dp, top = 12.dp, bottom = 8.dp),
+                Modifier.fillMaxWidth().heightIn(min = 44.dp).padding(start = 24.dp, end = 16.dp, top = 12.dp, bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
                     stringResource(R.string.orbit_search_title), style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f),
                 )
-                OrbitBackToOperitPill(onLeaveOrbit)
             }
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 val showing = searched.isNotEmpty() && needle.isNotEmpty()

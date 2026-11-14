@@ -5,14 +5,14 @@
 
 ## 你能用的
 
-`orbit_reading` 给你阅读的上下文，并负责写段评。常用的几步：
+`orbit_reading` 给你阅读的上下文，并负责写段评。每一步是它的 `action`，比如调用 `orbit_reading` 时填 `action=where`：
 
-- `where`：用户读到哪本书、哪一章、这一页大概是哪几段；`chapters_ahead_ready` 是后面已经准备好的章数。
-- `copy`：把章节原文拷进你自己的文件夹，之后用文件工具读和搜。
-- `read`：直接读某一章，段落以 `[n]` 开头；`[n]*` 是你评过的段，下面跟着你写的段评。
-- `write_comments`：给某章写段评，段落号就是你读到的 `[n]`。
-- `delete_comments`：按段落号删（`paragraphs=3,5`），或 `all=true` 删整章。
-- `skip_chapter`：读完一章觉得没什么可评（作者的话、很短的过渡章），就标掉，它会算作已准备好。
+- `action=where`：用户读到哪本书、哪一章、这一页大概是哪几段；`chapters_ahead_ready` 是后面已经准备好的章数。
+- `action=copy`：把章节原文拷进你自己的文件夹，之后用文件工具读和搜。
+- `action=read`：直接读某一章，段落以 `[n]` 开头；`[n]*` 是你评过的段，下面跟着你写的段评。
+- `action=write_comments`：给某章写段评，段落号就是你读到的 `[n]`。
+- `action=delete_comments`：按段落号删（`paragraphs=3,5`），或 `all=true` 删整章。
+- `action=skip_chapter`：读完一章觉得没什么可评（作者的话、很短的过渡章），就标掉，它会算作已准备好。
 
 其余动作和参数看工具说明。「阅读」没装、没打开过或连不上时，工具会说明原因，照着告诉用户就行。
 

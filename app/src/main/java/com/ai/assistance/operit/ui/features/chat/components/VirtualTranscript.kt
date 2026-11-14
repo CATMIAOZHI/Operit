@@ -290,6 +290,15 @@ internal fun VirtualTranscript(
             restoreUnavailable = currentReveal?.invoke(restoreTimestamp) != true
         }
     }
+    LocalTranscriptPreparing.current?.let { sink ->
+        // Only rows that are actually being prepared (on screen, nearby or the restore target).
+        // Long messages far off screen stay as placeholders and never finish preparing.
+        val pending = prepareCandidates.mapTo(hashSetOf()) { it.first }
+        val preparing = restoring || rows.any {
+            it.preparingMarkdown && messages.getOrNull(it.messageIndex)?.timestamp in pending
+        }
+        SideEffect { sink.value = preparing }
+    }
     LaunchedEffect(chatId, rows.map { it.key to it.preparingMarkdown }, restoring, restoreUnavailable) {
         if (!restoring || bookmark == null) return@LaunchedEffect
         onFollowingChange?.invoke(false)

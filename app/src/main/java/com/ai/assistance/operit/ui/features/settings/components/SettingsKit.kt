@@ -293,12 +293,21 @@ fun SettingsSwitchRow(
     /** 0.dp lines the text up with other content in a card that already has its own padding. */
     horizontalPadding: Dp = 8.dp
 ) {
+    // Felt as it flips, like the system's own switches.
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    val change: (Boolean) -> Unit = { on ->
+        haptic.performHapticFeedback(
+            if (on) androidx.compose.ui.hapticfeedback.HapticFeedbackType.ToggleOn
+            else androidx.compose.ui.hapticfeedback.HapticFeedbackType.ToggleOff,
+        )
+        onCheckedChange(on)
+    }
     Row(
         modifier =
             (if (searchable) modifier.settingsSearchTarget(title) else modifier)
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(14.dp))
-                .clickable(enabled = enabled) { onCheckedChange(!checked) }
+                .clickable(enabled = enabled) { change(!checked) }
                 .padding(horizontal = horizontalPadding, vertical = 10.dp)
                 .alpha(if (enabled) 1f else 0.38f),
         verticalAlignment = Alignment.CenterVertically
@@ -316,7 +325,7 @@ fun SettingsSwitchRow(
                 )
             }
         }
-        Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
+        Switch(checked = checked, onCheckedChange = change, enabled = enabled)
     }
 }
 

@@ -41,9 +41,13 @@ data class StringResultData(val value: String) : ToolResultData() {
 @Serializable
 data class SleepResultData(
         val requestedMs: Int,
-        val sleptMs: Int
+        val sleptMs: Int,
+        /** Ended early because a new message arrived in the chat. */
+        val wokenByMessage: Boolean = false,
 ) : ToolResultData() {
-    override fun toString(): String = "Slept for ${sleptMs}ms"
+    override fun toString(): String =
+        if (wokenByMessage) "Woke after ${sleptMs}ms of ${requestedMs}ms: a new message arrived"
+        else "Slept for ${sleptMs}ms"
 }
 
 @Serializable

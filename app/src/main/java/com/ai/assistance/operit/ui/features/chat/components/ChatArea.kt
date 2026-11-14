@@ -786,7 +786,6 @@ private fun MessageItem(
         com.ai.assistance.operit.ui.common.markdown.LocalTranscriptMarkdownSlice.current?.first != false &&
         OrbitSpeech.of(message.content).isBlank()
     var showEmojiPicker by remember { mutableStateOf(false) }
-    val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
     // The bubble the long-press menu is for: a card inside the reply, or null for the message itself.
     var menuPiece by remember { mutableStateOf<OrbitPiece?>(null) }
     val reactionKey = menuPiece?.reactionKey(orbitUserReactions?.byMessage) ?: message.timestamp.toString()
@@ -796,7 +795,6 @@ private fun MessageItem(
     fun like(key: String, said: String?) {
         val reactions = orbitUserReactions ?: return
         if (reactions.byMessage[key] != OrbitQuickLike) {
-            haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
             OrbitEmojiUsage.record(context, OrbitQuickLike)
             reactions.toggle(key, OrbitQuickLike, said)
         }

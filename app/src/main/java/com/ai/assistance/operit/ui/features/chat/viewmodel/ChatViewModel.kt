@@ -1032,14 +1032,15 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
     }
 
-    fun switchChat(chatId: String, scrollToBottom: Boolean = true) {
+    /** [refreshWorkspace] is false for a chat shown inside Orbit, which never shows the chat page's workspace. */
+    fun switchChat(chatId: String, scrollToBottom: Boolean = true, refreshWorkspace: Boolean = true) {
         invalidateCurrentComposerPrediction()
         messageProcessingDelegate.invalidateComposerPrediction(chatId)
         chatHistoryDelegate.switchChat(chatId, scrollToBottom = scrollToBottom)
         chatRuntimeHolder.syncMainChatSelectionToFloating(chatId)
 
         // 如果当前WebView正在显示，则更新工作区并触发刷新
-        if (_showWebView.value) {
+        if (refreshWorkspace && _showWebView.value) {
             viewModelScope.launch {
                 try {
                     prepareWorkspaceServerForCurrentChat(chatId)

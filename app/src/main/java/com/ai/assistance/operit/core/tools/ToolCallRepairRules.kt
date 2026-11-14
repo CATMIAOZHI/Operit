@@ -21,10 +21,47 @@ internal data class ToolCallRepairRule(
 
 internal object ToolCallRepairRules {
     private val repeatedTerminalSeparator = Regex("""^super_admin::+terminal$""")
+    private val actionSuffix = Regex("""^([a-z][a-z0-9_]*):([a-z][a-z0-9_]*)$""")
+
+    /**
+     * Built-in tools that take an `action`. A model that reads "orbit_reading: where" writes
+     * `orbit_reading:where`, which then looks like a package tool. Only repaired when no package
+     * or MCP server has that name ([isPackageName]); the tool itself still checks the action.
+     */
+    private val actionTools: Set<String> by lazy {
+        runCatching {
+            com.ai.assistance.operit.core.config.SystemToolPrompts
+                .getAllCategoriesEn(includeSubagentTools = false)
+                .flatMap { it.tools }
+                .filter { tool -> tool.parametersStructured.orEmpty().any { it.name == "action" } }
+                .mapTo(hashSetOf()) { it.name }
+        }.getOrDefault(emptySet())
+    }
+
+    /**
+     * Whether a JS package or MCP server (installed, active or not) is called this, so its
+     * `name:tool` is real. Set by the app once tools are registered; unset, nothing is repaired.
+     */
+    @Volatile
+    internal var isPackageName: (String) -> Boolean = { true }
 
     // Name normalization precedes canonical-name rules. One pass, no retry loop.
     val ordered = listOf(
         ToolCallRepairRule(ToolCallRepairRouter.SPILLED_PARAMETER) { call -> splitSpilledParameter(call) },
+        ToolCallRepairRule(ToolCallRepairRouter.ACTION_IN_TOOL_NAME) { call ->
+            val match = actionSuffix.matchEntire(call.targetName) ?: return@ToolCallRepairRule null
+            val (tool, action) = match.destructured
+            if (tool !in actionTools) return@ToolCallRepairRule null
+            if (runCatching { isPackageName(tool) }.getOrDefault(true)) return@ToolCallRepairRule null
+            val given = call.arguments.filter { it.name == "action" }
+            when {
+                given.isEmpty() -> call.copy(targetName = tool,
+                    arguments = listOf(ToolRepairArgument("action", JsonPrimitive(action))) + call.arguments)
+                given.size == 1 && (given.single().value as? JsonPrimitive)?.content == action ->
+                    call.copy(targetName = tool)
+                else -> null
+            }
+        },
         ToolCallRepairRule(ToolCallRepairRouter.MEMORY_FINISH_ALIAS) { call ->
             if (call.targetName != "memory_learning_action" || call.proxyParameters != null ||
                 call.arguments.any { it.name !in setOf("action","arguments") } ||
@@ -58,21 +95,29 @@ internal object ToolCallRepairRules {
                 call.arguments.any { it.name == "start_line" || it.name == "end_line" })
                 call.copy(targetName = "read_file_part") else null
         },
+        ToolCallRepairRule(ToolCallRepairRouter.WRITE_FILE_NEW_ALIAS) { call ->
+            // Seen on a device: write_file given create_file's `new`; without content it would
+            // have written nothing (now refused), so the text is moved to where it is read.
+            if (call.targetName != "write_file" || call.arguments.any { it.name == "content" })
+                return@ToolCallRepairRule null
+            if (call.arguments.count { it.name == "new" } != 1) return@ToolCallRepairRule null
+            call.copy(arguments = call.arguments.map { if (it.name == "new") it.copy(name = "content") else it })
+        },
         ToolCallRepairRule(ToolCallRepairRouter.TERMINAL_PROXY_YIELD) { call ->
-            if (call.targetName != "super_admin:terminal") return@ToolCallRepairRule null
-            val outer = call.proxyParameters ?: return@ToolCallRepairRule null
-            val misplaced = outer.singleOrNull { it.name == "yieldMs" } ?: return@ToolCallRepairRule null
-            val value = misplaced.value.toLongOrNull()?.takeIf { it in 0..30_000 }
-                ?: return@ToolCallRepairRule null
-            val existing = call.arguments.filter { it.name == "yieldMs" }
-            if (existing.size > 1 || existing.any {
-                (it.value as? JsonPrimitive)?.content?.toLongOrNull() != value
-            }) return@ToolCallRepairRule null
-            call.copy(
-                proxyParameters = outer.filterNot { it.name == "yieldMs" },
-                arguments = if (existing.isNotEmpty()) call.arguments else
-                    call.arguments + ToolRepairArgument("yieldMs", JsonPrimitive(value)),
-            )
+            moveTerminalProxyNumber(call, "yieldMs", 0L..30_000L)
+        },
+        ToolCallRepairRule(ToolCallRepairRouter.TERMINAL_PROXY_TIMEOUT) { call ->
+            // The terminal checks the value itself; this only puts it where it is read.
+            moveTerminalProxyNumber(call, "timeoutMs", 1L..Long.MAX_VALUE)
+        },
+        ToolCallRepairRule(ToolCallRepairRouter.REDUNDANT_PARAMS_TOOL_NAME) { call ->
+            // params repeating the proxy's own tool_name, seen as `params.tool_name` undeclared on
+            // the terminal. Other package tools may take a tool_name of their own, so only this one.
+            if (call.proxyParameters == null || call.targetName != "super_admin:terminal") return@ToolCallRepairRule null
+            val inner = call.arguments.filter { it.name == "tool_name" }
+            if (inner.size != 1 || (inner.single().value as? JsonPrimitive)?.takeIf { it.isString }?.content
+                    != call.targetName) return@ToolCallRepairRule null
+            call.copy(arguments = call.arguments.filterNot { it.name == "tool_name" })
         },
         ToolCallRepairRule(ToolCallRepairRouter.TERMINAL_TIMEOUT) { call ->
             if (call.targetName != "super_admin:terminal") return@ToolCallRepairRule null
@@ -117,6 +162,26 @@ internal object ToolCallRepairRules {
                 if (it.name == MEMORY_ARGUMENT_FIELD) it.copy(value = JsonPrimitive(renamed)) else it
             })
         },
+    )
+}
+
+/**
+ * A terminal option written next to tool_name instead of inside params moves into params, when
+ * it is a whole number in [range] and params does not already say something else.
+ */
+private fun moveTerminalProxyNumber(call: ToolRepairCall, name: String, range: LongRange): ToolRepairCall? {
+    if (call.targetName != "super_admin:terminal") return null
+    val outer = call.proxyParameters ?: return null
+    val misplaced = outer.singleOrNull { it.name == name } ?: return null
+    val value = misplaced.value.toLongOrNull()?.takeIf { it in range } ?: return null
+    val existing = call.arguments.filter { it.name == name }
+    if (existing.size > 1 || existing.any {
+        (it.value as? JsonPrimitive)?.content?.toLongOrNull() != value
+    }) return null
+    return call.copy(
+        proxyParameters = outer.filterNot { it.name == name },
+        arguments = if (existing.isNotEmpty()) call.arguments else
+            call.arguments + ToolRepairArgument(name, JsonPrimitive(value)),
     )
 }
 

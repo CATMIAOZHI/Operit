@@ -7,8 +7,9 @@ import androidx.lifecycle.MutableLiveData
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.core.config.DistributionConfig
 import com.ai.assistance.operit.data.api.GitHubApiService
+import com.ai.assistance.operit.data.api.GitHubRelease
+import com.ai.assistance.operit.data.api.GitHubReleaseAsset
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
-import com.ai.assistance.operit.util.GithubReleaseUtil
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -31,7 +32,9 @@ sealed class UpdateStatus {
             val updateUrl: String,
             val releaseNotes: String,
             val patchUrl: String,
-            val metaUrl: String
+            val metaUrl: String,
+            /** The same version as a whole APK, downloaded instead if the patch cannot be applied. */
+            val fullApkUrl: String = ""
     ) : UpdateStatus()
     object UpToDate : UpdateStatus()
     data class Error(val message: String) : UpdateStatus()
@@ -176,38 +179,45 @@ class UpdateManager private constructor(private val context: Context) {
                 val repoOwner = DistributionConfig.OWNER
                 val repoName = DistributionConfig.SOURCE_REPOSITORY
 
-                val githubReleaseUtil = GithubReleaseUtil(context)
-                val releaseInfo = githubReleaseUtil.fetchLatestReleaseInfo(repoOwner, repoName)
+                val latestRelease = GitHubApiService(context)
+                    .getRepositoryReleases(owner = repoOwner, repo = repoName, page = 1, perPage = 1)
+                    .onFailure { AppLogger.e(TAG, "Failed to get release info for $repoOwner/$repoName", it) }
+                    .getOrNull()?.firstOrNull()
 
                 AppLogger.d(
                     TAG,
-                    "normal release check: repo=$repoOwner/$repoName releaseInfo=${releaseInfo?.version}"
+                    "normal release check: repo=$repoOwner/$repoName latest=${latestRelease?.tag_name}"
                 )
 
-                if (releaseInfo != null) {
+                if (latestRelease != null) {
+                    val latestVersion = latestRelease.tag_name.removePrefix("v")
+                    val apkAsset = latestRelease.assets.firstOrNull { it.name.endsWith(".apk") }
                     val normalUpdate: UpdateStatus =
-                        if (compareVersions(releaseInfo.version, currentVersion) > 0) {
-                            UpdateStatus.Available(
-                            newVersion = releaseInfo.version,
-                            updateUrl = releaseInfo.releasePageUrl,
-                            releaseNotes = releaseInfo.releaseNotes,
-                            downloadUrl = releaseInfo.downloadUrl
+                        if (compareVersions(latestVersion, currentVersion) > 0) {
+                            stablePatchFor(latestRelease, latestVersion, apkAsset) ?: UpdateStatus.Available(
+                            newVersion = latestVersion,
+                            updateUrl = latestRelease.html_url,
+                            releaseNotes = latestRelease.body ?: "",
+                            downloadUrl = apkAsset?.browser_download_url ?: latestRelease.html_url
                             )
                         } else {
                             UpdateStatus.UpToDate
                         }
 
-                    // patchUpdate 可能是补丁（PatchAvailable）或完整 APK 回退（Available）。
-                    // 两者都是 nightly 渠道可用的更新，统一按 newVersion 与正式渠道比较，
-                    // 避免完整 APK 回退无条件压过更高版本的正式更新。
-                    val normal = normalUpdate as? UpdateStatus.Available
+                    // 两个渠道都可能给出补丁（PatchAvailable）或完整 APK（Available），统一按
+                    // newVersion 比较，避免任何一种无条件压过更高版本的另一渠道更新。
+                    val normal = when (normalUpdate) {
+                        is UpdateStatus.PatchAvailable -> normalUpdate.newVersion
+                        is UpdateStatus.Available -> normalUpdate.newVersion
+                        else -> null
+                    }
                     val nightly = when (patchUpdate) {
                         is UpdateStatus.PatchAvailable -> patchUpdate.newVersion
                         is UpdateStatus.Available -> patchUpdate.newVersion
                         else -> null
                     }
                     if (nightly != null && normal != null) {
-                        val finalStatus = if (compareVersions(normal.newVersion, nightly) >= 0) {
+                        val finalStatus = if (compareVersions(normal, nightly) >= 0) {
                             normalUpdate
                         } else {
                             patchUpdate!!
@@ -229,6 +239,38 @@ class UpdateManager private constructor(private val context: Context) {
                 return@withContext UpdateStatus.Error(context.getString(R.string.update_check_failed, e.message))
             }
         }
+    }
+
+    /**
+     * The latest stable release as a patch, when it carries one made from exactly the build that is
+     * installed (the previous release). A user further behind downloads the whole APK, which is
+     * quicker than rebuilding the app once per release they skipped.
+     */
+    private fun stablePatchFor(
+        release: GitHubRelease,
+        version: String,
+        apkAsset: GitHubReleaseAsset?,
+    ): UpdateStatus.PatchAvailable? {
+        val patches = release.assets.filter { it.name.startsWith("apkrawpatch_") && it.name.endsWith(".zip") }
+        if (patches.isEmpty()) return null
+        val installed = runCatching { sha256Hex(File(context.applicationInfo.sourceDir)) }.getOrNull() ?: return null
+        // tools/hotbuild/build_patch.py names them ..._<base sha256, 12>_<target sha256, 12>.zip, with
+        // the meta file patch_<same>.json; the installer checks the whole hashes again.
+        val patch = patches.firstOrNull { asset ->
+            asset.name.removeSuffix(".zip").split('_').let { it.getOrNull(it.size - 2) }
+                ?.lowercase()?.takeIf { it.length == 12 }?.let(installed::startsWith) == true
+        } ?: return null
+        val metaName = "patch_" + patch.name.removePrefix("apkrawpatch_").removeSuffix(".zip") + ".json"
+        val meta = release.assets.firstOrNull { it.name == metaName } ?: return null
+        AppLogger.i(TAG, "stable patch found: version=$version patch=${patch.name}")
+        return UpdateStatus.PatchAvailable(
+            newVersion = version,
+            updateUrl = release.html_url,
+            releaseNotes = release.body ?: "",
+            patchUrl = patch.browser_download_url,
+            metaUrl = meta.browser_download_url,
+            fullApkUrl = apkAsset?.browser_download_url.orEmpty(),
+        )
     }
 
     private suspend fun tryFetchLatestPatchUpdate(currentVersion: String): UpdateStatus? {

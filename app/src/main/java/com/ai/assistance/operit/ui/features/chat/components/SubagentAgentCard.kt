@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -496,7 +497,8 @@ internal fun SubagentAgentCard(
             Spacer(modifier = Modifier.width(8.dp))
             // The path and its status share one weighted band that reaches the card's trailing
             // edge, so what is left over after them stays inside the band and the chevron comes
-            // to rest against that edge however long the path runs.
+            // to rest against that edge however long the path runs. The short status keeps its
+            // width; the path takes the rest and wraps instead of being cut off.
             Row(
                 modifier = Modifier.weight(1f),
                 verticalAlignment = Alignment.CenterVertically,
@@ -506,13 +508,14 @@ internal fun SubagentAgentCard(
                     modifier = Modifier.weight(1f, fill = false),
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Medium,
-                    maxLines = 1,
+                    maxLines = 3,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
                     text = statusText,
-                    modifier = Modifier.weight(1f, fill = false),
+                    // A status naming a long tool still leaves the path its room.
+                    modifier = Modifier.widthIn(max = 140.dp),
                     style = MaterialTheme.typography.labelSmall,
                     color = statusColor,
                     maxLines = 1,

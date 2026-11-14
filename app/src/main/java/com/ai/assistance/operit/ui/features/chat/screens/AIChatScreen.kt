@@ -296,13 +296,18 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
             actualViewModel.disableUserPreferenceDescription.collectAsState()
     val summaryTokenThreshold by actualViewModel.summaryTokenThreshold.collectAsState()
     val isAutoReadEnabled by actualViewModel.isAutoReadEnabled.collectAsState()
-    val showChatHistorySelector by actualViewModel.showChatHistorySelector.collectAsState()
+    // The workspace and the terminal belong to the normal chat page, the chat list to any chat
+    // not shown on Orbit's behalf. The chat inside Orbit shares this view model but has no top
+    // bar to close them, so it never shows them (they stay as they were for the chat page).
+    val ownsChatPanels = !embedded && chatIdOverride == null
+    val chatHistorySelectorState by actualViewModel.showChatHistorySelector.collectAsState()
+    val showChatHistorySelector = chatHistorySelectorState && chatIdOverride == null
     val chatHistories by actualViewModel.chatHistories.collectAsState()
     val chatHistoriesLoaded by actualViewModel.chatHistoriesLoaded.collectAsState()
     val currentChatId by actualViewModel.currentChatId.collectAsState()
     if (chatIdOverride != null) {
         LaunchedEffect(chatIdOverride, currentChatId) {
-            if (currentChatId != chatIdOverride) actualViewModel.switchChat(chatIdOverride)
+            if (currentChatId != chatIdOverride) actualViewModel.switchChat(chatIdOverride, refreshWorkspace = false)
         }
     }
     val hasNewerDisplayHistory by actualViewModel.hasNewerDisplayHistory.collectAsState()
@@ -416,7 +421,8 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
     // 从ViewModel收集新的状态
     val shouldShowConfigDialog by actualViewModel.shouldShowConfigDialog.collectAsState()
     val isWorkspaceOpen by actualViewModel.isWorkspaceOpen.collectAsState()
-    val isWorkspacePreparing by actualViewModel.isWorkspacePreparing.collectAsState()
+    val workspacePreparingState by actualViewModel.isWorkspacePreparing.collectAsState()
+    val isWorkspacePreparing = workspacePreparingState && ownsChatPanels
 
     // 添加模型建议对话框状态
     var showModelSuggestionDialog by remember { mutableStateOf(false) }
@@ -802,9 +808,11 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
     }
 
     // 收集WebView显示状态
-    val showWebView by actualViewModel.showWebView.collectAsState()
+    val showWebViewState by actualViewModel.showWebView.collectAsState()
+    val showWebView = showWebViewState && ownsChatPanels
     // 收集AI电脑显示状态
-    val showAiComputer by actualViewModel.showAiComputer.collectAsState()
+    val showAiComputerState by actualViewModel.showAiComputer.collectAsState()
+    val showAiComputer = showAiComputerState && ownsChatPanels
     com.ai.assistance.operit.pet.PetViewedChatObserver(
         currentChatId.takeIf {
             !isFloatingMode && isCurrentScreen && !showChatHistorySelector &&

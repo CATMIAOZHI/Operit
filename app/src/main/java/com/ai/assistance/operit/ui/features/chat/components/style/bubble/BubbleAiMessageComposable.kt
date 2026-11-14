@@ -146,9 +146,12 @@ fun BubbleAiMessageComposable(
     val toolCollapseMode = settings.toolMode
     
     // 根据角色名获取头像
-    val aiAvatarUri by remember(message.roleName, showIdentity, bubbleShowAvatar) {
+    // A reply Orbit signed shows Orbit's own picture (developer view), whatever role card shares its name.
+    val orbitOwnAvatar = com.ai.assistance.operit.ui.features.chat.components.LocalOrbitOwnAvatar.current
+        ?.takeIf { it.name == message.roleName.trim() }
+    val aiAvatarUri by remember(message.roleName, showIdentity, bubbleShowAvatar, orbitOwnAvatar != null) {
         kotlinx.coroutines.flow.flow {
-            if (!showIdentity || !bubbleShowAvatar) { emit(null); return@flow }
+            if (!showIdentity || !bubbleShowAvatar || orbitOwnAvatar != null) { emit(null); return@flow }
             val characterCard = characterCardManager.findCharacterCardByName(message.roleName)
             emitAll(if (characterCard != null)
                 preferencesManager.getAiAvatarForCharacterCardFlow(characterCard.id)
@@ -184,7 +187,7 @@ fun BubbleAiMessageComposable(
     var linkToPreview by remember { mutableStateOf("") }
     
     // 创建并保存StreamMarkdownRenderer的状态，使用message.timestamp作为key确保同一条消息共享状态
-    val rendererState = remember(message.timestamp) { StreamMarkdownRendererState() }
+    val rendererState = remember(message.timestamp) { StreamMarkdownRendererState(message.timestamp.toString()) }
     val persistedToolExecutions =
         rememberPersistedToolExecutions(message.timestamp, message.content)
 
@@ -308,7 +311,9 @@ fun BubbleAiMessageComposable(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     if (bubbleShowAvatar) {
-                        if (!aiAvatarUri.isNullOrEmpty()) {
+                        if (orbitOwnAvatar != null) {
+                            Box(avatarModifier) { orbitOwnAvatar.content() }
+                        } else if (!aiAvatarUri.isNullOrEmpty()) {
                             Image(
                                 painter = rememberAsyncImagePainter(model = Uri.parse(aiAvatarUri)),
                                 contentDescription = "AI Avatar",
@@ -517,7 +522,9 @@ fun BubbleAiMessageComposable(
                     }
                 )
             // Avatar
-            if (!aiAvatarUri.isNullOrEmpty()) {
+            if (orbitOwnAvatar != null) {
+                Box(avatarModifier) { orbitOwnAvatar.content() }
+            } else if (!aiAvatarUri.isNullOrEmpty()) {
                 Image(
                     painter = rememberAsyncImagePainter(model = Uri.parse(aiAvatarUri)),
                     contentDescription = "AI Avatar",

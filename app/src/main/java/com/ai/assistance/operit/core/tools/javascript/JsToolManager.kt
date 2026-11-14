@@ -178,17 +178,21 @@ class JsToolManager private constructor(
             ?.tools
             ?.find { it.name == functionName }
         val parameterDefinitions = toolDefinition?.parameters?.associateBy { it.name }.orEmpty()
+        // Each missing name carries its description, so the model sees the allowed values to retry with.
         val missingRequiredParameters = toolDefinition
             ?.parameters
             ?.filter { definition ->
                 definition.required && tool.parameters.none { it.name == definition.name }
             }
-            ?.map { it.name }
+            ?.map { definition ->
+                val description = definition.description.resolve(context).trim()
+                if (description.isEmpty()) definition.name else "${definition.name} ($description)"
+            }
             .orEmpty()
 
         if (missingRequiredParameters.isNotEmpty()) {
             throw ToolParameterConversionException(
-                "Missing required parameters: ${missingRequiredParameters.joinToString(", ")}"
+                "Missing required parameters: ${missingRequiredParameters.joinToString("; ")}"
             )
         }
 

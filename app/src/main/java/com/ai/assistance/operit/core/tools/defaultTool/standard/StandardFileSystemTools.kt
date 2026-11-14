@@ -3579,9 +3579,9 @@ open class StandardFileSystemTools(protected val context: Context) {
                                     operation = "apply",
                                     path = path,
                                     successful = false,
-                                    details = "File does not exist. Use type=create with 'new' to create it."
+                                    details = "File does not exist: $path. Create it with create_file."
                                 ),
-                            error = "File does not exist. Use type=create with 'new' to create it."
+                            error = "File does not exist: $path. Create it with create_file."
                         )
                     )
                     return@flow
@@ -3668,7 +3668,7 @@ open class StandardFileSystemTools(protected val context: Context) {
 
             if (operationType == "create") {
                 val errorMsg =
-                    "If you need to rewrite a whole existing file: do NOT use apply_file to overwrite it. Instead, call delete_file first, then write_file."
+                    "File already exists: $path. create_file only makes new files: change part of it with edit_file, or write all of it again with write_file (path, content)."
                 emit(
                     ToolResult(
                         toolName = tool.name,

@@ -110,6 +110,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
@@ -495,6 +496,12 @@ private fun OrbitChatPage(
     var devLeaving by remember(orbit.id) { mutableStateOf(false) }
     var devGesture by remember(orbit.id) { mutableStateOf(false) }
     var devSettling by remember(orbit.id) { mutableStateOf(false) }
+    // Opening slides the developer view in over the profile the same way, in reverse: its
+    // recording comes in from the right while the profile waits a little to the left under it.
+    var devEntering by remember(orbit.id) { mutableStateOf(false) }
+    var devEnter by remember(orbit.id) { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    // Whether the developer view's replies are still being prepared (reported by its transcript).
+    val devPreparing = remember(orbit.id) { mutableStateOf(true) }
     var devPicture by remember(orbit.id) { mutableStateOf<android.graphics.Picture?>(null) }
     var devPictureWanted by remember(orbit.id) { mutableStateOf(false) }
     val devRecorded = remember(orbit.id) { arrayOfNulls<android.graphics.Picture>(1) }
@@ -523,7 +530,7 @@ private fun OrbitChatPage(
     }
     fun leaveDevView() {
         // A swipe still settling back owns the view until it is done; the button waits for it.
-        if (devLeaving || devSettling) return
+        if (devLeaving || devSettling || devEntering) return
         devLeaving = true
         devScope.launch {
             try {
@@ -541,6 +548,45 @@ private fun OrbitChatPage(
                 devLeaving = false
                 withContext(kotlinx.coroutines.NonCancellable) { devLeave.snapTo(0f) }
             }
+        }
+    }
+    fun enterDevView() {
+        if (devChatView || devLeaving || devSettling || devEntering) return
+        devChatView = true
+        stackNames = ""
+        // Without recordings (Android 8) it shows at once.
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.P) return
+        devEntering = true
+        devPreparing.value = true
+        devEnter = devScope.launch {
+            try {
+                // The recording starts off screen; the profile still covers the view while it is made.
+                devLeave.snapTo(1f)
+                // Recorded once its replies show, not their loading placeholder; the profile stays
+                // in front meanwhile. A transcript that takes long shows at once, without the slide.
+                androidx.compose.runtime.withFrameNanos { }
+                androidx.compose.runtime.withFrameNanos { }
+                val ready = kotlinx.coroutines.withTimeoutOrNull(800) {
+                    androidx.compose.runtime.snapshotFlow { devPreparing.value }.first { !it }
+                } != null
+                if (ready) swapToPicture()
+                if (devPicture != null) devLeave.animateTo(0f, tween(OrbitMotion.PUSH_MS, easing = OrbitMotion.Easing))
+            } finally {
+                devPicture = null
+                devEntering = false
+                withContext(kotlinx.coroutines.NonCancellable) { devLeave.snapTo(0f) }
+            }
+        }
+    }
+    // Turning the developer option off leaves the developer view altogether, so turning it on
+    // again does not reopen it.
+    LaunchedEffect(settings.developerMode) {
+        if (!settings.developerMode) {
+            devEnter?.cancel()
+            devSwap?.cancel()
+            devPicture = null
+            devChatView = false
+            devSubChatId = null
         }
     }
     // A cancelled back only removes the recording; the live chat has stayed selected and composed.
@@ -597,10 +643,13 @@ private fun OrbitChatPage(
             }
         }
     }
-    val userReactions = remember(userReactionMap, currentChatId) {
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    val userReactions = remember(userReactionMap, currentChatId, haptic) {
         com.ai.assistance.operit.ui.features.chat.components.OrbitUserReactions(userReactionMap) { key, emoji, said ->
             // Taking a tapback off says nothing to Orbit; putting one on lets it decide what to do.
             val adding = userReactionMap[key] != emoji
+            // Every tapback the user gives passes here (menu, picker, double tap, cards), so it is felt the same.
+            if (adding) OrbitHaptics.reaction(haptic) else OrbitHaptics.reactionRemoved(haptic)
             val chatId = currentChatId
             reactionScope.launch {
                 try {
@@ -632,6 +681,7 @@ private fun OrbitChatPage(
         if (id in orbit.talkChatIds) {
             // An explicit chat navigation leaves the inspector too. Otherwise it would keep a
             // subagent selected after closing the profile that its back preview needs underneath.
+            devEnter?.cancel()
             devSwap?.cancel()
             devPicture = null
             devChatView = false
@@ -649,12 +699,20 @@ private fun OrbitChatPage(
     val lifecycleState by androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
     // Covered by the menu, the profile or a full page over it, the chat is not being read.
     // The profile is revealed under the back preview without changing the selected chat.
-    val profileShown = showProfile && (!devView || devPicture != null)
+    val profileShown = showProfile && (!devView || devPicture != null || devEntering)
     val chatOnScreen = tab == OrbitTab.CHAT && !showChats && !profileShown && !sidebarSearch &&
         subPage == null && !showImport && !chatSearchOpen &&
         lifecycleState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
     LaunchedEffect(currentChatId, unreadChats, chatOnScreen) {
         if (chatOnScreen && currentChatId in unreadChats) com.ai.assistance.operit.features.orbit.OrbitDelivery.markSeen(currentChatId)
+    }
+    // Orbit's tapback on one of the user's messages lands with a tap, while that chat is in view.
+    // The developer view can show one of the chat's subagents instead; its own chat is not in view then.
+    val reactionFelt = rememberUpdatedState(chatOnScreen && !(devView && devSubChatId != null))
+    LaunchedEffect(orbit.id, currentChatId) {
+        com.ai.assistance.operit.features.orbit.OrbitReactions.of(context, orbit.id).reacted.collect { chatId ->
+            if (chatId == currentChatId && reactionFelt.value) OrbitHaptics.reaction(haptic)
+        }
     }
     val hasUnread = unreadChats.any { (it != currentChatId || !chatOnScreen) && it in orbit.talkChatIds }
     // The tab pages keep one header; it reads the newest unread state from here.
@@ -857,9 +915,8 @@ private fun OrbitChatPage(
         }
     }
     androidx.compose.runtime.SideEffect { sharedAvatar.onTab = tab != OrbitTab.CHAT }
-    // The developer view keeps the whole width. Leaving it, the sidebar is back as soon as the
-    // recording that slides away covers the page, so nothing jumps when it is gone.
-    val docked = wide && sidebarOpen && (!devView || devPicture != null)
+    // The developer view is a page like the profile it opens from: on a tablet the sidebar stays.
+    val docked = wide && sidebarOpen
     // Settings opened on a tablet show as a card in the middle of the screen, like Muse's, over
     // whatever page was open. Whether it is a card is decided when it opens and kept until it
     // closes, so resizing the window never moves its pages (and an edit in them) to another place.
@@ -891,10 +948,10 @@ private fun OrbitChatPage(
         // The back swipe slides the developer view to the right under the finger, like leaving a page.
         // Stays on while the view moves, so a second back is swallowed here instead of leaving Orbit.
         androidx.activity.compose.PredictiveBackHandler(
-            enabled = devLeaving || devGesture || devSettling ||
+            enabled = devLeaving || devGesture || devSettling || devEntering ||
                 (devView && !showChats && stack.isEmpty())
         ) { events ->
-            if (devLeaving || devSettling) {
+            if (devLeaving || devSettling || devEntering) {
                 events.collect { }
                 return@PredictiveBackHandler
             }
@@ -970,6 +1027,21 @@ private fun OrbitChatPage(
                         if (!devView && currentChatId == orbit.chatId && !forkingMessage && orbit.canAddSideChat)
                             ::forkMessage else null,
                     com.ai.assistance.operit.ui.features.chat.components.LocalShowHiddenChatRows provides devView,
+                    com.ai.assistance.operit.ui.features.chat.components.LocalTranscriptPreparing provides
+                        devPreparing.takeIf { devEntering },
+                    com.ai.assistance.operit.ui.features.chat.components.LocalOrbitOwnAvatar provides
+                        // Only in Orbit's own chats and its task runs: a subagent may share its name.
+                        (devSubChatId ?: currentChatId).takeIf { shown ->
+                            devView && orbit.name.isNotBlank() &&
+                                (shown in orbit.talkChatIds || shown.startsWith("orbit-task-"))
+                        }?.let {
+                            val orbitNow = rememberUpdatedState(orbit)
+                            remember(orbit.name) {
+                                com.ai.assistance.operit.ui.features.chat.components.OrbitOwnAvatar(orbit.name.trim()) {
+                                    OrbitAvatar(orbitNow.value, 32, petVisible = false)
+                                }
+                            }
+                        },
                     // A long screenshot only scrolls the chat while nothing covers it.
                     com.ai.assistance.operit.ui.features.chat.components.LocalLongScreenshotEnabled provides
                         (chatOnScreen && stack.isEmpty() && editingFile == null),
@@ -1129,14 +1201,14 @@ private fun OrbitChatPage(
         // back exactly as it was; closed meanwhile, it finishes closing out of sight. Its back goes to
         // a dispatcher nobody presses until the developer view is fully gone. While the developer view
         // slides off, it waits a little to the left under it.
-        val devOwnsBack = devView || devPicture != null || devLeaving || devGesture || devSettling
+        val devOwnsBack = devView || devPicture != null || devLeaving || devGesture || devSettling || devEntering
         val realBackOwner = androidx.activity.compose.LocalOnBackPressedDispatcherOwner.current
         val inertBackOwner = rememberInertBackOwner()
         Box(
             Modifier.fillMaxSize()
                 .then(
                     // Closed while hidden, it stays out of sight until the developer view is fully gone.
-                    if ((devView && devPicture == null) || (!showProfile && devOwnsBack)) Modifier.layout { _, constraints ->
+                    if ((devView && devPicture == null && !devEntering) || (!showProfile && devOwnsBack)) Modifier.layout { _, constraints ->
                         layout(constraints.maxWidth, constraints.maxHeight) {}
                     } else Modifier
                 )
@@ -1197,9 +1269,8 @@ private fun OrbitChatPage(
                         onDraft = ::draftToChat,
                         onOpenRawChat = {
                             // The chat drawn as a normal Operit chat, over the profile it goes back to.
-                            devChatView = true
                             tab = OrbitTab.CHAT
-                            stackNames = ""
+                            enterDevView()
                         },
                     )
                 }
@@ -1238,7 +1309,13 @@ private fun OrbitChatPage(
         // shows that in the page and closes what was open over the page; a page with an unsaved
         // edit asks first, and the pick waits.
         fun showInPage(): Boolean {
+            // A pick in the sidebar leaves the developer view; not while it slides.
+            if (devLeaving || devSettling || devEntering || devGesture) return false
             if (!cardLeaveGuard.tryLeave() || !leaveGuard.tryLeave()) return false
+            if (devChatView) {
+                devChatView = false
+                devSubChatId = null
+            }
             showProfile = false
             stackNames = ""
             chatSearchOpen = false
@@ -1271,13 +1348,14 @@ private fun OrbitChatPage(
             blocked = settingsModal,
         )
     }
-    // The recorded developer view sliding off the page it goes back to, over every page of this
-    // Orbit and the sidebar, with the usual dim over them. It takes every touch while it moves. The
-    // recording is played into its own layer once and only the layer moves, so the swipe does not
-    // replay the whole page each frame.
+    // The recorded developer view sliding over the page it opens from or goes back to, over every
+    // page of this Orbit, with the usual dim over them; on a tablet beside the sidebar, like the
+    // page it records. It takes every touch while it moves. The recording is played into its own
+    // layer once and only the layer moves, so the swipe does not replay the whole page each frame.
     devPicture?.let { picture ->
             Box(
                 Modifier.fillMaxSize()
+                    .padding(start = if (docked) ORBIT_SIDEBAR_WIDTH else 0.dp)
                     .pointerInput(Unit) {
                         awaitPointerEventScope { while (true) awaitPointerEvent().changes.forEach { it.consume() } }
                     }
@@ -1288,9 +1366,15 @@ private fun OrbitChatPage(
             )
             Box(
                 Modifier.fillMaxSize()
-                    // The developer view hides the sidebar and records this same centered column.
+                    // The same place and centered column as the page it records.
+                    .padding(start = if (docked) ORBIT_SIDEBAR_WIDTH else 0.dp)
                     .then(if (wide) Modifier.centeredMaxWidth(ORBIT_PAGE_MAX_WIDTH) else Modifier)
                     .clipToBounds()
+                    // Resized while it moves (rotated, window split): the recording no longer fits,
+                    // so the live page shows instead for the rest of the slide.
+                    .onSizeChanged {
+                        if (it.width != picture.width || it.height != picture.height) devPicture = null
+                    }
                     .graphicsLayer { translationX = size.width * devLeave.value }
                     .drawBehind { drawIntoCanvas { it.nativeCanvas.drawPicture(picture) } }
             )

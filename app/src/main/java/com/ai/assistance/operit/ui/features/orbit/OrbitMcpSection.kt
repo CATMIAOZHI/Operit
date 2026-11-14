@@ -195,7 +195,7 @@ private fun McpItem(row: McpRow, on: Boolean, busy: Boolean, onToggle: (Boolean)
         Spacer(Modifier.width(4.dp))
         Switch(
             checked = on && !offInApp,
-            onCheckedChange = if (offInApp) null else onToggle,
+            onCheckedChange = if (offInApp) null else orbitToggle(onToggle),
             enabled = !offInApp,
             modifier = Modifier.semantics { contentDescription = row.title },
         )
