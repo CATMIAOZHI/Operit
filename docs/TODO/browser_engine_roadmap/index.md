@@ -49,15 +49,16 @@ last_reviewed: 2026-11-14
 - 真正无窗口的后台运行：WebView 需要挂在窗口上，后台依赖 1×1 悬浮窗。
 - 系统 WebView 不支持 `MULTI_PROFILE` 时，Orbit 只能共用主应用一套登录。
 
-## 第二、三版：按需下载（定为 A 方案）
+## 第二、三版：两个完整版本（普通版 / 带浏览器版）
 
-不打进主 APK，首次启用时下载内核。定为 **A 方案：占位 + 同包附加安装包（feature split）**。
+同一个包名、同一个签名，发两个完整 APK：普通版用系统 WebView；带浏览器版内置 Cefrium（约多 220 MB）。想要统一浏览器的用户下载一次带浏览器版覆盖安装，切回普通版也是覆盖安装，数据都保留。
 
-- 原因：Chromium 的渲染进程运行在 isolated 沙盒里。SELinux 的 `isolated_app` 域不能执行应用私有目录里下载的 `.so`；经 Binder 传入的 FD 也只有读和映射权限，没有执行权限。已安装 APK 的代码（`apk_data_file`）没有这个限制。
-- 做法：主 APK 预留浏览器模块入口；下载与主 APK 同包名、同 versionCode、同签名的 split，用 `PackageInstaller` 的 `MODE_INHERIT_EXISTING` 会话安装。split 可以声明沙盒渲染进程的 Service。
-- 代价：安装时系统会确认一次，安装后应用会重启一次（`setDontKillApp` 只是请求，要处理 `STATUS_PENDING_USER_ACTION`）；内核升级走同样的流程。
-- 不采用 B 方案（关闭渲染进程沙盒，直接加载私有目录里的内核）：网页一旦攻破内核，就能读到应用里的 API Key、聊天记录和登录状态。
-- 共享内存加载器（ASharedMemory + `PROT_EXEC`）在理论上可行，但没有验证过，只作为实验路线。
+- 原因：Chromium 的渲染进程运行在 isolated 沙盒里。SELinux 的 `isolated_app` 域不能执行应用私有目录里下载的 `.so`；经 Binder 传入的 FD 也只有读和映射权限，没有执行权限。内核必须装在 APK 里（`apk_data_file` 没有这个限制）。
+- 之后的更新走差异补丁（nightly 和正式版都默认先试补丁，见 `docs/agent/dev-to-main-promotion.md` 第 9 节）：补丁按 APK 里的文件逐个比较，内核没变时补丁里没有内核。跳过了几个版本或补丁失败时，仍下载完整 APK（带浏览器版就是大包）。
+- 待实现：每个版本为两种 APK 各发一份补丁。正式版检查已按已装 APK 的哈希挑补丁；nightly 检查、补丁失败时回退的完整 APK、发版手册目前都只认一种 APK，上线带浏览器版前要一起改。
+- 带浏览器版的最低系统是 Android 10（Cefrium 0.10.1 的 minSdk 29；0.20.0 待复测）。普通版不变。
+- 不采用附加安装包（feature split）：系统要求所有 split 的 versionCode 一致，App 每次更新都要连浏览器模块一起重下，而且安装时要系统确认、应用会重启。
+- 不采用关闭渲染进程沙盒、直接加载私有目录里内核的做法：网页一旦攻破内核，就能读到应用里的 API Key、聊天记录和登录状态。
 
 ## 第二版 Cefrium 实测结论（2026-10-20）
 

@@ -1553,6 +1553,8 @@
     <string name="patch_update_failed">补丁更新失败: %1$s</string>
     <string name="patch_update_success">补丁更新已准备完成</string>
     <string name="patch_update_failed_simple">补丁更新失败</string>
+    <string name="patch_update_fallback_full">补丁用不了，改为下载完整安装包</string>
+    <string name="patch_update_use_full">下载完整安装包</string>
     <string name="patch_update_prepare_downloading">准备更新到 %1$s，正在下载补丁</string>
     <string name="patch_update_prepare_testing_mirrors">准备更新到 %1$s，正在测速镜像</string>
     <string name="patch_update_testing_mirrors">正在测速镜像</string>
