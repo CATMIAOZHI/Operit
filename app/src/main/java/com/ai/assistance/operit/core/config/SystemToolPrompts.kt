@@ -292,10 +292,20 @@ object SystemToolPrompts {
             ),
             ToolPrompt(
                 name = "create_file",
-                description = "Create a new file by delegating to apply_file with type=create.",
+                description = "Create a new file. Fails if the file already exists: change part of it with edit_file, or write all of it again with write_file (path, content).",
                 parametersStructured = listOf(
                     ToolParameterSchema(name = "path", type = "string", description = "file path", required = true),
                     ToolParameterSchema(name = "new", type = "string", description = "full file content for the new file", required = true),
+                    ToolParameterSchema(name = "environment", type = "string", description = "optional, same as read_file environment", required = false)
+                )
+            ),
+            ToolPrompt(
+                name = "write_file",
+                description = "Write the whole text of a file: creates it, or replaces everything in an existing one. To change one part of a file, use edit_file.",
+                parametersStructured = listOf(
+                    ToolParameterSchema(name = "path", type = "string", description = "file path", required = true),
+                    ToolParameterSchema(name = "content", type = "string", description = "the whole new text of the file", required = true),
+                    ToolParameterSchema(name = "append", type = "boolean", description = "optional, true adds content at the end instead of replacing", required = false),
                     ToolParameterSchema(name = "environment", type = "string", description = "optional, same as read_file environment", required = false)
                 )
             ),
@@ -422,10 +432,20 @@ object SystemToolPrompts {
             ),
             ToolPrompt(
                 name = "create_file",
-                description = "通过委托给 apply_file 且 type=create 来创建新文件。",
+                description = "新建文件。文件已存在时会失败：改其中一处用 edit_file，整篇重写用 write_file（参数 path、content）。",
                 parametersStructured = listOf(
                     ToolParameterSchema(name = "path", type = "string", description = "文件路径", required = true),
                     ToolParameterSchema(name = "new", type = "string", description = "新文件的完整内容", required = true),
+                    ToolParameterSchema(name = "environment", type = "string", description = "可选，同 read_file 的 environment", required = false)
+                )
+            ),
+            ToolPrompt(
+                name = "write_file",
+                description = "写入文件全文：文件不存在就新建，已存在就整篇替换。只改其中一处用 edit_file。",
+                parametersStructured = listOf(
+                    ToolParameterSchema(name = "path", type = "string", description = "文件路径", required = true),
+                    ToolParameterSchema(name = "content", type = "string", description = "文件的完整新内容", required = true),
+                    ToolParameterSchema(name = "append", type = "boolean", description = "可选，true 表示追加到末尾而不是替换", required = false),
                     ToolParameterSchema(name = "environment", type = "string", description = "可选，同 read_file 的 environment", required = false)
                 )
             ),
@@ -620,7 +640,7 @@ object SystemToolPrompts {
         includeSubagentTools: Boolean = true,
         collaborationLimits: com.ai.assistance.operit.core.agent.collaboration.CollaborationLimits? = null
     ): List<SystemToolPromptCategory> {
-        return getAIAllCategoriesEn(
+        val listed = getAIAllCategoriesEn(
             hasBackendImageRecognition = hasBackendImageRecognition,
             chatModelHasDirectImage = chatModelHasDirectImage,
             hasBackendAudioRecognition = hasBackendAudioRecognition,
@@ -630,10 +650,14 @@ object SystemToolPrompts {
             safBookmarkNames = safBookmarkNames,
             includeSubagentTools = includeSubagentTools,
             collaborationLimits = collaborationLimits
-        ) + internalToolCategoriesEn.map { category ->
+        )
+        // An internal tool that is also listed (write_file) is offered once.
+        val listedNames = listed.flatMap { it.tools }.mapTo(hashSetOf()) { it.name }
+        return listed + internalToolCategoriesEn.map { category ->
             category.copy(tools = category.tools.filterNot {
                 it.name in com.ai.assistance.operit.core.tools.phone.PhoneControlTools.retiredNames ||
-                    it.name in com.ai.assistance.operit.core.tools.defaultTool.standard.MemoryQueryToolExecutor.LEGACY_GRAPH_WRITE_TOOLS
+                    it.name in com.ai.assistance.operit.core.tools.defaultTool.standard.MemoryQueryToolExecutor.LEGACY_GRAPH_WRITE_TOOLS ||
+                    it.name in listedNames
             })
         }
     }
@@ -713,7 +737,7 @@ object SystemToolPrompts {
         includeSubagentTools: Boolean = true,
         collaborationLimits: com.ai.assistance.operit.core.agent.collaboration.CollaborationLimits? = null
     ): List<SystemToolPromptCategory> {
-        return getAIAllCategoriesCn(
+        val listed = getAIAllCategoriesCn(
             hasBackendImageRecognition = hasBackendImageRecognition,
             chatModelHasDirectImage = chatModelHasDirectImage,
             hasBackendAudioRecognition = hasBackendAudioRecognition,
@@ -723,10 +747,13 @@ object SystemToolPrompts {
             safBookmarkNames = safBookmarkNames,
             includeSubagentTools = includeSubagentTools,
             collaborationLimits = collaborationLimits
-        ) + internalToolCategoriesCn.map { category ->
+        )
+        val listedNames = listed.flatMap { it.tools }.mapTo(hashSetOf()) { it.name }
+        return listed + internalToolCategoriesCn.map { category ->
             category.copy(tools = category.tools.filterNot {
                 it.name in com.ai.assistance.operit.core.tools.phone.PhoneControlTools.retiredNames ||
-                    it.name in com.ai.assistance.operit.core.tools.defaultTool.standard.MemoryQueryToolExecutor.LEGACY_GRAPH_WRITE_TOOLS
+                    it.name in com.ai.assistance.operit.core.tools.defaultTool.standard.MemoryQueryToolExecutor.LEGACY_GRAPH_WRITE_TOOLS ||
+                    it.name in listedNames
             })
         }
     }

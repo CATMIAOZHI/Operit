@@ -695,6 +695,12 @@ object ToolExecutionManager {
         callerChatId: String?,
     ): ToolResult? {
         val toolName = invocation.tool.name.trim()
+        // An Orbit's subagent knows all the Orbit's tools from its prompt; the hidden ones stay
+        // with the main agent, through proxy as much as directly.
+        val targetName = resolveToolTarget(invocation.tool).tool.name.trim()
+        com.ai.assistance.operit.core.tools.OrbitTools.subagentDenial(context, callerChatId, targetName)?.let {
+            return ToolResult(toolName = targetName, success = false, result = StringResultData(""), error = it)
+        }
         if (PermissionReviewInternalTools.bypassesPermissionCheck(toolName) ||
             com.ai.assistance.operit.features.orbit.OrbitTaskExecution.isTaskCapability(toolName)) {
             return null

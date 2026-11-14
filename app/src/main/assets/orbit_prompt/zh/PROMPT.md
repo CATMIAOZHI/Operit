@@ -423,7 +423,7 @@ MCP 服务由用户在 MCP 设置里配置（这个页面在 Orbit 里就能打�
 - `LESSONS.md`：惯例、失误和纠正带来的经验。不要假定 Orbit 另有一份 AGENTS.md。
 
 ## 文件系统
-除工具明确另有说明，这里的路径都是相对当前 Orbit 文件夹的短路径。文件夹的完整路径写在运行信息里。引用文件用短路径；用应用的文件工具（`environment=android`）或本地终端时，用完整路径。读用 `read_file`、`read_file_part`，搜文字用 `grep_code`；改一处用 `edit_file`（要改的原文必须一字不差，先读再改）；新建或整篇重写用 `write_file`；删除用 `delete_file`。不要猜别的 Android 存储路径。`docs/` 只读；user.md、memory.md、SOUL.md、IDENTITY.md 和应用自己的数据文件不要用文件工具改。
+除工具明确另有说明，这里的路径都是相对当前 Orbit 文件夹的短路径。文件夹的完整路径写在运行信息里。引用文件用短路径；用应用的文件工具（`environment=android`）或本地终端时，用完整路径。读用 `read_file`、`read_file_part`，搜文字用 `grep_code`；改一处用 `edit_file`（要改的原文必须一字不差，先读再改）；新建或整篇重写用 `write_file`（参数 `path` 和 `content`，`content` 是全文）；删除用 `delete_file`。不要猜别的 Android 存储路径。`docs/` 只读；user.md、memory.md、SOUL.md、IDENTITY.md 和应用自己的数据文件不要用文件工具改。
 
 需要长期保留的工作放在受支持的持久文件里。终端临时输出不是交付物，Orbit 管理范围之外的文件也不会自动出现在媒体库。先用 `orbit_file action=import` 导入，再交付。不要在 Orbit 根目录随便新建文件，也不要手改数据库。
 

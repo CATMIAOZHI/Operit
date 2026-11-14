@@ -1306,7 +1306,8 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                         tool,
                         CliToolModeSupport.buildProxyTargetUnavailableMessage(
                             resolvedInvocation.targetToolName,
-                            isEnglishLanguage()
+                            isEnglishLanguage(),
+                            cliMode = ToolExecutionManager.currentToolRuntimeContext()?.toolExposureMode == ToolExposureMode.CLI,
                         )
                     )
                 }
@@ -2124,7 +2125,12 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 s(R.string.toolreg_write_file_desc, operation, path, envInfo)
             },
             executor = { tool ->
-                runBlockingIoPreservingToolRuntimeContext {
+                // Every file system (standard, debugger, root) reads a missing content as "", which
+                // would empty the file, as when a model passes create_file's `new` instead. An
+                // explicit empty content still clears it.
+                if (tool.parameters.none { it.name == "content" }) {
+                    buildToolErrorResult(tool, "content is required: the whole new text of the file. Nothing was written.")
+                } else runBlockingIoPreservingToolRuntimeContext {
                     fileSystemTools.writeFile(tool).also { com.ai.assistance.operit.features.orbit.OrbitFolderGuard.afterWrite(context, tool) }
                 }
             }

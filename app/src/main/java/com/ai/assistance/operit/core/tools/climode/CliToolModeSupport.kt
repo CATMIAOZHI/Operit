@@ -441,8 +441,14 @@ object CliToolModeSupport {
 
     fun buildProxyTargetUnavailableMessage(
         targetToolName: String,
-        useEnglish: Boolean
+        useEnglish: Boolean,
+        cliMode: Boolean = true,
     ): String {
+        // Outside CLI mode there is no `search`; built-in tools are listed and called by name.
+        if (!cliMode) {
+            return "No package tool '$targetToolName'. package_proxy only calls package tools (packageName:toolName) of a package in use. " +
+                "Built-in tools from your tool list are called directly by their own name, with options such as action as parameters."
+        }
         return if (useEnglish) {
             "Hidden target tool '$targetToolName' is unavailable. Use 'search' first to discover a valid hidden tool name and params."
         } else {
