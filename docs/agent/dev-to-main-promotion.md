@@ -291,16 +291,15 @@ sha256sum Operit-Ry-<version>-arm64-v8a.apk > SHA256SUMS.txt
 # Set-Content -Path SHA256SUMS.txt -Value ("{0}  {1}`n" -f $hash, $name) -NoNewline -Encoding ascii
 ```
 
-生成差异补丁。App 默认先试补丁：已装的正好是上一版稳定 APK 时下载补丁，否则（跳过了几个版本、或补丁出错）下载完整 APK。补丁以上一个稳定 Release 的 APK 为起点，用 `tools/hotbuild/build_patch.py` 生成，只在本地生成、不发到 nightly 仓库：
+差异补丁由同一次 CI 生成（`Build stable update patch` 步骤）：以上一个 Release 的 APK（校验发布签名）为起点生成补丁，再用补丁从旧 APK 还原新 APK 并逐字节比对，一致才放进 artifact 的 `patch/` 目录；run 摘要会写出补丁大小。App 默认先试补丁：已装的正好是上一版时下载补丁，否则（跳过了几个版本、或补丁出错）下载完整 APK。
 
 ```bash
-gh release download v<上一版> --repo CATMIAOZHI/Operit -p "*.apk" -O prev.apk
-python tools/hotbuild/build_patch.py \
-  --from prev.apk --to Operit-Ry-<version>-arm64-v8a.apk \
-  --from-version <上一版> --to-version <version> \
-  --repo CATMIAOZHI/Operit --tag v<version> --no-publish
-# 产出 apkrawpatch_<上一版>_to_<version>_<旧sha12>_<新sha12>.zip 和同名的 patch_….json，两个都随 Release 上传。
-# 文件名末尾两段是两个 APK 的 sha256 前 12 位，App 靠它判断补丁是否适用于已装版本，不要改名。
+shopt -s nullglob
+PATCH_ASSETS=("$WORK"/patch/*)
+printf '%s\n' "${PATCH_ASSETS[@]}"
+# apkrawpatch_<上一版>_to_<version>_<旧sha12>_<新sha12>.zip 和同名的 patch_….json，两个都随 Release 上传，不要改名：
+# 文件名末尾两段是两个 APK 的 sha256 前 12 位，App 靠它判断补丁是否适用于已装版本。
+# 为空说明仓库还没有更早的 Release，这一版只发 APK。
 ```
 
 创建 Release，`--target` 指向本轮 `personal/main` 合并后的 commit：
@@ -311,7 +310,7 @@ gh release create v<version> \
   --target <本轮 main 合并 commit> \
   --title "Operit Ry <version>" \
   --notes-file <release-notes.md> \
-  Operit-Ry-<version>-arm64-v8a.apk SHA256SUMS.txt apkrawpatch_*.zip patch_*.json
+  Operit-Ry-<version>-arm64-v8a.apk SHA256SUMS.txt "${PATCH_ASSETS[@]}"
 ```
 
 Release 只放一份补丁（上一版 → 本轮）。`SHA256SUMS.txt` 只记 APK。
