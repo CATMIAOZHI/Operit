@@ -21,10 +21,47 @@ internal data class ToolCallRepairRule(
 
 internal object ToolCallRepairRules {
     private val repeatedTerminalSeparator = Regex("""^super_admin::+terminal$""")
+    private val actionSuffix = Regex("""^([a-z][a-z0-9_]*):([a-z][a-z0-9_]*)$""")
+
+    /**
+     * Built-in tools that take an `action`. A model that reads "orbit_reading: where" writes
+     * `orbit_reading:where`, which then looks like a package tool. Only repaired when no package
+     * or MCP server has that name ([isPackageName]); the tool itself still checks the action.
+     */
+    private val actionTools: Set<String> by lazy {
+        runCatching {
+            com.ai.assistance.operit.core.config.SystemToolPrompts
+                .getAllCategoriesEn(includeSubagentTools = false)
+                .flatMap { it.tools }
+                .filter { tool -> tool.parametersStructured.orEmpty().any { it.name == "action" } }
+                .mapTo(hashSetOf()) { it.name }
+        }.getOrDefault(emptySet())
+    }
+
+    /**
+     * Whether a JS package or MCP server (installed, active or not) is called this, so its
+     * `name:tool` is real. Set by the app once tools are registered; unset, nothing is repaired.
+     */
+    @Volatile
+    internal var isPackageName: (String) -> Boolean = { true }
 
     // Name normalization precedes canonical-name rules. One pass, no retry loop.
     val ordered = listOf(
         ToolCallRepairRule(ToolCallRepairRouter.SPILLED_PARAMETER) { call -> splitSpilledParameter(call) },
+        ToolCallRepairRule(ToolCallRepairRouter.ACTION_IN_TOOL_NAME) { call ->
+            val match = actionSuffix.matchEntire(call.targetName) ?: return@ToolCallRepairRule null
+            val (tool, action) = match.destructured
+            if (tool !in actionTools) return@ToolCallRepairRule null
+            if (runCatching { isPackageName(tool) }.getOrDefault(true)) return@ToolCallRepairRule null
+            val given = call.arguments.filter { it.name == "action" }
+            when {
+                given.isEmpty() -> call.copy(targetName = tool,
+                    arguments = listOf(ToolRepairArgument("action", JsonPrimitive(action))) + call.arguments)
+                given.size == 1 && (given.single().value as? JsonPrimitive)?.content == action ->
+                    call.copy(targetName = tool)
+                else -> null
+            }
+        },
         ToolCallRepairRule(ToolCallRepairRouter.MEMORY_FINISH_ALIAS) { call ->
             if (call.targetName != "memory_learning_action" || call.proxyParameters != null ||
                 call.arguments.any { it.name !in setOf("action","arguments") } ||

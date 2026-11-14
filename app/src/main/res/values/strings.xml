@@ -8750,6 +8750,7 @@
     <string name="tool_repairs_memory_argument">将记忆工具误写的 new_text 参数改为 content</string>
     <string name="tool_repairs_memory_finish">将误放在 action 中的结束操作改为独立结束工具</string>
     <string name="tool_repairs_spilled_parameter">把混进上一个参数里的下一个参数拆了出来</string>
+    <string name="tool_repairs_action_in_name">把写进工具名里的动作挪回 action 参数</string>
     <string name="tool_repairs_invalid_record">记录格式无效，点击查看原始记录</string>
     <string name="tool_repairs_refresh">刷新</string>
     <string name="tool_errors_totals">%1$d 条记录 · %2$d 个工具</string>

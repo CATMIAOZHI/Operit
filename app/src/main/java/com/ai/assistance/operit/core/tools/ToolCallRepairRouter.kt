@@ -17,6 +17,7 @@ internal object ToolCallRepairRouter {
     const val MEMORY_FINISH_ALIAS = "memory_finish_alias"
     const val TERMINAL_PROXY_YIELD = "terminal_proxy_yield"
     const val SPILLED_PARAMETER = "spilled_parameter"
+    const val ACTION_IN_TOOL_NAME = "action_in_tool_name"
 
     fun terminalToolName(invocation: ToolInvocation): String =
         if (invocation.tool.name == "memory_learning_action")
@@ -51,7 +52,10 @@ internal object ToolCallRepairRouter {
             applied += rule.id
         }
         if (applied.isEmpty()) return null
-        val routed = if (isProxy) {
+        // package_proxy only takes package:tool, so a built-in target found inside it is called
+        // directly; a CLI chat then gets the usual "call it through proxy" answer.
+        val direct = !isProxy || (tool.name == "package_proxy" && ':' !in current.targetName)
+        val routed = if (!direct) {
             val encoded = if (current.arguments == initial.arguments) null else
                 JsonObject(current.arguments.associate { it.name to it.value }).toString()
             tool.copy(parameters = checkNotNull(current.proxyParameters).map {
@@ -64,7 +68,8 @@ internal object ToolCallRepairRouter {
             })
         } else {
             tool.copy(name = current.targetName, parameters = current.arguments.map {
-                ToolParameter(it.name, it.value.jsonPrimitive.content)
+                val value = it.value
+                ToolParameter(it.name, if (value is JsonPrimitive) value.content else value.toString())
             })
         }
         // The log names the call as it arrived: the target the model declared, or the proxy tool

@@ -8774,6 +8774,7 @@
     <string name="tool_repairs_memory_argument">Renamed the memory tool\'s new_text argument to content</string>
     <string name="tool_repairs_memory_finish">Routed an empty finish action to the separate finish tool</string>
     <string name="tool_repairs_spilled_parameter">Split out a parameter that was written inside the one before it</string>
+    <string name="tool_repairs_action_in_name">Moved an action written into the tool name back to the action parameter</string>
     <string name="tool_repairs_invalid_record">Invalid record format; tap to view the raw record</string>
     <string name="tool_repairs_refresh">Refresh</string>
     <string name="tool_errors_totals">%1$d records · %2$d tools</string>

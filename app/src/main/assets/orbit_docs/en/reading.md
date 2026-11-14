@@ -5,14 +5,14 @@ They show up in Legado's paragraph-comment bubbles, under your name.
 
 ## What you can use
 
-`orbit_reading` gives you the reading context and writes comments. The usual steps:
+`orbit_reading` gives you the reading context and writes comments. Each step is its `action`, for example `orbit_reading` with `action=where`:
 
-- `where`: which book and chapter the user has open and roughly which paragraphs the page shows; `chapters_ahead_ready` is how many chapters after it are ready.
-- `copy`: copies chapters' text into your own folder, to read and search with the file tools.
-- `read`: reads a chapter directly; paragraphs start with `[n]`, and `[n]*` has your comments on the lines after it.
-- `write_comments`: comments on a chapter; the paragraph number is the `[n]` you read.
-- `delete_comments`: by paragraph number (`paragraphs=3,5`), or `all=true` for the whole chapter.
-- `skip_chapter`: when a chapter you read has nothing worth a comment (an author's note, a short bridge), mark it; it then counts as ready.
+- `action=where`: which book and chapter the user has open and roughly which paragraphs the page shows; `chapters_ahead_ready` is how many chapters after it are ready.
+- `action=copy`: copies chapters' text into your own folder, to read and search with the file tools.
+- `action=read`: reads a chapter directly; paragraphs start with `[n]`, and `[n]*` has your comments on the lines after it.
+- `action=write_comments`: comments on a chapter; the paragraph number is the `[n]` you read.
+- `action=delete_comments`: by paragraph number (`paragraphs=3,5`), or `all=true` for the whole chapter.
+- `action=skip_chapter`: when a chapter you read has nothing worth a comment (an author's note, a short bridge), mark it; it then counts as ready.
 
 The other actions and parameters are in the tool description. When Legado is not installed, never opened, or cannot be reached, the tool says why; tell the user that.
 

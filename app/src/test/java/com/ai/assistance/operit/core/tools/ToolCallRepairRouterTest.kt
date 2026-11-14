@@ -67,6 +67,54 @@ class ToolCallRepairRouterTest {
             rawText = "original provider response", responseLocation = 4..12,
             callId = "call-7", invocationIndex = 2)
 
+    @Test fun actionWrittenIntoABuiltInToolNameMovesBackToItsParameter() {
+        val packageNames = ToolCallRepairRules.isPackageName
+        try {
+            ToolCallRepairRules.isPackageName = { false }
+            actionRepairCases()
+            // A real package with a built-in tool's name keeps its own tools.
+            ToolCallRepairRules.isPackageName = { it == "orbit_reading" }
+            assertNull(ToolCallRepairRouter.route(call("proxy", "tool_name" to "orbit_reading:where", "params" to "{}")))
+            ToolCallRepairRules.isPackageName = { error("package list unavailable") }
+            assertNull(ToolCallRepairRouter.route(call("proxy", "tool_name" to "orbit_reading:where", "params" to "{}")))
+        } finally {
+            ToolCallRepairRules.isPackageName = packageNames
+        }
+        // Before the app says which packages exist, nothing is repaired.
+        assertNull(ToolCallRepairRouter.route(call("proxy", "tool_name" to "orbit_reading:where", "params" to "{}")))
+    }
+
+    private fun actionRepairCases() {
+        // Seen on a device: proxy target `orbit_reading:where`.
+        val proxy = ToolCallRepairRouter.route(call("proxy", "tool_name" to "orbit_reading:where",
+            "params" to """{"book_id":"b1"}"""))!!
+        assertEquals(listOf(ToolCallRepairRouter.ACTION_IN_TOOL_NAME), proxy.rules)
+        assertEquals("proxy", proxy.invocation.tool.name)
+        assertEquals("orbit_reading", proxy.invocation.tool.parameters.single { it.name == "tool_name" }.value)
+        val params = JSONObject(proxy.invocation.tool.parameters.single { it.name == "params" }.value)
+        assertEquals("where", params.getString("action"))
+        assertEquals("b1", params.getString("book_id"))
+        assertNull(ToolCallRepairRouter.route(proxy.invocation))
+
+        // A native `orbit_reading:where` call arrives wrapped in package_proxy, which only takes
+        // package:tool, so it becomes a direct call; a nested value keeps its JSON text.
+        val wrapped = ToolCallRepairRouter.route(call("package_proxy", "tool_name" to "orbit_reading:write_comments",
+            "params" to """{"chapter":3,"comments":[{"paragraph":1,"text":"hi"}]}"""))!!.invocation
+        assertEquals("orbit_reading", wrapped.tool.name)
+        assertEquals(listOf("action", "chapter", "comments"), wrapped.tool.parameters.map { it.name })
+        assertEquals("write_comments", wrapped.tool.parameters[0].value)
+        assertEquals("3", wrapped.tool.parameters[1].value)
+        assertEquals("hi", org.json.JSONArray(wrapped.tool.parameters[2].value).getJSONObject(0).getString("text"))
+        assertEquals("call-7", wrapped.callId)
+
+        val direct = ToolCallRepairRouter.route(call("orbit_reading:catalog", "action" to "catalog"))!!.invocation
+        assertEquals(AITool("orbit_reading", listOf(ToolParameter("action", "catalog"))), direct.tool)
+
+        assertNull(ToolCallRepairRouter.route(call("orbit_reading:catalog", "action" to "read")))
+        assertNull(ToolCallRepairRouter.route(call("proxy", "tool_name" to "some_package:where", "params" to "{}")))
+        assertNull(ToolCallRepairRouter.route(call("proxy", "tool_name" to "read_file:where", "params" to "{}")))
+    }
+
     @Test fun parameterOpenedAtTheEndOfTheOneBeforeIsRestoredOnlyInItsExactShape() {
         // The two shapes seen on a device: the next parameter opened as text, with nothing after it.
         for (tag in listOf("<parameter name=\"userMessage\">", "<parameter name=\"userMessage\" string=\"true\">")) {
