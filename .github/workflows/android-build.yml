@@ -189,6 +189,60 @@ jobs:
             esac
           done
 
+      # The app updates a stable install with this patch when it is exactly the previous release;
+      # anyone further behind downloads the whole APK. The patch is proved to rebuild this APK byte
+      # for byte before it is kept.
+      - name: Build stable update patch
+        if: success() && inputs.gradle_task == ':app:assembleRelease'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          new_apk="$GITHUB_WORKSPACE/app/build/outputs/apk/release/app-release.apk"
+          build_tools="$ANDROID_HOME/build-tools/37.0.0"
+          version="$("$build_tools/aapt2" dump badging "$new_apk" | sed -n "s/^package:.* versionName='\([^']*\)'.*/\1/p")"
+          : "${version:?cannot read versionName}"
+
+          prev_tag="$(gh api "repos/$REPO/releases?per_page=10" \
+            --jq "[.[] | select(.draft | not) | select(.tag_name != \"v$version\")][0].tag_name // empty")"
+          if [[ -z "$prev_tag" ]]; then
+            echo "::notice::No earlier release; skipping the update patch."
+            exit 0
+          fi
+
+          work="$RUNNER_TEMP/stable-patch"
+          rm -rf "$work"
+          mkdir -p "$work"
+          gh release download "$prev_tag" --repo "$REPO" --pattern '*.apk' --output "$work/prev.apk"
+          expected_apk_digest="${OPERIT_RELEASE_CERT_SHA256//:/}"
+          if ! "$build_tools/apksigner" verify --print-certs "$work/prev.apk" \
+            | grep -Eqi "certificate SHA-256 digest: ${expected_apk_digest,,}$"; then
+            echo "$prev_tag APK is not signed with the Operit Ry release key." >&2
+            exit 1
+          fi
+          cp "$new_apk" "$work/new.apk"
+
+          cd "$work"
+          python3 "$GITHUB_WORKSPACE/tools/hotbuild/build_patch.py" \
+            --from prev.apk --to new.apk \
+            --from-version "${prev_tag#v}" --to-version "$version" \
+            --repo "$REPO" --tag "v$version" --no-publish
+          meta=(patch_*.json)
+          patch=(apkrawpatch_*.zip)
+          python3 "$GITHUB_WORKSPACE/tools/hotbuild/apply_patch.py" \
+            --meta "${meta[0]}" --from prev.apk --to rebuilt.apk
+          cmp rebuilt.apk new.apk
+
+          out="$GITHUB_WORKSPACE/app/build/outputs/patch"
+          mkdir -p "$out"
+          mv "${patch[0]}" "${meta[0]}" "$out/"
+          {
+            echo "### Stable update patch"
+            echo "$prev_tag → v$version: \`${patch[0]}\` ($(du -h "$out/${patch[0]}" | cut -f1)), rebuilds the new APK byte for byte."
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload Android reports
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
@@ -211,5 +265,6 @@ jobs:
           path: |
             app/build/outputs/apk/**/*.apk
             app/build/outputs/bundle/**/*.aab
+            app/build/outputs/patch/*
           if-no-files-found: error
           retention-days: 14
