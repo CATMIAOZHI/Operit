@@ -3,6 +3,7 @@ package com.ai.assistance.operit.ui.features.about.screens
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.widget.Toast
 import android.net.Uri
 import android.text.Html
 import android.text.method.LinkMovementMethod
@@ -557,7 +558,9 @@ private fun AboutScreenContent(
         patchUrl: String,
         metaUrl: String,
         patchVersion: String,
-        mirrorKey: String
+        mirrorKey: String,
+        /** The same version as a whole APK, offered when the patch cannot be applied. */
+        fallback: UpdateStatus.Available? = null,
     ) {
         if (patchUpdateJob?.isActive == true) return
         showUpdateDialog = false
@@ -607,12 +610,19 @@ private fun AboutScreenContent(
                     patchUpdateStateFlow.value = null
                 } catch (e: Exception) {
                     AppLogger.e("AboutScreen", "patch update failed", e)
-                    patchUpdateStateFlow.value =
-                        PatchUpdateDialogState(
-                            phase = PatchUpdatePhase.ERROR,
-                            message = context.getString(R.string.patch_update_failed_simple),
-                            errorMessage = e.message ?: context.getString(R.string.unknown_error)
-                    )
+                    if (fallback != null) {
+                        // The whole APK of the same version, through the usual source picker.
+                        patchUpdateStateFlow.value = null
+                        Toast.makeText(context, R.string.patch_update_fallback_full, Toast.LENGTH_SHORT).show()
+                        pendingFullUpdateInApp = fallback
+                    } else {
+                        patchUpdateStateFlow.value =
+                            PatchUpdateDialogState(
+                                phase = PatchUpdatePhase.ERROR,
+                                message = context.getString(R.string.patch_update_failed_simple),
+                                errorMessage = e.message ?: context.getString(R.string.unknown_error)
+                        )
+                    }
                 } finally {
                     ActivityLifecycleManager.forceKeepScreenOn(false)
                     patchUpdateJob = null
@@ -827,6 +837,9 @@ private fun AboutScreenContent(
 
     if (pendingPatchUpdate != null) {
         val status = pendingPatchUpdate!!
+        val fullApk = status.fullApkUrl.takeIf { it.isNotBlank() }?.let { apk ->
+            UpdateStatus.Available(status.newVersion, status.updateUrl, status.releaseNotes, apk)
+        }
         PatchDownloadSourceDialog(
             patchUrl = status.patchUrl,
             metaUrl = status.metaUrl,
@@ -837,9 +850,11 @@ private fun AboutScreenContent(
                     patchUrl = status.patchUrl,
                     metaUrl = status.metaUrl,
                     patchVersion = status.newVersion,
-                    mirrorKey = mirrorKey
+                    mirrorKey = mirrorKey,
+                    fallback = fullApk,
                 )
-            }
+            },
+            onFullApk = fullApk?.let { full -> { pendingPatchUpdate = null; pendingFullUpdateInApp = full } },
         )
     }
 
@@ -1126,6 +1141,17 @@ fun UpdateDialog(
                             style = MaterialTheme.typography.bodyMedium,
                             modifier = Modifier.padding(bottom = 8.dp)
                         )
+                        // A stable release's notes; a nightly patch's body is its JSON meta.
+                        if (status.releaseNotes.isNotBlank() && !status.releaseNotes.trimStart().startsWith("{")) {
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                            Text(
+                                stringResource(id = R.string.update_content),
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(bottom = 4.dp)
+                            )
+                            Text(status.releaseNotes, style = MaterialTheme.typography.bodySmall)
+                        }
                     }
                     is UpdateStatus.UpToDate -> {
                         Text(stringResource(id = R.string.already_latest_version, appVersion))
@@ -1699,7 +1725,9 @@ fun PatchDownloadSourceDialog(
     patchUrl: String,
     metaUrl: String,
     onDismiss: () -> Unit,
-    onDownload: (String) -> Unit
+    onDownload: (String) -> Unit,
+    /** Offered when no source can reach the patch: the same version as a whole APK. */
+    onFullApk: (() -> Unit)? = null,
 ) {
     val patchMirrors = remember(patchUrl) { GithubReleaseUtil.getMirroredUrls(patchUrl) }
     val metaMirrors = remember(metaUrl) { GithubReleaseUtil.getMirroredUrls(metaUrl) }
@@ -1772,6 +1800,7 @@ fun PatchDownloadSourceDialog(
     }
 
     val autoEnabled = probeResults.values.any { it.ok }
+    val allFailed = probeResults.size == keys.size && !autoEnabled
     val orderedKeys = remember(keys, probeResults) {
         sortPatchMirrorNamesForDisplay(keys, probeResults)
     }
@@ -1877,8 +1906,14 @@ fun PatchDownloadSourceDialog(
         },
         orbitScrollable = false,
         confirmButton = {
-            SettingsDialogButton(onClick = { autoSelect() }, enabled = autoEnabled) {
-                Text(stringResource(id = R.string.auto_select))
+            if (allFailed && onFullApk != null) {
+                SettingsDialogButton(onClick = onFullApk) {
+                    Text(stringResource(id = R.string.patch_update_use_full))
+                }
+            } else {
+                SettingsDialogButton(onClick = { autoSelect() }, enabled = autoEnabled) {
+                    Text(stringResource(id = R.string.auto_select))
+                }
             }
         },
         dismissButton = {

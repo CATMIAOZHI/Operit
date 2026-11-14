@@ -291,6 +291,18 @@ sha256sum Operit-Ry-<version>-arm64-v8a.apk > SHA256SUMS.txt
 # Set-Content -Path SHA256SUMS.txt -Value ("{0}  {1}`n" -f $hash, $name) -NoNewline -Encoding ascii
 ```
 
+生成差异补丁。App 默认先试补丁：已装的正好是上一版稳定 APK 时下载补丁，否则（跳过了几个版本、或补丁出错）下载完整 APK。补丁以上一个稳定 Release 的 APK 为起点，用 `tools/hotbuild/build_patch.py` 生成，只在本地生成、不发到 nightly 仓库：
+
+```bash
+gh release download v<上一版> --repo CATMIAOZHI/Operit -p "*.apk" -O prev.apk
+python tools/hotbuild/build_patch.py \
+  --from prev.apk --to Operit-Ry-<version>-arm64-v8a.apk \
+  --from-version <上一版> --to-version <version> \
+  --repo CATMIAOZHI/Operit --tag v<version> --no-publish
+# 产出 apkrawpatch_<上一版>_to_<version>_<旧sha12>_<新sha12>.zip 和同名的 patch_….json，两个都随 Release 上传。
+# 文件名末尾两段是两个 APK 的 sha256 前 12 位，App 靠它判断补丁是否适用于已装版本，不要改名。
+```
+
 创建 Release，`--target` 指向本轮 `personal/main` 合并后的 commit：
 
 ```bash
@@ -299,8 +311,10 @@ gh release create v<version> \
   --target <本轮 main 合并 commit> \
   --title "Operit Ry <version>" \
   --notes-file <release-notes.md> \
-  Operit-Ry-<version>-arm64-v8a.apk SHA256SUMS.txt
+  Operit-Ry-<version>-arm64-v8a.apk SHA256SUMS.txt apkrawpatch_*.zip patch_*.json
 ```
+
+Release 只放一份补丁（上一版 → 本轮）。`SHA256SUMS.txt` 只记 APK。
 
 资产传错（例如误传 debug 包）时覆盖并复核：
 

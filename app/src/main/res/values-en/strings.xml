@@ -6064,6 +6064,8 @@
     <string name="patch_update_failed">Patch update failed: %1$s</string>
     <string name="patch_update_success">Patch update prepared</string>
     <string name="patch_update_failed_simple">Patch update failed</string>
+    <string name="patch_update_fallback_full">The patch could not be used; downloading the full APK instead</string>
+    <string name="patch_update_use_full">Download full APK</string>
     <string name="patch_update_prepare_downloading">Preparing update to %1$s, downloading patch</string>
     <string name="patch_update_prepare_testing_mirrors">Preparing update to %1$s, testing mirrors</string>
     <string name="patch_update_testing_mirrors">Testing mirrors</string>
