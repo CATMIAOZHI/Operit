@@ -134,6 +134,12 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
             })
         }
     }
+    // `orbit_reading:where` is only read as a built-in tool plus its action when no package or
+    // MCP server really has that name (see ToolCallRepairRules).
+    ToolCallRepairRules.isPackageName = { name ->
+        val packages = handler.getOrCreatePackageManager()
+        packages.getAvailablePackages().containsKey(name) || packages.getAvailableServerPackages().containsKey(name)
+    }
     OrbitProductTools.prompts.forEach { prompt ->
         handler.registerTool(name = prompt.name, executor = { OrbitProductTools.execute(context, it) })
     }
