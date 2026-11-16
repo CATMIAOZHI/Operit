@@ -51,7 +51,7 @@ last_reviewed: 2026-11-16
 
 ## 第二、三版：两个完整版本（普通版 / 带浏览器版）
 
-同一个包名、同一个签名，发两个完整 APK：普通版用系统 WebView；带浏览器版内置 Cefrium（内核压缩存放，约多 90 MB 下载）。想要统一浏览器的用户下载一次带浏览器版覆盖安装，切回普通版也是覆盖安装，数据都保留。
+同一个包名、同一个签名，发两个完整 APK：普通版用系统 WebView；带浏览器版内置 Cefrium（内核压缩存放，约多 100 MB 下载）。想要统一浏览器的用户下载一次带浏览器版覆盖安装，切回普通版也是覆盖安装，数据都保留。
 
 - 原因：Chromium 的渲染进程运行在 isolated 沙盒里。SELinux 的 `isolated_app` 域不能执行应用私有目录里下载的 `.so`；经 Binder 传入的 FD 也只有读和映射权限，没有执行权限。内核必须装在 APK 里（`apk_data_file` 没有这个限制）。
 - 之后的更新走差异补丁（nightly 和正式版都默认先试补丁，见 `docs/agent/dev-to-main-promotion.md` 第 9 节）：补丁按 APK 里的文件逐个比较，内核没变时补丁里没有内核。跳过了几个版本或补丁失败时，仍下载完整 APK（带浏览器版就是大包）。
@@ -102,6 +102,12 @@ Cefrium 维护者在 [issue #75](https://github.com/CATMIAOZHI/Operit/issues/75)
 | 工具链 | JDK 25、Gradle 9.7.1、AGP 9.4、compileSdk 37、minSdk 29。Operit 现在是 AGP 9.1.1、Gradle 9.3.1、compileSdk 36、JDK 17，接入前要先升级工具链；Cefrium 的类文件是 Java 25（major 69），Kotlin 编译器也要能读 |
 
 结论：维护者在 issue #75 说的变化都成立。第二版可以开始接入，第一步是升级 Operit 的构建工具链。
+
+## 第二版接入进度
+
+1. 工具链与构建开关（2026-11-16，已完成）：Gradle 升到 9.7.1、AGP 升到 9.4.0，普通版仍用 JDK 21/17 构建，单测通过。命令行加 `-PoperitBrowser=true` 打出带浏览器版：加入 Cefrium 插件和 `cefrium-sdk:0.21.0`，`minSdk 29`，`BuildConfig.BROWSER_ENGINE_BUILT_IN = true`，需要 JDK 25。arm64 调试包：普通版 166 MB，带浏览器版 308 MB（`libcef.so` 压缩后 93 MB，`icudtl.dat` 9 MB）。用法见 `docs/agent/build-guide.md`。
+2. 引擎接入（待做）：带浏览器版把 Orbit 的后台浏览器（现在是 1×1 悬浮窗里的 WebView）换成离屏 Cefrium，主应用和 Orbit 各用一个持久 Profile，CDP 走 Cefrium 的公开接口；普通版保持 WebView。Cefrium 自带的 `CefriumInitProvider` 会在启动时初始化，接入时评估改成用到时再初始化。
+3. 发版（待做）：CI 同时打两种 APK，每个版本两种补丁，nightly 检查、回退完整包和发版手册都要认两种 APK。
 
 ## 两套登录空间（第二版）
 

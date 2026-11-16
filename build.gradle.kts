@@ -2,9 +2,14 @@ buildscript {
     val objectboxVersion by extra("5.3.0")
     repositories {
         mavenCentral()
+        maven { url = uri("https://maven.cefrium.com"); content { includeGroup("com.cefrium") } }
     }
     dependencies {
         classpath("io.objectbox:objectbox-gradle-plugin:$objectboxVersion")
+        // Only the browser build (-PoperitBrowser=true) needs the Cefrium plugin, and its repository.
+        if (gradle.startParameter.projectProperties["operitBrowser"] == "true") {
+            classpath("com.cefrium:cefrium-gradle-plugin:0.21.0")
+        }
     }
 }
 
@@ -73,4 +78,6 @@ tasks.register<GradleBuild>("assembleDebugWithToolPkg") {
     dependsOn(syncBundledToolPkgPackages)
     dir = rootDir
     tasks = listOf(":app:assembleDebug")
+    // A nested build starts without the outer one's -P switches; keep the browser build's.
+    startParameter.projectProperties = gradle.startParameter.projectProperties
 }

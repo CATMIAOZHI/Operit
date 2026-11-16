@@ -32,6 +32,19 @@ plugins {
     alias(libs.plugins.kotlin.parcelize)
 }
 
+// -PoperitBrowser=true builds the version with the Cefrium browser engine built in (Android 10+,
+// about 100 MB larger, compiled with JDK 25). Without it the app uses the system WebView.
+// Read from the command line like the root build script, which puts the plugin on the classpath.
+val browserBuild = gradle.startParameter.projectProperties["operitBrowser"] == "true"
+if (browserBuild && !JavaVersion.current().isCompatibleWith(JavaVersion.toVersion(25))) {
+    throw GradleException(
+        "-PoperitBrowser=true builds with the Cefrium engine, which needs Gradle to run on JDK 25 " +
+            "(this run uses JDK ${JavaVersion.current()}). Point JAVA_HOME at a JDK 25 and build again; " +
+            "leave out -PoperitBrowser=true for the usual version.",
+    )
+}
+if (browserBuild) apply(plugin = "com.cefrium")
+
 val verifyScriptExecutionReceiverManifests =
     tasks.register("verifyScriptExecutionReceiverManifests") {
         group = "verification"
@@ -184,7 +197,8 @@ android {
 
     defaultConfig {
         applicationId = "com.rainy.operitry"
-        minSdk = 26
+        // The engine needs Android 10; older phones install the version without it.
+        minSdk = if (browserBuild) 29 else 26
         targetSdk = 34
         // Bound to the baseline version, not to the ry release counter: bump by one only when the
         // baseline itself moves. Stable and dev must agree; see docs/agent/dev-to-main-promotion.md.
@@ -210,6 +224,7 @@ android {
         }
 
         buildConfigField("boolean", "PERSONAL_DEV_UPDATE_CHANNEL", "false")
+        buildConfigField("boolean", "BROWSER_ENGINE_BUILT_IN", browserBuild.toString())
         // Name under Orbit's home-screen icon; Operit Ry's entry uses app_name.
         resValue("string", "orbit_launcher_name", "Orbit")
     }
@@ -383,6 +398,7 @@ if (readmeShots == null) {
 }
 
 dependencies {
+    if (browserBuild) implementation("com.cefrium:cefrium-sdk:0.21.0")
     // Keep this alpha set in sync with compose-bom-alpha 2026.09.00.
     implementation("androidx.a2ui.compose:compose-runtime:1.0.0-alpha01")
     implementation("androidx.a2ui.compose:compose-ui:1.0.0-alpha01")
