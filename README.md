@@ -31,7 +31,7 @@ Orbit is a long-term personal agent. It talks with you, remembers what matters, 
 
 Orbit ships inside **Operit Ry**, a personal distribution of [Operit](https://github.com/AAswordman/Operit) maintained by [WaterRainCat (水晴喵)](https://github.com/CATMIAOZHI).
 
-> Orbit is developed and released in [CATMIAOZHI/Operit](https://github.com/CATMIAOZHI/Operit); [CATMIAOZHI/orbit](https://github.com/CATMIAOZHI/orbit) is its synced mirror. Downloads, issues and pull requests go to Operit.
+> Orbit is developed and released in [CATMIAOZHI/Operit](https://github.com/CATMIAOZHI/Operit); [CATMIAOZHI/orbit](https://github.com/CATMIAOZHI/orbit) is its synced mirror. Both repositories carry the same Releases, so you can download the APK from either; issues and pull requests go to Operit.
 
 ## What Orbit does
 
