@@ -136,9 +136,11 @@ private fun ProcessRecordPage(
             false
         }
         var running = if (returned > 0 || value != null) selfRunning() else when (process) {
-            is OrbitProcess.TaskRun -> process.running
-            is OrbitProcess.Learning -> process.running
-            is OrbitProcess.Subagent -> process.running
+            // The opener's state can be old (a subagent opened from a tool card is passed as not
+            // running), so a record that looks finished is asked once more.
+            is OrbitProcess.TaskRun -> process.running || selfRunning()
+            is OrbitProcess.Learning -> process.running || selfRunning()
+            is OrbitProcess.Subagent -> process.running || selfRunning()
             is OrbitProcess.ChatTurn -> false
             is OrbitProcess.LiveTurn -> true
         }
