@@ -9516,6 +9516,12 @@
 
     <string name="orbit_run_interrupted">Execution was interrupted and paused. Verify earlier tool effects before continuing; the turn will not replay automatically.</string>
     <string name="orbit_run_timed_out">Ran past %2$d minutes, so it was stopped and paused: “%1$s”. Verify what it already did before continuing; it will not replay automatically.</string>
+    <string name="orbit_run_interrupted_skipped">This run did not finish; it goes on at the next scheduled time</string>
+    <string name="orbit_run_wake_timed_out_skipped">Took too long to reach Orbit this time; it goes on at the next scheduled time</string>
+    <string name="orbit_run_timed_out_skipped">This run took too long and was stopped; it goes on at the next scheduled time</string>
+    <string name="orbit_run_wake_timed_out_paused">Took too long to reach Orbit, so it was paused; ask Orbit to try again if needed</string>
+    <string name="orbit_run_failed_reason">Did not finish (%1$s); tries again at the next scheduled time</string>
+    <string name="orbit_run_failed_paused">Stopped with an error and paused (%1$s)</string>
     <string name="orbit_permission_keep_alive_title">Keep %1$s awake in the background</string>
     <string name="orbit_permission_keep_alive_sub">So reminders and background tasks run on time</string>
     <string name="orbit_permission_all_on">All on; background tasks can run on time</string>

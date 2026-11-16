@@ -132,8 +132,10 @@ object OrbitTaskRunner {
                 context.getString(com.ai.assistance.operit.R.string.orbit_run_interrupted),
                 resumable = resumable,
                 resumeNextRunAt = if (resumable) OrbitTaskRepository.nextAt(it, now) else 0,
-                continueNextRunAt = if (it.useSubagent && OrbitRoutines.isRoutineSource(it.source))
-                    OrbitTaskRepository.nextAt(it, now) else 0)
+                // The app was closed or restarted while this ran: a repeating task just goes on.
+                continueNextRunAt = goesOnAt(it, now),
+                continuedMessage = context.getString(com.ai.assistance.operit.R.string.orbit_run_interrupted_skipped),
+                continues = repeats(it))
         } ?: run {
             OrbitDelivery.sendPending(context, orbit.id)
             return@coroutineScope false
@@ -172,7 +174,8 @@ object OrbitTaskRunner {
         try {
             val runStart = SystemClock.elapsedRealtime()
             withTimeout(timeoutMinutes * 60_000L) {
-                check(OrbitPreferences.getInstance(context).current().activeOrbitId == orbit.id)
+                // Orbit was paused while this was being picked: not this task's fault, it goes on once Orbit does.
+                if (OrbitPreferences.getInstance(context).current().activeOrbitId != orbit.id) throw OrbitPaused()
                 // Orbit is paused while both token allowances are used up: the run waits and tries
                 // again later, so nothing is used up or marked failed while it cannot think.
                 if (OrbitQuota.paused(context) && dao.defer(token, System.currentTimeMillis() + QUOTA_RETRY_MS, boot,
@@ -196,7 +199,7 @@ object OrbitTaskRunner {
                                 result.observation()
                             } else if (OrbitReadingWatch.isReading(task.source)) {
                                 // Enough comments ahead: nothing for Orbit to do, and no row in the activity list.
-                                val ahead = OrbitReadingWatch.check(context, task.orbitId)
+                                val ahead = OrbitReadingWatch.check(context, task.orbitId, OrbitReadingWatch.ahead(task.source))
                                 if (!ahead.wake) {
                                     // Noted as what was seen, so a later "something is missing" counts as a change.
                                     check(dao.checkpoint(token, ahead.observation.take(20_000), sha(ahead.observation), boot,
@@ -301,8 +304,17 @@ object OrbitTaskRunner {
                 // A review keeps what it wrote down and reads on from there at its next run; it is never paused.
                 if (dao.run(token.id)?.let { OrbitWake.isWatching(it.handoffTurnId) } != true &&
                     !stopForQuota(context, state) && !continueReview(context, state)) {
-                    dao.interrupt(token, System.currentTimeMillis(), context.getString(
-                        com.ai.assistance.operit.R.string.orbit_run_timed_out, task.title, timeoutMinutes))
+                    val now = System.currentTimeMillis()
+                    // A subagent run that used up its own limit is paused, as its prompt says. Waking
+                    // Orbit only took too long to get going: a repeating task tries again next time.
+                    if (task.useSubagent) dao.interrupt(token, now, context.getString(
+                        com.ai.assistance.operit.R.string.orbit_run_timed_out, task.title, timeoutMinutes),
+                        continuedMessage = context.getString(com.ai.assistance.operit.R.string.orbit_run_timed_out_skipped))
+                    else dao.interrupt(token, now,
+                        context.getString(com.ai.assistance.operit.R.string.orbit_run_wake_timed_out_paused),
+                        goesOnAt(task, now),
+                        context.getString(com.ai.assistance.operit.R.string.orbit_run_wake_timed_out_skipped),
+                        repeats(task))
                 }
             } else throw e
         } catch (e: Exception) {
@@ -310,13 +322,29 @@ object OrbitTaskRunner {
             // A review that stopped without its result keeps what it wrote down and goes on later.
             // A model that failed (network, key, balance), or ended its turn without handing in a
             // result, skips only this run of a repeating task.
-            if (!stopForQuota(context, state) && !continueReview(context, state) && !skipForModelFailure(context, state, e)) {
-                dao.interrupt(token, System.currentTimeMillis(), (e as? ModelTurnFailed)?.let {
-                    context.getString(com.ai.assistance.operit.R.string.orbit_run_model_failed_paused, it.reason(context))
-                } ?: context.getString(com.ai.assistance.operit.R.string.orbit_run_interrupted))
+            // Any other error fails only this run of a repeating task, with its reason, told once.
+            if (e is OrbitPaused) {
+                val now = System.currentTimeMillis()
+                dao.interrupt(token, now, context.getString(com.ai.assistance.operit.R.string.orbit_run_interrupted),
+                    goesOnAt(task, now), context.getString(com.ai.assistance.operit.R.string.orbit_run_interrupted_skipped),
+                    repeats(task))
+            } else if (!stopForQuota(context, state) && !continueReview(context, state) && !skipForModelFailure(context, state, e) &&
+                !failThisRun(context, state, e)) {
+                // Paused for the user; a one-time task tried early keeps its time and says so instead.
+                val (paused, goesOn) = when (e) {
+                    is ModelTurnFailed -> context.getString(com.ai.assistance.operit.R.string.orbit_run_model_failed_paused,
+                        e.reason(context)) to context.getString(
+                        com.ai.assistance.operit.R.string.orbit_run_model_failed_skipped, e.reason(context))
+                    is NoResultSubmitted -> context.getString(com.ai.assistance.operit.R.string.orbit_run_interrupted) to
+                        context.getString(com.ai.assistance.operit.R.string.orbit_run_no_result_skipped)
+                    else -> context.getString(com.ai.assistance.operit.R.string.orbit_run_failed_paused, reasonOf(e)) to
+                        context.getString(com.ai.assistance.operit.R.string.orbit_run_failed_reason, reasonOf(e))
+                }
+                dao.interrupt(token, System.currentTimeMillis(), paused, continuedMessage = goesOn)
             }
             (e as? ModelTurnFailed)?.let {
-                tellModelFailure(context, state, OrbitSetup.problemOf(it.detail).name, it.reason(context))
+                tellModelFailure(context, state, OrbitSetup.problemOf(it.detail).name, it.reason(context),
+                    dao.task(task.id)?.state.let { s -> s != null && s != "ACTIVE" })
             }
         } finally {
             withContext(NonCancellable) {
@@ -339,7 +367,12 @@ object OrbitTaskRunner {
                     com.ai.assistance.operit.util.AppLogger.w("OrbitTasks", "Temporary task chat cleanup deferred")
                 }
                 if (dao.run(token.id)?.let { OrbitWake.isWatching(it.handoffTurnId) } != true) {
-                    dao.interrupt(token, System.currentTimeMillis(), context.getString(com.ai.assistance.operit.R.string.orbit_run_interrupted))
+                    // Stopped from outside (the app or Orbit closing); a pause or an edit is not ours to undo.
+                    val now = System.currentTimeMillis()
+                    dao.interrupt(token, now, context.getString(com.ai.assistance.operit.R.string.orbit_run_interrupted),
+                        goesOnAt(task, now),
+                        context.getString(com.ai.assistance.operit.R.string.orbit_run_interrupted_skipped),
+                        repeats(task))
                 }
                 runCatching { dao.pruneRuns(task.id) }
                 active.remove(chatId, state)
@@ -411,23 +444,28 @@ object OrbitTaskRunner {
     /** The model's turn ended without a saved result: it never called [FINISH], or every call failed. */
     private class NoResultSubmitted : Exception("The model did not submit a result")
 
+    /** Orbit was paused (no active Orbit) before this run began. */
+    private class OrbitPaused : Exception("Orbit is paused")
+
     /**
      * Tells Orbit once that background work stopped working because of its model, so a user who
      * chats as usual still hears about it; told again only after that model worked once more
      * ([modelWorked]). Kept apart for the main and the assistant model.
      */
-    private fun tellModelFailure(context: Context, state: ActiveRun, problem: String, reason: String) {
+    private fun tellModelFailure(context: Context, state: ActiveRun, problem: String, reason: String, paused: Boolean) {
         val title = state.task.title.replace(Regex("\\s+"), " ").take(80)
         OrbitNotices.once(context, state.orbitId, "${modelKey(state)}$problem",
             "[orbit-task] 后台任务的模型出错了\n这是 App 发给你的说明，不是用户说的，用户也看不到。后台任务「$title」这次没跑成：$reason" +
-                "重复的任务下次到点会再试，一次性的任务先暂停了。模型修好之前，其他后台工作（动态、点子、提醒、整理）也可能一样失败。" +
+                (if (paused) "这个任务先暂停了。" else "这个任务到时间会再试。") +
+                "模型修好之前，其他后台工作（动态、点子、提醒、整理）也可能一样失败。" +
                 "找合适的时机用一句话告诉用户。是密钥的问题（401、密钥无效、余额不足）就用 orbit_models action=request_create 新建一个配置请他填新密钥，" +
                 "好了再用 request_use 切过去；他明确要替换原配置的密钥时才用 request_key（指明是哪个配置）。" +
                 "其他问题用 orbit_models action=list 看看，必要时换个模型或放 open_settings 卡片请他检查。" +
                 "他以前说过不用提醒这个的话，就调用 orbit_nothing_to_do 保持安静。",
             "[orbit-task] A background task's model failed\nThis is a note from the app, not from the user; they cannot see it. " +
-                "The background task \"$title\" did not run this time: $reason Repeating tasks try again at their next time; a " +
-                "one-time task is paused. Until the model works, other background work (feed, ideas, reminders, tidying) may fail too. " +
+                "The background task \"$title\" did not run this time: $reason " +
+                (if (paused) "This task is paused. " else "This task tries again at its next scheduled time. ") +
+                "Until the model works, other background work (feed, ideas, reminders, tidying) may fail too. " +
                 "When it fits, tell the user in one line. If it is the key (401, invalid key, out of balance), use orbit_models " +
                 "action=request_create to make a new configuration where they type the new key, then request_use to move to it; use " +
                 "request_key (naming the exact configuration) only when they want the old one's key replaced. Otherwise check orbit_models action=list and switch models, " +
@@ -438,6 +476,40 @@ object OrbitTaskRunner {
 
     /** The task's model answered a turn: its failure, if one was told, is over and a new one is told again. */
     private fun modelWorked(context: Context, state: ActiveRun) = OrbitNotices.clear(context, state.orbitId, modelKey(state))
+
+    /** A repeating task goes on after a run that did not finish; a one-time task waits for the user. */
+    private fun repeats(task: OrbitTaskEntity): Boolean = task.kind != "ONCE" && task.scheduleMode != "ONCE"
+
+    /** When a repeating task goes on (0 for a place task, which waits for its next crossing). */
+    private fun goesOnAt(task: OrbitTaskEntity, now: Long): Long =
+        if (repeats(task)) OrbitTaskRepository.nextAt(task, now) else 0
+
+    private fun reasonOf(e: Exception): String =
+        (e.message?.takeIf { it.isNotBlank() } ?: e.javaClass.simpleName).replace(Regex("\\s+"), " ").take(300)
+
+    /**
+     * Any other error of a repeating task (a page that cannot be read, a broken place) fails only
+     * this run: the reason is kept on the run, the user is told once for the same failure,
+     * and the task goes on at its next time. False for a one-time task, a model failure, a run
+     * handed to the chat, or one with an unconfirmed effect; those keep the old way.
+     */
+    private suspend fun failThisRun(context: Context, state: ActiveRun, e: Exception): Boolean {
+        if (e is ModelTurnFailed || e is NoResultSubmitted) return false
+        if (!repeats(state.task)) return false
+        return try {
+            val run = AppDatabase.getDatabase(context).orbitTaskDao().run(state.token.id)
+            if (run?.handoffTurnId?.isNotEmpty() == true) return false
+            // The reason sits early in the line, so a different failure counts as new (see the DAO's kind).
+            complete(context, state, state.task.lastObservation, "",
+                context.getString(com.ai.assistance.operit.R.string.orbit_run_failed_reason, reasonOf(e)),
+                triggerFollowers = false)
+        } catch (c: CancellationException) {
+            throw c
+        } catch (x: Exception) {
+            com.ai.assistance.operit.util.AppLogger.w("OrbitTasks", "Run not failed on its own: ${x.message}")
+            false
+        }
+    }
 
     /**
      * A repeating task whose model failed (no network, a wrong key, no balance), or whose model
@@ -534,8 +606,8 @@ object OrbitTaskRunner {
                 val failed = told == OrbitWake.Told.FAILED
                 val reason = context.getString(com.ai.assistance.operit.R.string.orbit_decision_chat_failed, orbit.name)
                 val saved = if (failed) {
-                    dao.interrupt(state.token, now, reason,
-                        if (task.kind != "ONCE" && task.scheduleMode != "ONCE") OrbitTaskRepository.nextAt(task, now) else 0)
+                    // The model's failure is told on its own (see tellModelFailure); a repeating task goes on.
+                    dao.interrupt(state.token, now, reason, goesOnAt(task, now), reason, repeats(task))
                 } else dao.finishChatHandoff(state.token, decision.turnId, observation,
                     OrbitTaskRepository.nextAt(task, now), state.boot, now, SystemClock.elapsedRealtime())
                 if (!saved) return
@@ -547,9 +619,11 @@ object OrbitTaskRunner {
                     if (told == OrbitWake.Told.SPOKE) dao.touchDelivered(orbit.id, now)
                     logRun(context, state, observation, "", if (told == OrbitWake.Told.SPOKE) "-" else "")
                 } else {
-                    tellModelFailure(context, state, "wake", reason + if (english) "." else "。")
+                    // A one-time task tried early stays on for its own time: no fallback reminder yet.
+                    val stopped = dao.task(task.id)?.state.let { it != null && it != "ACTIVE" }
+                    tellModelFailure(context, state, "wake", reason + if (english) "." else "。", stopped)
                     // The failed hand-off remains a durable pending item as well as this fallback.
-                    if ((task.kind == "ONCE" || task.scheduleMode == "ONCE") && task.instruction.isNotBlank()) {
+                    if ((task.kind == "ONCE" || task.scheduleMode == "ONCE") && stopped && task.instruction.isNotBlank()) {
                         val text = context.getString(com.ai.assistance.operit.R.string.orbit_reminder_fallback,
                             task.instruction.trim().take(300), orbit.name)
                         runCatching {
