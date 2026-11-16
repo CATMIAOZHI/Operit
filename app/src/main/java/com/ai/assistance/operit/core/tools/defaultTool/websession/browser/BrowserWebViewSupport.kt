@@ -582,6 +582,12 @@ internal fun StandardBrowserSessionTools.createBrowserHostCallbacks(
             }
         }
 
+        override fun onSetExpanded(expanded: Boolean) {
+            runOnMainSync<Unit> {
+                setExpandedOnMain(expanded)
+            }
+        }
+
         override fun onCloseCurrentTab() {
             resolvePreferredSessionId()?.let { closeSession(it) }
         }
