@@ -59,7 +59,7 @@ object CollaborationTools {
                     parametersStructured = listOf(
                         parameter("task_name", "任务名，只含小写字母、数字和下划线，不可为 root。", "Task name: lowercase letters, digits and underscores; root is reserved.", true),
                         message,
-                        parameter("fork_turns", "继承父上下文：all（默认）、none 或正整数轮数。", "Parent context: all (default), none, or a positive number of turns."),
+                        parameter("fork_turns", "继承父上下文：none（默认）、all 或正整数轮数。", "Parent context: none (default), all, or a positive number of turns."),
                         parameter("agent_type", "代理配置 ID：" + profiles.joinToString { it.id }, "Agent profile ID: " + profiles.joinToString { it.id }),
                         parameter("model", "可选。需要指定模型时先调用 list_agent_models，原样填写返回的 model（配置名称 / 模型名称，重名时带区分标记）。不填则沿用原有继承或子代理预设规则。", "Optional. To select a model, first call list_agent_models and copy its model value (configuration name / model name, disambiguated when needed). Omit to retain the existing inheritance or agent-profile selection."),
                         parameter("reasoning_effort", "可选思考强度：none、minimal、low、medium、high、xhigh、max、ultra；模型需支持。", "Optional reasoning effort: none, minimal, low, medium, high, xhigh, max, ultra; requires model support."),
