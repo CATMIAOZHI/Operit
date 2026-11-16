@@ -99,6 +99,16 @@ fun FirstLaunchLanguagePicker(
                             }
                             LocaleUtils.applyAppLanguage(context, code)
                             AgentProfileRepository.instance.initialize(context.applicationContext)
+                            try {
+                                withContext(Dispatchers.IO) {
+                                    com.ai.assistance.operit.data.preferences.CharacterCardManager
+                                        .getInstance(context.applicationContext).relocalizeBuiltInCards()
+                                }
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                // The next start switches them over.
+                            }
                             // MainActivity applies the saved language when it is created, and no
                             // per-app system language is set, so the screen is redrawn here on every
                             // Android version. Saved state (such as the launch mode picked below) survives.

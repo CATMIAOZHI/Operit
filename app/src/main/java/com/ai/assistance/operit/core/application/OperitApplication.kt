@@ -806,6 +806,12 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
         }
     }
 
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        // A language picked since start-up is lost when the system updates the configuration.
+        LocaleUtils.reapplyInProcess(this)
+    }
+
     override fun onTerminate() {
         super.onTerminate()
         if (!mainApplicationInitialized) {
