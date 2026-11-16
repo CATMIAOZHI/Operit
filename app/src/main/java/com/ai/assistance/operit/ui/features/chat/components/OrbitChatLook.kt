@@ -4,6 +4,8 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -1034,6 +1036,9 @@ fun OrbitSwipeToReply(
             offset.floatValue = 0f
         }
     }
+    // Set when something inside the bubble (a card slider, a wide code block) already took the
+    // finger; the swipe then stays put. Read before the swipe below sees the same move.
+    val innerOwns = androidx.compose.runtime.remember { booleanArrayOf(false) }
     Box(
         Modifier.fillMaxWidth().then(if (!enabled) Modifier else Modifier.pointerInput(Unit) {
             var passed = false
@@ -1045,7 +1050,7 @@ fun OrbitSwipeToReply(
                     dragged = offset.floatValue
                 },
                 onDragEnd = {
-                    if (dragged >= trigger) currentReply.value()
+                    if (dragged >= trigger && !innerOwns[0]) currentReply.value()
                     dragged = 0f
                     springBack()
                 },
@@ -1054,6 +1059,7 @@ fun OrbitSwipeToReply(
                     springBack()
                 },
             ) { change, dragAmount ->
+                if (innerOwns[0]) return@detectHorizontalDragGestures
                 val next = (dragged + dragAmount).coerceIn(0f, limit)
                 if (next == dragged) return@detectHorizontalDragGestures
                 change.consume()
@@ -1065,6 +1071,15 @@ fun OrbitSwipeToReply(
                     passed = false
                 }
                 offset.floatValue = next
+            }
+        }.pointerInput(Unit) {
+            awaitEachGesture {
+                awaitFirstDown(requireUnconsumed = false)
+                innerOwns[0] = false
+                do {
+                    val event = awaitPointerEvent()
+                    if (event.changes.any { it.isConsumed }) innerOwns[0] = true
+                } while (event.changes.any { it.pressed })
             }
         }),
     ) {

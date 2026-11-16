@@ -692,7 +692,8 @@ private fun renderNodeContent(
                 // In an Orbit chat a card is numbered among its message's cards, the same in its own
                 // bubble, in the developer view and while Orbit is still writing.
                 val orbitChat = com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current ||
-                    com.ai.assistance.operit.ui.features.chat.components.LocalShowHiddenChatRows.current
+                    com.ai.assistance.operit.ui.features.chat.components.LocalShowHiddenChatRows.current ||
+                    com.ai.assistance.operit.ui.common.dynamicui.LocalDynamicUiOrbitNumbering.current
                 val ownerContent = com.ai.assistance.operit.ui.common.dynamicui.LocalDynamicUiOwner.current?.content
                 val pieceIndex = com.ai.assistance.operit.ui.common.dynamicui.LocalDynamicUiBlockIndex.current
                 val canvasNodes = LocalMarkdownCanvasNodes.current

@@ -34,10 +34,13 @@ import com.ai.assistance.operit.ui.common.markdown.EnhancedCodeBlock
 import com.ai.assistance.operit.util.AppLogger
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.onSubscription
 import kotlinx.serialization.json.*
 
 data class DynamicUiOwner(val chatId: String, val timestamp: Long, val variant: Int, val content: String)
 val LocalDynamicUiOwner = staticCompositionLocalOf<DynamicUiOwner?> { null }
+/** True where an Orbit reply shows outside its chat (its work record): cards are numbered as in the chat. */
+val LocalDynamicUiOrbitNumbering = staticCompositionLocalOf { false }
 val LocalDynamicUiSubmit = staticCompositionLocalOf<((DynamicUiOwner, String) -> Boolean)?> { null }
 /** Opens a card's web link; null opens it right away. A page can ask the user first. */
 val LocalDynamicUiOpenUrl = staticCompositionLocalOf<((String) -> Unit)?> { null }
@@ -98,6 +101,10 @@ private fun DynamicUiCardContent(source: String, closed: Boolean, streaming: Boo
     val loggedErrors = remember { mutableSetOf<String>() }
     val ready = remember { mutableStateMapOf<String, Boolean>() }
     val saved = remember { mutableStateMapOf<String, JsonElement>() }
+    // Values another view of this card saved and this one only shows (see the sync below).
+    val synced = remember { mutableMapOf<String, JsonElement>() }
+    // Counts this view's own saves, so a read that overlaps one of them is dropped as older.
+    val localWrites = remember { mutableMapOf<String, Int>() }
     val results = remember { mutableStateMapOf<String, Boolean>() }
     var pending by remember { mutableStateOf<A2uiClientEventMessage?>(null) }
     var notice by remember { mutableStateOf<String?>(null) }
@@ -149,11 +156,12 @@ private fun DynamicUiCardContent(source: String, closed: Boolean, streaming: Boo
     }
     fun persist(surface: A2uiCoreSurfaceModel, data: JsonElement) {
         val file = stateFile(surface.id) ?: return
+        localWrites[surface.id] = (localWrites[surface.id] ?: 0) + 1
         DynamicUiStateStore.save(file, buildJsonObject {
             put("data", if (CardLiveStore.isLive(surface.id)) CardLiveStore.userData(data.jsonObject) else data)
             saved[surface.id]?.let { put("saved", if (CardLiveStore.isLive(surface.id)) CardLiveStore.userData(it.jsonObject) else it) }
             put("result", results[surface.id] == true)
-        })
+        }, processor)
     }
     LaunchedEffect(processor) {
         // Start collecting errors/events before replay, otherwise a parser failure could be missed.
@@ -324,6 +332,42 @@ private fun DynamicUiCardContent(source: String, closed: Boolean, streaming: Boo
             if (surface.id in surfaceErrors) return@LaunchedEffect
             // Repeat registries still contain the initial rows until their first restored expansion.
             if (surface.id !in templates) ready[surface.id] = true
+            // The same card shown elsewhere (the chat under its work record) saved new values: show them.
+            currentOwner?.let {
+                launch {
+                    // Read once more after subscribing: the other view may have saved since our first read.
+                    DynamicUiStateStore.saves.onSubscription {
+                        stateFile(surface.id)?.let { emit(it to null) }
+                    }.collect { (file, writer) ->
+                        if (writer === processor || file != stateFile(surface.id)) return@collect
+                        val writesBefore = localWrites[surface.id] ?: 0
+                        val before = runCatching { model(surface) }.getOrNull() ?: return@collect
+                        val record = DynamicUiStateStore.read(file) ?: return@collect
+                        val stored = record["data"] as? JsonObject ?: return@collect
+                        // Input made here while reading is newer: it is saved and reaches the other view.
+                        if ((localWrites[surface.id] ?: 0) != writesBefore ||
+                            runCatching { model(surface) }.getOrNull() != before) return@collect
+                        try {
+                            // The saved copy leaves out the live agent part; rows may be built from it.
+                            val data = if (CardLiveStore.isLive(surface.id)) JsonObject(stored +
+                                ("agent" to DynamicUiProtocol.toJson(surface.dataModel[A2uiDataPath("/agent")]))) else stored
+                            val initialized = templates[surface.id]?.let {
+                                CardRowState.prepare(it, data, CardLiveStore.isLive(surface.id))
+                            } ?: data
+                            // Saving or editing only changes these marks, not the values: take them either way.
+                            val changed = initialized != before
+                            androidx.compose.runtime.snapshots.Snapshot.withMutableSnapshot {
+                                if (changed) restore(surface, initialized)
+                                record["saved"]?.let { saved[surface.id] = it } ?: saved.remove(surface.id)
+                                results[surface.id] = record["result"]?.jsonPrimitive?.booleanOrNull == true
+                            }
+                            // Already saved by the other view; writing it back could undo its newer values.
+                            if (changed) synced[surface.id] = model(surface)
+                        } catch (e: CancellationException) { throw e }
+                        catch (_: Exception) { logIssue("sync", surface.id) }
+                    }
+                }
+            }
             if (CardLiveStore.isLive(surface.id)) currentOwner?.let { identity ->
                 CardLiveStore.observe(identity.chatId, source, surface.id)?.let { updates ->
                     launch {
@@ -383,7 +427,15 @@ private fun DynamicUiCardContent(source: String, closed: Boolean, streaming: Boo
                     }
                 }
             }
+            // The first value is what was just loaded; writing it back could undo a newer save elsewhere.
+            var loaded = true
             snapshotFlow { runCatching { model(surface) }.getOrNull() }.collect { data ->
+                if (loaded) {
+                    loaded = false
+                    if (data == null) notice = tooLargeText
+                    return@collect
+                }
+                if (data != null && synced.remove(surface.id) == data) return@collect
                 if (data != null && error == null && surface.id !in surfaceErrors) persist(surface, data)
                 else if (data == null) notice = tooLargeText
             }
@@ -397,7 +449,9 @@ private fun DynamicUiCardContent(source: String, closed: Boolean, streaming: Boo
         typography = MaterialTheme.typography.copy(bodyLarge = MaterialTheme.typography.bodyMedium),
     ) {
     ProvideTextStyle(MaterialTheme.typography.bodyMedium) {
-    CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
+    // A raised bubble would tint the card's surfaces; the card looks the same in a bubble and on a page.
+    CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface,
+        LocalAbsoluteTonalElevation provides 0.dp) {
         BoxWithConstraints(Modifier.fillMaxWidth()) {
         val density = LocalDensity.current
         var measuredHeight by rememberSaveable { mutableIntStateOf(0) }

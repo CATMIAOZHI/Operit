@@ -8,6 +8,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.serialization.json.*
 
@@ -22,6 +23,8 @@ internal object DynamicUiStateStore {
     private val ioMutex = Mutex()
     private val deleted = mutableSetOf<File>()
     val failures = MutableStateFlow<Set<File>>(emptySet())
+    /** Each save and who made it, so another view of the same card (chat and work record) follows. */
+    val saves = MutableSharedFlow<Pair<File, Any?>>(extraBufferCapacity = 64)
     private var started = false
 
     fun file(context: Context, owner: DynamicUiOwner, source: String, surface: String): File {
@@ -44,7 +47,7 @@ internal object DynamicUiStateStore {
         }.getOrNull()
     }
 
-    fun save(file: File, record: JsonObject) {
+    fun save(file: File, record: JsonObject, writer: Any? = null) {
         val text = record.toString()
         require(text.length <= DynamicUiProtocol.MAX_STATE * 3)
         synchronized(pending) {
@@ -84,6 +87,7 @@ internal object DynamicUiStateStore {
             }
         }
         signal.trySend(Unit)
+        saves.tryEmit(file to writer)
     }
 
     /** Live tool updates acknowledge only after an atomic write, serialized with chat deletion. */
