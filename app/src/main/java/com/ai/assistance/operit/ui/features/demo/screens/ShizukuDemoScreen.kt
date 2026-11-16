@@ -509,7 +509,7 @@ fun ShizukuDemoScreen(
 
                                     // 启动安装界面
                                     withContext(Dispatchers.Main) {
-                                        context.startActivity(installIntent)
+                                        context.startActivity(com.ai.assistance.operit.util.ApkInstallIntent.toInstaller(context, installIntent))
                                         Toast.makeText(
                                                         context,
                                                         context.getString(
@@ -658,7 +658,7 @@ fun ShizukuDemoScreen(
 
                                     // 启动安装界面
                                     withContext(Dispatchers.Main) {
-                                        context.startActivity(installIntent)
+                                        context.startActivity(com.ai.assistance.operit.util.ApkInstallIntent.toInstaller(context, installIntent))
                                         Toast.makeText(
                                                         context,
                                                         updateNotify,

@@ -139,7 +139,7 @@ object UIHierarchyManager {
 
             withContext(Dispatchers.Main) {
                 try {
-                    context.startActivity(installIntent)
+                    context.startActivity(com.ai.assistance.operit.util.ApkInstallIntent.toInstaller(context, installIntent))
                 } catch (e: Exception) {
                     AppLogger.e(TAG, "启动安装界面失败", e)
                     Toast.makeText(

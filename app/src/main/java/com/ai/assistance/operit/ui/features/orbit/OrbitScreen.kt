@@ -424,7 +424,6 @@ private fun OrbitChatPage(
             val sub = when (page) {
                 OrbitCardPage.SPEECH_SETTINGS -> OrbitSubPage.SPEECH_SETTINGS
                 OrbitCardPage.MODEL_CONFIG -> OrbitSubPage.MODEL_CONFIG
-                OrbitCardPage.DEVICE_ACCESS -> OrbitSubPage.DEVICE_ACCESS
                 OrbitCardPage.WEIXIN -> OrbitSubPage.WEIXIN
                 OrbitCardPage.TOOL_ACCESS -> OrbitSubPage.TOOL_ACCESS
                 OrbitCardPage.TOOL_PERMISSIONS -> OrbitSubPage.TOOL_PERMISSIONS
@@ -830,7 +829,7 @@ private fun OrbitChatPage(
             OrbitSubPage.APP_GROUPS -> OrbitAppPricingPage(pricing = false, onBack = back)
             OrbitSubPage.PHONE_PERMISSIONS -> OrbitPhonePermissionsPage(onBack = back,
                 onOpenDeviceAccess = { push(OrbitSubPage.DEVICE_ACCESS) })
-            OrbitSubPage.DEVICE_ACCESS -> OrbitDeviceAccessPage(orbitName(orbit), onBack = back, onDraft = ::draftToChat)
+            OrbitSubPage.DEVICE_ACCESS -> OrbitDeviceAccessPage(orbitName(orbit), onBack = back)
             OrbitSubPage.NOTIFICATION_SETTINGS -> OrbitNotificationSettingsPage(orbit, onBack = back,
                 onOpenDelivery = { push(OrbitSubPage.NOTIFICATIONS) })
             OrbitSubPage.USAGE -> OrbitUsagePage(orbit, onBack = back,

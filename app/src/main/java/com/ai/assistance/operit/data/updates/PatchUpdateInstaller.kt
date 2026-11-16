@@ -119,7 +119,7 @@ object PatchUpdateInstaller {
             }
         }
 
-        context.startActivity(intent)
+        context.startActivity(com.ai.assistance.operit.util.ApkInstallIntent.toInstaller(context, intent))
     }
 
     suspend fun downloadAndPreparePatchUpdateWithProgress(

@@ -112,7 +112,7 @@ class ShizukuInstaller {
                 AppLogger.d(TAG, "启动${action}界面")
 
                 // 启动安装界面
-                context.startActivity(installIntent)
+                context.startActivity(com.ai.assistance.operit.util.ApkInstallIntent.toInstaller(context, installIntent))
 
                 // 清除缓存，强制下次检测重新计算
                 clearCache()
