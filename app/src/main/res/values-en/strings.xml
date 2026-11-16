@@ -9743,6 +9743,8 @@
     <string name="orbit_chats_unread">New messages</string>
     <string name="orbit_chats_title_unread">Chats — new messages</string>
     <string name="orbit_menu_back_to_operit">Back to Operit</string>
+    <string name="orbit_menu_back_to_operit_confirm_title">Back to Operit?</string>
+    <string name="orbit_menu_back_to_operit_confirm_note">You can come back to Orbit from Operit\'s menu.</string>
     <string name="orbit_chats_side_section">Side chats</string>
     <string name="orbit_sidebar_tabs">Tabs</string>
     <string name="orbit_chats_empty_title">Start a side chat</string>
