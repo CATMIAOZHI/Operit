@@ -707,7 +707,12 @@ class SubagentCoordinator private constructor(context: Context) {
         private const val MAX_CONCURRENT_SUBAGENTS_PER_PARENT = 10
         private const val RESPONSE_STREAM_ACQUIRE_TIMEOUT_MS = 15_000L
         private const val DELETION_CANCELLATION_TIMEOUT_MS = 20_000L
-        private const val CHILD_VISIBILITY_TIMEOUT_MS = 5_000L
+        /**
+         * The chat list is read whole after every saved message; with many chats on a slow phone one
+         * read takes seconds, and a reply saving meanwhile queues another. Five seconds failed the
+         * permission reviewer there (it fails closed, so the tool was refused); it has 90 in all.
+         */
+        private const val CHILD_VISIBILITY_TIMEOUT_MS = 30_000L
         private val ACTIVE_STATUS_NAMES =
             setOf(
                 SubagentRunStatus.CREATED.name,
