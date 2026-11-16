@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.ui.features.orbit.OrbitAwareDialog
 import androidx.compose.ui.window.DialogProperties
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.ComposerPredictionTextField
+import com.ai.assistance.operit.ui.features.chat.components.style.input.common.AcceptPastedAttachments
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.rememberComposerPredictionTransformation
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.rememberMentionVisualTransformation
@@ -31,6 +32,10 @@ fun FullscreenInputDialog(
     onConfirm: () -> Unit,
     composerPrediction: String? = null,
     onAcceptPrediction: (String) -> TextFieldValue? = { null },
+    /** Takes pictures and files pasted into the editor as attachments; null leaves it text only. */
+    onAttach: ((String) -> Unit)? = null,
+    /** The chat being written, so a paste that finishes after a switch is dropped. */
+    chatId: () -> String? = { null },
 ) {
     val mentionVisualTransformation =
         rememberMentionVisualTransformation(MaterialTheme.typography.bodyLarge)
@@ -95,6 +100,11 @@ fun FullscreenInputDialog(
                 HorizontalDivider()
 
                 // Input Area
+                AcceptPastedAttachments(
+                    enabled = onAttach != null,
+                    chatId = chatId,
+                    onAttach = { onAttach?.invoke(it) },
+                ) { pasteModifier ->
                 ComposerPredictionTextField(
                     value = editorValue,
                     prediction = composerPrediction,
@@ -112,7 +122,8 @@ fun FullscreenInputDialog(
                     visualTransformation = composerTransformation,
                     modifier = Modifier
                         .fillMaxSize()
-                        .weight(1f),
+                        .weight(1f)
+                        .then(pasteModifier),
                     colors = TextFieldDefaults.colors(
                         focusedContainerColor = Color.Transparent,
                         unfocusedContainerColor = Color.Transparent,
@@ -122,6 +133,7 @@ fun FullscreenInputDialog(
                     ),
                     textStyle = MaterialTheme.typography.bodyLarge
                 )
+                }
             }
         }
     }

@@ -95,6 +95,7 @@ import androidx.compose.foundation.verticalScroll
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.rememberDraftVoiceController
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.HoldToTalkArea
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.SuppressFieldLongPress
+import com.ai.assistance.operit.ui.features.chat.components.style.input.common.AcceptPastedAttachments
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.holdToTalk
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.rememberKeyboardDown
 import com.ai.assistance.operit.ui.features.chat.components.style.input.agent.collapseWidth
@@ -822,11 +823,17 @@ fun ClassicChatInputSection(
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
                 SuppressFieldLongPress(active = classicInputEnabled && keyboardDown) {
+                AcceptPastedAttachments(
+                    enabled = classicInputEnabled,
+                    chatId = { actualViewModel.currentChatId.value },
+                    onAttach = onAttachmentRequest,
+                ) { pasteModifier ->
                 BasicTextField(
                     value = userMessage,
                     onValueChange = onUserMessageChange,
                     modifier = Modifier
                         .weight(1f)
+                        .then(pasteModifier)
                         .onGloballyPositioned { holdArea.field = it }
                         .heightIn(min = 24.dp)
                         .composerPredictionSemantics(userMessage, composerPrediction,
@@ -887,6 +894,7 @@ fun ClassicChatInputSection(
                         }
                     },
                 )
+                }
                 }
                     Spacer(modifier = Modifier.width(4.dp))
                     // A plain box rather than IconButton: IconButton enforces a 48dp minimum touch
@@ -1150,7 +1158,9 @@ fun ClassicChatInputSection(
                     },
                     onValueChange = onUserMessageChange,
                     onDismiss = { showFullscreenInput.value = false },
-                    onConfirm = { showFullscreenInput.value = false }
+                    onConfirm = { showFullscreenInput.value = false },
+                    onAttach = onAttachmentRequest,
+                    chatId = { actualViewModel.currentChatId.value },
                 )
             }
 
