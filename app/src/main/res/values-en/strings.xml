@@ -9643,7 +9643,6 @@
     <string name="orbit_watch_calendar">Watches the calendar for the next %1$d days</string>
     <string name="orbit_watch_reading">Reads along, keeping comments ready %1$d chapters ahead</string>
     <string name="orbit_watch_reading_not_installed">The Legado build that works with Operit is not installed, so the book you read cannot be seen</string>
-    <string name="orbit_watch_reading_unreachable">Could not reach Legado; open Legado once and it will work again</string>
     <string name="orbit_watch_reading_failed">Could not read Legado: %1$s</string>
     <string name="orbit_watch_script">Runs the script %1$s and watches its output</string>
     <string name="orbit_decision_unchanged">Nothing changed, so Orbit stayed quiet</string>

@@ -9620,7 +9620,6 @@
     <string name="orbit_watch_calendar">看未来 %1$d 天的日程</string>
     <string name="orbit_watch_reading">陪你读书，提前写好后面 %1$d 章的段评</string>
     <string name="orbit_watch_reading_not_installed">没装能配合 Operit 的「阅读」，看不到你在读的书</string>
-    <string name="orbit_watch_reading_unreachable">连不上「阅读」，打开一次「阅读」就好</string>
     <string name="orbit_watch_reading_failed">读不到「阅读」：%1$s</string>
     <string name="orbit_watch_script">运行小脚本 %1$s 看结果</string>
     <string name="orbit_decision_unchanged">和上次一样，就没有打扰你</string>

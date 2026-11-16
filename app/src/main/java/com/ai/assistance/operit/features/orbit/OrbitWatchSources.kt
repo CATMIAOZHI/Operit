@@ -31,8 +31,8 @@ import org.json.JSONObject
  * - `notifications` or `notifications:<package>,<package>`: notifications now on the phone
  * - `sms` or `sms:<sender>`: the latest received text messages
  * - `calendar` or `calendar:<days>`: calendar events in the next days (1 to 30, default 7)
- * - `reading`: the book open in Legado; wakes only when the open chapter or the next few lack
- *   Orbit's comments (see [OrbitReadingWatch])
+ * - `reading` or `reading:<chapters>`: the book open in Legado; keeps Orbit's comments ready that many
+ *   chapters ahead (2 to 50, default 20), waking it once fewer than half are (see [OrbitReadingWatch])
  * - `script:files/hooks/<name>.sh@<hash>`: a small shell script Orbit wrote; its final verdict
  *   chooses whether to wake. The hash pins the reviewed script: if edited, the check stops until the
  *   task is updated with the new script.
@@ -82,7 +82,9 @@ object OrbitWatchSources {
             }
             "sms" -> require(arg.length <= 40) { "sms:<sender> takes a phone number or sender name" }
             "calendar" -> require(arg.isEmpty() || arg.toIntOrNull() in 1..30) { "calendar:<days> takes 1 to 30" }
-            "reading" -> require(OrbitReadingWatch.isReading(source)) { "The reading watch is just watch=reading" }
+            "reading" -> require(arg.isEmpty() || arg.toIntOrNull() in OrbitReadingWatch.AHEAD_RANGE) {
+                "reading:<chapters> takes 2 to 50 (default 20)"
+            }
             "script" -> require(SCRIPT.matches(source)) { "Create script watches with watch=script and the script text" }
             else -> error("watch must be notifications, sms, calendar, reading or script")
         }
