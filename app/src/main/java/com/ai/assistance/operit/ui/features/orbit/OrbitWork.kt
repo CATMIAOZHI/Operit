@@ -23,6 +23,12 @@ internal sealed interface OrbitProcess {
         val timestamps: List<Long>,
         override val title: String,
         override val time: Long,
+        /**
+         * Where the next listed turn of the chat begins, which ends the time this turn owns (as on
+         * the activity list, quiet automatic turns are not listed and do not end it). Null when
+         * it is the latest or unknown.
+         */
+        val nextTurnAt: Long? = null,
     ) : OrbitProcess
 
     data class TaskRun(
@@ -479,6 +485,14 @@ internal object OrbitWork {
                 }.orEmpty(),
                 usedTools = turn.members.any { it in usedTools },
             )
+        }.let { found ->
+            // Each turn learns where the next listed one begins, so its record bounds its agents
+            // the way the activity list does.
+            val starts = found.mapNotNull { it.process.timestamps.minOrNull() }.distinct().sorted()
+            found.map { turn ->
+                val from = turn.process.timestamps.minOrNull() ?: return@map turn
+                turn.copy(process = turn.process.copy(nextTurnAt = starts.firstOrNull { it > from }))
+            }
         }
     }
 

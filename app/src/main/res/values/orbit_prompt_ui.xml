@@ -68,6 +68,7 @@
     <string name="orbit_process_subagent">子代理 %1$02d</string>
     <string name="orbit_process_subagent_task">交给它的任务</string>
     <string name="orbit_process_subagent_open">查看完整过程</string>
+    <string name="orbit_process_subagent_started_by">由 %1$s 派出</string>
     <string name="orbit_process_subagent_earlier">前面还有 %1$d 步</string>
     <string name="orbit_process_subagent_no_steps">还没有动手</string>
     <string name="orbit_process_subagent_running">进行中</string>

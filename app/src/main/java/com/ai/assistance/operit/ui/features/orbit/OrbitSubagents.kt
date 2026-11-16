@@ -24,9 +24,19 @@ internal data class OrbitSubagentRecord(
     val stepCount: Int,
     /** The first line of what it last said; empty while it has said nothing. */
     val result: String,
+    /**
+     * For a chat turn's record: whether it works on a request made during that turn now, the way
+     * the activity list counts it. Null elsewhere, where any listed agent still running counts.
+     */
+    val workingHere: Boolean? = null,
 ) {
     val name: String get() = path.substringAfterLast('/').ifBlank { run.title }
+    /** Who started a nested agent, like browse_github for /root/browse_github/read_issue; empty for /root's own. */
+    val startedBy: String get() = path.removePrefix("/root/").takeIf { path.startsWith("/root/") }
+        ?.substringBeforeLast('/', "").orEmpty()
     val running: Boolean get() = run.status in OrbitSubagents.LIVE
+    /** Still doing this work, which keeps the record page "going on". */
+    val busyHere: Boolean get() = workingHere ?: running
     val failed: Boolean get() = run.status == SubagentRunStatus.FAILED.name
     val stopped: Boolean get() =
         run.status == SubagentRunStatus.CANCELLED.name || run.status == SubagentRunStatus.INTERRUPTED.name
@@ -44,9 +54,13 @@ internal object OrbitSubagents {
     private val envelope = Regex("^Message ID: [^\\n]*\\n(?:[A-Za-z ]+: [^\\n]*\\n)*Payload:\\n", RegexOption.MULTILINE)
 
     /**
-     * The subagents behind a piece of work, in the order they were started. A chat turn owns the
-     * agents its own spawn calls started; a background run or a subagent owns every agent its chat
-     * started.
+     * The subagents behind a piece of work, in the order they were started. A background run or a
+     * subagent owns every agent its chat started, and the agents those started.
+     *
+     * A chat turn owns the agents it started or handed more work to, the agents those started
+     * while the turn was the latest, and — as the activity list counts them — any agent of the
+     * chat's tree whose latest work was asked for during the turn (a follow-up between siblings).
+     * Only those last, while running, keep the turn going on; see [OrbitSubagentRecord.workingHere].
      */
     suspend fun of(context: Context, process: OrbitProcess, messages: List<ChatMessage>, cache: Cache): List<OrbitSubagentRecord> =
         withContext(Dispatchers.IO) {
@@ -58,28 +72,117 @@ internal object OrbitSubagents {
                 is OrbitProcess.Subagent -> process.chatId
                 is OrbitProcess.Learning -> return@withContext emptyList()
             }
-            val runs = dao.getByParentChatId(parentChatId).filter(::isWorker)
-            if (runs.isEmpty()) return@withContext emptyList()
-            // A turn in a chat owns only the agents its own calls started.
-            val owned = if (process is OrbitProcess.ChatTurn || process is OrbitProcess.LiveTurn) {
-                val calls = messages.asSequence().filter { it.sender == "ai" }
-                    .flatMap { parsePersistedToolExecutions(it.content).values }
-                    .mapNotNull { it.callId?.takeIf(String::isNotBlank) }.toSet()
-                runs.filter { it.parentToolCallId in calls }
-            } else runs
             val manager = ChatHistoryManager.getInstance(context)
-            owned.sortedBy { it.createdAt }.map { run -> cache.record(manager, run) }
+            val runs = dao.getByParentChatId(parentChatId).filter(::isWorker)
+            val window = turnWindow(AppDatabase.getDatabase(context).messageDao(), process, messages)
+            if (window == null) {
+                return@withContext (runs + descendants(dao, runs)).sortedBy { it.createdAt }
+                    .map { run -> cache.record(manager, run) }
+            }
+            val collaboration = com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(context)
+            // Asked for during this turn; for v1 tasks, which keep no request time, when they began.
+            fun askedHere(run: SubagentRunEntity) =
+                (collaboration.workSince(run.childChatId) ?: run.startedAt ?: run.createdAt) in window
+            fun workingHere(run: SubagentRunEntity) = run.status in LIVE && askedHere(run)
+            val executions = messages.asSequence().filter { it.sender == "ai" }
+                .flatMap { parsePersistedToolExecutions(it.content).values }.toList()
+            val calls = executions.mapNotNull { it.callId?.takeIf(String::isNotBlank) }.toSet()
+            // A follow-up names the chat it reached, which may sit deeper in the tree.
+            val reached = executions.asSequence()
+                .filter { it.success && it.toolName == "followup_task" }
+                .mapNotNull { com.ai.assistance.operit.ui.features.chat.components.part.collaborationCallAgentId(it.resultText) }
+                .toSet()
+            val byChat = runs.associateBy { it.childChatId }
+            val owned = LinkedHashMap<String, SubagentRunEntity>()
+            runs.filter { it.parentToolCallId in calls }.forEach { owned[it.childChatId] = it }
+            reached.filterNot { it in owned }.forEach { chat ->
+                (byChat[chat] ?: dao.getByChildChatId(chat)?.takeIf(::isWorker))?.let { owned[chat] = it }
+            }
+            collaboration.chatsWorkingSince(parentChatId, window).filterNot { it in owned }.forEach { chat ->
+                (byChat[chat] ?: dao.getByChildChatId(chat)?.takeIf(::isWorker))?.let { owned[chat] = it }
+            }
+            if (owned.isEmpty()) return@withContext emptyList()
+            // What they started belongs here when it was started during the turn or asked for in it.
+            val nested = descendants(dao, owned.values.toList(), owned.keys.toHashSet())
+                .filter { it.createdAt in window || askedHere(it) }
+            (owned.values + nested).sortedBy { it.createdAt }
+                .map { run -> cache.record(manager, run).copy(workingHere = workingHere(run)) }
         }
 
-    /** The latest state of [records], for a record page that is still running. */
+    /**
+     * The time a chat turn holds: from its first row until the next listed turn began, the way the
+     * activity list bounds it. Without one known, until the user next wrote; quiet automatic turns
+     * (a notice Orbit let pass) are not listed there and do not end it here either. Null for other
+     * work, which owns its whole chat.
+     */
+    private suspend fun turnWindow(
+        messageDao: com.ai.assistance.operit.data.dao.MessageDao,
+        process: OrbitProcess,
+        messages: List<ChatMessage>,
+    ): LongRange? {
+        val (chatId, from, last) = when (process) {
+            // A live turn's rows include what the user added while it ran, so look past the last of them.
+            is OrbitProcess.LiveTurn -> Triple(
+                process.chatId, process.since, maxOf(process.since, process.time, messages.maxOfOrNull { it.timestamp } ?: Long.MIN_VALUE),
+            )
+            is OrbitProcess.ChatTurn -> Triple(
+                process.chatId, process.timestamps.minOrNull() ?: process.time, process.timestamps.maxOrNull() ?: process.time,
+            )
+            else -> return null
+        }
+        val next = (process as? OrbitProcess.ChatTurn)?.nextTurnAt ?: messageDao.getNextTypedUserTimestamp(chatId, last)
+        val until = next?.minus(1) ?: Long.MAX_VALUE
+        return from..until
+    }
+
+    /** The chat a run's tree began in: a talk chat or a background run's chat. The tree is shallow. */
+    private suspend fun topChat(dao: com.ai.assistance.operit.data.dao.SubagentRunDao, run: SubagentRunEntity): String {
+        var top = run
+        repeat(MAX_DEPTH) {
+            top = dao.getByChildChatId(top.parentChatId)?.takeIf(::isWorker) ?: return top.parentChatId
+        }
+        return top.parentChatId
+    }
+
+    /**
+     * The latest state of [records], for a record page that is still running. An agent still
+     * working can start agents of its own meanwhile; those join the list.
+     */
     suspend fun refresh(context: Context, records: List<OrbitSubagentRecord>, cache: Cache): List<OrbitSubagentRecord> =
         withContext(Dispatchers.IO) {
             val dao = AppDatabase.getDatabase(context).subagentRunDao()
             val manager = ChatHistoryManager.getInstance(context)
-            records.map { old ->
+            val updated = records.map { old ->
                 dao.getById(old.run.id)?.let { cache.record(manager, it) } ?: old
             }
+            val known = updated.mapTo(HashSet()) { it.run.childChatId }
+            // Also look under a run that just ended, or one woken and finished again between two
+            // reads (its run row changed): it may have started agents meanwhile.
+            val working = updated.zip(records).filter { (now, old) -> now.running || old.running || now.run != old.run }
+                .map { it.first }
+            val added = descendants(dao, working.map { it.run }, known)
+            if (added.isEmpty()) updated
+            else (updated + added.map { cache.record(manager, it) }).sortedBy { it.run.createdAt }
         }
+
+    /** The agents [roots] started, and the ones those started, skipping chats in [known]. */
+    private suspend fun descendants(
+        dao: com.ai.assistance.operit.data.dao.SubagentRunDao,
+        roots: List<SubagentRunEntity>,
+        known: MutableSet<String> = roots.mapTo(HashSet()) { it.childChatId },
+    ): List<SubagentRunEntity> {
+        val found = mutableListOf<SubagentRunEntity>()
+        var parents = roots.map { it.childChatId }
+        var depth = 0
+        while (parents.isNotEmpty() && depth++ < MAX_DEPTH) {
+            val next = parents.flatMap { parent ->
+                dao.getByParentChatId(parent).filter { isWorker(it) && known.add(it.childChatId) }
+            }
+            found += next
+            parents = next.map { it.childChatId }
+        }
+        return found
+    }
 
     /** Page-local summaries survive polling and returning from a child's record. */
     class Cache {
@@ -161,13 +264,7 @@ internal object OrbitSubagents {
         val collaboration = com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(context)
         live.map { run ->
             val since = collaboration.workSince(run.childChatId) ?: run.startedAt ?: run.createdAt
-            var top = run
-            // Up to the chat the tree began in; the tree is shallow.
-            repeat(4) {
-                top = dao.getByChildChatId(top.parentChatId)?.takeIf(::isWorker)
-                    ?: return@map LiveOwner(top.parentChatId, since)
-            }
-            LiveOwner(top.parentChatId, since)
+            LiveOwner(topChat(dao, run), since)
         }.distinct()
     }
 
