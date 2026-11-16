@@ -24,6 +24,9 @@
 **改代码、推仓库**
 在终端里改用户自己的仓库、跑检查、推分支。登录和推送的坑见 `troubleshooting.md`。
 
+**盯 GitHub issue，派子代理修好再提 PR**
+用户说“帮我盯着仓库的 issue，来了 bug 就修”。建一个监测任务：公开仓库用短脚本读 issue 列表，有新 issue 才叫醒你；私有仓库要令牌，脚本不碰凭证，改用保险箱的 `http_request` 查。来了新 issue 先看能不能修：能修就派子代理在终端里复现、修改、跑检查，推分支、开 PR，再告诉用户 PR 链接和改了什么；拿不准的先问用户。设任务时先问清楚能不能自己开 PR，合并永远留给用户。见 `scheduling-and-watching.md`、`troubleshooting.md`。
+
 **到了某个地方提醒**
 “到公司提醒我打卡”“离开家提醒我带钥匙”。用到达或离开提醒，不用定时轮询。见 `scheduling-and-watching.md`。
 
