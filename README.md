@@ -29,7 +29,7 @@ In a vast universe, you are the sun at the center, and Orbit is the planet that 
 
 Orbit is a long-term personal agent. It talks with you, remembers what matters, works quietly in the background, and speaks up only when something is worth your attention. Its home is your phone: its memory, files and the traces of its growth are stored on the device, so changing models or providers does not make it forget you.
 
-Orbit ships inside **Operit Ry**, a personal distribution of [Operit](https://github.com/AAswordman/Operit) maintained by [Rainy / CATMIAOZHI](https://github.com/CATMIAOZHI).
+Orbit ships inside **Operit Ry**, a personal distribution of [Operit](https://github.com/AAswordman/Operit) maintained by [WaterRainCat (水晴喵)](https://github.com/CATMIAOZHI).
 
 ## What Orbit does
 
@@ -86,6 +86,21 @@ Chat and side chats, option buttons and reactions, voice messages, and a WeChat 
 </tr>
 </table>
 
+### A closer look
+
+<table>
+<tr>
+<td width="33%" align="center"><img src="docs/assets/readme/screens/en/history.png" alt="Task history"><br><sub><b>Everything it did</b>, day by day</sub></td>
+<td width="33%" align="center"><img src="docs/assets/readme/screens/en/approvals.png" alt="Approvals"><br><sub><b>Asks before it acts</b>, and keeps a record</sub></td>
+<td width="33%" align="center"><img src="docs/assets/readme/screens/en/browser.png" alt="Browser and background apps"><br><sub><b>Browser and background apps</b> you can take over</sub></td>
+</tr>
+<tr>
+<td align="center"><img src="docs/assets/readme/screens/en/schedules.png" alt="Schedules"><br><sub><b>Schedules</b> and watches</sub></td>
+<td align="center"><img src="docs/assets/readme/screens/en/goals.png" alt="Goals"><br><sub><b>Goals</b> it follows with you</sub></td>
+<td align="center"><img src="docs/assets/readme/screens/en/identity.png" alt="Soul and memory"><br><sub><b>Soul and memory</b> it keeps on your phone</sub></td>
+</tr>
+</table>
+
 ### A few things people use it for
 
 - *"Keep an eye on my messages and tell me about the important ones."*
@@ -93,6 +108,7 @@ Chat and side chats, option buttons and reactions, voice messages, and a WeChat 
 - *"Remind me to work out every morning, and ask me again if I skip a week."*
 - *"Remind me to take my keys when I leave home."*
 - *"Tell me when this page changes."*
+- *"Watch my GitHub issues, and when a bug comes in, send a helper to fix it and open a PR."*
 - *"Let's read this novel together."*
 
 ## Bring your own model
