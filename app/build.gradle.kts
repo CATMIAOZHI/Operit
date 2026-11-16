@@ -279,6 +279,10 @@ android {
         checkDependencies = true
         disable += "MissingTranslation"
     }
+    // The README pictures are drawn from the real UI on the computer (ReadmeScreenshots test).
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+    }
 
     packaging {
         
@@ -327,6 +331,41 @@ android {
 kotlin {
     compilerOptions {
         jvmTarget = JvmTarget.JVM_17
+    }
+}
+
+// Drawing the README pictures (tools/readme/readme-shots.ps1) loads UI libraries built for Java 21 and
+// the chat's markdown library built for the computer; only that run needs them.
+val readmeShots = providers.gradleProperty("orbitReadmeShots").orNull
+if (readmeShots == null) {
+    // Ordinary test runs leave the picture classes out entirely.
+    tasks.withType<Test>().configureEach { exclude("com/ai/assistance/operit/readme/**") }
+} else {
+    // Robolectric loads every file system on the classpath; the terminal's SFTP one cannot start there.
+    configurations.matching { it.name.endsWith("UnitTestRuntimeClasspath") }.configureEach {
+        exclude(group = "org.apache.sshd", module = "sshd-sftp")
+    }
+    // DataStore 1.0 cannot save a settings file a second time on Windows (it renames over the old
+    // copy); 1.1 replaces it. Only the picture run uses the newer one; the app keeps its own.
+    configurations.matching { it.name.endsWith("UnitTestRuntimeClasspath") }.configureEach {
+        resolutionStrategy.eachDependency {
+            if (requested.group == "androidx.datastore") useVersion("1.1.7")
+        }
+    }
+    tasks.withType<Test>().configureEach {
+        javaLauncher.set(javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(21)) })
+        systemProperty("roborazzi.test.record", "true")
+        systemProperty("orbit.readme.shots", readmeShots)
+        // Always drawn again, even when nothing in the code changed.
+        outputs.upToDateWhen { false }
+        outputs.cacheIf { false }
+        // The app's settings are app-wide singletons; each picture starts from a fresh app.
+        forkEvery = 1
+        val native = layout.buildDirectory.dir("readme-native").get().asFile
+        doFirst {
+            val current = systemProperties["java.library.path"]?.toString() ?: System.getProperty("java.library.path")
+            systemProperty("java.library.path", native.absolutePath + File.pathSeparator + current)
+        }
     }
 }
 
@@ -514,6 +553,12 @@ dependencies {
     // Test dependencies
     testImplementation(libs.junit)
     testImplementation("org.json:json:20240303")
+    // README pictures: Orbit's real UI drawn on the JVM, with made-up demo data (ReadmeScreenshots).
+    testImplementation(libs.robolectric)
+    testImplementation(libs.roborazzi)
+    testImplementation(libs.roborazzi.compose)
+    testImplementation(platform(libs.compose.bom))
+    testImplementation(libs.ui.test.junit4)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.room.testing)
