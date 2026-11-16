@@ -13,7 +13,7 @@
   <a href="https://github.com/CATMIAOZHI/Operit/releases/latest"><img src="https://img.shields.io/github/v/release/CATMIAOZHI/Operit?label=release&color=3D6FD1" alt="最新版本"></a>
   <img src="https://img.shields.io/badge/Android-8.0%2B-3D6FD1" alt="Android 8.0+">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-LGPL--3.0-D9531F" alt="LGPL-3.0"></a>
-  <a href="https://github.com/CATMIAOZHI/Operit/stargazers"><img src="https://img.shields.io/github/stars/CATMIAOZHI/Operit?color=D9531F" alt="Stars"></a>
+  <a href="https://github.com/CATMIAOZHI/orbit/stargazers"><img src="https://img.shields.io/github/stars/CATMIAOZHI/orbit?color=D9531F" alt="Stars"></a>
 </p>
 
 <p align="center">
