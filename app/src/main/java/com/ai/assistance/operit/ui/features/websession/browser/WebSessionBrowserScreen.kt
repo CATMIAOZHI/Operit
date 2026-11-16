@@ -194,7 +194,7 @@ internal fun WebSessionBrowserScreen(
                         onClick = dismissSheet))
                 Surface(
                     modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(0.75f)
-                        .navigationBarsPadding().orbitDismissLayer(back),
+                        .navigationBarsPadding().browserKeyboardPadding().orbitDismissLayer(back),
                     shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
                     color = MaterialTheme.colorScheme.surface,
                 ) {
@@ -253,12 +253,12 @@ internal fun WebSessionBrowserScreen(
                 .background(MaterialTheme.colorScheme.background)
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            Column(
+            BrowserKeyboardLayout(
                 modifier =
                     Modifier
                         .fillMaxSize()
-                        .onSizeChanged { totalHeightPx = it.height }
-            ) {
+                        .onSizeChanged { totalHeightPx = it.height },
+                body = { Column(Modifier.fillMaxSize()) {
             WebSessionTopUrlBar(
                 url = browserState.currentUrl.ifBlank { "about:blank" },
                 pageTitle = browserState.pageTitle,
@@ -409,7 +409,8 @@ internal fun WebSessionBrowserScreen(
                     }
                 }
             }
-
+            } },
+                bottomBar = { Column(Modifier.fillMaxWidth()) {
             Spacer(
                 modifier =
                     Modifier
@@ -437,7 +438,8 @@ internal fun WebSessionBrowserScreen(
                 },
                 modifier = Modifier.navigationBarsPadding()
             )
-            }
+            } },
+            )
         }
 
         if (activeSheetRoute != WebSessionBrowserSheetRoute.NONE) {
@@ -541,7 +543,8 @@ private fun PendingDialogOverlay(
         modifier =
             Modifier
                 .fillMaxSize()
-                .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.52f)),
+                .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.52f))
+                .browserKeyboardPadding(),
         contentAlignment = Alignment.Center
     ) {
         Surface(

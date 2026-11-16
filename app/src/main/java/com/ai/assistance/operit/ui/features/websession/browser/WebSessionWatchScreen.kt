@@ -83,29 +83,34 @@ internal fun WebSessionWatchScreen(
     onBrowserArea: (width: Int, height: Int) -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
-    Column(
-        Modifier.fillMaxSize().background(colors.background).onSizeChanged { onTotalHeight(it.height) },
-    ) {
-        Row(
-            Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            WatchCloseButton(watch)
-            WatchTitle(watch, Modifier.weight(1f).padding(horizontal = 8.dp))
-            Spacer(Modifier.size(48.dp))
-        }
-        // Once the user drives the page, they get a browser's own controls.
-        if (watch.controlling) {
-            WatchControls(url, isLoading, canGoBack, canGoForward, onNavigate, onBack, onForward, onRefreshOrStop)
-        }
-        WatchBrowserArea(watch, webViewHost, hasSession, onBrowserArea, Modifier.weight(1f).fillMaxWidth())
-        Column(
-            Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            WatchActions(watch)
-        }
-    }
+    BrowserKeyboardLayout(
+        modifier = Modifier.fillMaxSize().background(colors.background).onSizeChanged { onTotalHeight(it.height) },
+        body = {
+            Column(Modifier.fillMaxSize()) {
+                Row(
+                    Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    WatchCloseButton(watch)
+                    WatchTitle(watch, Modifier.weight(1f).padding(horizontal = 8.dp))
+                    Spacer(Modifier.size(48.dp))
+                }
+                // Once the user drives the page, they get a browser's own controls.
+                if (watch.controlling) {
+                    WatchControls(url, isLoading, canGoBack, canGoForward, onNavigate, onBack, onForward, onRefreshOrStop)
+                }
+                WatchBrowserArea(watch, webViewHost, hasSession, onBrowserArea, Modifier.weight(1f).fillMaxWidth())
+            }
+        },
+        bottomBar = {
+            Column(
+                Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                WatchActions(watch)
+            }
+        },
+    )
 }
 
 /**

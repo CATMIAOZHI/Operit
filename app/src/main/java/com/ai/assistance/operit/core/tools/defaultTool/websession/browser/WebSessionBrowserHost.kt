@@ -26,10 +26,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.ime
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.ComposeView
@@ -260,14 +257,10 @@ internal class WebSessionBrowserHost(
                     BrowserAppearanceTheme(watchWork?.orbitId) {
                         val background = androidx.compose.material3.MaterialTheme.colorScheme.background.toArgb()
                         androidx.compose.runtime.SideEffect { reportBrowserBackground(background) }
-                        // In its activity the window draws behind the keyboard; the screen ends above it.
-                        // The bars inside then add no navigation bar space, the keyboard covers it.
-                        androidx.compose.foundation.layout.Box(
-                            if (hostedInActivity) {
-                                Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.ime)
-                            } else {
-                                Modifier.fillMaxSize()
-                            }
+                        // In its activity the window draws behind the keyboard: the page ends at the
+                        // keyboard's top and the bottom bar stays behind it.
+                        CompositionLocalProvider(
+                            com.ai.assistance.operit.ui.features.websession.browser.LocalBrowserFollowsKeyboard provides hostedInActivity,
                         ) {
                         WebSessionBrowserScreen(
                             hostState = if (watchWork == null) hostState else hostState.copy(browserState =
