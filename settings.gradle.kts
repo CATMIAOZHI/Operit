@@ -8,6 +8,8 @@ pluginManagement {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
+        // Only asked for com.cefrium artifacts, which only the browser build (-PoperitBrowser=true) uses.
+        maven { url = uri("https://maven.cefrium.com"); content { includeGroup("com.cefrium") } }
         google()
         mavenCentral()
         maven { url = uri("https://jitpack.io") }
