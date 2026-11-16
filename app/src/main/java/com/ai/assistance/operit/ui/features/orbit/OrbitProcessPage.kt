@@ -236,7 +236,8 @@ private fun ProcessRecordPage(
                     }
                     CompositionLocalProvider(LocalSubagentChatHost provides host) {
                         ProcessMessages(current.messages, developer, subagents,
-                            assigned = process is OrbitProcess.Subagent, onOpenSubagent = onOpenSubagent)
+                            assigned = process is OrbitProcess.Subagent, chatId = processChatId(process),
+                            onOpenSubagent = onOpenSubagent)
                     }
                 }
             }
@@ -260,6 +261,8 @@ private fun ProcessMessages(
     subagents: List<OrbitSubagentRecord>,
     /** A subagent's record: its first message is the task it was handed, not the user speaking. */
     assigned: Boolean,
+    /** The chat these messages are in: a card here keeps the values chosen in the chat. */
+    chatId: String?,
     onOpenSubagent: (OrbitProcess.Subagent) -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
@@ -294,6 +297,15 @@ private fun ProcessMessages(
                                 // Lined up with the message text, which is inset 16dp.
                                 OrbitHiddenBadge(message.displayMode, Modifier.padding(start = 16.dp, bottom = 4.dp))
                             }
+                            CompositionLocalProvider(
+                                com.ai.assistance.operit.ui.common.dynamicui.LocalDynamicUiOwner provides
+                                    chatId?.takeIf { message.sender == "ai" && !message.isVariantPreview }?.let {
+                                        com.ai.assistance.operit.ui.common.dynamicui.DynamicUiOwner(
+                                            it, message.timestamp, message.selectedVariantIndex, message.content,
+                                        )
+                                    },
+                                com.ai.assistance.operit.ui.common.dynamicui.LocalDynamicUiOrbitNumbering provides true,
+                            ) {
                             CursorStyleChatMessage(
                                 message = message,
                                 userMessageColor = colors.surfaceContainerHigh,
@@ -309,6 +321,7 @@ private fun ProcessMessages(
                                 enableDialogs = true,
                                 showAssistantHeader = false,
                             )
+                            }
                         }
                     }
                 }
