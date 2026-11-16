@@ -740,6 +740,14 @@ private fun OrbitChatPage(
     LaunchedEffect(currentChatId, unreadChats, chatOnScreen) {
         if (chatOnScreen && currentChatId in unreadChats) com.ai.assistance.operit.features.orbit.OrbitDelivery.markSeen(currentChatId)
     }
+    // Like a messenger: once the chat is in front of the user, its notifications are cleared.
+    // The developer view may show one of its subagents instead; the chat itself is not read then.
+    val chatReadable = chatOnScreen && !(devView && devSubChatId != null)
+    LaunchedEffect(currentChatId, chatReadable) {
+        if (chatReadable) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching { com.ai.assistance.operit.features.orbit.OrbitDelivery.clearNotifications(context, currentChatId) }
+        }
+    }
     // Orbit's tapback on one of the user's messages lands with a tap, while that chat is in view.
     // The developer view can show one of the chat's subagents instead; its own chat is not in view then.
     val reactionFelt = rememberUpdatedState(chatOnScreen && !(devView && devSubChatId != null))

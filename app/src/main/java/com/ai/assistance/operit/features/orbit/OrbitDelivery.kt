@@ -81,6 +81,19 @@ object OrbitDelivery {
         unread.update { it - chatId }
     }
 
+    /**
+     * The user is looking at [chatId]: its notifications go, like a messenger's. Covers both
+     * Orbit's replies and what it said on its own.
+     */
+    fun clearNotifications(context: Context, chatId: String) {
+        com.ai.assistance.operit.api.chat.AIForegroundService.cancelReplyNotification(context, chatId)
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return
+        val said = "orbit:said-$chatId-"
+        runCatching { manager.activeNotifications }.getOrNull()?.forEach {
+            if (it.tag?.startsWith(said) == true) manager.cancel(it.tag, it.id)
+        }
+    }
+
     /** How long a report waits for a busy chat before it is retried on a later wake-up. */
     private const val IDLE_WAIT_MS = 60_000L
     /** How long the whole hand-off may take, Orbit's reply included (to show it as a notification). */
@@ -233,7 +246,7 @@ object OrbitDelivery {
         val privatePreview = settings == null || settings.appLock
         val text = if (privatePreview) context.getString(R.string.orbit_chats_unread)
             else WaifuMessageProcessor.cleanContentForWaifu(body).ifBlank { body }
-        manager.notify("orbit:$key", 0, NotificationCompat.Builder(context, channel)
+        val notification = NotificationCompat.Builder(context, channel)
             .setSmallIcon(R.drawable.ic_launcher_simple_foreground).setContentTitle(title)
             .setContentText(text).setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
@@ -242,6 +255,9 @@ object OrbitDelivery {
                     com.ai.assistance.operit.api.chat.AIForegroundService.loadBitmapFromUri(context, uri, OrbitNotificationIcon.SIZE)
                 } }?.let(::setLargeIcon)
             }
-            .setContentIntent(pending).setAutoCancel(true).setOnlyAlertOnce(true).build())
+            .setContentIntent(pending).setAutoCancel(true).setOnlyAlertOnce(true).build()
+        // Reading the picture took a moment; if the app came to the front meanwhile, it shows the chat.
+        if (ActivityLifecycleManager.getCurrentActivity() != null) return
+        manager.notify("orbit:$key", 0, notification)
     }
 }

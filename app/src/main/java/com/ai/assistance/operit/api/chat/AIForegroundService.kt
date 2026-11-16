@@ -64,7 +64,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -169,6 +173,13 @@ class AIForegroundService : Service() {
         private fun buildReplyNotificationTag(chatId: String?): String {
             val suffix = chatId?.ifBlank { "default" } ?: "default"
             return "$REPLY_NOTIFICATION_TAG_PREFIX$suffix"
+        }
+
+        /** Takes away [chatId]'s reply notification once the user is looking at that chat. */
+        fun cancelReplyNotification(context: Context, chatId: String) {
+            val tag = buildReplyNotificationTag(chatId)
+            activeReplyNotificationTags.remove(tag)
+            context.getSystemService(NotificationManager::class.java)?.cancel(tag, REPLY_NOTIFICATION_ID)
         }
 
         private fun createMainActivityPendingIntent(context: Context): PendingIntent {
@@ -371,7 +382,7 @@ class AIForegroundService : Service() {
                 }
                 val notificationBuilder =
                     NotificationCompat.Builder(appContext, replyChannelId)
-                        .setSmallIcon(android.R.drawable.ic_dialog_info)
+                        .setSmallIcon(if (orbit != null) R.drawable.ic_launcher_simple_foreground else android.R.drawable.ic_dialog_info)
                         .setContentTitle(
                             title
                                 ?: appContext.getString(R.string.notification_ai_reply_title)
@@ -419,6 +430,8 @@ class AIForegroundService : Service() {
                     appContext.getSystemService(Context.NOTIFICATION_SERVICE)
                         as NotificationManager
                 val tag = buildReplyNotificationTag(chatId)
+                // Building took a moment; if the app came to the front meanwhile, the chat is being read.
+                if (ActivityLifecycleManager.getCurrentActivity() != null) return
                 activeReplyNotificationTags.add(tag)
                 manager.notify(tag, REPLY_NOTIFICATION_ID, notificationBuilder.build())
                 AppLogger.d(TAG, "AI回复通知已发送: chatId=$chatId, tag=$tag")
@@ -692,7 +705,7 @@ class AIForegroundService : Service() {
         }
 
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        com.ai.assistance.operit.core.application.CompanionNotification.update(this@AIForegroundService, createNotification())
+        publishNotification()
     }
 
     private fun startRecordingStateMonitoring() {
@@ -840,6 +853,13 @@ class AIForegroundService : Service() {
     private var characterName: String? = null
     private var avatarUri: String? = null
     private var isAiBusy: Boolean = false
+    /** The running Orbit and what it is doing; while set, the ongoing notification speaks as it. */
+    @Volatile private var orbitNotice: Pair<com.ai.assistance.operit.data.preferences.OrbitProfile,
+        com.ai.assistance.operit.ui.features.orbit.OrbitLiveActivity>? = null
+    /** The running Orbit's picture for that notification, read once per picture. */
+    @Volatile private var orbitNoticeIcon: Pair<String, Bitmap?>? = null
+    /** Resources in the app's chosen language, read off the main thread when the notice changes. */
+    @Volatile private var orbitNoticeText: Context? = null
     @Volatile
     private var hideRuntimeTaskViewEnabled: Boolean = false
     @Volatile
@@ -1020,8 +1040,19 @@ class AIForegroundService : Service() {
         if (!isRunning.get()) {
             return
         }
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        com.ai.assistance.operit.core.application.CompanionNotification.update(this@AIForegroundService, createNotification())
+        publishNotification()
+    }
+
+    private val notificationLock = Any()
+
+    /**
+     * Draws and posts the ongoing notification in one step, so a notice drawn from older state can
+     * never be posted after a newer one (an Orbit paused while another thread was drawing).
+     */
+    private fun publishNotification() {
+        synchronized(notificationLock) {
+            com.ai.assistance.operit.core.application.CompanionNotification.update(this@AIForegroundService, createNotification())
+        }
     }
 
     private fun isExternalHttpEnabledNow(): Boolean {
@@ -1099,16 +1130,54 @@ class AIForegroundService : Service() {
         observeRuntimeTaskViewPreference()
         serviceScope.launch {
             com.ai.assistance.operit.pet.PetPreferences.get(this@AIForegroundService).enabled.collect {
-                com.ai.assistance.operit.core.application.CompanionNotification.update(
-                    this@AIForegroundService, createNotification(),
-                )
+                publishNotification()
             }
         }
         observeBackgroundKeepAlivePreference()
         observeChatRuntimeStats()
+        observeOrbitNotice()
         startWakeMonitoring()
         startExternalHttpMonitoring()
         AppLogger.d(TAG, "AI 前台服务已启动。")
+    }
+
+    /**
+     * While an Orbit runs, the ongoing notification shows it like a contact: its name, its picture
+     * and what it is doing, instead of the app's session and tool counts.
+     */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private fun observeOrbitNotice() {
+        val app = applicationContext
+        serviceScope.launch(Dispatchers.Default) {
+            runCatching {
+                val orbitNotices = com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(app).settingsFlow
+                    .map { settings -> settings.active?.takeUnless { it.deleting } }
+                    .distinctUntilChanged()
+                    .flatMapLatest { orbit ->
+                        if (orbit == null) flowOf(null)
+                        else com.ai.assistance.operit.ui.features.orbit.orbitActivityFlow(app, orbit.id, orbit.talkChatIds, null)
+                            .map { orbit to it }
+                    }
+                // A new app language redraws the words too.
+                val language = com.ai.assistance.operit.data.preferences.UserPreferencesManager.getInstance(app)
+                    .appLanguage.distinctUntilChanged()
+                combine(orbitNotices, language) { notice, _ -> notice }
+                    .collect { notice ->
+                        orbitNoticeText = runCatching { com.ai.assistance.operit.util.LocaleUtils.getLocalizedContext(app) }.getOrNull()
+                        notice?.first?.let { orbit ->
+                            // Any change to the Orbit (picture, colours, name) redraws the icon; that is rare.
+                            val key = "${orbit.id}|${orbit.hashCode()}"
+                            if (orbitNoticeIcon?.first != key) {
+                                orbitNoticeIcon = key to com.ai.assistance.operit.features.orbit.OrbitNotificationIcon.of(orbit) {
+                                    loadBitmapFromUri(app, it, com.ai.assistance.operit.features.orbit.OrbitNotificationIcon.SIZE)
+                                }
+                            }
+                        }
+                        orbitNotice = notice
+                        if (isRunning.get()) publishNotification()
+                    }
+            }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it; AppLogger.w(TAG, "Orbit notice stopped", it) }
+        }
     }
 
     private fun observeRuntimeTaskViewPreference() {
@@ -1192,8 +1261,9 @@ class AIForegroundService : Service() {
                 Unit
             }.collect {
                 if (!isRunning.get()) return@collect
-                val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                com.ai.assistance.operit.core.application.CompanionNotification.update(this@AIForegroundService, createNotification())
+                // The Orbit notice shows no counts; it is refreshed by its own observer.
+                if (orbitNotice != null) return@collect
+                publishNotification()
             }
         }
     }
@@ -1233,16 +1303,28 @@ class AIForegroundService : Service() {
 
         val types = ForegroundServiceCompat.buildTypes(dataSync = true, microphone = true)
         return try {
-            com.ai.assistance.operit.core.application.CompanionNotification.startForeground(
-                service = this,
-                notificationId = NOTIFICATION_ID,
-                notification = createNotification(),
-                types = types
-            )
+            synchronized(notificationLock) {
+                com.ai.assistance.operit.core.application.CompanionNotification.startForeground(
+                    service = this,
+                    notificationId = NOTIFICATION_ID,
+                    notification = createNotification(),
+                    types = types
+                )
+            }
             true
         } catch (e: SecurityException) {
             AppLogger.e(TAG, "promote microphone foreground failed: ${e.message}", e)
             false
+        }
+    }
+
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        // "Follow the system" keeps the same saved setting while the phone's language changes.
+        if (orbitNotice == null) return
+        serviceScope.launch {
+            orbitNoticeText = runCatching { com.ai.assistance.operit.util.LocaleUtils.getLocalizedContext(applicationContext) }.getOrNull()
+            if (isRunning.get()) publishNotification()
         }
     }
 
@@ -1269,7 +1351,7 @@ class AIForegroundService : Service() {
                     android.widget.Toast.makeText(this, R.string.pet_overlay_failed, android.widget.Toast.LENGTH_LONG).show()
                 }
             }
-            com.ai.assistance.operit.core.application.CompanionNotification.update(this@AIForegroundService, createNotification())
+            publishNotification()
             return START_NOT_STICKY
         }
         if (intent?.action == ACTION_EXIT_APP) {
@@ -1382,7 +1464,7 @@ class AIForegroundService : Service() {
                 }
 
                 val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                com.ai.assistance.operit.core.application.CompanionNotification.update(this@AIForegroundService, createNotification())
+                publishNotification()
             }
             return START_NOT_STICKY
         }
@@ -1441,7 +1523,7 @@ class AIForegroundService : Service() {
                 AppLogger.e(TAG, "取消当前AI任务失败: ${e.message}", e)
             }
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            com.ai.assistance.operit.core.application.CompanionNotification.update(this@AIForegroundService, createNotification())
+            publishNotification()
             return START_NOT_STICKY
         }
 
@@ -1467,7 +1549,7 @@ class AIForegroundService : Service() {
                     return START_NOT_STICKY
                 }
                 val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                com.ai.assistance.operit.core.application.CompanionNotification.update(this@AIForegroundService, createNotification())
+                publishNotification()
             }
         }
         
@@ -1613,7 +1695,7 @@ class AIForegroundService : Service() {
                     applyWakeListeningState()
 
                     val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                    com.ai.assistance.operit.core.application.CompanionNotification.update(this@AIForegroundService, createNotification())
+                    publishNotification()
                 }
             }
     }
@@ -1781,7 +1863,7 @@ class AIForegroundService : Service() {
             } catch (_: Exception) {
             }
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            com.ai.assistance.operit.core.application.CompanionNotification.update(this@AIForegroundService, createNotification())
+            publishNotification()
             return
         }
 
@@ -2079,6 +2161,7 @@ class AIForegroundService : Service() {
     }
 
     private fun createNotification(): Notification {
+        orbitNotice?.let { (orbit, activity) -> return createOrbitNotification(orbit, activity) }
         // 为了简单起见，使用一个安卓内置图标。
         // 在实际项目中，应替换为应用的自定义图标。
         val wakeListeningEnabledSnapshot = wakeListeningEnabled
@@ -2218,5 +2301,53 @@ class AIForegroundService : Service() {
 
         return builder.build()
     }
-    
+
+    /** The ongoing notification while an Orbit runs: who it is and what it is up to, nothing technical. */
+    private fun createOrbitNotification(
+        orbit: com.ai.assistance.operit.data.preferences.OrbitProfile,
+        activity: com.ai.assistance.operit.ui.features.orbit.OrbitLiveActivity,
+    ): Notification {
+        // The service's own resources follow the phone; the words follow the app's chosen language.
+        val text = orbitNoticeText ?: applicationContext
+        val flags = PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        // Opens the Orbit at its chat, even when the main app was on screen last.
+        val open = com.ai.assistance.operit.features.orbit.OrbitDelivery.openChatIntent(this, orbit.chatId, "ongoing")
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_launcher_simple_foreground)
+            .setContentTitle(orbit.name.ifBlank { text.getString(R.string.service_operit_running) })
+            .setContentText(text.getString(activity.label ?: R.string.orbit_profile_status_online))
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setOngoing(true)
+            .setShowWhen(false)
+            .setContentIntent(open)
+        orbitNoticeIcon?.takeIf { it.first.startsWith("${orbit.id}|") }?.second?.let(builder::setLargeIcon)
+        // While a reply is running, stopping it matters more than the pet; three buttons fit.
+        if (isAiBusy) {
+            builder.addAction(
+                android.R.drawable.ic_menu_close_clear_cancel,
+                text.getString(R.string.service_stop),
+                PendingIntent.getService(this, REQUEST_CODE_CANCEL_CURRENT_OPERATION,
+                    Intent(this, AIForegroundService::class.java).setAction(ACTION_CANCEL_CURRENT_OPERATION), flags),
+            )
+        } else {
+            builder.addAction(com.ai.assistance.operit.core.application.CompanionNotification.petAction(text))
+        }
+        // Voice wake-up is offered only to someone who turned it on.
+        if (wakeListeningEnabled) {
+            builder.addAction(
+                android.R.drawable.ic_lock_silent_mode_off,
+                text.getString(R.string.service_turn_off_wake),
+                PendingIntent.getService(this, REQUEST_CODE_TOGGLE_WAKE_LISTENING,
+                    Intent(this, AIForegroundService::class.java).setAction(ACTION_TOGGLE_WAKE_LISTENING), flags),
+            )
+        }
+        builder.addAction(
+            android.R.drawable.ic_menu_close_clear_cancel,
+            text.getString(R.string.service_exit),
+            PendingIntent.getService(this, REQUEST_CODE_EXIT_APP,
+                Intent(this, AIForegroundService::class.java).setAction(ACTION_EXIT_APP), flags),
+        )
+        return builder.build()
+    }
+
 }
