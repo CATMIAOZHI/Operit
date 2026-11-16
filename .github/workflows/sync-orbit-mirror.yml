@@ -1,0 +1,49 @@
+name: Sync Orbit Mirror
+
+# CATMIAOZHI/orbit mirrors personal/dev on its main branch, so the same commits (and README)
+# show there. Fast-forward only: if orbit's main has drifted, the push fails instead of
+# overwriting it.
+on:
+  push:
+    branches:
+      - personal/dev
+  workflow_dispatch:
+
+concurrency:
+  group: sync-orbit-mirror
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    name: Fast-forward orbit main to personal/dev
+    # Manual runs started from any other branch must not push that branch to orbit.
+    if: github.repository == 'CATMIAOZHI/Operit' && github.ref == 'refs/heads/personal/dev'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require workflow-capable mirror token
+        env:
+          ORBIT_MIRROR_TOKEN: ${{ secrets.ORBIT_MIRROR_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${ORBIT_MIRROR_TOKEN:?ORBIT_MIRROR_TOKEN secret is required}"
+
+      - name: Checkout personal/dev
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          # The checkout's own GitHub credentials would be sent to orbit too; keep them out.
+          persist-credentials: false
+
+      - name: Push to orbit
+        env:
+          ORBIT_MIRROR_TOKEN: ${{ secrets.ORBIT_MIRROR_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git push "https://x-access-token:${ORBIT_MIRROR_TOKEN}@github.com/CATMIAOZHI/orbit.git" \
+            HEAD:refs/heads/main

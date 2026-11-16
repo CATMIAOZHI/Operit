@@ -106,6 +106,13 @@ git diff --cached --check
 - `MAIN_MIRROR_TOKEN` 必须是仅授权本仓库 **Contents: read and write** 与 **Workflows: read and write** 的 fine-grained PAT；不得改用权限不足的 `GITHUB_TOKEN` 或复用其他服务的 token
 - 不直接提交、不接受 PR、不强推；同步失败时排查分叉，不得覆盖历史
 
+### orbit 镜像
+
+- `CATMIAOZHI/orbit` 的 `main` 是 `personal/dev` 的只读镜像，由 `sync-orbit-mirror.yml` 在每次推送 `personal/dev` 后快进
+- `ORBIT_MIRROR_TOKEN` 必须是仅授权 `CATMIAOZHI/orbit` 的 fine-grained PAT，权限为 **Contents: read and write** 与 **Workflows: read and write**
+- 不直接提交、不接受 PR、不强推；orbit 关闭了 Actions，发布、issue 和 PR 留在 Operit
+- README 在两个仓库里共用，写法要两边都通顺
+
 ### 上游 dev
 
 - 以最新 `upstream/dev` 为基线，为每个 PR 创建独立分支；按改动类型使用 `feat/`、`fix/`、`docs/`、`ci/`、`refactor/` 或 `test/` 前缀，例如 `fix/<topic>`，已有分支维持原名
