@@ -14,32 +14,44 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * The WATCH source `reading`: keeps the chapter the user has open in Legado and the next [AHEAD]
- * chapters ready (commented, skipped or a volume heading). The app checks this itself, so Orbit is
- * only woken when something is missing. Legado tells Operit when the user turns a page; then a
- * reading watch that would wake runs now instead of at its next time.
+ * The WATCH source `reading` (or `reading:<n>`): keeps comments ready [n][DEFAULT_AHEAD] chapters
+ * past the one the user has open in Legado (commented, skipped or a volume heading count as ready).
+ * Writing takes time, so Orbit works in batches: it is woken once fewer than half of them are ready
+ * and fills them all up again. The app checks this itself, so a check that finds enough costs no
+ * tokens. Legado tells Operit when the user turns a page; then a reading watch that would wake runs
+ * now instead of at its next time.
  */
 internal object OrbitReadingWatch {
     const val SOURCE = "reading"
-    const val AHEAD = 3
+    const val DEFAULT_AHEAD = 20
+    val AHEAD_RANGE = 2..50
     /** Page turns come every few seconds; one check after the first of a burst sees where the user ends up. */
     private const val PROGRESS_DELAY_MS = 30_000L
 
     data class Check(val wake: Boolean, val observation: String)
 
-    fun isReading(source: String) = source == SOURCE
+    fun isReading(source: String) = source == SOURCE || source.startsWith("$SOURCE:")
 
-    /** Reads Legado and the saved comments; no model. A Legado that cannot be read fails with words for the user. */
-    suspend fun check(context: Context, orbitId: String): Check = try {
-        check(OrbitReading(context, orbitId))
+    /** How many chapters past the open one the watch keeps ready. */
+    fun ahead(source: String): Int =
+        source.substringAfter(':', "").trim().toIntOrNull()?.takeIf { it in AHEAD_RANGE } ?: DEFAULT_AHEAD
+
+    /**
+     * Reads Legado and the saved comments; no model. A Legado that is not running is not being read:
+     * that is a quiet skip, and its next page turn brings a check (see [onProgress]). Other failures
+     * are told to the user in their words.
+     */
+    suspend fun check(context: Context, orbitId: String, ahead: Int): Check = try {
+        check(OrbitReading(context, orbitId), ahead)
     } catch (e: ReaderProviderException) {
         when (e.reason) {
             ReaderProviderException.Reason.NO_RECENT_BOOK, ReaderProviderException.Reason.EMPTY_BOOKSHELF ->
                 Check(false, "No book is open in Legado yet.")
+            // The system stopped Legado in the background; the user is not reading right now.
+            ReaderProviderException.Reason.CONNECTION_FAILED ->
+                Check(false, "Legado is not running, so the user is not reading now.")
             ReaderProviderException.Reason.LEGADO_NOT_INSTALLED ->
                 throw IllegalStateException(context.getString(R.string.orbit_watch_reading_not_installed), e)
-            ReaderProviderException.Reason.CONNECTION_FAILED ->
-                throw IllegalStateException(context.getString(R.string.orbit_watch_reading_unreachable), e)
             else -> throw IllegalStateException(context.getString(R.string.orbit_watch_reading_failed, e.message.orEmpty()), e)
         }
     } catch (e: CancellationException) {
@@ -49,7 +61,7 @@ internal object OrbitReadingWatch {
         throw IllegalStateException(context.getString(R.string.orbit_watch_reading_failed, e.message.orEmpty()), e)
     }
 
-    private suspend fun check(reading: OrbitReading): Check {
+    private suspend fun check(reading: OrbitReading, ahead: Int): Check {
         val state = reading.readingState(null)
         val book = state.book
         // A kept list from before the book grew would pull a new chapter back onto an old one.
@@ -58,15 +70,25 @@ internal object OrbitReadingWatch {
         }
         if (catalog.isEmpty()) return Check(false, "\"${book.name}\" has no chapters in Legado.")
         val index = state.chapterIndex.coerceIn(0, catalog.size - 1)
-        val last = minOf(catalog.size - 1, index + AHEAD)
         val ready = reading.readyIndexes(book.id, catalog)
-        val missing = (index..last).firstOrNull { it !in ready }
-            ?: return Check(false, "\"${book.name}\": chapters ${index + 1} to ${last + 1} are ready.")
+        // Ready in a row from the open chapter; near the end of the book, what is left is enough.
+        var inRow = 0
+        while (index + inRow < catalog.size && index + inRow in ready) inRow++
+        val left = catalog.size - index
+        // Woken when fewer than half (rounded up) of the chapters after the open one are ready.
+        val half = (ahead + 1) / 2
+        val enough = minOf(left, half + 1)
+        if (inRow >= enough) return Check(false,
+            "\"${book.name}\": chapters ${index + 1} to ${index + inRow} are ready; " +
+                "Orbit is woken once fewer than $half after the open chapter are.")
+        val missing = index + inRow
+        val last = index + minOf(left, ahead + 1) - 1
         val title = state.chapterTitle?.takeIf { it.isNotBlank() } ?: catalog[index].title
         return Check(true, "The user is reading \"${book.name}\" in Legado (book_id: ${book.id}), " +
-            "chapter ${index + 1} \"$title\" of ${catalog.size}. This watch keeps the open chapter and the next $AHEAD " +
-            "ready (with your comments, skipped, or a volume heading); chapter ${missing + 1} " +
-            "\"${catalog[missing].title}\" is not ready yet. Go on from there with orbit_reading, as docs/reading.md says.")
+            "chapter ${index + 1} \"$title\" of ${catalog.size}. This watch keeps comments ready $ahead chapters past " +
+            "the open one (with your comments, skipped, or a volume heading) and wakes you when fewer than $half are. " +
+            "Chapter ${missing + 1} \"${catalog[missing].title}\" is the first not ready: go on from there with orbit_reading, " +
+            "as docs/reading.md says, until every chapter up to ${last + 1} is ready.")
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -108,18 +130,25 @@ internal object OrbitReadingWatch {
         }
         // Legado is asked only when some watch could actually be brought forward.
         if (tasks.isEmpty()) return
-        // Every reading watch follows the open book, so one look serves them all.
-        val check = try {
-            check(context, orbit.id)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            return
-        }
-        if (!check.wake) return
-        val fingerprint = OrbitTaskRunner.sha(check.observation)
+        // Every reading watch follows the open book, so one look per number of chapters serves them all.
+        val checks = HashMap<Int, Check?>()
         var moved = false
         for (task in tasks) {
+            val ahead = ahead(task.source)
+            // A failed look is kept too (as null), so it is not repeated for the next watch.
+            val check = if (ahead in checks) checks[ahead] else {
+                val look = try {
+                    check(context, orbit.id, ahead)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    null
+                }
+                checks[ahead] = look
+                look
+            }
+            if (check == null || !check.wake) continue
+            val fingerprint = OrbitTaskRunner.sha(check.observation)
             if (fingerprint == task.lastFingerprint) continue
             if (repo.dao.bringForward(task.id, task.version, now) > 0) moved = true
         }

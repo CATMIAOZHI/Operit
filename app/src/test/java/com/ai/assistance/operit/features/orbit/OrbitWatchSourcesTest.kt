@@ -21,8 +21,14 @@ class OrbitWatchSourcesTest {
 
     @Test fun readingSourcesAreChecked() {
         assertTrue(ok("reading"))
-        assertFalse(ok("reading:5"))
+        assertTrue(ok("reading:30"))
+        assertFalse(ok("reading:1"))
+        assertFalse(ok("reading:51"))
+        assertFalse(ok("reading:many"))
         assertFalse(OrbitReadingWatch.isReading("readings"))
+        assertTrue(OrbitReadingWatch.isReading("reading:30"))
+        assertEquals(OrbitReadingWatch.DEFAULT_AHEAD, OrbitReadingWatch.ahead("reading"))
+        assertEquals(30, OrbitReadingWatch.ahead("reading:30"))
     }
 
     @Test fun scriptsArePinnedToTheirHash() {
