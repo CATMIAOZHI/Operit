@@ -40,7 +40,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -120,7 +119,10 @@ internal fun OrbitPermissionCard(card: JSONObject) {
         val on = when (permission) {
             OrbitPermissionCards.KEEP_ALIVE ->
                 KeepAliveBody(name, tick, onRefresh = { tick++ }, onBeginGrant, onChecked)
-            OrbitPermissionCards.DEVICE_ACCESS -> DeviceAccessBody(name, tick, onRefresh = { tick++ }, onBeginGrant, onChecked)
+            OrbitPermissionCards.DEVICE_ACCESS -> DeviceAccessBody(name, tick, onRefresh = { tick++ }, onBeginGrant, onChecked,
+                onStepDone = { from, to ->
+                    OrbitPermissionCards.deviceStepReached(context, orbitId, card.optString("chat_id"), cardId, from, to)
+                })
             OrbitPermissionCards.ACCESSIBILITY -> AccessibilityBody(name, tick, onRefresh = { tick++ }, onBeginGrant, onChecked)
             else -> PhoneBody(permission, cardId, name, tick, onRefresh = { tick++ }, onBeginGrant, onChecked)
         }
@@ -135,7 +137,8 @@ internal fun OrbitPermissionCard(card: JSONObject) {
  */
 @Composable
 private fun DeviceAccessBody(name: String, tick: Int, onRefresh: () -> Unit,
-    onBeginGrant: (Boolean) -> Unit, onChecked: (Boolean, Int) -> Unit): Boolean {
+    onBeginGrant: (Boolean) -> Unit, onChecked: (Boolean, Int) -> Unit,
+    onStepDone: (OrbitPermissionCards.DeviceStep, OrbitPermissionCards.DeviceStep) -> Unit): Boolean {
     val context = LocalContext.current
     val setup = rememberDeviceSetup(tick, onChecked)
     val english = remember(context) { com.ai.assistance.operit.util.LocaleUtils.usesEnglishPrompt(context) }
@@ -145,7 +148,7 @@ private fun DeviceAccessBody(name: String, tick: Int, onRefresh: () -> Unit,
         else stringResource(R.string.orbit_device_access_note),
         subMaxLines = Int.MAX_VALUE)
     Spacer(Modifier.height(14.dp))
-    DeviceAccessSteps(name, setup, onRefresh, onBeginGrant)
+    DeviceAccessSteps(name, setup, onRefresh, onBeginGrant, onStepDone)
     return on
 }
 
@@ -157,7 +160,14 @@ internal data class DeviceSetup(
     val shizukuRunning: Boolean,
     /** The installed Shizuku is older than the one bundled with Operit. */
     val shizukuOutdated: Boolean = false,
-)
+    val developerOptions: Boolean = false,
+    val wirelessDebugging: Boolean = false,
+) {
+    /** The one Shizuku step the card shows. */
+    val step: OrbitPermissionCards.DeviceStep
+        get() = OrbitPermissionCards.deviceStep(access.working, shizukuInstalled, shizukuOutdated, shizukuRunning,
+            developerOptions, wirelessDebugging)
+}
 
 @Volatile
 private var lastDeviceSetup: DeviceSetup? = null
@@ -172,7 +182,10 @@ private fun readDeviceSetup(context: Context): DeviceSetup {
         com.ai.assistance.operit.core.tools.system.ShizukuInstaller.clearCache()
         com.ai.assistance.operit.core.tools.system.ShizukuInstaller.isShizukuUpdateNeeded(context)
     }.getOrDefault(false)
-    return DeviceSetup(access, rooted, installed, running, outdated).also { lastDeviceSetup = it }
+    return DeviceSetup(access, rooted, installed, running, outdated,
+        developerOptions = OrbitPermissionCards.developerOptionsOn(context),
+        wirelessDebugging = OrbitPermissionCards.wirelessDebuggingOn(context),
+    ).also { lastDeviceSetup = it }
 }
 
 /** Reads the setup whenever [tick] changes; [onChecked] hears whether access works after each read. */
@@ -193,21 +206,34 @@ internal fun rememberDeviceSetup(tick: Int, onChecked: (Boolean, Int) -> Unit = 
 
 /**
  * The rows that turn device access on. A rooted phone gets one row (with a way to Shizuku if its
- * root manager refuses); others install Shizuku, start it and allow Operit. Steps not reached yet
- * show without a button. Each step saves the level it needs, so nothing else has to be picked.
+ * root manager refuses); others see one Shizuku step at a time (install, developer options,
+ * wireless debugging, start, allow), each with a button straight to where it is done. When a step
+ * the user tapped is finished, [onStepDone] hears it (the chat card tells Orbit, which explains the
+ * next one). Each step saves the level it needs, so nothing else has to be picked.
  */
 @Composable
-internal fun DeviceAccessSteps(name: String, setup: DeviceSetup?, onRefresh: () -> Unit, onBeginGrant: (Boolean) -> Unit) {
+internal fun DeviceAccessSteps(name: String, setup: DeviceSetup?, onRefresh: () -> Unit, onBeginGrant: (Boolean) -> Unit,
+    onStepDone: ((OrbitPermissionCards.DeviceStep, OrbitPermissionCards.DeviceStep) -> Unit)? = null) {
     val context = LocalContext.current
     val colors = MaterialTheme.colorScheme
     val scope = rememberCoroutineScope()
     var busy by remember { mutableStateOf(false) }
     var useShizuku by rememberSaveable { mutableStateOf(false) }
+    // The step whose button was tapped; only a step the user worked on tells Orbit when it is done.
+    var tappedStep by rememberSaveable { mutableStateOf<String?>(null) }
     // Shizuku says when its service starts or stops and when the user answers its dialog.
     DisposableEffect(Unit) {
         val listener: () -> Unit = { onRefresh() }
         com.ai.assistance.operit.core.tools.system.ShizukuAuthorizer.addStateChangeListener(listener)
         onDispose { com.ai.assistance.operit.core.tools.system.ShizukuAuthorizer.removeStateChangeListener(listener) }
+    }
+    val step = setup?.step
+    LaunchedEffect(step, tappedStep) {
+        val from = tappedStep?.let { t -> OrbitPermissionCards.DeviceStep.entries.firstOrNull { it.name == t } } ?: return@LaunchedEffect
+        if (step != null && step.ordinal > from.ordinal) {
+            tappedStep = null
+            onStepDone?.invoke(from, step)
+        }
     }
     val failed = stringResource(R.string.orbit_permission_failed)
     fun use(level: com.ai.assistance.operit.core.tools.system.AndroidPermissionLevel) {
@@ -254,64 +280,101 @@ internal fun DeviceAccessSteps(name: String, setup: DeviceSetup?, onRefresh: () 
         StepLink(stringResource(R.string.orbit_device_use_shizuku)) { useShizuku = true }
         return
     }
-    // An old Shizuku is updated over itself with the bundled one; it may not start or allow Operit.
-    PermissionRow(stringResource(R.string.orbit_device_shizuku_install), on = s.shizukuInstalled && !s.shizukuOutdated,
-        onLabel = stringResource(R.string.orbit_device_installed),
-        action = stringResource(if (s.shizukuOutdated) R.string.orbit_accessibility_update else R.string.orbit_accessibility_install_action),
-        enabled = !busy) {
+    val current = s.step
+    val steps = OrbitPermissionCards.deviceSteps
+    Text(stringResource(R.string.orbit_device_step_count, steps.indexOf(current) + 1, steps.size),
+        style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant,
+        modifier = Modifier.padding(start = 18.dp, bottom = 6.dp))
+    fun tapped() {
+        tappedStep = current.name
         onBeginGrant(true)
-        scope.launch {
-            val started = withContext(Dispatchers.IO) {
-                com.ai.assistance.operit.core.tools.system.ShizukuInstaller.installBundledShizuku(context.applicationContext)
-            }
-            if (!started) {
-                onBeginGrant(false)
-                Toast.makeText(context, failed, Toast.LENGTH_SHORT).show()
-            }
-        }
     }
-    Spacer(Modifier.height(8.dp))
-    PermissionRow(stringResource(R.string.orbit_device_shizuku_start), on = if (s.shizukuInstalled) s.shizukuRunning else null,
-        onLabel = stringResource(R.string.orbit_device_running),
-        action = stringResource(R.string.orbit_device_open), enabled = !busy,
-        modifier = Modifier.graphicsLayer { alpha = if (s.shizukuInstalled) 1f else 0.5f }) {
-        onBeginGrant(true)
-        val launch = context.packageManager.getLaunchIntentForPackage("moe.shizuku.privileged.api")
-        if (launch == null || runCatching { context.startActivity(launch) }.isFailure) {
+    fun open(intents: List<android.content.Intent>) {
+        tapped()
+        val opened = intents.any { intent ->
+            runCatching { context.startActivity(intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }.isSuccess
+        }
+        if (!opened) {
             onBeginGrant(false)
             Toast.makeText(context, failed, Toast.LENGTH_SHORT).show()
         }
     }
-    if (s.shizukuInstalled && !s.shizukuRunning) {
-        Text(
-            stringResource(if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R)
-                R.string.orbit_device_shizuku_start_hint else R.string.orbit_device_shizuku_start_hint_pc),
-            style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant,
-            modifier = Modifier.padding(start = 18.dp, end = 12.dp, top = 6.dp),
-        )
+    val hint: Int? = when (current) {
+        OrbitPermissionCards.DeviceStep.INSTALL -> {
+            // An old Shizuku is updated over itself with the bundled one; it may not start or allow Operit.
+            PermissionRow(stringResource(R.string.orbit_device_shizuku_install), on = false,
+                action = stringResource(if (s.shizukuOutdated) R.string.orbit_accessibility_update else R.string.orbit_accessibility_install_action),
+                enabled = !busy) {
+                tapped()
+                scope.launch {
+                    val started = withContext(Dispatchers.IO) {
+                        com.ai.assistance.operit.core.tools.system.ShizukuInstaller.installBundledShizuku(context.applicationContext)
+                    }
+                    if (!started) {
+                        onBeginGrant(false)
+                        Toast.makeText(context, failed, Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+            null
+        }
+        OrbitPermissionCards.DeviceStep.DEVELOPER -> {
+            PermissionRow(stringResource(R.string.orbit_device_dev_options), on = false,
+                action = stringResource(R.string.orbit_device_open), enabled = !busy) {
+                open(listOf(android.content.Intent(android.provider.Settings.ACTION_DEVICE_INFO_SETTINGS),
+                    android.content.Intent(android.provider.Settings.ACTION_SETTINGS)))
+            }
+            R.string.orbit_device_dev_options_hint
+        }
+        OrbitPermissionCards.DeviceStep.WIRELESS -> {
+            PermissionRow(stringResource(R.string.orbit_device_wireless), on = false,
+                action = stringResource(R.string.orbit_device_open), enabled = !busy) {
+                open(listOf(android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS),
+                    android.content.Intent(android.provider.Settings.ACTION_SETTINGS)))
+            }
+            R.string.orbit_device_wireless_hint
+        }
+        OrbitPermissionCards.DeviceStep.START -> {
+            PermissionRow(stringResource(R.string.orbit_device_shizuku_start), on = false,
+                action = stringResource(R.string.orbit_device_open), enabled = !busy) {
+                val launch = context.packageManager.getLaunchIntentForPackage("moe.shizuku.privileged.api")
+                if (launch == null) {
+                    Toast.makeText(context, failed, Toast.LENGTH_SHORT).show()
+                } else open(listOf(launch))
+            }
+            if (OrbitPermissionCards.wirelessDebuggingSupported) R.string.orbit_device_shizuku_start_hint
+            else R.string.orbit_device_shizuku_start_hint_pc
+        }
+        OrbitPermissionCards.DeviceStep.ALLOW, OrbitPermissionCards.DeviceStep.DONE -> {
+            PermissionRow(stringResource(R.string.orbit_device_shizuku_allow, name), on = false,
+                action = stringResource(R.string.orbit_permission_allow), enabled = !busy) {
+                busy = true
+                tapped()
+                com.ai.assistance.operit.core.tools.system.ShizukuAuthorizer.requestShizukuPermission { granted ->
+                    scope.launch {
+                        if (granted) use(com.ai.assistance.operit.core.tools.system.AndroidPermissionLevel.DEBUGGER)
+                        else {
+                            busy = false
+                            onBeginGrant(false)
+                            onRefresh()
+                        }
+                    }
+                }
+            }
+            null
+        }
+    }
+    if (hint != null) {
+        Text(stringResource(hint), style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant,
+            modifier = Modifier.padding(start = 18.dp, end = 12.dp, top = 6.dp))
+    }
+    if (current == OrbitPermissionCards.DeviceStep.START) {
         val guide = stringResource(R.string.orbit_device_shizuku_guide_url)
         StepLink(stringResource(R.string.orbit_device_shizuku_guide)) {
             runCatching {
                 context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(guide))
                     .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
             }.onFailure { Toast.makeText(context, failed, Toast.LENGTH_SHORT).show() }
-        }
-    }
-    Spacer(Modifier.height(8.dp))
-    PermissionRow(stringResource(R.string.orbit_device_shizuku_allow, name), on = if (s.shizukuRunning) false else null,
-        action = stringResource(R.string.orbit_permission_allow), enabled = !busy,
-        modifier = Modifier.graphicsLayer { alpha = if (s.shizukuRunning) 1f else 0.5f }) {
-        busy = true
-        onBeginGrant(true)
-        com.ai.assistance.operit.core.tools.system.ShizukuAuthorizer.requestShizukuPermission { granted ->
-            scope.launch {
-                if (granted) use(com.ai.assistance.operit.core.tools.system.AndroidPermissionLevel.DEBUGGER)
-                else {
-                    busy = false
-                    onBeginGrant(false)
-                    onRefresh()
-                }
-            }
         }
     }
 }
