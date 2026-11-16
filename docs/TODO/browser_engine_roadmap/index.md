@@ -4,7 +4,7 @@ status: in-progress
 document_type: implementation-plan
 fork: https://github.com/CATMIAOZHI/Operit
 branch: personal/dev
-last_reviewed: 2026-11-14
+last_reviewed: 2026-11-16
 ---
 
 # 浏览器引擎路线图
@@ -18,7 +18,7 @@ last_reviewed: 2026-11-14
 | 版本 | 内核 | 状态 |
 |---|---|---|
 | 第一版 | 系统 WebView + 应用内 CDP | 进行中 |
-| 第二版 | Cefrium（现成的 Android Chromium 嵌入 SDK，LGPL-3.0） | 待复测 0.20.0 |
+| 第二版 | Cefrium（现成的 Android Chromium 嵌入 SDK，LGPL-3.0） | 0.21.0 复测通过，待接入 |
 | 第三版 | 自己编译 Chromium | 可能不需要（见第二版） |
 
 ## 第一版：WebView + 应用内 CDP
@@ -51,12 +51,12 @@ last_reviewed: 2026-11-14
 
 ## 第二、三版：两个完整版本（普通版 / 带浏览器版）
 
-同一个包名、同一个签名，发两个完整 APK：普通版用系统 WebView；带浏览器版内置 Cefrium（约多 220 MB）。想要统一浏览器的用户下载一次带浏览器版覆盖安装，切回普通版也是覆盖安装，数据都保留。
+同一个包名、同一个签名，发两个完整 APK：普通版用系统 WebView；带浏览器版内置 Cefrium（内核压缩存放，约多 90 MB 下载）。想要统一浏览器的用户下载一次带浏览器版覆盖安装，切回普通版也是覆盖安装，数据都保留。
 
 - 原因：Chromium 的渲染进程运行在 isolated 沙盒里。SELinux 的 `isolated_app` 域不能执行应用私有目录里下载的 `.so`；经 Binder 传入的 FD 也只有读和映射权限，没有执行权限。内核必须装在 APK 里（`apk_data_file` 没有这个限制）。
 - 之后的更新走差异补丁（nightly 和正式版都默认先试补丁，见 `docs/agent/dev-to-main-promotion.md` 第 9 节）：补丁按 APK 里的文件逐个比较，内核没变时补丁里没有内核。跳过了几个版本或补丁失败时，仍下载完整 APK（带浏览器版就是大包）。
 - 待实现：每个版本为两种 APK 各发一份补丁。正式版检查已按已装 APK 的哈希挑补丁；nightly 检查、补丁失败时回退的完整 APK、发版手册目前都只认一种 APK，上线带浏览器版前要一起改。
-- 带浏览器版的最低系统是 Android 10（Cefrium 0.10.1 的 minSdk 29；0.20.0 待复测）。普通版不变。
+- 带浏览器版的最低系统是 Android 10（Cefrium 0.21.0 仍是 minSdk 29）。普通版不变。
 - 不采用附加安装包（feature split）：系统要求所有 split 的 versionCode 一致，App 每次更新都要连浏览器模块一起重下，而且安装时要系统确认、应用会重启。
 - 不采用关闭渲染进程沙盒、直接加载私有目录里内核的做法：网页一旦攻破内核，就能读到应用里的 API Key、聊天记录和登录状态。
 
@@ -84,8 +84,26 @@ Cefrium 维护者在 [issue #75](https://github.com/CATMIAOZHI/Operit/issues/75)
 
 复测清单：浏览器标识、渲染进程沙盒、两套持久 Profile 互不串号、公开 CDP 接口、严格 CSP 页面填字、中文输入、体积和工具链。
 
+## 第二版 Cefrium 0.21.0 复测结论（2026-11-16）
+
+独立测试工程 `workspace/cefrium-probe-021`（包名 `com.rainy.cefriumprobe`，只用公开接口），在 Android 14 x86_64 模拟器上测试。0.20.0 之后已发布 0.21.0（内核 Chromium 156.0.8078.96），直接测最新版。依赖从 Cefrium 自己的 Maven 仓库 `https://maven.cefrium.com`（限定 `com.cefrium` 组）获取，Maven Central 只到 0.17.1。
+
+| 项目 | 结果 |
+|---|---|
+| 浏览器标识 | 版本正确：`Chrome/156.0.8078.96`。但 UA 里多一个 `Cefrium/1.0`，Client Hints 品牌只有 Chromium（没有 Google Chrome），高熵值 `mobile` 为 false。接入时用公开的 `setUserAgentOverride` 统一成手机 Chrome 标识 |
+| 渲染进程沙盒 | 通过：渲染进程是 isolated UID（u0_i*），`NoNewPrivs=1`，seccomp 过滤器 4 个（应用主进程 1 个），说明 Chromium 自己的 seccomp-BPF 策略装上了。“恢复沙盒归第三版”不再需要 |
+| 两套登录空间 | 通过：`CefriumProfile.get("main")` 和 `get("orbit")` 的 Cookie 互不可见；重启 App 后两边的 Cookie 都还在 |
+| 公开 CDP | 通过：`executeDevToolsMethod` 跑 `Runtime.evaluate`、`Network.enable`、`Page.captureScreenshot`、`Input.insertText`；`setDevToolsEventListener` 收到网络事件（状态码和类型）。不再需要内部 JNI 或调试 socket |
+| 严格 CSP 页面填字 | 通过：GitHub 登录页 `evaluateJavaScript` 填入并返回结果 |
+| 中文输入 | CDP `Input.insertText` 写入“中文输入测试”成功；`imeCommitText` 在 Surface 模式下没有写入（它面向离屏模式）。系统输入法输入中文待真机确认 |
+| 和 WebView 同进程 | 通过：同一进程里先用 Cefrium 再建 WebView，两边都正常。第一版的 WebView 可以和第二版并存 |
+| 无窗口后台运行 | 通过：离屏模式 `new CefriumBrowser(w, h, scale, profile)` 不挂任何窗口就能加载页面、执行脚本；截图用 `captureBitmap`（先 `invalidate()`），离屏模式下 CDP `Page.captureScreenshot` 不返回。可以取代第一版的 1×1 悬浮窗 |
+| 体积 | arm64 的 `libcef.so` 202 MB。默认不压缩存进 APK，arm64 调试包 306 MB；`useLegacyPackaging = true` 压缩存放后能正常运行（x86_64 包从 332 MB 降到 208 MB），arm64 估计比普通版多约 90 MB 下载 |
+| 工具链 | JDK 25、Gradle 9.7.1、AGP 9.4、compileSdk 37、minSdk 29。Operit 现在是 AGP 9.1.1、Gradle 9.3.1、compileSdk 36、JDK 17，接入前要先升级工具链；Cefrium 的类文件是 Java 25（major 69），Kotlin 编译器也要能读 |
+
+结论：维护者在 issue #75 说的变化都成立。第二版可以开始接入，第一步是升级 Operit 的构建工具链。
+
 ## 两套登录空间（第二版）
 
-- 主应用一套、Orbit 一套，用 Cefrium 的持久 Profile（0.14.0 起，待复测）；Orbit 设置里“和主应用共用登录”的开关保持和第一版一样。
-- 复测不通过时的退路：Cefrium 只用一套登录，Orbit 需要独立登录时继续用第一版 WebView。
+- 主应用一套、Orbit 一套，用 Cefrium 的持久 Profile（0.21.0 复测通过）；Orbit 设置里“和主应用共用登录”的开关保持和第一版一样。
 - 不采用：给 Orbit 安装一个独立浏览器 App。约 220 MB，安装和升级都要确认；CDP socket 只接受浏览器自身 UID，要另做转发通道；打开浏览器会跳出 Operit。
