@@ -444,7 +444,7 @@ internal object OrbitBrowserWatch {
                 val now = _works.value[work.executorChatId]
                 if (now?.finished == true && now.control == Control.NONE && _watching.value != work.executorChatId) {
                     StandardBrowserSessionTools.sessions.values.filter { it.browserTaskId == work.executorChatId }
-                        .forEach { rest(it.webView) }
+                        .forEach { rest(it.page) }
                 }
             }
         }
@@ -483,7 +483,7 @@ internal object OrbitBrowserWatch {
 
     /** A small picture of the page [sessionId] shows, for the chat card. Main thread only. */
     fun preview(sessionId: String?, width: Int = 320): Bitmap? {
-        val webView = sessionId?.let(StandardBrowserSessionTools.sessions::get)?.webView ?: return null
+        val webView = sessionId?.let(StandardBrowserSessionTools.sessions::get)?.page?.view ?: return null
         if (webView.width <= 0 || webView.height <= 0) return null
         return runCatching {
             val scale = width.toFloat() / webView.width
@@ -575,7 +575,7 @@ internal object OrbitBrowserWatch {
             val work = _works.value[talkChatId]
             if (work?.finished == true && work.control == Control.NONE && _watching.value != talkChatId) {
                 StandardBrowserSessionTools.sessions.values.filter { it.browserTaskId == talkChatId }
-                    .forEach { rest(it.webView) }
+                    .forEach { rest(it.page) }
             }
         }
     }
@@ -695,10 +695,10 @@ internal object OrbitBrowserWatch {
         return work.finished && !work.stopping && work.control == Control.NONE && _watching.value != task
     }
 
-    fun rest(webView: android.webkit.WebView) {
+    internal fun rest(page: com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserPage) {
         runCatching {
-            webView.onPause()
-            webView.visibility = android.view.View.GONE
+            page.onPause()
+            page.view.visibility = android.view.View.GONE
         }
     }
 

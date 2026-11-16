@@ -23,7 +23,7 @@ internal fun StandardBrowserSessionTools.typeVaultValue(
         return@aiCall error(toolName, "The page is still loading. Wait for it to finish, take a new snapshot and retry.")
     }
     // Both the navigation target and the live document must be the site; the fill script checks again.
-    val live = readCurrentUrl(session.webView, "")
+    val live = readCurrentUrl(session.page, "")
     if (listOf(session.currentUrl, live).any { url ->
             val uri = runCatching { Uri.parse(url) }.getOrNull()
             uri?.scheme != "https" || !OrbitVault.matchesHost(uri.host.orEmpty(), site)
@@ -36,7 +36,7 @@ internal fun StandardBrowserSessionTools.typeVaultValue(
     }
     val markers = captureActionMarkers(session)
     try {
-        typeIntoElementByRef(session.webView, ref, value, submit, false, requiredSite = site)
+        typeIntoElementByRef(session.page, ref, value, submit, false, requiredSite = site)
     } catch (e: kotlinx.coroutines.CancellationException) {
         throw e
     } catch (e: Exception) {

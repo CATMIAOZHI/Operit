@@ -215,7 +215,7 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
 
     internal data class WebSession(
         val id: String,
-        val webView: WebView,
+        val page: BrowserPage,
         val sessionName: String?,
         val customUserAgent: String? = null,
         val createdAt: Long = System.currentTimeMillis(),
@@ -223,6 +223,8 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         val profileName: String = BrowserProfiles.MAIN,
         val browserTaskId: String? = null,
     ) {
+        /** The system WebView behind this tab; null when the tab runs on the built-in engine. */
+        val webView: WebView? get() = page.webViewOrNull
         @Volatile var currentUrl: String = "about:blank"
         @Volatile var pageTitle: String = ""
         @Volatile var pageLoaded: Boolean = false
@@ -419,7 +421,7 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
                 modifiers.isEmpty()
         val jsResult =
             when {
-                useNativeTap && dispatchNativeTapByRef(session.webView, ref!!) == true ->
+                useNativeTap && dispatchNativeTapByRef(session.page, ref!!) == true ->
                     JSONObject()
                         .put("ok", true)
                         .put("ref", ref)
@@ -428,7 +430,7 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
                         .put("activationMethod", "native_webview_tap")
                 ref != null ->
                     dispatchClickByRef(
-                        webView = session.webView,
+                        page = session.page,
                         ref = ref,
                         button = button,
                         modifiers = modifiers,
@@ -436,7 +438,7 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
                     )
                 else ->
                     dispatchClickBySelector(
-                        webView = session.webView,
+                        page = session.page,
                         selector = selector!!,
                         button = button,
                         modifiers = modifiers,
@@ -493,20 +495,20 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         )
     }
 
-    private fun dispatchNativeTapByRef(webView: WebView, ref: String): Boolean {
-        val rect = resolveElementRect(webView, ref) ?: return false
+    private fun dispatchNativeTapByRef(page: BrowserPage, ref: String): Boolean {
+        val rect = resolveElementRect(page, ref) ?: return false
         // 浏览器工具可能在后台线程调用（比如工具包里的 JS 调工具），WebView 的方法只能在主线程用，
         // 所以缩放和尺寸也要在主线程里读。
         return runOnMainSync {
             try {
-                val pageScale = webView.scale.takeIf { it > 0f } ?: 1f
+                val pageScale = page.scale.takeIf { it > 0f } ?: 1f
                 val x =
                     (((rect.left + rect.right) / 2f) * pageScale)
-                        .coerceIn(1f, (webView.width - 1).coerceAtLeast(1).toFloat())
+                        .coerceIn(1f, (page.view.width - 1).coerceAtLeast(1).toFloat())
                 val y =
                     (((rect.top + rect.bottom) / 2f) * pageScale)
-                        .coerceIn(1f, (webView.height - 1).coerceAtLeast(1).toFloat())
-                webView.requestFocus()
+                        .coerceIn(1f, (page.view.height - 1).coerceAtLeast(1).toFloat())
+                page.view.requestFocus()
                 val downTime = SystemClock.uptimeMillis()
                 val down =
                     MotionEvent.obtain(
@@ -527,8 +529,8 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
                         0
                     )
                 try {
-                    val downHandled = webView.dispatchTouchEvent(down)
-                    val upHandled = webView.dispatchTouchEvent(up)
+                    val downHandled = page.view.dispatchTouchEvent(down)
+                    val upHandled = page.view.dispatchTouchEvent(up)
                     downHandled || upHandled
                 } finally {
                     down.recycle()
@@ -563,7 +565,7 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
     }
 
     private fun dispatchClickByRef(
-        webView: WebView,
+        page: BrowserPage,
         ref: String,
         button: String,
         modifiers: Set<String>,
@@ -681,10 +683,10 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
             })();
             """.trimIndent()
 
-        return runJsonScript(webView, script, "click_dispatch_error")
+        return runJsonScript(page, script, "click_dispatch_error")
     }
 
-    private fun dispatchHoverByRef(webView: WebView, ref: String): JSONObject? {
+    private fun dispatchHoverByRef(page: BrowserPage, ref: String): JSONObject? {
         val script =
             """
             (function() {
@@ -720,10 +722,10 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
                 }
             })();
             """.trimIndent()
-        return runJsonScript(webView, script, "hover_dispatch_error")
+        return runJsonScript(page, script, "hover_dispatch_error")
     }
 
-    private fun dispatchDragByRef(webView: WebView, startRef: String, endRef: String): JSONObject? {
+    private fun dispatchDragByRef(page: BrowserPage, startRef: String, endRef: String): JSONObject? {
         val script =
             """
             (function() {
@@ -772,11 +774,11 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
                 }
             })();
             """.trimIndent()
-        return runJsonScript(webView, script, "drag_dispatch_error")
+        return runJsonScript(page, script, "drag_dispatch_error")
     }
 
     private fun dispatchClickBySelector(
-        webView: WebView,
+        page: BrowserPage,
         selector: String,
         button: String,
         modifiers: Set<String>,
@@ -895,14 +897,14 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
                 }
             })();
             """.trimIndent()
-        return runJsonScript(webView, script, "click_dispatch_error")
+        return runJsonScript(page, script, "click_dispatch_error")
     }
 
-    internal fun runJsonScript(webView: WebView, script: String, fallbackError: String): JSONObject? {
+    internal fun runJsonScript(page: BrowserPage, script: String, fallbackError: String): JSONObject? {
         return try {
             val payload =
                 evaluateJavascriptAsync(
-                    webView,
+                    page,
                     script,
                     DEFAULT_TIMEOUT_MS.coerceIn(2_000L, 8_000L)
                 )
@@ -940,11 +942,11 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         return parsed to invalid
     }
 
-    internal fun readCurrentUrl(webView: WebView, fallback: String): String {
+    internal fun readCurrentUrl(page: BrowserPage, fallback: String): String {
         return runCatching {
             extractAsyncJsValue(
                 evaluateJavascriptAsync(
-                    webView,
+                    page,
                     "(function(){ return String(location.href || ''); })();",
                     2_000L
                 )
@@ -1189,7 +1191,7 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
                 return JSON.stringify({ ok: true, text: pageText, attached: attached, visible: visible });
             })();
             """.trimIndent()
-        val json = runJsonScript(session.webView, script, "wait_check_error") ?: return WaitCheck(false, "the page could not be read")
+        val json = runJsonScript(session.page, script, "wait_check_error") ?: return WaitCheck(false, "the page could not be read")
         json.optString("badSelector").takeIf { it.isNotBlank() }?.let {
             return WaitCheck(false, badSelector = "selector is not valid: $it")
         }
@@ -1266,9 +1268,9 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         val couldGoBack = runOnMainSync(timeoutMs = 8_000L) {
             ensureSessionAttachedOnMain(session.id)
             val sessionCouldGoBack = session.canGoBack
-            val webViewCanGoBack = session.webView.canGoBack()
+            val webViewCanGoBack = session.page.canGoBack()
             if (webViewCanGoBack) {
-                session.webView.goBack()
+                session.page.goBack()
             }
             refreshNavigationStateAsync(session)
             sessionCouldGoBack || webViewCanGoBack
@@ -1318,7 +1320,7 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         }
         val markers = captureActionMarkers(session)
         val geometry =
-            elementGeometry(session.webView, ref, "center")
+            elementGeometry(session.page, ref, "center")
                 ?: return pageError(
                     tool.name,
                     session,
@@ -1327,14 +1329,14 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         val connection = BrowserCdp.connection(this, session)
         val hoverResult =
             if (connection != null) {
-                if (cdpHoverElement(connection, session.webView, ref, geometry) != null) {
+                if (cdpHoverElement(connection, session.page, ref, geometry) != null) {
                     "Hovered ref=$ref with the mouse; the page shows it as hovered."
                 } else {
                     "Moved the mouse over ref=$ref, but the page does not show it as hovered. " +
                         "Another element may cover it; check the snapshot or screenshot."
                 }
             } else {
-                val jsResult = dispatchHoverByRef(session.webView, ref)
+                val jsResult = dispatchHoverByRef(session.page, ref)
                 if (jsResult?.optBoolean("ok", false) != true) {
                     return error(tool.name, "Hover failed: ${jsResult?.optString("error") ?: "unknown"}")
                 }
@@ -1408,9 +1410,9 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
      * page's HTML drag events instead. Null when either ref is gone.
      */
     private fun performDrag(session: WebSession, startRef: String, endRef: String, requestedMode: String): String? {
-        val webView = session.webView
-        val start = elementGeometry(webView, startRef, "center") ?: return null
-        val end = elementGeometry(webView, endRef, null) ?: return null
+        val page = session.page
+        val start = elementGeometry(page, startRef, "center") ?: return null
+        val end = elementGeometry(page, endRef, null) ?: return null
         val connection = if (requestedMode == "auto" || requestedMode == "mouse") BrowserCdp.connection(this, session) else null
         val mode =
             when {
@@ -1425,7 +1427,7 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         val path = easedPath(start.centerX, start.centerY, end.centerX, end.centerY, steps)
         when (mode) {
             "html5" -> {
-                val jsResult = dispatchDragByRef(webView, startRef, endRef)
+                val jsResult = dispatchDragByRef(page, startRef, endRef)
                 if (jsResult?.optBoolean("ok", false) != true) {
                     return if (jsResult?.optString("error")?.endsWith("ref_not_found") == true) null
                     else throw BrowserInputException("Drag failed: ${jsResult?.optString("error") ?: "unknown"}")
@@ -1433,7 +1435,7 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
             }
             "mouse" -> {
                 val cdp = connection ?: throw BrowserInputException("DevTools is unavailable for a mouse drag. Use mode=touch.")
-                val scaled = cdpHoverElement(cdp, webView, startRef, start) ?: true
+                val scaled = cdpHoverElement(cdp, page, startRef, start) ?: true
                 val jitter = java.util.Random()
                 var lastX = start.cdpX(start.centerX, scaled)
                 var lastY = start.cdpY(start.centerY, scaled)
@@ -1457,12 +1459,12 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
                 }
             }
             else -> {
-                val viewSize = runOnMainSync { webView.width to webView.height }
+                val viewSize = runOnMainSync { page.view.width to page.view.height }
                 if (viewSize.first <= 0 || viewSize.second <= 0) {
                     throw BrowserInputException("The page is not laid out yet. Take a snapshot and try again.")
                 }
                 val points = path.map { (x, y) -> start.toViewX(x, viewSize.first) to start.toViewY(y, viewSize.second) }
-                dispatchTouchPath(webView, points, stepDelayMs = 18L, holdBeforeMoveMs = 120L)
+                dispatchTouchPath(page, points, stepDelayMs = 18L, holdBeforeMoveMs = 120L)
             }
         }
         val how =
@@ -1503,7 +1505,7 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
             )
         }
         val markers = captureActionMarkers(session)
-        val value = evaluatePageFunction(session.webView, functionSource, ref, DEFAULT_TIMEOUT_MS)
+        val value = evaluatePageFunction(session.page, functionSource, ref, DEFAULT_TIMEOUT_MS)
         val settlement =
             settleBrowserAction(
                 initialSession = session,
@@ -1551,7 +1553,7 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
             }
         }
         val markers = captureActionMarkers(session)
-        val result = fillFormFields(session.webView, rawFields)
+        val result = fillFormFields(session.page, rawFields)
         val settlement =
             settleBrowserAction(
                 initialSession = session,
@@ -1678,7 +1680,7 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
             } else {
                 // DevTools unavailable: only page-level key events, so the browser's own default
                 // actions (moving the caret, Tab focus, Control+A) may not happen.
-                pressKeyOnPage(session.webView, combo.label) +
+                pressKeyOnPage(session.page, combo.label) +
                     "\nNote: sent as page key events only; check the page state, because default " +
                     "actions such as caret movement or Tab focus may not have happened."
             }
@@ -1812,7 +1814,7 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
             )
         }
         val markers = captureActionMarkers(session)
-        val result = selectOptionsByRef(session.webView, ref, values)
+        val result = selectOptionsByRef(session.page, ref, values)
         val settlement =
             settleBrowserAction(
                 initialSession = session,
@@ -2003,26 +2005,26 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         val problem =
             runOnMainSync<String?> {
                 ensureSessionAttachedOnMain(session.id)
-                val webView = session.webView
-                val imageWidth = session.viewportWidthPx ?: webView.width
-                val imageHeight = session.viewportHeightPx ?: webView.height
+                val page = session.page
+                val imageWidth = session.viewportWidthPx ?: page.view.width
+                val imageHeight = session.viewportHeightPx ?: page.view.height
                 when {
-                    webView.width <= 0 || webView.height <= 0 || imageWidth <= 0 || imageHeight <= 0 ->
+                    page.view.width <= 0 || page.view.height <= 0 || imageWidth <= 0 || imageHeight <= 0 ->
                         "The page is not laid out yet. Take a screenshot and try again."
                     x < 0 || y < 0 || x >= imageWidth || y >= imageHeight ->
                         "($x, $y) is outside the page screenshot, which is ${imageWidth}x$imageHeight."
                     else -> {
-                        val viewX = (x * webView.width / imageWidth).toFloat()
-                        val viewY = (y * webView.height / imageHeight).toFloat()
-                        webView.requestFocus()
+                        val viewX = (x * page.view.width / imageWidth).toFloat()
+                        val viewY = (y * page.view.height / imageHeight).toFloat()
+                        page.view.requestFocus()
                         val start = SystemClock.uptimeMillis()
                         repeat(if (doubleClick) 2 else 1) { index ->
                             val downAt = start + index * 120L
                             val down = MotionEvent.obtain(downAt, downAt, MotionEvent.ACTION_DOWN, viewX, viewY, 0)
                             val up = MotionEvent.obtain(downAt, downAt + 40L, MotionEvent.ACTION_UP, viewX, viewY, 0)
                             try {
-                                webView.dispatchTouchEvent(down)
-                                webView.dispatchTouchEvent(up)
+                                page.view.dispatchTouchEvent(down)
+                                page.view.dispatchTouchEvent(up)
                             } finally {
                                 down.recycle()
                                 up.recycle()
@@ -2067,12 +2069,12 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         val mapping =
             runOnMainSync {
                 ensureSessionAttachedOnMain(session.id)
-                val webView = session.webView
+                val page = session.page
                 Mapping(
-                    webView.width,
-                    webView.height,
-                    session.viewportWidthPx ?: webView.width,
-                    session.viewportHeightPx ?: webView.height
+                    page.view.width,
+                    page.view.height,
+                    session.viewportWidthPx ?: page.view.width,
+                    session.viewportHeightPx ?: page.view.height
                 )
             }
         if (mapping.viewWidth <= 0 || mapping.viewHeight <= 0 || mapping.imageWidth <= 0 || mapping.imageHeight <= 0) {
@@ -2113,10 +2115,10 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
             result = "Clicked the $button mouse button at (${x.toInt()}, ${y.toInt()})${if (doubleClick) " twice" else ""}."
         } else if (endX != null && endY != null) {
             val path = easedPath(x, y, endX, endY, 20).map { (px, py) -> viewX(px) to viewY(py) }
-            dispatchTouchPath(session.webView, path, stepDelayMs = 18L, holdBeforeMoveMs = holdMs.coerceAtLeast(80L))
+            dispatchTouchPath(session.page, path, stepDelayMs = 18L, holdBeforeMoveMs = holdMs.coerceAtLeast(80L))
             result = "Dragged a finger from (${x.toInt()}, ${y.toInt()}) to (${endX.toInt()}, ${endY.toInt()})."
         } else {
-            dispatchTouchPath(session.webView, listOf(viewX(x) to viewY(y)), holdBeforeMoveMs = holdMs)
+            dispatchTouchPath(session.page, listOf(viewX(x) to viewY(y)), holdBeforeMoveMs = holdMs)
             result = "Pressed and held (${x.toInt()}, ${y.toInt()}) for ${holdMs} ms."
         }
         val settlement =
@@ -2192,7 +2194,7 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         runOnMainSync<Unit> { ensureSessionAttachedOnMain(session.id) }
         return when (action) {
             "read" -> {
-                val (selection, _) = readPageSelection(session.webView)
+                val (selection, _) = readPageSelection(session.page)
                 val clip = readAndroidClipboard()
                 ok(
                     tool.name,
@@ -2204,7 +2206,7 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
                 )
             }
             "copy" -> {
-                val (selection, _) = readPageSelection(session.webView)
+                val (selection, _) = readPageSelection(session.page)
                 if (selection.isEmpty()) return pageError(tool.name, session, "Nothing is selected in the page. Select text first, for example with Control+A.")
                 writeAndroidClipboard(selection)
                 ok(tool.name, buildBrowserResponse(result = "Copied ${selection.length} characters to the clipboard:\n" + shown(selection)))
@@ -2221,11 +2223,11 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
                         ?: return error(tool.name, "The clipboard is empty or cannot be read now; pass text to paste.")
                 val markers = captureActionMarkers(session)
                 val how =
-                    if (offerPasteEvent(session.webView, text)) {
+                    if (offerPasteEvent(session.page, text)) {
                         "the page handled the paste itself"
                     } else {
                         // Inserting needs a focused, writable text field; otherwise nothing lands.
-                        val (_, editable) = readPageSelection(session.webView)
+                        val (_, editable) = readPageSelection(session.page)
                         if (!editable) {
                             return pageError(
                                 tool.name,
@@ -2240,7 +2242,7 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
                         } else {
                             val inserted =
                                 runJsonScript(
-                                    session.webView,
+                                    session.page,
                                     "(function(){ let ok = false; try { ok = document.execCommand('insertText', false, ${JSONObject.quote(text)}); } catch (_) {} return JSON.stringify({ ok: true, inserted: ok }); })();",
                                     "paste_error"
                                 )?.optBoolean("inserted", false) == true
@@ -2384,7 +2386,7 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
             )
         }
         val markers = captureActionMarkers(session)
-        val result = typeIntoElementByRef(session.webView, ref, text, submit, slowly)
+        val result = typeIntoElementByRef(session.page, ref, text, submit, slowly)
         val settlement =
             settleBrowserAction(
                 initialSession = session,

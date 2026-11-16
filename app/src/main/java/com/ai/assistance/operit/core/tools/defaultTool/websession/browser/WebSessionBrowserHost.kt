@@ -15,7 +15,6 @@ import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
-import android.webkit.WebView
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -136,7 +135,7 @@ internal class WebSessionBrowserHost(
     private var watchLocked = false
     /** The Orbit chat whose watch screen showed last; when its work ends the browser closes instead of unlocking. */
     private var lastWatchTalk: String? = null
-    private var a11yHiddenWebView: java.lang.ref.WeakReference<WebView>? = null
+    private var a11yHiddenWebView: java.lang.ref.WeakReference<View>? = null
     fun ensureCreated(initialExpanded: Boolean = false) {
         if (rootView != null) {
             if (isExpanded != initialExpanded) {
@@ -343,10 +342,10 @@ internal class WebSessionBrowserHost(
         if (wantsIndicator()) showIndicator() else hideIndicator()
     }
 
-    fun attachActiveWebView(webView: WebView?, viewportWidth: Int? = null, viewportHeight: Int? = null) {
-        webViewHost.currentWebView()?.takeIf { it !== webView }?.let { previous ->
+    fun attachActiveWebView(page: BrowserPage?, viewportWidth: Int? = null, viewportHeight: Int? = null) {
+        webViewHost.currentPage()?.takeIf { it !== page }?.let { previous ->
             com.ai.assistance.operit.core.tools.defaultTool.standard.StandardBrowserSessionTools.sessions.values
-                .firstOrNull { it.webView === previous && it.browserTaskId != null }?.let {
+                .firstOrNull { it.page === previous && it.browserTaskId != null }?.let {
                     parkWebView(previous, it.viewportWidthPx, it.viewportHeightPx)
                 }
         }
@@ -357,15 +356,16 @@ internal class WebSessionBrowserHost(
                 it.copy(viewportWidthPx = viewportWidth, viewportHeightPx = viewportHeight)
             }
         }
-        webViewHost.setActiveWebView(webView, viewportWidth, viewportHeight)
-        applyWatchAccessibility(webView)
+        webViewHost.setActivePage(page, viewportWidth, viewportHeight)
+        applyWatchAccessibility(page?.view)
     }
 
-    fun attachBackgroundWebView(webView: WebView, width: Int?, height: Int?) {
-        if (webViewHost.currentWebView() !== webView) parkWebView(webView, width, height)
+    fun attachBackgroundWebView(page: BrowserPage, width: Int?, height: Int?) {
+        if (webViewHost.currentPage() !== page) parkWebView(page, width, height)
     }
 
-    private fun parkWebView(webView: WebView, width: Int?, height: Int?) {
+    private fun parkWebView(page: BrowserPage, width: Int?, height: Int?) {
+        val webView = page.view
         val target = backgroundViews ?: return
         if (webView.parent !== target) {
             (webView.parent as? ViewGroup)?.removeView(webView)
@@ -385,9 +385,9 @@ internal class WebSessionBrowserHost(
         webView.translationY = 0f
         // A page Orbit stopped using stays at rest when it goes back to the background.
         val task = com.ai.assistance.operit.core.tools.defaultTool.standard.StandardBrowserSessionTools.sessions.values
-            .firstOrNull { it.webView === webView }?.browserTaskId
+            .firstOrNull { it.page === page }?.browserTaskId
         val watch = com.ai.assistance.operit.features.orbit.OrbitBrowserWatch
-        if (watch.resting(task)) watch.rest(webView) else webView.onResume()
+        if (watch.resting(task)) watch.rest(page) else page.onResume()
         webView.measure(View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY),
             View.MeasureSpec.makeMeasureSpec(h, View.MeasureSpec.EXACTLY))
         webView.layout(0, 0, w, h)
@@ -589,7 +589,7 @@ internal class WebSessionBrowserHost(
         watchLocked = locked
         val root = rootView ?: return
         if (locked) {
-            webViewHost.currentWebView()?.let { webView ->
+            webViewHost.currentPage()?.view?.let { webView ->
                 webView.clearFocus()
                 (appContext.getSystemService(Context.INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager)
                     ?.hideSoftInputFromWindow(webView.windowToken, 0)
@@ -599,11 +599,11 @@ internal class WebSessionBrowserHost(
             root.descendantFocusability =
                 if (locked) ViewGroup.FOCUS_BLOCK_DESCENDANTS else ViewGroup.FOCUS_AFTER_DESCENDANTS
         }
-        applyWatchAccessibility(webViewHost.currentWebView())
+        applyWatchAccessibility(webViewHost.currentPage()?.view)
     }
 
     /** While locked, screen readers skip the page too, so it cannot be clicked through TalkBack. */
-    private fun applyWatchAccessibility(webView: WebView?) {
+    private fun applyWatchAccessibility(webView: View?) {
         val hidden = a11yHiddenWebView?.get()
         if (hidden != null && (hidden !== webView || !watchLocked)) {
             hidden.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
@@ -636,8 +636,8 @@ internal class WebSessionBrowserHost(
     }
 
     private fun evaluateActiveWebViewSelectedText(onResult: (String) -> Unit) {
-        val webView = webViewHost.currentWebView() ?: return
-        webView.evaluateJavascript(activeWebViewSelectionTextScript()) { rawValue ->
+        val page = webViewHost.currentPage() ?: return
+        page.evaluateJavascript(activeWebViewSelectionTextScript()) { rawValue ->
             try {
                 val selectedText = JSONTokener(rawValue).nextValue() as String
                 onResult(selectedText)
@@ -655,8 +655,8 @@ internal class WebSessionBrowserHost(
         """.trimIndent()
 
     private fun selectAllActiveWebViewText() {
-        val webView = webViewHost.currentWebView() ?: return
-        webView.evaluateJavascript(
+        val page = webViewHost.currentPage() ?: return
+        page.evaluateJavascript(
             """
             (function() {
                 window.__operitTextSelection.selectAll();
@@ -671,8 +671,8 @@ internal class WebSessionBrowserHost(
     }
 
     private fun clearActiveWebViewSelection() {
-        val webView = webViewHost.currentWebView() ?: return
-        webView.evaluateJavascript(
+        val page = webViewHost.currentPage() ?: return
+        page.evaluateJavascript(
             """
             (function() {
                 window.__operitTextSelection.clear();
@@ -757,7 +757,8 @@ internal class WebSessionBrowserHost(
         anchorY: Double
     ) {
         val params = selectionActionsParams ?: return
-        val webView = webViewHost.currentWebView() ?: return
+        val page = webViewHost.currentPage() ?: return
+        val webView = page.view
         if (actionsView.measuredWidth == 0 || actionsView.measuredHeight == 0) {
             actionsView.measure(
                 View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
@@ -767,7 +768,7 @@ internal class WebSessionBrowserHost(
 
         val location = IntArray(2)
         webView.getLocationOnScreen(location)
-        val scale = webView.scale * webView.scaleX
+        val scale = page.scale * webView.scaleX
         val width = actionsView.measuredWidth
         val height = actionsView.measuredHeight
         val metrics = appContext.resources.displayMetrics

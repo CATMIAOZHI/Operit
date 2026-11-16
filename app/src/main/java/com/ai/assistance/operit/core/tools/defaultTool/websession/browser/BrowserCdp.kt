@@ -102,7 +102,9 @@ internal object BrowserCdp {
 
     private fun attach(tools: StandardBrowserSessionTools, session: BrowserToolSession): CdpConnection? {
         val tag = "operit-" + UUID.randomUUID().toString()
-        if (!tagPage(session.webView, tag)) return null
+        // WebView DevTools only; an engine tab has its own DevTools channel.
+        val webView = session.webView ?: return null
+        if (!tagPage(webView, tag)) return null
         val taken = connections.values.filter { it.isOpen }.map { it.targetId }.toSet()
         val targets = JSONArray(CdpConnection.httpGet(socketName, "/json/list"))
         val candidates =

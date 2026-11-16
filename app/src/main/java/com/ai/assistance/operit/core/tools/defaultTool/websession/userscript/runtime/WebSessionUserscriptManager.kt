@@ -16,9 +16,9 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
-import androidx.webkit.JavaScriptReplyProxy
-import androidx.webkit.ScriptHandler
-import androidx.webkit.WebMessageCompat
+import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserMessageReply
+import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserPage
+import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserScriptHandle
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import com.ai.assistance.operit.R
@@ -67,8 +67,8 @@ internal class WebSessionUserscriptManager(
 ) {
     private data class SessionBinding(
         val sessionId: String,
-        val webView: WebView,
-        val scriptHandler: ScriptHandler?,
+        val page: BrowserPage,
+        val scriptHandler: BrowserScriptHandle?,
         val menuCommands: LinkedHashMap<String, UserscriptPageMenuCommand> = linkedMapOf()
     )
 
@@ -188,13 +188,13 @@ internal class WebSessionUserscriptManager(
 
     fun attachSession(
         sessionId: String,
-        webView: WebView
+        page: BrowserPage
     ) {
         if (!supportState.isSupported) {
             return
         }
         val existing = sessionBindings[sessionId]
-        if (existing?.webView === webView) {
+        if (existing?.page === page) {
             return
         }
         sessionPageStates.putIfAbsent(sessionId, SessionPageState())
@@ -202,45 +202,27 @@ internal class WebSessionUserscriptManager(
             runCatching { existing?.scriptHandler?.remove() }
             val scriptHandler =
                 runCatching {
-                    WebViewCompat.addDocumentStartJavaScript(
-                        webView,
-                        UserscriptBootstrapScript.documentStartScript(),
-                        setOf("*")
-                    )
+                    page.addDocumentStartScript(UserscriptBootstrapScript.documentStartScript())
                 }.getOrElse { error ->
                     AppLogger.e(TAG, "Failed to add document-start userscript runtime", error)
                     null
                 }
             runCatching {
-                WebViewCompat.addWebMessageListener(
-                    webView,
-                    UserscriptBootstrapScript.BRIDGE_NAME,
-                    setOf("*"),
-                    object : WebViewCompat.WebMessageListener {
-                        override fun onPostMessage(
-                            view: WebView,
-                            message: WebMessageCompat,
-                            sourceOrigin: android.net.Uri,
-                            isMainFrame: Boolean,
-                            replyProxy: JavaScriptReplyProxy
-                        ) {
-                            handleBridgeMessage(
-                                sessionId = sessionId,
-                                webView = view,
-                                rawMessage = message.data.orEmpty(),
-                                replyProxy = replyProxy,
-                                isMainFrame = isMainFrame
-                            )
-                        }
-                    }
-                )
+                page.addMessageListener(UserscriptBootstrapScript.BRIDGE_NAME) { message, isMainFrame, reply ->
+                    handleBridgeMessage(
+                        sessionId = sessionId,
+                        rawMessage = message,
+                        replyProxy = reply,
+                        isMainFrame = isMainFrame
+                    )
+                }
             }.onFailure { error ->
                 AppLogger.e(TAG, "Failed to add userscript message listener", error)
             }
             sessionBindings[sessionId] =
                 SessionBinding(
                     sessionId = sessionId,
-                    webView = webView,
+                    page = page,
                     scriptHandler = scriptHandler
                 )
         }
@@ -304,7 +286,7 @@ internal class WebSessionUserscriptManager(
         val binding = sessionBindings[sessionId] ?: return
         mainHandler.post {
             val escaped = JSONObject.quote(commandId)
-            binding.webView.evaluateJavascript(
+            binding.page.evaluateJavascript(
                 """
                 (function() {
                     if (window.__operitUserscriptRuntime &&
@@ -531,9 +513,8 @@ internal class WebSessionUserscriptManager(
 
     private fun handleBridgeMessage(
         sessionId: String,
-        webView: WebView,
         rawMessage: String,
-        replyProxy: JavaScriptReplyProxy,
+        replyProxy: BrowserMessageReply,
         isMainFrame: Boolean
     ) {
         val message = runCatching { JSONObject(rawMessage) }.getOrNull() ?: return
@@ -798,7 +779,7 @@ internal class WebSessionUserscriptManager(
 
     private fun handleSetClipboard(
         payload: JSONObject,
-        replyProxy: JavaScriptReplyProxy,
+        replyProxy: BrowserMessageReply,
         requestId: String
     ) {
         val text = payload.optString("text", "")
@@ -817,7 +798,7 @@ internal class WebSessionUserscriptManager(
 
     private fun handleNotification(
         payload: JSONObject,
-        replyProxy: JavaScriptReplyProxy,
+        replyProxy: BrowserMessageReply,
         requestId: String
     ) {
         val title = payload.optString("title", "").ifBlank { context.getString(R.string.web_session_userscript_notification_title) }
@@ -874,7 +855,7 @@ internal class WebSessionUserscriptManager(
     private fun handleDownload(
         sessionId: String,
         payload: JSONObject,
-        replyProxy: JavaScriptReplyProxy,
+        replyProxy: BrowserMessageReply,
         requestId: String
     ) {
         val url = payload.optString("url", "").trim()
@@ -956,7 +937,7 @@ internal class WebSessionUserscriptManager(
     private fun handleGetTab(
         sessionId: String,
         payload: JSONObject,
-        replyProxy: JavaScriptReplyProxy,
+        replyProxy: BrowserMessageReply,
         requestId: String
     ) {
         val scriptId = payload.optLong("scriptId")
@@ -974,7 +955,7 @@ internal class WebSessionUserscriptManager(
     private fun handleSaveTab(
         sessionId: String,
         payload: JSONObject,
-        replyProxy: JavaScriptReplyProxy,
+        replyProxy: BrowserMessageReply,
         requestId: String
     ) {
         val scriptId = payload.optLong("scriptId")
@@ -989,7 +970,7 @@ internal class WebSessionUserscriptManager(
 
     private fun handleGetTabs(
         payload: JSONObject,
-        replyProxy: JavaScriptReplyProxy,
+        replyProxy: BrowserMessageReply,
         requestId: String
     ) {
         val scriptId = payload.optLong("scriptId")
@@ -1007,7 +988,7 @@ internal class WebSessionUserscriptManager(
 
     private fun handleCookie(
         payload: JSONObject,
-        replyProxy: JavaScriptReplyProxy,
+        replyProxy: BrowserMessageReply,
         requestId: String
     ) {
         val details = payload.optJSONObject("details") ?: JSONObject()
@@ -1039,7 +1020,7 @@ internal class WebSessionUserscriptManager(
     private fun handleAudio(
         sessionId: String,
         payload: JSONObject,
-        replyProxy: JavaScriptReplyProxy,
+        replyProxy: BrowserMessageReply,
         requestId: String
     ) {
         val binding = sessionBindings[sessionId]
@@ -1047,7 +1028,7 @@ internal class WebSessionUserscriptManager(
             postRpcError(replyProxy, requestId, "session_not_found")
             return
         }
-        if (!WebViewFeature.isFeatureSupported(WebViewFeature.MUTE_AUDIO)) {
+        if (binding.page.isAudioMuted() == null) {
             postRpcError(replyProxy, requestId, "mute_audio_not_supported")
             return
         }
@@ -1056,7 +1037,7 @@ internal class WebSessionUserscriptManager(
             runCatching {
                 when (action) {
                     "get_state" -> {
-                        val muted = WebViewCompat.isAudioMuted(binding.webView)
+                        val muted = binding.page.isAudioMuted() ?: false
                         audioMuteStates[sessionId] = muted
                         postRpcSuccess(
                             replyProxy,
@@ -1066,7 +1047,7 @@ internal class WebSessionUserscriptManager(
                     }
                     "set_mute" -> {
                         val muted = payload.optBoolean("muted", false)
-                        WebViewCompat.setAudioMuted(binding.webView, muted)
+                        binding.page.setAudioMuted(muted)
                         audioMuteStates[sessionId] = muted
                         dispatchHostEvent(
                             sessionId,
@@ -1090,7 +1071,7 @@ internal class WebSessionUserscriptManager(
     private fun handleRegisterWebRequest(
         sessionId: String,
         payload: JSONObject,
-        replyProxy: JavaScriptReplyProxy,
+        replyProxy: BrowserMessageReply,
         requestId: String
     ) {
         val scriptId = payload.optLong("scriptId")
@@ -1115,7 +1096,7 @@ internal class WebSessionUserscriptManager(
 
     private fun handleUnregisterWebRequest(
         payload: JSONObject,
-        replyProxy: JavaScriptReplyProxy,
+        replyProxy: BrowserMessageReply,
         requestId: String
     ) {
         val registrationId = payload.optString("registrationId", "").trim()
@@ -1134,7 +1115,7 @@ internal class WebSessionUserscriptManager(
     private fun handleXmlHttpRequest(
         sessionId: String,
         payload: JSONObject,
-        replyProxy: JavaScriptReplyProxy,
+        replyProxy: BrowserMessageReply,
         requestId: String
     ) {
         val gmRequestId = payload.optString("requestId", "").trim()
@@ -1173,7 +1154,7 @@ internal class WebSessionUserscriptManager(
         scriptId: Long,
         pageUrl: String,
         payload: JSONObject,
-        replyProxy: JavaScriptReplyProxy
+        replyProxy: BrowserMessageReply
     ) {
         val method = payload.optString("method", "GET").uppercase()
         val url = payload.optString("url", "")
@@ -1517,7 +1498,7 @@ internal class WebSessionUserscriptManager(
         val escapedMessage = JSONObject.quote(rawMessage)
         mainHandler.post {
             runCatching {
-                binding.webView.evaluateJavascript(
+                binding.page.evaluateJavascript(
                     """
                     (function() {
                         const runtime = window.__operitUserscriptRuntime;
@@ -1583,7 +1564,7 @@ internal class WebSessionUserscriptManager(
         )
 
     private fun postRpcSuccess(
-        replyProxy: JavaScriptReplyProxy,
+        replyProxy: BrowserMessageReply,
         requestId: String,
         payload: JSONObject
     ) {
@@ -1597,7 +1578,7 @@ internal class WebSessionUserscriptManager(
     }
 
     private fun postRpcError(
-        replyProxy: JavaScriptReplyProxy,
+        replyProxy: BrowserMessageReply,
         requestId: String,
         error: String
     ) {
@@ -1611,7 +1592,7 @@ internal class WebSessionUserscriptManager(
     }
 
     private fun postXhrEvent(
-        replyProxy: JavaScriptReplyProxy,
+        replyProxy: BrowserMessageReply,
         requestId: String,
         eventType: String,
         terminal: Boolean,
@@ -1629,7 +1610,7 @@ internal class WebSessionUserscriptManager(
     }
 
     private fun postBridgeMessage(
-        replyProxy: JavaScriptReplyProxy,
+        replyProxy: BrowserMessageReply,
         payload: JSONObject
     ) {
         mainHandler.post {
