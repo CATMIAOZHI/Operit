@@ -31,7 +31,7 @@ Orbit 是一个长期陪着你的私人代理。它和你聊天，记住重要�
 
 Orbit 内置在 **Operit Ry** 里。Operit Ry 是 [Operit](https://github.com/AAswordman/Operit) 的个人发行版，由 [水晴喵（WaterRainCat）](https://github.com/CATMIAOZHI) 维护。
 
-> Orbit 在 [CATMIAOZHI/Operit](https://github.com/CATMIAOZHI/Operit) 开发和发布，[CATMIAOZHI/orbit](https://github.com/CATMIAOZHI/orbit) 是它的同步镜像。下载、反馈和 PR 都请去 Operit。
+> Orbit 在 [CATMIAOZHI/Operit](https://github.com/CATMIAOZHI/Operit) 开发和发布，[CATMIAOZHI/orbit](https://github.com/CATMIAOZHI/orbit) 是它的同步镜像。两个仓库的 Releases 一样，安装包从哪边下载都行；反馈和 PR 请去 Operit。
 
 ## Orbit 能做什么
 

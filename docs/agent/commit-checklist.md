@@ -112,6 +112,7 @@ git diff --cached --check
 - `ORBIT_MIRROR_TOKEN` 必须是仅授权 `CATMIAOZHI/orbit` 的 fine-grained PAT，权限为 **Contents: read and write** 与 **Workflows: read and write**
 - 不直接提交、不接受 PR、不强推；orbit 关闭了 Actions，发布、issue 和 PR 留在 Operit
 - README 在两个仓库里共用，写法要两边都通顺
+- Operit 发布 Release 后由 `sync-orbit-release.yml` 复制到 orbit；该文件进入 `personal/main` 前按晋升手册第 9 节手动复制
 
 ### 上游 dev
 

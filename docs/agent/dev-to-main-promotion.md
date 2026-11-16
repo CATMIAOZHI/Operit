@@ -333,6 +333,30 @@ release notes 首行为 `# Operit Ry <version>`，正文按功能域分组（模
 
 创建 Release 属于对外动作，必须先取得用户明确同意。
 
+Release 发布后，`sync-orbit-release.yml` 会把它连同全部文件复制到 `CATMIAOZHI/orbit`，在 Actions 里确认这次运行成功。之后要重新复制，可在 Actions 里手动运行它并填写 `v<version>`。
+
+这个工作流进入 `personal/main` 之前既不会自动触发，也不能手动运行，用下面的命令手动复制（标签用普通 push，orbit 已有同名但不同提交的标签时会被拒绝；整段在子 shell 里遇错即停，标签推送失败就不会发布）：
+
+```bash
+(
+set -euo pipefail
+TAG=v<version>
+git fetch origin "refs/tags/$TAG:refs/tags/$TAG"
+git push https://github.com/CATMIAOZHI/orbit.git "refs/tags/$TAG:refs/tags/$TAG"
+rm -rf orbit-release && mkdir orbit-release
+gh release download "$TAG" --repo CATMIAOZHI/Operit --dir orbit-release
+gh release view "$TAG" --repo CATMIAOZHI/Operit --json body --jq '.body // ""' > orbit-release-notes.md
+TITLE=$(gh release view "$TAG" --repo CATMIAOZHI/Operit --json name --jq .name)
+PRERELEASE=$(gh release view "$TAG" --repo CATMIAOZHI/Operit --json isPrerelease --jq .isPrerelease)
+gh release create "$TAG" --repo CATMIAOZHI/orbit --verify-tag --title "$TITLE" \
+  --prerelease="$PRERELEASE" --latest=false \
+  --notes-file orbit-release-notes.md orbit-release/*
+# orbit 的 Latest 跟 Operit 一致
+LATEST=$(gh api repos/CATMIAOZHI/Operit/releases/latest --jq .tag_name)
+gh release edit "$LATEST" --repo CATMIAOZHI/orbit --latest
+)
+```
+
 ### 10. 回合并 main 并建立新检查点
 
 晋升 PR 合并后，将稳定分支回合并到开发分支。由于晋升 PR 可能经过 squash，出现等价代码冲突时，通用代码以通过审查的 `personal/main` 为准，同时保留 dev 专属身份、Nightly 和热更新配置。
