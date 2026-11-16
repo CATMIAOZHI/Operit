@@ -159,21 +159,22 @@ open class StandardSystemOperationTools(private val context: Context) {
                 manager.createNotificationChannel(channel)
             }
 
-            val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
-            val pendingIntent = if (launchIntent != null) {
-                PendingIntent.getActivity(
-                    context,
-                    0,
-                    launchIntent,
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-                    } else {
-                        PendingIntent.FLAG_UPDATE_CURRENT
-                    }
-                )
-            } else {
-                null
-            }
+            // The main screen itself: the home-screen entries can be switched off after the
+            // notification is posted (AppLauncherIdentity), MainActivity stays.
+            val launchIntent = Intent(context, com.ai.assistance.operit.ui.main.MainActivity::class.java)
+                .setAction(Intent.ACTION_MAIN)
+                .addCategory(Intent.CATEGORY_LAUNCHER)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
+            val pendingIntent = PendingIntent.getActivity(
+                context,
+                0,
+                launchIntent,
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                } else {
+                    PendingIntent.FLAG_UPDATE_CURRENT
+                }
+            )
 
             val builder =
                 NotificationCompat.Builder(context, AI_REPLY_CHANNEL_ID)
@@ -185,10 +186,7 @@ open class StandardSystemOperationTools(private val context: Context) {
                     .setCategory(NotificationCompat.CATEGORY_STATUS)
                     .setAutoCancel(true)
                     .setStyle(NotificationCompat.BigTextStyle().bigText(message))
-
-            if (pendingIntent != null) {
-                builder.setContentIntent(pendingIntent)
-            }
+                    .setContentIntent(pendingIntent)
 
             val notification = builder.build()
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
