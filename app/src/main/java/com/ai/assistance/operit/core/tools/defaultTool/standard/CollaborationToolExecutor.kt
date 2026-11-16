@@ -75,16 +75,21 @@ class CollaborationToolExecutor(context: Context) : ToolExecutor {
                         manager.initializeIfNeeded()
                         CollaborationModels.resolve(model, manager.getAllConfigSummaries())
                     } else null
+                    // An omitted fork_turns now starts the child without the parent's conversation.
+                    // Model inheritance and profile-prompt injection keep the rule they had while the
+                    // default was a full fork, so only the inherited context changes for those callers.
+                    val forkRaw = optional("fork_turns")
+                    val agentType = optional("agent_type")
+                    val fork = AgentFork.parse(forkRaw)
+                    val fullForkCompat = forkRaw == null || fork == AgentFork.All
                     val agent = coordinator.spawn(
-                        chatId, required("task_name"), required("message"), optional("agent_type") ?: "general",
-                        AgentFork.parse(optional("fork_turns")), selectedModel?.configId ?: runtime.parentModelConfigId,
+                        chatId, required("task_name"), required("message"), agentType ?: "general",
+                        fork, selectedModel?.configId ?: runtime.parentModelConfigId,
                         selectedModel?.modelIndex ?: runtime.parentModelIndex, runtime.callId,
-                        inheritModel = model != null ||
-                            (AgentFork.parse(optional("fork_turns")) == AgentFork.All && optional("agent_type") == null),
+                        inheritModel = model != null || (fullForkCompat && agentType == null),
                         reasoningEffort = effort,
                         roleCardId = runtime.callerCardId,
-                        includeProfilePrompt = AgentFork.parse(optional("fork_turns")) != AgentFork.All ||
-                            optional("agent_type") != null,
+                        includeProfilePrompt = !fullForkCompat || agentType != null,
                     )
                     buildJsonObject { put("task_name", agent.path); put("agent_id", agent.chatId) }
                 }
