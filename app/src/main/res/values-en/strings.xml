@@ -6813,6 +6813,9 @@
     <string name="attachment_added">Attachment added: %1$s</string>
     <string name="attachment_media_process_failed">Cannot process media file, please try another method</string>
     <string name="attachment_cannot_attach">Cannot attach file: %1$s</string>
+    <string name="paste_as_attachment">Paste as attachment</string>
+    <string name="attachment_paste">Paste</string>
+    <string name="paste_attachment_failed">Couldn\'t read what was pasted</string>
     <string name="attachment_file_not_exist">File does not exist</string>
     <string name="attachment_add_failed">Failed to add attachment: %1$s</string>
     <string name="attachment_screen_content_failed">Failed to get screen content: %1$s</string>

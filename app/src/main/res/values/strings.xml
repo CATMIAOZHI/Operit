@@ -7280,6 +7280,9 @@
     <string name="attachment_added">已添加附件: %1$s</string>
     <string name="attachment_media_process_failed">无法处理媒体文件，请尝试其他方式</string>
     <string name="attachment_cannot_attach">无法附加文件: %1$s</string>
+    <string name="paste_as_attachment">粘贴为附件</string>
+    <string name="attachment_paste">粘贴</string>
+    <string name="paste_attachment_failed">读不到粘贴的内容</string>
     <string name="attachment_file_not_exist">文件不存在</string>
     <string name="attachment_add_failed">添加附件失败: %1$s</string>
     <string name="attachment_screen_content_failed">获取屏幕内容失败: %1$s</string>

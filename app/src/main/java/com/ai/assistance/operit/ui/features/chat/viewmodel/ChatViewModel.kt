@@ -2498,6 +2498,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     messageProcessingDelegate.setInputProcessingStateForChat(currentChatId, InputProcessingState.Idle)
                 }
             }
+        }.invokeOnCompletion {
+            // A picture pasted from the keyboard waits in a cache copy; it goes however this ended.
+            com.ai.assistance.operit.ui.features.chat.components.style.input.common
+                .releaseStagedPasteLater(context, filePath)
         }
     }
 

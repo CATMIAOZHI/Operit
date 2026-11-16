@@ -246,6 +246,8 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
                     var sourceUri: Uri? = null
                     var fileName: String? = null
                     var mimeType: String? = null
+                    // A picture pasted from the keyboard waits in a cache copy until it is copied below.
+                    var pastedCopy: java.io.File? = null
 
                     if (filePath.startsWith("content://")) {
                         val uri = Uri.parse(filePath)
@@ -270,6 +272,7 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
                         sourceUri = Uri.fromFile(file)
                         fileName = file.name
                         mimeType = getMimeTypeFromPath(localPath) ?: "application/octet-stream"
+                        pastedCopy = file
                     }
 
                     val resolvedUri = sourceUri
@@ -282,6 +285,9 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
 
                     AppLogger.d(TAG, "Copying attachment source to a local temporary file: $resolvedUri")
                     val tempFile = createTempFileFromUri(resolvedUri, resolvedFileName)
+                    pastedCopy?.let {
+                        com.ai.assistance.operit.ui.features.chat.components.style.input.common.releaseStagedPaste(context, it)
+                    }
                     if (tempFile == null || !tempFile.exists()) {
                         AppLogger.e(TAG, "Failed to create temp file from source: $resolvedUri")
                         _toastEvent.emit(context.getString(R.string.attachment_cannot_attach, resolvedFileName))

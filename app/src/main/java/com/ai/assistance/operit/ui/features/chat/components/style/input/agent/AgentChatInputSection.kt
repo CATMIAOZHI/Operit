@@ -113,6 +113,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.ComposerPredictionTextField
+import com.ai.assistance.operit.ui.features.chat.components.style.input.common.AcceptPastedAttachments
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.rememberComposerPredictionTransformation
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.EnhancedAIService
@@ -923,6 +924,11 @@ fun AgentChatInputSection(
                             .fillMaxWidth()
                             .padding(horizontal = 12.dp, vertical = 8.dp),
                 ) {
+                    AcceptPastedAttachments(
+                        enabled = !isProcessing || allowTextInputWhileProcessing,
+                        chatId = { actualViewModel.currentChatId.value },
+                        onAttach = onAttachmentRequest,
+                    ) { pasteModifier ->
                     ComposerPredictionTextField(
                         value = userMessage,
                         prediction = composerPrediction,
@@ -940,6 +946,7 @@ fun AgentChatInputSection(
                             )
                         },
                         modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp)
+                            .then(pasteModifier)
                             .onPreviewKeyEvent(onEnterToSendKeyEvent),
                         textStyle = inputTextStyle,
                         maxLines = 6,
@@ -981,6 +988,7 @@ fun AgentChatInputSection(
                         },
                         enabled = !isProcessing || allowTextInputWhileProcessing,
                     )
+                    }
 
                     Spacer(modifier = Modifier.height(8.dp))
 
@@ -1231,6 +1239,11 @@ fun AgentChatInputSection(
                                 .fillMaxWidth()
                                 .padding(horizontal = 12.dp, vertical = 8.dp),
                     ) {
+                        AcceptPastedAttachments(
+                            enabled = !isProcessing || allowTextInputWhileProcessing,
+                            chatId = { actualViewModel.currentChatId.value },
+                            onAttach = onAttachmentRequest,
+                        ) { pasteModifier ->
                         ComposerPredictionTextField(
                             value = userMessage,
                             prediction = composerPrediction,
@@ -1248,6 +1261,7 @@ fun AgentChatInputSection(
                                 )
                             },
                             modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp)
+                                .then(pasteModifier)
                                 .onPreviewKeyEvent(onEnterToSendKeyEvent),
                             textStyle = inputTextStyle,
                             maxLines = 6,
@@ -1289,6 +1303,7 @@ fun AgentChatInputSection(
                             },
                             enabled = !isProcessing || allowTextInputWhileProcessing,
                         )
+                        }
 
                         Spacer(modifier = Modifier.height(8.dp))
 
@@ -1594,6 +1609,8 @@ fun AgentChatInputSection(
                     onValueChange = onUserMessageChange,
                     onDismiss = { showFullscreenInput.value = false },
                     onConfirm = { showFullscreenInput.value = false },
+                    onAttach = onAttachmentRequest,
+                    chatId = { actualViewModel.currentChatId.value },
                 )
             }
         }
