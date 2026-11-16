@@ -135,6 +135,17 @@
             android:noHistory="true"
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
+        <!-- The open browser: an ordinary window, so swiping home and the recent apps work. -->
+        <activity
+            android:name=".core.tools.defaultTool.websession.browser.WebSessionBrowserActivity"
+            android:exported="false"
+            android:label="@string/app_name"
+            android:taskAffinity="${applicationId}.browser"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|screenLayout|smallestScreenSize|uiMode|density"
+            android:windowSoftInputMode="adjustResize"
+            android:theme="@style/Theme.Operit" />
+
         <activity
             android:name=".ui.components.ResourceDownloadConfirmActivity"
             android:excludeFromRecents="true"
