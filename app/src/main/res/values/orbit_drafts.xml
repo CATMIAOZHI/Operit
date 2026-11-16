@@ -8,8 +8,6 @@
     <string name="orbit_avatar_default">默认头像</string>
     <string name="orbit_avatar_logo_colors">默认头像颜色</string>
     <string name="orbit_avatar_logo_colors_draft">帮我换一下默认头像的颜色：</string>
-    <string name="orbit_device_access_terminal_draft">帮我装一下终端环境。</string>
-    <string name="orbit_device_access_terminal_button">让 %1$s 帮你装</string>
     <string name="orbit_rename_draft">我想给你改个名字，叫：</string>
     <string name="orbit_avatar_pick_role_card">选一张角色卡</string>
     <string name="orbit_avatar_no_role_cards">还没有角色卡</string>

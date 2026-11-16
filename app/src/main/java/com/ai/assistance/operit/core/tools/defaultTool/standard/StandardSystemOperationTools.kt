@@ -395,7 +395,7 @@ open class StandardSystemOperationTools(private val context: Context) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                 intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-            context.startActivity(intent)
+            context.startActivity(com.ai.assistance.operit.util.ApkInstallIntent.toInstaller(context, intent))
 
             val resultData = AppOperationData(
                 operationType = "install_request",

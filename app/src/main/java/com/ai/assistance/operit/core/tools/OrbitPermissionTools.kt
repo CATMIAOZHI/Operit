@@ -39,7 +39,7 @@ internal object OrbitPermissionTools {
         details = """
   - Checks what is on first. When it is already on, no card is placed and the result says so.
   - To see every permission at once without placing any card, call orbit_device action=describe and read its permissions; the app reads them itself, so no ADB, Shizuku or terminal command is needed.
-  - device_access opens Operit's own access page over the chat (pick a level there and follow its steps). The result gives the picked level and whether it answers now.
+  - device_access is set up on the card itself: one Root button on a rooted phone, otherwise three steps (install the Shizuku bundled with Operit, start it in Shizuku through wireless debugging, allow Operit). The result gives the current level and whether it answers now.
   - accessibility has two steps on the card: install the bundled service app (or update an old one), then turn its service on (done for the user when ADB debugging works, otherwise the system's accessibility settings open). The result gives installed, update_needed and enabled.
   - overlay: before orbit_browser_handoff or showing the browser full screen, check it; when it is off, put this card so the user's tap on the page opens.
   - Otherwise the card shows the setting with a button that opens the system prompt or settings screen, and a "Don't remind me" button; then it returns at once. End the turn with one short line.

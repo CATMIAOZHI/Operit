@@ -58,7 +58,7 @@ import org.json.JSONObject
 
 /** Orbit pages a chat card can open over the chat. */
 internal enum class OrbitCardPage {
-    SPEECH_SETTINGS, MODEL_CONFIG, DEVICE_ACCESS, WEIXIN, ROLE_CARDS, TOOL_ACCESS, TOOL_PERMISSIONS, ORBIT_MODELS, NOTIFICATIONS, MCP_CONFIG,
+    SPEECH_SETTINGS, MODEL_CONFIG, WEIXIN, ROLE_CARDS, TOOL_ACCESS, TOOL_PERMISSIONS, ORBIT_MODELS, NOTIFICATIONS, MCP_CONFIG,
 }
 
 /** Opens an Orbit page from a card; null where the chat cannot open pages (then the button is off). */
@@ -384,27 +384,33 @@ internal fun OrbitSpeechSettingsPage(orbitId: String, onBack: () -> Unit) {
     }
 }
 
-/** The app's own access page (ADB debugging through Shizuku, device admin, Root), opened inside Orbit. */
+/** Device access in Orbit's settings: the same steps as the chat card, read again on every return. */
 @Composable
-internal fun OrbitDeviceAccessPage(name: String, onBack: () -> Unit, onDraft: (String) -> Unit) {
+internal fun OrbitDeviceAccessPage(name: String, onBack: () -> Unit) {
     OrbitPageBack(onBack = onBack)
-    androidx.compose.runtime.DisposableEffect(Unit) {
-        onDispose { com.ai.assistance.operit.features.orbit.OrbitPermissionCards.deviceAccessPageClosed() }
-    }
-    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
-        .statusBarsPadding().navigationBarsPadding()) {
-        OrbitPageHeader(stringResource(R.string.orbit_device_access_title), onBack,
-            Modifier.padding(horizontal = 20.dp).padding(top = 8.dp))
-        Box(Modifier.fillMaxWidth().weight(1f)) {
-            val terminalDraft = stringResource(R.string.orbit_device_access_terminal_draft)
-            val terminalLabel = stringResource(R.string.orbit_device_access_terminal_button, name)
-            // The page's terminal setup button asks Orbit, which installs the terminal itself.
-            com.ai.assistance.operit.ui.features.demo.screens.ShizukuDemoScreen(
-                navigateTo = { screen ->
-                    if (screen == com.ai.assistance.operit.ui.main.screens.Screen.TerminalSetup) onDraft(terminalDraft)
-                },
-                terminalSetupLabel = terminalLabel,
-            )
+    var tick by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    androidx.compose.runtime.DisposableEffect(lifecycle) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) tick++
         }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
+    val setup = rememberDeviceSetup(tick)
+    val context = LocalContext.current
+    val english = remember(context) { com.ai.assistance.operit.util.LocaleUtils.usesEnglishPrompt(context) }
+    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
+        .statusBarsPadding().navigationBarsPadding().verticalScroll(rememberScrollState())
+        .padding(horizontal = 20.dp).padding(top = 8.dp, bottom = 32.dp)) {
+        OrbitPageHeader(stringResource(R.string.orbit_device_access_title), onBack)
+        Text(
+            if (setup?.access?.working == true) stringResource(R.string.orbit_device_access_card_on,
+                com.ai.assistance.operit.features.orbit.OrbitPermissionCards.levelLabel(english, setup.access.level))
+            else stringResource(R.string.orbit_device_access_note),
+            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp, bottom = 16.dp),
+        )
+        DeviceAccessSteps(name, setup, onRefresh = { tick++ }, onBeginGrant = {})
     }
 }

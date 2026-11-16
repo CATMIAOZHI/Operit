@@ -98,11 +98,6 @@ internal object OrbitPermissionCards {
     @Volatile
     var lastDeviceAccess: DeviceAccess? = null
 
-    /** Counts closes of the app's access page, which opens inside Orbit, so cards read the level again. */
-    private val deviceAccessClosedFlow = MutableStateFlow(0)
-    val deviceAccessPageClosed: StateFlow<Int> = deviceAccessClosedFlow
-    fun deviceAccessPageClosed() { deviceAccessClosedFlow.update { it + 1 } }
-
     private val elevatedLevels = setOf(
         com.ai.assistance.operit.core.tools.system.AndroidPermissionLevel.DEBUGGER,
         com.ai.assistance.operit.core.tools.system.AndroidPermissionLevel.ROOT,
