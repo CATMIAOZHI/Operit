@@ -42,12 +42,23 @@ internal fun rememberOrbitActivity(orbit: OrbitProfile, currentChatId: String?):
     val talkIds = orbit.talkChatIds
     val orbitId = orbit.id
     return remember(talkIds, orbitId, currentChatId) {
+        orbitActivityFlow(context, orbitId, talkIds, currentChatId)
+    }.collectAsStateWithLifecycle(initialValue = OrbitLiveActivity())
+}
+
+/** What this Orbit is doing now; also drives the ongoing notification while Orbit runs. */
+internal fun orbitActivityFlow(
+    context: android.content.Context,
+    orbitId: String,
+    talkIds: List<String>,
+    currentChatId: String?,
+): kotlinx.coroutines.flow.Flow<OrbitLiveActivity> {
         val holder = ChatRuntimeHolder.getInstance(context)
         val main = holder.getCore(ChatRuntimeSlot.MAIN)
         val floating = holder.getCore(ChatRuntimeSlot.FLOATING)
         // Taken on the flow's own thread below: the first use reads the subagent store from disk.
         val coordinator by lazy { CollaborationCoordinator.getInstance(context) }
-        combine(
+        return combine(
             main.activeStreamingChatIds, main.inputProcessingStateByChatId,
             floating.activeStreamingChatIds, floating.inputProcessingStateByChatId,
             OrbitTaskRunner.runningChats,
@@ -66,7 +77,6 @@ internal fun rememberOrbitActivity(orbit: OrbitProfile, currentChatId: String?):
             val ordered = listOfNotNull(currentChatId?.takeIf { it in mine }) + mine
             orbitLiveActivity(ordered.map { states[it] }, tasks.isNotEmpty())
         }.distinctUntilChanged().flowOn(Dispatchers.Default)
-    }.collectAsStateWithLifecycle(initialValue = OrbitLiveActivity())
 }
 
 internal fun orbitLiveActivity(states: List<InputProcessingState?>, hasBackgroundTask: Boolean): OrbitLiveActivity {
