@@ -193,6 +193,34 @@ class OrbitTaskDaoTest {
         assertEquals("PAUSED", dao.task("once")!!.state)
     }
 
+    @Test fun `a repeating task whose chat turn was lost goes on quietly at its next time`() = runBlocking {
+        dao.insertTask(definition(kind = "WATCH"))
+        val first = checkNotNull(claim())
+        assertTrue(dao.beginChatHandoff(first, "turn", "boot", 1001, 11))
+        // The app restarted: the turn is gone and the lease has run out.
+        val event = checkNotNull(dao.enqueueDue("task", 2000))
+        assertNull(dao.claim(event, "next", "new-boot", 2000, 1, 100, "paused", continueNextRunAt = 9000,
+            continuedMessage = "goes on"))
+        assertEquals("ACTIVE", dao.task("task")!!.state)
+        assertEquals(9000L, dao.task("task")!!.nextRunAt)
+        assertEquals("", dao.run(first.id)!!.error)
+        assertEquals("goes on", dao.run(first.id)!!.observation)
+        assertTrue(dao.pendingDeliveries("orbit").isEmpty())
+        // A repeating place task has no clock time but still goes on.
+        dao.insertTask(definition(id = "place", kind = "GEOFENCE").copy(nextRunAt = 0))
+        assertTrue(dao.enqueueGeofence("place", 1, "crossing", 1000))
+        val place = checkNotNull(claim(id = "place"))
+        assertTrue(dao.interrupt(place, 1011, "paused", 0, "goes on", continues = true))
+        assertEquals("ACTIVE", dao.task("place")!!.state)
+        assertTrue(dao.pendingDeliveries("orbit").isEmpty())
+        // Without a next time (a one-time task) it is paused and the user is told.
+        dao.insertTask(definition(id = "once", kind = "WATCH").copy(scheduleMode = "ONCE"))
+        val once = checkNotNull(claim(id = "once"))
+        assertTrue(dao.interrupt(once, 1011, "paused"))
+        assertEquals("PAUSED", dao.task("once")!!.state)
+        assertEquals(1, dao.pendingDeliveries("orbit").size)
+    }
+
     @Test fun `a run with an unconfirmed effect is not retried for the allowance`() = runBlocking {
         dao.insertTask(definition(kind = "ASSIST"))
         val token = checkNotNull(claim())

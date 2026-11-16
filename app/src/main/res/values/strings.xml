@@ -9493,6 +9493,12 @@
 
     <string name="orbit_run_interrupted">执行意外中断，已暂停。请先核实此前工具是否已完成操作，再继续；不会自动从头重做。</string>
     <string name="orbit_run_timed_out">运行超过 %2$d 分钟，已停下并暂停：“%1$s”。请先核实已经做了哪些操作，再继续；不会自动从头重做。</string>
+    <string name="orbit_run_interrupted_skipped">这次没跑完，到时间照常</string>
+    <string name="orbit_run_wake_timed_out_skipped">这次等了太久没叫上 Orbit，到时间照常</string>
+    <string name="orbit_run_timed_out_skipped">这次运行太久，已停下，到时间照常</string>
+    <string name="orbit_run_wake_timed_out_paused">等了太久没叫上 Orbit，已暂停；需要的话让 Orbit 再试一次</string>
+    <string name="orbit_run_failed_reason">这次出错没做完（%1$s），到时间再试</string>
+    <string name="orbit_run_failed_paused">出错了，已暂停（%1$s）</string>
     <string name="orbit_permission_keep_alive_title">让 %1$s 在后台醒着</string>
     <string name="orbit_permission_keep_alive_sub">打开后，提醒和后台任务能按时进行</string>
     <string name="orbit_permission_all_on">都已开启，后台任务可以按时进行</string>

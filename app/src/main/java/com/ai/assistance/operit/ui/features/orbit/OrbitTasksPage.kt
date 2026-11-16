@@ -368,7 +368,8 @@ private fun runIcon(run: OrbitRunEntity): String = when {
     run.state == "RUNNING" -> "loader"
     run.state == "CANCELLED" -> "circle-slash"
     run.state == "FAILED" || run.error.isNotBlank() -> "circle-alert"
-    run.decision == OrbitRunEntity.SKIPPED -> "skip-forward"
+    // Skipped, or stopped without an error and left to go on next time.
+    run.decision == OrbitRunEntity.SKIPPED || run.state == "INTERRUPTED" -> "skip-forward"
     OrbitChatDecision.isChat(run.decision) -> "message-circle"
     else -> "circle-check"
 }
