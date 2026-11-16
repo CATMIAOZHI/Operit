@@ -2,4 +2,5 @@
 <resources>
     <color name="rainy_primary">#FFFFB3C6</color>
     <color name="rainy_background">#FF1F1419</color>
+    <color name="orbit_launch_background">#FF151517</color>
 </resources>

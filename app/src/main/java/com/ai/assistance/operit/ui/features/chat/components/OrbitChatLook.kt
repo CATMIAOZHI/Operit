@@ -111,6 +111,12 @@ val LocalShowHiddenChatRows = compositionLocalOf { false }
 val LocalTranscriptPreparing = compositionLocalOf<androidx.compose.runtime.MutableState<Boolean>?> { null }
 
 /**
+ * How visible the transcript's messages are. Entering an Orbit chat keeps them hidden until they
+ * are ready, so they show together instead of one by one. Read only while drawing.
+ */
+val LocalTranscriptAlpha = compositionLocalOf<androidx.compose.runtime.State<Float>?> { null }
+
+/**
  * In Orbit's developer view: Orbit's own picture, drawn beside replies signed with its [name]
  * (its chats and its background runs), so they never look like a role card's.
  */
@@ -502,6 +508,8 @@ object OrbitSpeech {
     private val placeholder = Regex("\uE000(\\d+)\uE001")
     // The start of an options token at the very end of a reply still streaming in.
     private val partialOptionsToken = Regex("\\[\\[orbit-options(?::[a-z0-9]{0,10}]?)?$")
+    // A token Orbit wrote without making a set (empty or made up) draws nothing, so it is not shown.
+    private val strayOptionsToken = Regex("\\[\\[orbit-options(?::[^\\]\\n]{0,40})?]]", RegexOption.IGNORE_CASE)
     // The chat is re-shown as a reply streams in; each stored text is cleaned only once.
     private val cleaned = java.util.Collections.synchronizedMap(java.util.WeakHashMap<String, String>())
     // Stored instead of a text that needed no cleaning: a value pointing at its own key would keep
@@ -648,7 +656,7 @@ object OrbitSpeech {
         if (text.contains("[[orbit-options", ignoreCase = true)) {
             text = text.replace(com.ai.assistance.operit.features.orbit.OrbitOptions.token) { m ->
                 "\n\n```$ORBIT_OPTIONS_FENCE\n${m.groupValues[1]}\n```\n\n"
-            }.replace(partialOptionsToken, "")
+            }.replace(strayOptionsToken, "").replace(partialOptionsToken, "")
         }
         if (cards.isNotEmpty()) {
             text = text.replace(placeholder) { m ->

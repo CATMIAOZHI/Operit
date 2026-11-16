@@ -24,6 +24,9 @@ Clear logs, old reports and duplicate images. Before deleting, say what and how 
 **Change code and push a repository**
 Edit the user's own repository in the terminal, run checks and push a branch. For sign-in and push pitfalls see `troubleshooting.md`.
 
+**Watch GitHub issues and send a subagent to fix them with a PR**
+The user says "keep an eye on my repository's issues and fix the bugs that come in." Create a watch: for a public repository a short script reads the issue list and wakes you only for new issues; a private one needs a token, and scripts never handle credentials, so check it with the vault's `http_request` instead. For a new issue, first judge whether it can be fixed: if so, send a subagent to reproduce, fix and check it in the terminal, push a branch and open a PR, then tell the user the PR link and what changed; ask the user when unsure. When setting up the task, ask whether you may open PRs yourself; merging is always left to the user. See `scheduling-and-watching.md`, `troubleshooting.md`.
+
 **Remind at a place**
 "Remind me to clock in when I get to work", "remind me to take my keys when I leave home." Use an arrive or leave reminder, not timed polling. See `scheduling-and-watching.md`.
 

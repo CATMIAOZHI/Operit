@@ -98,11 +98,6 @@ internal object OrbitPermissionCards {
     @Volatile
     var lastDeviceAccess: DeviceAccess? = null
 
-    /** Counts closes of the app's access page, which opens inside Orbit, so cards read the level again. */
-    private val deviceAccessClosedFlow = MutableStateFlow(0)
-    val deviceAccessPageClosed: StateFlow<Int> = deviceAccessClosedFlow
-    fun deviceAccessPageClosed() { deviceAccessClosedFlow.update { it + 1 } }
-
     private val elevatedLevels = setOf(
         com.ai.assistance.operit.core.tools.system.AndroidPermissionLevel.DEBUGGER,
         com.ai.assistance.operit.core.tools.system.AndroidPermissionLevel.ROOT,
@@ -379,6 +374,145 @@ internal object OrbitPermissionCards {
                 grantSending.remove(cardId)
             }
         }
+    }
+
+    /**
+     * Where setting up Shizuku stands; the device access card shows only this step. Wireless
+     * debugging needs Android 11; before that Shizuku is started from a computer.
+     */
+    enum class DeviceStep { INSTALL, DEVELOPER, WIRELESS, START, ALLOW, DONE }
+
+    /** Wireless debugging (and so starting Shizuku on the phone itself) needs Android 11. */
+    val wirelessDebuggingSupported: Boolean get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
+
+    fun developerOptionsOn(context: Context): Boolean = runCatching {
+        Settings.Global.getInt(context.contentResolver, Settings.Global.DEVELOPMENT_SETTINGS_ENABLED, 0) == 1
+    }.getOrDefault(false)
+
+    fun wirelessDebuggingOn(context: Context): Boolean = runCatching {
+        Settings.Global.getInt(context.contentResolver, "adb_wifi_enabled", 0) == 1
+    }.getOrDefault(false)
+
+    fun deviceStep(working: Boolean, installed: Boolean, outdated: Boolean, running: Boolean,
+        developerOptions: Boolean, wirelessDebugging: Boolean): DeviceStep = when {
+        working -> DeviceStep.DONE
+        !installed || outdated -> DeviceStep.INSTALL
+        running -> DeviceStep.ALLOW
+        !developerOptions -> DeviceStep.DEVELOPER
+        wirelessDebuggingSupported && !wirelessDebugging -> DeviceStep.WIRELESS
+        else -> DeviceStep.START
+    }
+
+    /** The steps this phone goes through, in order (without [DeviceStep.DONE]). */
+    val deviceSteps: List<DeviceStep>
+        get() = DeviceStep.entries.filter { it != DeviceStep.DONE && (wirelessDebuggingSupported || it != DeviceStep.WIRELESS) }
+
+    /** Reads the step now; it may ask Shizuku, so call it off the main thread. */
+    fun deviceStepNow(context: Context): DeviceStep {
+        val working = deviceAccess(context).working
+        val installed = com.ai.assistance.operit.core.tools.system.ShizukuAuthorizer.isShizukuInstalled(context)
+        val running = installed && com.ai.assistance.operit.core.tools.system.ShizukuAuthorizer.isShizukuServiceRunning()
+        val outdated = installed && !working && runCatching {
+            com.ai.assistance.operit.core.tools.system.ShizukuInstaller.isShizukuUpdateNeeded(context)
+        }.getOrDefault(false)
+        return deviceStep(working, installed, outdated, running, developerOptionsOn(context), wirelessDebuggingOn(context))
+    }
+
+    /**
+     * The user finished a Shizuku step on the device access card ([from], after tapping its button)
+     * and the card now shows [to]. Orbit hears it once, so it can walk them through the next step in
+     * the chat. Reaching [DeviceStep.DONE] is told by [grantedFromCard] instead.
+     */
+    fun deviceStepReached(context: Context, orbitId: String, chatId: String, cardId: String, from: DeviceStep, to: DeviceStep) {
+        if (chatId.isBlank() || to == DeviceStep.DONE || to.ordinal <= from.ordinal) return
+        // One send per step: a newer step is not held back while an older one waits for the chat.
+        val key = "$cardId/step:${to.name}"
+        if (!grantSending.add(key)) return
+        val app = context.applicationContext
+        scope.launch {
+            try {
+                val saved = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                val deliveredKey = "step:$cardId:${to.name}"
+                if (withContext(Dispatchers.IO) { saved.getBoolean(deliveredKey, false) }) return@launch
+                val orbit = OrbitPreferences.getInstance(app).current().orbits
+                    .firstOrNull { it.id == orbitId && !it.deleting && chatId in it.talkChatIds } ?: return@launch
+                // Still on that step: a further one has its own note, and done has the granted note.
+                suspend fun stillThere() = withContext(Dispatchers.IO) { deviceStepNow(app) == to }
+                if (!stillThere()) return@launch
+                val notice = deviceStepNotice(LocaleUtils.usesEnglishPrompt(app), from, to)
+                val deadline = android.os.SystemClock.elapsedRealtime() + IDLE_WAIT_MS
+                while (true) {
+                    val left = deadline - android.os.SystemClock.elapsedRealtime()
+                    if (left <= 0) break
+                    val told = OrbitWake.tell(app, orbit, chatId, notice, left, left,
+                        ready = {
+                            OrbitPreferences.getInstance(app).current().orbits.any {
+                                it.id == orbitId && !it.deleting && chatId in it.talkChatIds
+                            } && stillThere()
+                        },
+                        onSent = {
+                            withContext(Dispatchers.IO) { saved.edit().putBoolean(deliveredKey, true).commit() }
+                        },
+                        announce = false)
+                    if (told != OrbitWake.Told.BUSY) break
+                    kotlinx.coroutines.delay(1_500)
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AppLogger.w("OrbitPermissionCards", "Could not tell Orbit about a device access step: ${e.message}")
+            } finally {
+                grantSending.remove(key)
+            }
+        }
+    }
+
+    fun deviceStepNotice(english: Boolean, from: DeviceStep, to: DeviceStep): String {
+        val phone = "${Build.MANUFACTURER} ${Build.MODEL}, Android ${Build.VERSION.RELEASE}"
+        val total = deviceSteps.size
+        val number = deviceSteps.indexOf(to) + 1
+        return if (english) {
+            "$MARKER Device control: \"${deviceStepName(true, from)}\" done, next \"${deviceStepName(true, to)}\" (step $number of $total)\n" +
+                "The user finished a step on your device control card and the app checked it. This is not a message typed by the user. " +
+                "Phone: $phone. The card now shows only the next step and its button: ${deviceStepHow(true, to)}\n" +
+                "In one or two short, plain sentences, tell them what to do next. If you know where this brand keeps the setting, " +
+                "say it. Do not repeat the step they finished, do not place another card, and do not mention hidden notes."
+        } else {
+            "$MARKER 设备控制：「${deviceStepName(false, from)}」已完成，下一步「${deviceStepName(false, to)}」（第 $number 步，共 $total 步）\n" +
+                "用户在你的设备控制卡上做完了一步，App 已核实。这不是用户打字发的消息。" +
+                "手机：$phone。卡片上现在只显示下一步和它的按钮：${deviceStepHow(false, to)}\n" +
+                "用一两句大白话告诉他下一步怎么做；知道这个品牌的设置在哪就说具体点。" +
+                "不要重复已完成的步骤，不要再放卡，不要提隐藏消息。"
+        }
+    }
+
+    private fun deviceStepName(english: Boolean, step: DeviceStep): String = when (step) {
+        DeviceStep.INSTALL -> if (english) "Install Shizuku" else "安装 Shizuku"
+        DeviceStep.DEVELOPER -> if (english) "Turn on developer options" else "打开开发者选项"
+        DeviceStep.WIRELESS -> if (english) "Turn on wireless debugging" else "打开无线调试"
+        DeviceStep.START -> if (english) "Start Shizuku" else "启动 Shizuku"
+        DeviceStep.ALLOW -> if (english) "Allow Operit in Shizuku" else "在 Shizuku 里允许 Operit"
+        DeviceStep.DONE -> if (english) "Done" else "完成"
+    }
+
+    private fun deviceStepHow(english: Boolean, step: DeviceStep): String = when (step) {
+        DeviceStep.INSTALL -> if (english) "tap Install on the card; Operit carries Shizuku." else "点卡片上的「安装」，Shizuku 是 Operit 自带的。"
+        DeviceStep.DEVELOPER -> if (english) "the button opens About phone; tapping the build number (on some phones the OS version) 7 times turns developer options on."
+            else "按钮打开「关于手机」，连点版本号（有的手机是 OS 版本）7 次就能打开开发者选项。"
+        DeviceStep.WIRELESS -> if (english) "the button opens Developer options; turn on Wireless debugging there (Wi-Fi must be on) and allow it."
+            else "按钮打开「开发者选项」，在里面打开「无线调试」并允许（要连着 Wi-Fi）。"
+        DeviceStep.START -> if (wirelessDebuggingSupported) {
+            if (english) "the button opens Shizuku; choose Start via wireless debugging. The first time it needs pairing: in Shizuku tap Pairing, " +
+                "then in Wireless debugging tap Pair device with pairing code, and type that code into Shizuku's notification."
+            else "按钮打开 Shizuku，选「通过无线调试启动」。第一次要先配对：在 Shizuku 里点「配对」，" +
+                "再到「无线调试」里点「使用配对码配对设备」，把配对码填进 Shizuku 弹出的通知里。"
+        } else {
+            if (english) "this phone is below Android 11, so Shizuku is started from a computer with adb; the card links to the guide."
+            else "这台手机低于 Android 11，要连电脑用 adb 启动 Shizuku；卡片上有教程链接。"
+        }
+        DeviceStep.ALLOW -> if (english) "tap Allow on the card and choose Allow in Shizuku's dialog."
+            else "点卡片上的「允许」，在 Shizuku 弹窗里选允许。"
+        DeviceStep.DONE -> ""
     }
 
     /** Null until read; the first call reads it off the main thread, so a card never waits on the disk. */

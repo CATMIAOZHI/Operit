@@ -720,13 +720,15 @@ private fun EmptySideChats(onNew: () -> Unit, enabled: Boolean) {
 
 /**
  * "Back to Operit", where Muse has "Invite". A round button: the menu and the sidebar are narrow,
- * and a labelled pill left the Orbit's name only a few characters.
+ * and a labelled pill left the Orbit's name only a few characters. It asks first: it sits next to
+ * the name, where a stray tap is easy.
  */
 @Composable
 internal fun OrbitBackToOperitButton(onClick: () -> Unit) {
     val label = stringResource(R.string.orbit_menu_back_to_operit)
+    var asking by remember { mutableStateOf(false) }
     Surface(
-        onClick = onClick,
+        onClick = { asking = true },
         shape = RoundedCornerShape(50),
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
@@ -737,6 +739,18 @@ internal fun OrbitBackToOperitButton(onClick: () -> Unit) {
             // Leaving, not a back arrow that could read as closing the menu.
             Icon(orbitIcon("log-out"), null, Modifier.size(18.dp))
         }
+    }
+    if (asking) {
+        OrbitConfirmDialog(
+            title = stringResource(R.string.orbit_menu_back_to_operit_confirm_title),
+            message = stringResource(R.string.orbit_menu_back_to_operit_confirm_note),
+            confirmLabel = label,
+            onDismiss = { asking = false },
+            onConfirm = {
+                asking = false
+                onClick()
+            },
+        )
     }
 }
 

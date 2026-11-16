@@ -9516,6 +9516,12 @@
 
     <string name="orbit_run_interrupted">Execution was interrupted and paused. Verify earlier tool effects before continuing; the turn will not replay automatically.</string>
     <string name="orbit_run_timed_out">Ran past %2$d minutes, so it was stopped and paused: “%1$s”. Verify what it already did before continuing; it will not replay automatically.</string>
+    <string name="orbit_run_interrupted_skipped">This run did not finish; it goes on at the next scheduled time</string>
+    <string name="orbit_run_wake_timed_out_skipped">Took too long to reach Orbit this time; it goes on at the next scheduled time</string>
+    <string name="orbit_run_timed_out_skipped">This run took too long and was stopped; it goes on at the next scheduled time</string>
+    <string name="orbit_run_wake_timed_out_paused">Took too long to reach Orbit, so it was paused; ask Orbit to try again if needed</string>
+    <string name="orbit_run_failed_reason">Did not finish (%1$s); tries again at the next scheduled time</string>
+    <string name="orbit_run_failed_paused">Stopped with an error and paused (%1$s)</string>
     <string name="orbit_permission_keep_alive_title">Keep %1$s awake in the background</string>
     <string name="orbit_permission_keep_alive_sub">So reminders and background tasks run on time</string>
     <string name="orbit_permission_all_on">All on; background tasks can run on time</string>
@@ -9532,7 +9538,23 @@
     <string name="orbit_device_access_title">Device control access</string>
     <string name="orbit_device_access_card_title">Let %1$s control the phone</string>
     <string name="orbit_device_access_card_on">On: %1$s</string>
-    <string name="orbit_device_access_note">With ADB debugging (Shizuku) or Root set up, it can tap the screen, install apps and change system settings. Device admin only allows a few things, such as locking the screen.</string>
+    <string name="orbit_device_access_note">Once on, it can tap the screen, install apps and change system settings in the background, without taking over your screen.</string>
+    <string name="orbit_device_root">Allow with Root</string>
+    <string name="orbit_device_root_refused">Root was not allowed. You can use Shizuku instead.</string>
+    <string name="orbit_device_use_shizuku">Use Shizuku instead</string>
+    <string name="orbit_device_shizuku_install">Install Shizuku</string>
+    <string name="orbit_device_shizuku_start">Start Shizuku</string>
+    <string name="orbit_device_open">Open</string>
+    <string name="orbit_device_step_count">Step %1$d of %2$d</string>
+    <string name="orbit_device_dev_options">Turn on developer options</string>
+    <string name="orbit_device_dev_options_hint">In About phone, tap Build number 7 times until it says you are a developer. Some phones call it OS version.</string>
+    <string name="orbit_device_wireless">Turn on wireless debugging</string>
+    <string name="orbit_device_wireless_hint">In Developer options, turn on Wireless debugging. Wi-Fi must be on.</string>
+    <string name="orbit_device_shizuku_start_hint">In Shizuku, choose \"Start via Wireless debugging\" and pair once when it asks. Start it again after the phone restarts.</string>
+    <string name="orbit_device_shizuku_start_hint_pc">On this phone Shizuku is started from a computer with adb. Start it again after the phone restarts.</string>
+    <string name="orbit_device_shizuku_guide">How to start it</string>
+    <string name="orbit_device_shizuku_guide_url">https://shizuku.rikka.app/guide/setup/</string>
+    <string name="orbit_device_shizuku_allow">Allow %1$s</string>
     <string name="orbit_permission_open_settings">Open settings</string>
     <string name="orbit_permission_in_settings">Android no longer asks for this; turn on %1$s here</string>
     <string name="orbit_task_timeout">Each run can take up to %1$d minutes</string>
@@ -9643,7 +9665,6 @@
     <string name="orbit_watch_calendar">Watches the calendar for the next %1$d days</string>
     <string name="orbit_watch_reading">Reads along, keeping comments ready %1$d chapters ahead</string>
     <string name="orbit_watch_reading_not_installed">The Legado build that works with Operit is not installed, so the book you read cannot be seen</string>
-    <string name="orbit_watch_reading_unreachable">Could not reach Legado; open Legado once and it will work again</string>
     <string name="orbit_watch_reading_failed">Could not read Legado: %1$s</string>
     <string name="orbit_watch_script">Runs the script %1$s and watches its output</string>
     <string name="orbit_decision_unchanged">Nothing changed, so Orbit stayed quiet</string>
@@ -9738,6 +9759,8 @@
     <string name="orbit_chats_unread">New messages</string>
     <string name="orbit_chats_title_unread">Chats — new messages</string>
     <string name="orbit_menu_back_to_operit">Back to Operit</string>
+    <string name="orbit_menu_back_to_operit_confirm_title">Back to Operit?</string>
+    <string name="orbit_menu_back_to_operit_confirm_note">You can come back to Orbit from Operit\'s menu.</string>
     <string name="orbit_chats_side_section">Side chats</string>
     <string name="orbit_sidebar_tabs">Tabs</string>
     <string name="orbit_chats_empty_title">Start a side chat</string>

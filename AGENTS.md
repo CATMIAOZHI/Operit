@@ -38,6 +38,8 @@
 - `origin` 指向个人 fork，默认分支为 `personal/main`；`upstream` 指向官方仓库，默认分支为 `main`。
 - 除非用户明确要求同步上游、分析上游或向上游贡献，否则所有规划、开发、审查和验证只以个人版当前目标分支为基线，不主动拉取、对比、合并或兼容 `upstream/main`。
 - `personal/main` 更新后由 `.github/workflows/sync-main-mirror.yml` 单向快进到 `main`，供仅支持 `main` 的安全工具读取。镜像使用仅授权本仓库 **Contents: read and write** 与 **Workflows: read and write** 的 `MAIN_MIRROR_TOKEN`，因为内置 `GITHUB_TOKEN` 不能推进包含 workflow 变更的提交。`main` 是只读兼容镜像，不得直接提交、合并 PR、强推或用作上游贡献分支；同步失败时先排查分叉，不得覆盖历史。
+- `personal/dev` 更新后由 `.github/workflows/sync-orbit-mirror.yml` 单向快进到 `CATMIAOZHI/orbit` 的 `main`，让 Orbit 仓库展示同一批提交和同一份 README。令牌 `ORBIT_MIRROR_TOKEN` 是仅授权 `CATMIAOZHI/orbit` 的 fine-grained PAT，权限为 **Contents: read and write** 与 **Workflows: read and write**。orbit 是只读镜像，关闭了 Actions，开发、发布、issue 和 PR 都留在本仓库；不得直接向 orbit 提交、合并 PR 或强推，同步失败时先排查分叉。README 要写成在两个仓库里读都通顺；简介、网站和话题标签是各仓库自己的设置，可以分别填写。
+- Operit 发布 Release 后，`.github/workflows/sync-orbit-release.yml` 用同一个 `ORBIT_MIRROR_TOKEN` 把标签、标题、说明和全部文件（APK、`SHA256SUMS.txt`、差异补丁）复制到 orbit，Latest 标记与 Operit 一致。`release` 事件读取标签所在提交里的工作流文件，手动运行要求它已在默认分支 `personal/main`；在此之前按 `docs/agent/dev-to-main-promotion.md` 第 9 节的命令手动复制。App 检查更新仍只读 Operit 的 Release。
 - 上游贡献以最新 `upstream/dev` 为基线，PR 显式目标官方 `dev`；官方 `main` 用于稳定发布和维护者执行的发布同步。新建贡献分支按上游当前 `docs/doc-src/dev-core/CONTRIBUTING.md` 使用 `feat/`、`fix/`、`docs/`、`ci/`、`refactor/` 或 `test/` 前缀加简短描述，不使用 `contrib/`、代理、模型或个人身份前缀；已有分支维持原名。不得混入 Operit Ry 的品牌、服务路由或发布配置。
 - `personal/main` 是 Operit Ry 稳定发行分支，受规则保护；改动必须通过 PR 和必需检查，稳定 APK 与 `v*` Release tag 只从该分支发布。
 - `Android Build` 只手动触发，不在稳定分支每次 push 后重复构建调试包；正式发布选择 `:app:assembleRelease`。CodeQL 只保留每周与手动扫描，PR 的编译、测试及快速检查仍按变更范围执行。Dev Quality 只在开发分支的 Android 源码、资源或构建输入变化时跑 JVM 单测，完整 Android Lint 通过手动构建选项运行。

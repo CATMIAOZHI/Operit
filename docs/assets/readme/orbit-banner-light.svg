@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 440" width="1280" height="440">
+  <title>Orbit</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFF9FA"/>
+      <stop offset="1" stop-color="#FDEEF2"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="640" cy="190" r="170" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FF6B8E" stop-opacity="0.10"/>
+      <stop offset="1" stop-color="#FF6B8E" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1280" height="440" rx="28" fill="url(#bg)"/>
+  <circle cx="640" cy="190" r="170" fill="url(#glow)"/>
+  <g fill="none" stroke="#FF6B8E" stroke-opacity="0.10" stroke-width="1.5">
+    <circle cx="640" cy="190" r="128"/>
+    <circle cx="640" cy="190" r="196"/>
+    <circle cx="640" cy="190" r="270"/>
+    <circle cx="640" cy="190" r="352"/>
+  </g>
+  <g fill="#FF6B8E" fill-opacity="0.22">
+    <circle cx="776" cy="53" r="5"/>
+    <circle cx="452" cy="296" r="4"/>
+    <circle cx="905" cy="242" r="3.5"/>
+    <circle cx="300" cy="120" r="3"/>
+  </g>
+  <g transform="translate(640 190) scale(6.2) translate(-12 -12)" fill="none" stroke-width="1.8" stroke-linecap="round">
+    <g stroke="#FF6B8E">
+      <path d="M20.339 6.481 A10 10 0 0 1 10.264 21.848"/>
+      <path d="M3.661 17.519 A10 10 0 0 1 13.736 2.152"/>
+      <circle cx="19" cy="5" r="2"/>
+      <circle cx="5" cy="19" r="2"/>
+    </g>
+    <circle cx="12" cy="12" r="3" stroke="#FF6B8E"/>
+  </g>
+  <text x="640" y="384" text-anchor="middle" fill="#1F2430" font-family="Inter, 'Segoe UI', -apple-system, Helvetica, Arial, sans-serif" font-size="64" font-weight="600" letter-spacing="3">Orbit</text>
+</svg>

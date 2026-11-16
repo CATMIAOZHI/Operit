@@ -368,7 +368,8 @@ private fun runIcon(run: OrbitRunEntity): String = when {
     run.state == "RUNNING" -> "loader"
     run.state == "CANCELLED" -> "circle-slash"
     run.state == "FAILED" || run.error.isNotBlank() -> "circle-alert"
-    run.decision == OrbitRunEntity.SKIPPED -> "skip-forward"
+    // Skipped, or stopped without an error and left to go on next time.
+    run.decision == OrbitRunEntity.SKIPPED || run.state == "INTERRUPTED" -> "skip-forward"
     OrbitChatDecision.isChat(run.decision) -> "message-circle"
     else -> "circle-check"
 }
@@ -1244,7 +1245,8 @@ internal fun watchLabel(task: OrbitTaskEntity): String {
             else stringResource(R.string.orbit_watch_notifications_apps, appNames(arg))
         "sms" -> if (arg.isEmpty()) stringResource(R.string.orbit_watch_sms) else stringResource(R.string.orbit_watch_sms_from, arg)
         "calendar" -> stringResource(R.string.orbit_watch_calendar, arg.toIntOrNull() ?: 7)
-        "reading" -> stringResource(R.string.orbit_watch_reading, com.ai.assistance.operit.features.orbit.OrbitReadingWatch.AHEAD)
+        "reading" -> stringResource(R.string.orbit_watch_reading,
+            com.ai.assistance.operit.features.orbit.OrbitReadingWatch.ahead(task.source))
         else -> stringResource(R.string.orbit_watch_script,
             com.ai.assistance.operit.features.orbit.OrbitWatchSources.SCRIPT.matchEntire(task.source)?.groupValues?.get(1)
                 ?.substringAfterLast('/')?.replace(SCRIPT_SUFFIX, "") ?: task.source)

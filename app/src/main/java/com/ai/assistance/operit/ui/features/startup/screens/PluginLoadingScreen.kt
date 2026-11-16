@@ -1279,7 +1279,7 @@ internal class PluginInitializationGuard {
 
 /** 插件加载屏幕的预览视图 */
 @Composable
-fun PluginLoadingScreenWithState(loadingState: PluginLoadingState, modifier: Modifier = Modifier) {
+fun PluginLoadingScreenWithState(loadingState: PluginLoadingState, modifier: Modifier = Modifier, hidden: Boolean = false) {
     val isVisible by loadingState.isVisible.collectAsState()
     val progress by loadingState.progress.collectAsState()
     val message by loadingState.message.collectAsState()
@@ -1317,7 +1317,7 @@ fun PluginLoadingScreenWithState(loadingState: PluginLoadingState, modifier: Mod
     }
 
     PluginLoadingScreen(
-            isVisible = isVisible,
+            isVisible = isVisible && !hidden,
             progress = progress,
             message = message,
             pluginsStarted = pluginsStarted,

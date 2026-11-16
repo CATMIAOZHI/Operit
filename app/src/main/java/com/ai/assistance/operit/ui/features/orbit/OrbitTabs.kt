@@ -1153,13 +1153,24 @@ private fun FeedPostRow(
                     }
                     // Like Muse: the buttons on the left, lined up with the text (their touch area
                     // reaches past it); the time and ⓘ at the right edge of the text, at any width.
+                    // The row reaches 12dp into the left margin and, with an ⓘ, 13dp into the right
+                    // one, so the icons line up with the text. Those margins count as room for the
+                    // row: an offset would keep them, and with an ⓘ "Discuss" was cut to "Dis…".
+                    val overhangRight = if (post.extra.isNotBlank()) 13.dp else 0.dp
                     Row(
-                        Modifier.fillMaxWidth().offset(x = (-12).dp), verticalAlignment = Alignment.CenterVertically,
+                        Modifier.layout { measurable, constraints ->
+                            val left = 12.dp.roundToPx()
+                            val width = constraints.maxWidth + left + overhangRight.roundToPx()
+                            val placeable = measurable.measure(constraints.copy(minWidth = width, maxWidth = width))
+                            layout(constraints.maxWidth, placeable.height) { placeable.placeRelative(-left, 0) }
+                        },
+                        verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
-                        // Narrow or with large text, the discuss label shortens first, then the
-                        // time; the vote buttons and ⓘ keep their size.
-                        Row(Modifier.weight(1.5f, fill = false), verticalAlignment = Alignment.CenterVertically) {
+                        // The time (short) and ⓘ take what they need; the buttons get the rest, and
+                        // when narrow or with large text the discuss label shortens. A fixed share
+                        // cut "Discuss" to "Dis…" on a normal phone.
+                        Row(Modifier.weight(1f, fill = false), verticalAlignment = Alignment.CenterVertically) {
                             VoteButton("thumbs-up", stringResource(R.string.orbit_feed_like), shownVote > 0) { vote(1) }
                             VoteButton("thumbs-down", stringResource(R.string.orbit_feed_dislike), shownVote < 0) { vote(-1) }
                             TextButton(
@@ -1174,9 +1185,16 @@ private fun FeedPostRow(
                                 )
                             }
                         }
-                        // Undoes the row's shift, so the time or the ⓘ mark itself ends at the text's right edge.
+                        // Measured first, so it leaves room for the two vote buttons and the discuss
+                        // icon (48dp each); past that, the time shortens instead of pushing them out.
                         Row(
-                            Modifier.weight(1f, fill = false).offset(x = if (post.extra.isNotBlank()) 25.dp else 12.dp),
+                            Modifier.layout { measurable, constraints ->
+                                val maxWidth = (constraints.maxWidth - 144.dp.roundToPx()).coerceAtLeast(0)
+                                val placeable = measurable.measure(
+                                    constraints.copy(minWidth = 0, maxWidth = maxWidth),
+                                )
+                                layout(placeable.width, placeable.height) { placeable.placeRelative(0, 0) }
+                            },
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(

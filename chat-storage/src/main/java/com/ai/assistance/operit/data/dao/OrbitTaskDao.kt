@@ -71,7 +71,8 @@ private const val MAX_RESUMES = 3
 
 @Dao
 interface OrbitTaskDao {
-    @Query("SELECT r.id AS id, r.taskId AS taskId, t.title AS title, t.kind AS kind, r.state AS state, SUBSTR(r.observation,1,400) AS observation, SUBSTR(r.error,1,400) AS error, r.startedAt AS startedAt, r.finishedAt AS finishedAt, r.generation AS generation FROM orbit_runs r INNER JOIN orbit_tasks t ON t.id = r.taskId WHERE t.orbitId = :orbitId AND r.decision NOT IN ('" + OrbitRunEntity.UNCHANGED + "', '" + OrbitRunEntity.SKIPPED + "', '" + OrbitRunEntity.IN_CHAT + "') AND r.decision NOT LIKE '@in_chat:%' ORDER BY r.startedAt DESC LIMIT 200")
+    // A run that stopped without an error was skipped quietly (its task goes on); it is not activity.
+    @Query("SELECT r.id AS id, r.taskId AS taskId, t.title AS title, t.kind AS kind, r.state AS state, SUBSTR(r.observation,1,400) AS observation, SUBSTR(r.error,1,400) AS error, r.startedAt AS startedAt, r.finishedAt AS finishedAt, r.generation AS generation FROM orbit_runs r INNER JOIN orbit_tasks t ON t.id = r.taskId WHERE t.orbitId = :orbitId AND r.decision NOT IN ('" + OrbitRunEntity.UNCHANGED + "', '" + OrbitRunEntity.SKIPPED + "', '" + OrbitRunEntity.IN_CHAT + "') AND r.decision NOT LIKE '@in_chat:%' AND NOT (r.state = 'INTERRUPTED' AND r.error = '') ORDER BY r.startedAt DESC LIMIT 200")
     fun observeActivity(orbitId: String): Flow<List<OrbitActivityRow>>
     /** The latest runs of [orbitId]'s tasks, unchanged, skipped and in-chat ones included. */
     @Query("SELECT r.id AS id, r.taskId AS taskId, t.title AS title, r.state AS state, r.decision AS decision, SUBSTR(r.observation,1,400) AS observation, SUBSTR(r.error,1,800) AS error, r.startedAt AS startedAt, r.finishedAt AS finishedAt, r.generation AS generation FROM orbit_runs r INNER JOIN orbit_tasks t ON t.id = r.taskId WHERE t.orbitId = :orbitId ORDER BY r.startedAt DESC LIMIT :limit")
@@ -803,6 +804,10 @@ interface OrbitTaskDao {
         resumable: Boolean = false,
         resumeNextRunAt: Long = 0,
         continueNextRunAt: Long = 0,
+        /** What the old run keeps when its task goes on at [continueNextRunAt]. */
+        continuedMessage: String = interruptedMessage,
+        /** Whether the task goes on; a repeating place task goes on with no clock time (0). */
+        continues: Boolean = continueNextRunAt > 0,
     ): OrbitRunEntity? {
         val task = task(event.taskId)?.takeIf { it.state == "ACTIVE" && it.version == event.taskVersion }
             ?: return null
@@ -835,7 +840,9 @@ interface OrbitTaskDao {
                 return null
             }
             if (!resumable) {
-                interrupt(old, now, interruptedMessage, continueNextRunAt)
+                interrupt(old, now, interruptedMessage, continueNextRunAt, continuedMessage, continues)
+                // This run never reaches the worker's own clean-up.
+                pruneRuns(task.id)
                 return null
             }
         }
@@ -854,9 +861,15 @@ interface OrbitTaskDao {
         return run
     }
 
-    /** A started model may have used any ordinary tool; never replay it after losing ownership. */
+    /**
+     * A started model may have used any ordinary tool; never replay it after losing ownership.
+     * When it [continues], a repeating task skips only this run and goes on at [continueNextRunAt],
+     * quietly, the run noting [continuedMessage]; so does a one-time task tried early, which keeps
+     * its own time. Otherwise it is paused (or left to verify) and the user is told [message].
+     */
     @Transaction
-    suspend fun interrupt(token: OrbitRunEntity, now: Long, message: String, continueNextRunAt: Long = 0): Boolean {
+    suspend fun interrupt(token: OrbitRunEntity, now: Long, message: String, continueNextRunAt: Long = 0,
+        continuedMessage: String = message, continues: Boolean = continueNextRunAt > 0): Boolean {
         val current = run(token.id) ?: return false
         val task = task(token.taskId) ?: return false
         if (current.state != "RUNNING" || current.owner != token.owner || current.generation != token.generation ||
@@ -865,11 +878,15 @@ interface OrbitTaskDao {
         val unresolved = unresolvedActions(task.id).isNotEmpty()
         val trial = task.kind != "ONCE" && task.scheduleMode == "ONCE" &&
             current.eventId.contains(":manual:") && task.nextRunAt > (event(current.eventId)?.createdAt ?: current.startedAt)
-        updateTask(task.copy(state = if (unresolved) "VERIFY" else if (trial || continueNextRunAt > 0) "ACTIVE" else "PAUSED",
-            nextRunAt = if (!unresolved && continueNextRunAt > 0) continueNextRunAt else task.nextRunAt, updatedAt = now))
-        updateRun(current.copy(state = "INTERRUPTED", error = message, finishedAt = now, handoffTurnId = ""))
-        if (!unresolved && (trial || continueNextRunAt > 0)) deleteEvent(current.eventId)
-        insertDelivery(OrbitDeliveryEntity(current.id, current.id, task.id, task.version, task.orbitId,
+        updateTask(task.copy(state = if (unresolved) "VERIFY" else if (trial || continues) "ACTIVE" else "PAUSED",
+            nextRunAt = if (!unresolved && !trial && continues) continueNextRunAt else task.nextRunAt, updatedAt = now))
+        // Going on needs nothing from the user: no error, nothing said; the run notes why it stopped.
+        val goesOn = !unresolved && (trial || continues)
+        updateRun(if (goesOn) current.copy(state = "INTERRUPTED", error = "", observation = continuedMessage,
+            finishedAt = now, handoffTurnId = "")
+            else current.copy(state = "INTERRUPTED", error = message, finishedAt = now, handoffTurnId = ""))
+        if (goesOn) deleteEvent(current.eventId)
+        if (!goesOn) insertDelivery(OrbitDeliveryEntity(current.id, current.id, task.id, task.version, task.orbitId,
             task.chatId, task.title, message, now, "PENDING", null, null, false))
         return true
     }
@@ -979,7 +996,8 @@ interface OrbitTaskDao {
             lastObservation = if (error.isEmpty() && decision != OrbitRunEntity.IN_CHAT) observation else task.lastObservation,
             // A run that never read its source (a skipped check) keeps the last known fingerprint.
             lastFingerprint = if (error.isEmpty() && current.hasSource && message.isBlank()) current.fingerprint else task.lastFingerprint))
-        if (message.isNotBlank() && (!repeatFailure || task.notifyPolicy == "ALWAYS")) insertDelivery(OrbitDeliveryEntity(
+        // ALWAYS is about results; the same failure again is not news.
+        if (message.isNotBlank() && !repeatFailure) insertDelivery(OrbitDeliveryEntity(
             id = current.id, runId = current.id, taskId = task.id, taskVersion = task.version,
             orbitId = task.orbitId, chatId = task.chatId, title = task.title, body = message,
             createdAt = now, state = "PENDING", messageId = null, messageTimestamp = null, notificationSent = false,

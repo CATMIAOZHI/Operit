@@ -38,8 +38,9 @@ When the user wants to read a book together, check where they are with `where`, 
 When the user wants comments waiting wherever they read, make a reading watch (read `docs/scheduling-and-watching.md` first):
 
 - Create it like this: `orbit_task` with `action=create`, `kind=WATCH`, `watch=reading`, `title=Reading <book> together`, `instruction=Keep comments ready ahead, as docs/reading.md says`. Leave the other parameters out: it checks every 60 minutes by default, and also after the user turns pages.
-- It follows the book the user has open and keeps the current chapter and the next 3 ready (with your comments, marked skipped by you, or volume headings). When they are, the run is skipped quietly, without waking you or spending tokens; only when they are not are you woken. About half a minute after the user turns pages the app checks again.
-- When woken, call `where` first and work from the first chapter that is not ready: read, write comments (or `skip_chapter`), write the summary, until the next 3 chapters are ready.
+- It follows the book the user has open and keeps the next 20 chapters ready (with your comments, marked skipped by you, or volume headings). Writing takes time, so you work in batches: you are woken once fewer than 10 are ready, and fill all 20 again; otherwise the run is skipped quietly, without waking you or spending tokens. About half a minute after the user turns pages the app checks again.
+- If the user wants more or fewer chapters ready, use `watch=reading:<chapters>` (2 to 50); for example `reading:30` fills up to 30 once fewer than 15 are ready. Change an existing watch with `action=update`.
+- When woken, call `where` first and work from the first chapter that is not ready: read, write comments (or `skip_chapter`), write the summary, up to the chapter named in the note that woke you. Go one chapter at a time, reading each chapter's text before you write; to recall earlier events, look at the summaries first (see "A summary for every chapter" below), and go back to the earlier text for details they lack.
 
 ## How to write a comment
 

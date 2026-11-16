@@ -9493,6 +9493,12 @@
 
     <string name="orbit_run_interrupted">执行意外中断，已暂停。请先核实此前工具是否已完成操作，再继续；不会自动从头重做。</string>
     <string name="orbit_run_timed_out">运行超过 %2$d 分钟，已停下并暂停：“%1$s”。请先核实已经做了哪些操作，再继续；不会自动从头重做。</string>
+    <string name="orbit_run_interrupted_skipped">这次没跑完，到时间照常</string>
+    <string name="orbit_run_wake_timed_out_skipped">这次等了太久没叫上 Orbit，到时间照常</string>
+    <string name="orbit_run_timed_out_skipped">这次运行太久，已停下，到时间照常</string>
+    <string name="orbit_run_wake_timed_out_paused">等了太久没叫上 Orbit，已暂停；需要的话让 Orbit 再试一次</string>
+    <string name="orbit_run_failed_reason">这次出错没做完（%1$s），到时间再试</string>
+    <string name="orbit_run_failed_paused">出错了，已暂停（%1$s）</string>
     <string name="orbit_permission_keep_alive_title">让 %1$s 在后台醒着</string>
     <string name="orbit_permission_keep_alive_sub">打开后，提醒和后台任务能按时进行</string>
     <string name="orbit_permission_all_on">都已开启，后台任务可以按时进行</string>
@@ -9509,7 +9515,23 @@
     <string name="orbit_device_access_title">设备控制权限</string>
     <string name="orbit_device_access_card_title">让 %1$s 能控制手机</string>
     <string name="orbit_device_access_card_on">已开启：%1$s</string>
-    <string name="orbit_device_access_note">设置 ADB 调试（Shizuku）或 Root 后，它能点屏幕、装应用、改系统设置。设备管理员只能锁屏等少数操作。</string>
+    <string name="orbit_device_access_note">开启后，它能在后台点屏幕、装应用、改系统设置，不占用你的屏幕。</string>
+    <string name="orbit_device_root">用 Root 授权</string>
+    <string name="orbit_device_root_refused">Root 没有授权，可以改用 Shizuku。</string>
+    <string name="orbit_device_use_shizuku">改用 Shizuku</string>
+    <string name="orbit_device_shizuku_install">安装 Shizuku</string>
+    <string name="orbit_device_shizuku_start">启动 Shizuku</string>
+    <string name="orbit_device_open">打开</string>
+    <string name="orbit_device_step_count">第 %1$d 步，共 %2$d 步</string>
+    <string name="orbit_device_dev_options">打开开发者选项</string>
+    <string name="orbit_device_dev_options_hint">在「关于手机」里连点版本号 7 次，看到提示就开好了。有的手机叫「OS 版本」。</string>
+    <string name="orbit_device_wireless">打开无线调试</string>
+    <string name="orbit_device_wireless_hint">在「开发者选项」里打开「无线调试」，要先连上 Wi-Fi。</string>
+    <string name="orbit_device_shizuku_start_hint">在 Shizuku 里选「通过无线调试启动」，第一次要按提示配对。手机重启后要再启动一次。</string>
+    <string name="orbit_device_shizuku_start_hint_pc">这台手机要连电脑，用 adb 启动 Shizuku。手机重启后要再启动一次。</string>
+    <string name="orbit_device_shizuku_guide">看启动教程</string>
+    <string name="orbit_device_shizuku_guide_url">https://shizuku.rikka.app/zh-hans/guide/setup/</string>
+    <string name="orbit_device_shizuku_allow">允许 %1$s 使用</string>
     <string name="orbit_permission_open_settings">去设置</string>
     <string name="orbit_permission_in_settings">系统不再弹出授权框了，请在这里打开「%1$s」</string>
     <string name="orbit_task_timeout">每次运行最多 %1$d 分钟</string>
@@ -9620,7 +9642,6 @@
     <string name="orbit_watch_calendar">看未来 %1$d 天的日程</string>
     <string name="orbit_watch_reading">陪你读书，提前写好后面 %1$d 章的段评</string>
     <string name="orbit_watch_reading_not_installed">没装能配合 Operit 的「阅读」，看不到你在读的书</string>
-    <string name="orbit_watch_reading_unreachable">连不上「阅读」，打开一次「阅读」就好</string>
     <string name="orbit_watch_reading_failed">读不到「阅读」：%1$s</string>
     <string name="orbit_watch_script">运行小脚本 %1$s 看结果</string>
     <string name="orbit_decision_unchanged">和上次一样，就没有打扰你</string>
@@ -9715,6 +9736,8 @@
     <string name="orbit_chats_unread">有新消息</string>
     <string name="orbit_chats_title_unread">聊天，有新消息</string>
     <string name="orbit_menu_back_to_operit">回到 Operit</string>
+    <string name="orbit_menu_back_to_operit_confirm_title">回到 Operit？</string>
+    <string name="orbit_menu_back_to_operit_confirm_note">之后可以从 Operit 的菜单回到 Orbit。</string>
     <string name="orbit_chats_side_section">侧聊</string>
     <string name="orbit_sidebar_tabs">选项卡</string>
     <string name="orbit_chats_empty_title">发起侧聊</string>

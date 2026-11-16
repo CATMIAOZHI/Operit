@@ -16,6 +16,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -294,7 +295,9 @@ internal fun VirtualTranscript(
         // Only rows that are actually being prepared (on screen, nearby or the restore target).
         // Long messages far off screen stay as placeholders and never finish preparing.
         val pending = prepareCandidates.mapTo(hashSetOf()) { it.first }
-        val preparing = restoring || rows.any {
+        // Before the list's first layout nothing counts as nearby yet, so nothing would look pending.
+        val laidOut by remember(listState) { derivedStateOf { listState.layoutInfo.visibleItemsInfo.isNotEmpty() } }
+        val preparing = restoring || (rows.isNotEmpty() && !laidOut) || rows.any {
             it.preparingMarkdown && messages.getOrNull(it.messageIndex)?.timestamp in pending
         }
         SideEffect { sink.value = preparing }
@@ -712,9 +715,12 @@ internal fun VirtualTranscript(
             },
             onRelease = { view -> if (screenshotBridge === view) screenshotBridge = null },
         )
+        val transcriptAlpha = LocalTranscriptAlpha.current
         LazyColumn(
             state = listState,
-            modifier = Modifier.fillMaxSize().nestedScroll(connection).onPlaced { listPlacement[0] = it },
+            modifier = Modifier.fillMaxSize()
+                .then(if (transcriptAlpha != null) Modifier.graphicsLayer { alpha = transcriptAlpha.value } else Modifier)
+                .nestedScroll(connection).onPlaced { listPlacement[0] = it },
             contentPadding = PaddingValues(
                 start = horizontalPadding, end = horizontalPadding,
                 top = topPadding, bottom = bottomPadding + 16.dp,

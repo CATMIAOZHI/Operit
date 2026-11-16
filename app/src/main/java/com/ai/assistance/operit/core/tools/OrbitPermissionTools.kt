@@ -39,7 +39,7 @@ internal object OrbitPermissionTools {
         details = """
   - Checks what is on first. When it is already on, no card is placed and the result says so.
   - To see every permission at once without placing any card, call orbit_device action=describe and read its permissions; the app reads them itself, so no ADB, Shizuku or terminal command is needed.
-  - device_access opens Operit's own access page over the chat (pick a level there and follow its steps). The result gives the picked level and whether it answers now.
+  - device_access is set up on the card itself: one Root button on a rooted phone, otherwise Shizuku one step at a time (install the Shizuku bundled with Operit, turn on developer options, turn on wireless debugging, start Shizuku, allow Operit; below Android 11 it is started from a computer instead). The result gives the current level, whether it answers now, and either rooted (the card shows the Root button) or shizuku_step, the step the card shows. Each time the user finishes a step you get a hidden note with the next one: walk them through it in one or two plain sentences.
   - accessibility has two steps on the card: install the bundled service app (or update an old one), then turn its service on (done for the user when ADB debugging works, otherwise the system's accessibility settings open). The result gives installed, update_needed and enabled.
   - overlay: before orbit_browser_handoff or showing the browser full screen, check it; when it is off, put this card so the user's tap on the page opens.
   - Otherwise the card shows the setting with a button that opens the system prompt or settings screen, and a "Don't remind me" button; then it returns at once. End the turn with one short line.
@@ -102,6 +102,11 @@ internal object OrbitPermissionTools {
             result.put("level", access.level?.name?.lowercase() ?: "not_set")
                 .put("level_working", access.working)
                 .put("background_phone_screen_supported", PHONE_SCREEN_SUPPORTED)
+            // The card's own choice: a rooted phone shows one Root button, others the Shizuku step.
+            if (!access.working) {
+                if (com.ai.assistance.operit.core.tools.system.RootAuthorizer.isDeviceRooted()) result.put("rooted", true)
+                else result.put("shizuku_step", OrbitPermissionCards.deviceStepNow(context).name.lowercase())
+            }
             if (!PHONE_SCREEN_SUPPORTED) result.put("phone_screen_note", "This phone runs Android ${android.os.Build.VERSION.RELEASE}; " +
                 "the background phone screen needs Android 10 or later, so device_access cannot give it here. It still helps with app installs and system settings.")
         }

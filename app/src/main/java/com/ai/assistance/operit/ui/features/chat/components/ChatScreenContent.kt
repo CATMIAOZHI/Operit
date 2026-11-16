@@ -1181,7 +1181,7 @@ fun ChatScreenContent(
                             )
                             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                             intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                            context.startActivity(intent)
+                            context.startActivity(com.ai.assistance.operit.util.ApkInstallIntent.toInstaller(context, intent))
                         } catch (e: ActivityNotFoundException) {
                             AppLogger.e("ChatScreenContent", "无法打开文件: $filePath", e)
                         } catch (e: Exception) {

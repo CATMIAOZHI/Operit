@@ -630,6 +630,7 @@ class CharacterCardManager private constructor(private val context: Context) {
     // 初始化默认角色卡
     suspend fun initializeIfNeeded() {
         var needsDefaultThemeMigration = false
+        var relocalized = emptyList<String>()
         dataStore.edit { preferences ->
             val cardListKey = CHARACTER_CARD_LIST
             val existingIds = preferences[cardListKey]?.toMutableSet()
@@ -656,12 +657,14 @@ class CharacterCardManager private constructor(private val context: Context) {
             }
 
             migrateSystemCharacterCardDescriptions(preferences)
+            relocalized = relocalizeBuiltInText(preferences)
             preferences[cardListKey] = currentIds
             if (shouldSelectRainy) {
                 preferences[ACTIVE_CHARACTER_CARD_ID] = RAINY_CHARACTER_CARD_ID
             }
             writeCharacterCardOrder(preferences, updatedOrder)
         }
+        relocalized.forEach { LearningPromptSnapshotRepository.markChanged(context, "card:$it") }
 
         if (needsDefaultThemeMigration) {
             AppLogger.d("CharacterCardManager", "Missing character cards detected. Migrating current theme to Operit.")
@@ -679,6 +682,50 @@ class CharacterCardManager private constructor(private val context: Context) {
     // 重置默认角色卡
     suspend fun resetDefaultCharacterCard() {
         resetSystemCharacterCard(DEFAULT_CHARACTER_CARD_ID)
+    }
+
+    /** After the app's language changes: the built-in cards' text follows it, unless the user edited it. */
+    suspend fun relocalizeBuiltInCards() {
+        var relocalized = emptyList<String>()
+        dataStore.edit { relocalized = relocalizeBuiltInText(it) }
+        relocalized.forEach { LearningPromptSnapshotRepository.markChanged(context, "card:$it") }
+    }
+
+    /**
+     * The built-in cards are written when the app first starts, often before the user picks a
+     * language, so in the phone's language. A field still holding a built-in text, in any language,
+     * is switched to the app's language; text the user wrote stays. Returns the cards changed.
+     */
+    private fun relocalizeBuiltInText(preferences: MutablePreferences): List<String> {
+        fun inLocale(locale: Locale): Context = context.createConfigurationContext(
+            android.content.res.Configuration(context.resources.configuration).apply { setLocale(locale) }
+        )
+        fun texts(c: Context): Map<String, Map<String, String>> = mapOf(
+            DEFAULT_CHARACTER_CARD_ID to mapOf(
+                "description" to CharacterCardBilingualData.getDefaultDescription(c),
+                "character_setting" to CharacterCardBilingualData.getDefaultCharacterSetting(c),
+                "other_content_chat" to CharacterCardBilingualData.getDefaultOtherContentChat(c),
+                "other_content_voice" to CharacterCardBilingualData.getDefaultOtherContentVoice(c),
+            ),
+            RAINY_CHARACTER_CARD_ID to mapOf(
+                "description" to RainyCharacterCardData.getDescription(c),
+                "character_setting" to RainyCharacterCardData.getCharacterSetting(c),
+            ),
+        )
+        val now = texts(com.ai.assistance.operit.util.LocaleUtils.getLocalizedContext(context))
+        val known = listOf(texts(inLocale(Locale.SIMPLIFIED_CHINESE)), texts(inLocale(Locale.ENGLISH)))
+        val changed = mutableListOf<String>()
+        now.forEach { (id, fields) ->
+            fields.forEach { (field, text) ->
+                val key = stringPreferencesKey("character_card_${id}_$field")
+                val saved = preferences[key] ?: return@forEach
+                if (saved != text && known.any { it[id]?.get(field) == saved }) {
+                    preferences[key] = text
+                    if (id !in changed) changed += id
+                }
+            }
+        }
+        return changed
     }
 
     suspend fun resetSystemCharacterCard(id: String) {

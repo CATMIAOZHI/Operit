@@ -326,6 +326,19 @@ class LegadoReaderProvider(
             }
         } catch (error: ReaderProviderException) {
             throw error
+        } catch (error: org.json.JSONException) {
+            // Legado answered, but not in a shape Operit reads: a real fault, not Legado being stopped.
+            throw ReaderProviderException(
+                ReaderProviderException.Reason.INVALID_RESPONSE,
+                "Legado 返回的数据无法解析",
+                error,
+            )
+        } catch (error: SecurityException) {
+            throw ReaderProviderException(
+                ReaderProviderException.Reason.INVALID_RESPONSE,
+                "Legado 拒绝了 Operit 的读取",
+                error,
+            )
         } catch (error: Throwable) {
             throw ReaderProviderException(
                 ReaderProviderException.Reason.CONNECTION_FAILED,

@@ -350,6 +350,12 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
         AppLogger.d(TAG, "【启动计时】长期记忆自动保存轮询器启动完成 - ${System.currentTimeMillis() - startTime}ms")
 
         // 初始化功能提示词管理器
+        // Orbit's page waits for its settings before it draws anything; reading them now means a
+        // cold start shows Orbit at once instead of a blank page first.
+        if (isMainAppProcess()) applicationScope.launch {
+            runCatching { com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(applicationContext).current() }
+        }
+
         applicationScope.launch {
             val characterStartTime = System.currentTimeMillis()
             CharacterCardManager.getInstance(applicationContext).initializeIfNeeded()
@@ -804,6 +810,12 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
             AppLogger.e(TAG, "应用基础上下文语言失败", e)
             super.attachBaseContext(base)
         }
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        // A language picked since start-up is lost when the system updates the configuration.
+        LocaleUtils.reapplyInProcess(this)
     }
 
     override fun onTerminate() {
