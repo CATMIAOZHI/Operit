@@ -210,6 +210,8 @@ android {
         }
 
         buildConfigField("boolean", "PERSONAL_DEV_UPDATE_CHANNEL", "false")
+        // Name under Orbit's home-screen icon; Operit Ry's entry uses app_name.
+        resValue("string", "orbit_launcher_name", "Orbit")
     }
 
     buildTypes {
@@ -230,6 +232,7 @@ android {
             applicationIdSuffix = ".dev"
             versionNameSuffix = "-dev${devBuildNumber?.let { ".$it" }.orEmpty()}"
             resValue("string", "app_name", "Operit Ry Dev")
+            resValue("string", "orbit_launcher_name", "Orbit Dev")
             buildConfigField("boolean", "PERSONAL_DEV_UPDATE_CHANNEL", "true")
             if (releaseSigningConfig != null) {
                 signingConfig = releaseSigningConfig
@@ -244,6 +247,7 @@ android {
             }
             matchingFallbacks += listOf("debug")
             resValue("string", "app_name", "Operit Ry Clone")
+            resValue("string", "orbit_launcher_name", "Orbit Clone")
         }
         create("nightly") {
             isMinifyEnabled = false
