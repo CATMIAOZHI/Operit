@@ -9522,8 +9522,11 @@
     <string name="orbit_device_shizuku_install">安装 Shizuku</string>
     <string name="orbit_device_shizuku_start">启动 Shizuku</string>
     <string name="orbit_device_open">打开</string>
-    <string name="orbit_device_installed">已安装</string>
-    <string name="orbit_device_running">已启动</string>
+    <string name="orbit_device_step_count">第 %1$d 步，共 %2$d 步</string>
+    <string name="orbit_device_dev_options">打开开发者选项</string>
+    <string name="orbit_device_dev_options_hint">在「关于手机」里连点版本号 7 次，看到提示就开好了。有的手机叫「OS 版本」。</string>
+    <string name="orbit_device_wireless">打开无线调试</string>
+    <string name="orbit_device_wireless_hint">在「开发者选项」里打开「无线调试」，要先连上 Wi-Fi。</string>
     <string name="orbit_device_shizuku_start_hint">在 Shizuku 里选「通过无线调试启动」，第一次要按提示配对。手机重启后要再启动一次。</string>
     <string name="orbit_device_shizuku_start_hint_pc">这台手机要连电脑，用 adb 启动 Shizuku。手机重启后要再启动一次。</string>
     <string name="orbit_device_shizuku_guide">看启动教程</string>
