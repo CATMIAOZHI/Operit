@@ -29,7 +29,7 @@
 
 Orbit 是一个长期陪着你的私人代理。它和你聊天，记住重要的事，在后台安静干活，只在值得你注意的时候开口。它的家在你的手机上：记忆、文件和成长的痕迹都存在设备里，换模型、换服务商，它也不会忘了你。
 
-Orbit 内置在 **Operit Ry** 里。Operit Ry 是 [Operit](https://github.com/AAswordman/Operit) 的个人发行版，由 [雨晴 / CATMIAOZHI](https://github.com/CATMIAOZHI) 维护。
+Orbit 内置在 **Operit Ry** 里。Operit Ry 是 [Operit](https://github.com/AAswordman/Operit) 的个人发行版，由 [水晴喵（WaterRainCat）](https://github.com/CATMIAOZHI) 维护。
 
 ## Orbit 能做什么
 
@@ -86,6 +86,21 @@ Orbit 内置在 **Operit Ry** 里。Operit Ry 是 [Operit](https://github.com/AA
 </tr>
 </table>
 
+### 更多界面
+
+<table>
+<tr>
+<td width="33%" align="center"><img src="docs/assets/readme/screens/zh/history.png" alt="任务记录"><br><sub><b>做过的每件事</b>，按天排好</sub></td>
+<td width="33%" align="center"><img src="docs/assets/readme/screens/zh/approvals.png" alt="批准记录"><br><sub><b>动手前先问你</b>，都有记录</sub></td>
+<td width="33%" align="center"><img src="docs/assets/readme/screens/zh/browser.png" alt="浏览器和后台 App"><br><sub><b>浏览器和后台 App</b>，随时能接手</sub></td>
+</tr>
+<tr>
+<td align="center"><img src="docs/assets/readme/screens/zh/schedules.png" alt="定时任务"><br><sub><b>定时任务</b>，到点就办</sub></td>
+<td align="center"><img src="docs/assets/readme/screens/zh/goals.png" alt="目标"><br><sub><b>目标</b>，陪你一起跟进</sub></td>
+<td align="center"><img src="docs/assets/readme/screens/zh/identity.png" alt="Soul 和记忆"><br><sub><b>Soul 和记忆</b>，存在你的手机上</sub></td>
+</tr>
+</table>
+
 ### 大家拿它做什么
 
 - *“帮我盯着消息，重要的告诉我。”*
@@ -93,6 +108,7 @@ Orbit 内置在 **Operit Ry** 里。Operit Ry 是 [Operit](https://github.com/AA
 - *“每天早上提醒我锻炼，要是我一周没练就再问问我。”*
 - *“我出门的时候提醒我带钥匙。”*
 - *“这个网页有变化就告诉我。”*
+- *“帮我盯着 GitHub 的 issue，来了 bug 就派子代理修好、提 PR。”*
 - *“我们一起读这本小说吧。”*
 
 ## 用你自己的模型
