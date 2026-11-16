@@ -162,6 +162,9 @@ import kotlinx.coroutines.launch
 
 private const val TAG = "OrbitScreen"
 
+/** The longest entering the chat keeps its messages hidden; a slow chat then shows as it loads. */
+private const val ORBIT_ENTRY_WAIT_MS = 2_500L
+
 /** On a tablet Orbit's chat and its pages keep this width in the middle of the screen. */
 internal val ORBIT_PAGE_MAX_WIDTH = 840.dp
 
@@ -202,6 +205,8 @@ fun OrbitScreen(
     // Settings already read open the page at once; only the very first visit waits for them.
     val settings by preferences.settingsFlow.collectAsState(initial = preferences.loadedSnapshot())
     val loadedSettings = settings ?: return
+    // The lock screen has nothing to wait for; the launch mark opens onto it at once.
+    if (loadedSettings.appLock) com.ai.assistance.operit.ui.main.MarkLaunchReadyAfterFrame()
     // Outside the lock, so locking again never hands the screen back to the chat from before.
     loadedSettings.activeOrbitId?.let { androidx.compose.runtime.key(it) { OrbitRestoresPreviousChat(it) } }
     // With the app lock on, nothing of Orbit draws until the system check is passed.
@@ -272,6 +277,7 @@ private fun OrbitScreenContent(
             showSetup = false
         }
         Box(Modifier.orbitDismissLayer(setupBack)) {
+            com.ai.assistance.operit.ui.main.MarkLaunchReadyAfterFrame()
             OrbitSetupPage(onSkip = {
                 com.ai.assistance.operit.features.orbit.OrbitSetup.skip(context)
                 showSetup = false
@@ -281,6 +287,7 @@ private fun OrbitScreenContent(
     }
 
     if (activeOrbitId == null) {
+        com.ai.assistance.operit.ui.main.MarkLaunchReadyAfterFrame()
         OrbitHome(
             settings = loadedSettings,
             hasBackgroundImage = hasBackgroundImage,
@@ -456,6 +463,34 @@ private fun OrbitChatPage(
     LaunchedEffect(orbit.talkChatIds) { if (justCreatedChatId in orbit.talkChatIds) justCreatedChatId = null }
     val currentChatId = talkChatId.takeIf { it in orbit.talkChatIds || it == justCreatedChatId } ?: orbit.chatId
     val currentSide = orbit.sideChats.firstOrNull { it.chatId == currentChatId }
+    // Entering the chat, its messages stay hidden until they are loaded, prepared and at the newest
+    // one, then show together instead of one by one. On launch the mark opens on them instead.
+    val entryPreparing = remember(orbit.id) { mutableStateOf(true) }
+    var entering by remember(orbit.id) { mutableStateOf(true) }
+    val entryAlpha = remember(orbit.id) { androidx.compose.animation.core.Animatable(0f) }
+    val enteringChatId by rememberUpdatedState(currentChatId)
+    LaunchedEffect(orbit.id) {
+        val core = ChatRuntimeHolder.getInstance(context.applicationContext).getCore(ChatRuntimeSlot.MAIN)
+        kotlinx.coroutines.withTimeoutOrNull(ORBIT_ENTRY_WAIT_MS) {
+            // Its message window has loaded (an empty chat too).
+            kotlinx.coroutines.flow.combine(core.currentChatId, core.displayedChatId, core.currentChatIsLoadingDisplayWindow) {
+                    id, shown, loading -> id == enteringChatId && shown == enteringChatId && !loading
+            }.first { it }
+            // The messages reach the transcript on the next frame; then it reports their preparing.
+            androidx.compose.runtime.withFrameNanos { }
+            androidx.compose.runtime.snapshotFlow { entryPreparing.value }.first { !it }
+        }
+        // The list goes to the newest message over the next frames.
+        repeat(3) { androidx.compose.runtime.withFrameNanos { } }
+        entering = false
+        if (com.ai.assistance.operit.ui.main.LaunchReveal.covering.value) {
+            entryAlpha.snapTo(1f)
+            androidx.compose.runtime.withFrameNanos { }
+        } else {
+            entryAlpha.animateTo(1f, tween(180))
+        }
+        com.ai.assistance.operit.ui.main.LaunchReveal.markReady()
+    }
     var showChats by remember { mutableStateOf(false) }
     // On a tablet the menu is a sidebar kept open at the left; the menu button folds it away and back.
     var sidebarOpen by rememberSaveable(orbit.id) { mutableStateOf(true) }
@@ -1027,7 +1062,8 @@ private fun OrbitChatPage(
                             ::forkMessage else null,
                     com.ai.assistance.operit.ui.features.chat.components.LocalShowHiddenChatRows provides devView,
                     com.ai.assistance.operit.ui.features.chat.components.LocalTranscriptPreparing provides
-                        devPreparing.takeIf { devEntering },
+                        (devPreparing.takeIf { devEntering } ?: entryPreparing.takeIf { entering }),
+                    com.ai.assistance.operit.ui.features.chat.components.LocalTranscriptAlpha provides entryAlpha.asState(),
                     com.ai.assistance.operit.ui.features.chat.components.LocalOrbitOwnAvatar provides
                         // Only in Orbit's own chats and its task runs: a subagent may share its name.
                         (devSubChatId ?: currentChatId).takeIf { shown ->

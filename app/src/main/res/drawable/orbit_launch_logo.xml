@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Orbit's mark for the launch screen, in Rainy's pink: the same shape as OrbitLogoAvatar, its
+     24-unit box drawn 96dp wide in the middle of the 288dp splash icon. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="288dp"
+    android:height="288dp"
+    android:viewportWidth="288"
+    android:viewportHeight="288">
+    <path
+        android:pathData="M177.36,121.92 A40,40 0 0,1 137.05,183.39 M110.64,166.08 A40,40 0 0,1 150.95,104.61 M164,116 a8,8 0 1,0 16,0 a8,8 0 1,0 -16,0 M108,172 a8,8 0 1,0 16,0 a8,8 0 1,0 -16,0"
+        android:strokeColor="#FF6B8E"
+        android:strokeWidth="7.2"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M132,144 a12,12 0 1,0 24,0 a12,12 0 1,0 -24,0"
+        android:strokeColor="#FF6B8E"
+        android:strokeWidth="7.2"
+        android:strokeLineCap="round" />
+</vector>

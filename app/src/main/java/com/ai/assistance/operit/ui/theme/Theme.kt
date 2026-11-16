@@ -113,7 +113,10 @@ fun OperitTheme(updateSystemBars: Boolean = true, content: @Composable () -> Uni
     val backgroundBlurRadius by preferencesManager.backgroundBlurRadius.collectAsState(initial = 10f)
 
     val view = LocalView.current
-    if (updateSystemBars && !view.isInEditMode) {
+    // While Orbit's launch mark covers the app it keeps the system bars clear; the page's colors
+    // come once it is gone.
+    val launchCovering by com.ai.assistance.operit.ui.main.LaunchReveal.covering.collectAsState()
+    if (updateSystemBars && !view.isInEditMode && !launchCovering) {
         SideEffect {
             val window = (view.context as Activity).window
             val insetsController = window.decorView.let { decorView ->

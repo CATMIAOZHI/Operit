@@ -14,6 +14,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.compose.foundation.layout.Box
@@ -28,6 +29,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -205,6 +207,14 @@ class MainActivity : ComponentActivity(), com.ai.assistance.operit.ui.components
     private var pendingShortcutNavItem: NavItem? = null
     private var pendingShortcutRequestId: Long = 0L
     private var currentMainNavItem: NavItem = NavItem.AiChat
+        set(value) {
+            field = value
+            orbitShown = value == NavItem.Orbit
+        }
+    /** Orbit has no place for Operit's plugin loading indicator; plugins still load behind it. */
+    private var orbitShown by mutableStateOf(false)
+    /** Orbit's turning mark over the app while it loads, until it opens onto the first page. */
+    private var launchOverlay: LaunchOverlay? = null
     private var pendingRouteId: String? = null
     private var pendingRouteArgs: Map<String, Any?> = emptyMap()
     private var pendingRouteRequestId: Long = 0L
@@ -284,8 +294,23 @@ class MainActivity : ComponentActivity(), com.ai.assistance.operit.ui.components
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // The system shows Orbit's mark until the app's first frame, which draws the same mark;
+        // that one turns until the first page is ready, then opens onto it.
+        val splash = installSplashScreen()
+        val coldLaunch = savedInstanceState == null
+        if (coldLaunch) {
+            LaunchReveal.reset()
+            LaunchReveal.setCovering(true)
+        }
+        // The app's first frame already shows the same mark, so the system's copy goes at once, and
+        // only then does the ring start turning (two rings at different angles would cross-fade).
+        splash.setOnExitAnimationListener { provider ->
+            provider.remove()
+            launchOverlay?.spin()
+        }
         super.onCreate(savedInstanceState)
         lastOrientation = resources.configuration.orientation
+        if (coldLaunch) openLaunchMarkWhenReady()
 
         if (RawSnapshotBackupManager.isProcessRestartRequired()) {
             // If the migration is running in this process (e.g. Activity recreation during
@@ -472,6 +497,7 @@ class MainActivity : ComponentActivity(), com.ai.assistance.operit.ui.components
      * user sees an error surface and can relaunch to retry, or exit manually.
      */
     private fun completePendingRestoreRegistration() {
+        LaunchReveal.markReady()
         setContent {
             OperitTheme {
                 MigrationInProgressScreen()
@@ -500,6 +526,7 @@ class MainActivity : ComponentActivity(), com.ai.assistance.operit.ui.components
     private fun showMigrationInProgressSurface() {
         // Show a minimal migration surface so the user sees something is happening instead of a
         // black screen while the process-owned migration continues across Activity recreation.
+        LaunchReveal.markReady()
         setContent {
             OperitTheme {
                 MigrationInProgressScreen()
@@ -561,6 +588,7 @@ class MainActivity : ComponentActivity(), com.ai.assistance.operit.ui.components
         message: String,
         pendingResetRequired: Boolean
     ) {
+        LaunchReveal.markReady()
         setContent {
             OperitTheme {
                 MigrationStartupErrorScreen(message, pendingResetRequired)
@@ -569,6 +597,7 @@ class MainActivity : ComponentActivity(), com.ai.assistance.operit.ui.components
     }
 
     private fun showCompatibilityInitializationErrorSurface(message: String) {
+        LaunchReveal.markReady()
         setContent {
             OperitTheme {
                 CompatibilityInitializationErrorScreen(
@@ -591,6 +620,7 @@ class MainActivity : ComponentActivity(), com.ai.assistance.operit.ui.components
             TAG,
             "Migration was interrupted (state=${snapshot.state}, safety=${snapshot.safetyBackupPath}), showing recovery surface"
         )
+        LaunchReveal.markReady()
         setContent {
             OperitTheme {
                 MigrationRecoveryScreen(snapshot)
@@ -961,7 +991,49 @@ class MainActivity : ComponentActivity(), com.ai.assistance.operit.ui.components
     }
 
 
+    /**
+     * Puts Orbit's turning mark over the app, and opens it once the first page is ready (or the wait
+     * runs out) and the app has stopped dropping frames, so the opening plays every frame.
+     */
+    private fun openLaunchMarkWhenReady() {
+        val overlay = LaunchOverlay.attach(this)
+        launchOverlay = overlay
+        lifecycleScope.launch {
+            kotlinx.coroutines.withTimeoutOrNull(LaunchReveal.MAX_WAIT_MS) {
+                LaunchReveal.ready.first { it }
+            }
+            // A page that just drew may still be busy for a few frames; wait a little for frames to
+            // come on time, so the opening plays every frame.
+            val calmUntil = android.os.SystemClock.uptimeMillis() + 600L
+            var last = nextFrameNanos()
+            var onTime = 0
+            while (onTime < 3 && android.os.SystemClock.uptimeMillis() < calmUntil) {
+                val now = nextFrameNanos()
+                onTime = if (now - last < 25_000_000L) onTime + 1 else 0
+                last = now
+            }
+            overlay.open {
+                if (launchOverlay === overlay) {
+                    launchOverlay = null
+                    LaunchReveal.setCovering(false)
+                }
+            }
+        }
+    }
+
+    private suspend fun nextFrameNanos(): Long =
+        kotlinx.coroutines.suspendCancellableCoroutine { continuation ->
+            val callback = android.view.Choreographer.FrameCallback { continuation.resumeWith(Result.success(it)) }
+            android.view.Choreographer.getInstance().postFrameCallback(callback)
+            continuation.invokeOnCancellation { android.view.Choreographer.getInstance().removeFrameCallback(callback) }
+        }
+
     override fun onDestroy() {
+        launchOverlay?.let {
+            it.remove()
+            launchOverlay = null
+            LaunchReveal.setCovering(false)
+        }
         if (!processStartupInitializationStarted) {
             processStartupLease?.let(processStartupGate::release)
         }
@@ -1134,6 +1206,7 @@ class MainActivity : ComponentActivity(), com.ai.assistance.operit.ui.components
                 Box {
                     // 检查是否需要显示用户协议
                         if (!agreementPreferences.isAgreementAccepted()) {
+                            MarkLaunchReadyAfterFrame()
                             AgreementScreen(
                                     onAgreementAccepted = {
                                         agreementPreferences.acceptCurrentAgreement()
@@ -1152,6 +1225,7 @@ class MainActivity : ComponentActivity(), com.ai.assistance.operit.ui.components
                             )
                         }
                         else if (showModeSelection) {
+                            MarkLaunchReadyAfterFrame()
                             LaunchModeSelectionScreen(
                                 isSaving = isSavingModeSelection,
                                 onModeSelected = { mode ->
@@ -1179,6 +1253,7 @@ class MainActivity : ComponentActivity(), com.ai.assistance.operit.ui.components
                         }
                         // 检查是否需要显示权限引导界面
                         else if (showPermissionGuide) {
+                            MarkLaunchReadyAfterFrame()
                             PermissionGuideScreen(
                                     onComplete = {
                                         showPermissionGuide = false
@@ -1202,6 +1277,8 @@ class MainActivity : ComponentActivity(), com.ai.assistance.operit.ui.components
                                 shortcutNavItem != null -> shortcutNavItem
                                 else -> currentMainNavItem
                             }
+                            // Orbit says itself when its chat has drawn.
+                            if (initialNavItem != NavItem.Orbit) MarkLaunchReadyAfterFrame()
 
                             CompositionLocalProvider(LocalPluginLoadingState provides pluginLoadingState) {
                                 // 主应用界面 (始终存在于底层)
@@ -1241,6 +1318,7 @@ class MainActivity : ComponentActivity(), com.ai.assistance.operit.ui.components
                     // 插件加载界面 (带有淡出效果) - 始终在最上层
                     PluginLoadingScreenWithState(
                             loadingState = pluginLoadingState,
+                            hidden = orbitShown,
                             modifier = Modifier.zIndex(10f) // 确保加载界面在最上层
                     )
                 }
