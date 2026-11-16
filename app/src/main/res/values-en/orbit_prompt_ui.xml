@@ -68,6 +68,7 @@
     <string name="orbit_process_subagent">SUBAGENT %1$02d</string>
     <string name="orbit_process_subagent_task">Its task</string>
     <string name="orbit_process_subagent_open">See everything it did</string>
+    <string name="orbit_process_subagent_started_by">Sent by %1$s</string>
     <string name="orbit_process_subagent_earlier">%1$d earlier steps</string>
     <string name="orbit_process_subagent_no_steps">No steps yet</string>
     <string name="orbit_process_subagent_running">Running</string>

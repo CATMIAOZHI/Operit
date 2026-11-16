@@ -1008,6 +1008,8 @@ private fun LazyListScope.activitySection(
                                     timestamps = row.turns.flatMap { it.process.timestamps }.distinct().sorted(),
                                     title = title,
                                     time = oldest.process.time,
+                                    // The merged turns end where the newest of them does.
+                                    nextTurnAt = row.turns.maxByOrNull { it.process.time }?.process?.nextTurnAt,
                                 )
                             )
                         },

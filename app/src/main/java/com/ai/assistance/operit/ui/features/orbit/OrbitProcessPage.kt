@@ -148,10 +148,12 @@ private fun ProcessRecordPage(
             value = try {
                 val messages = if (readMessages || value == null) OrbitWork.messages(context, process, raw = developer)
                     else value!!.messages
-                val subagents = value?.subagents?.takeIf { it.isNotEmpty() && !readMessages }
+                // A turn's agents are read whole each time: which agents work for it can change.
+                val turn = process is OrbitProcess.ChatTurn || process is OrbitProcess.LiveTurn
+                val subagents = value?.subagents?.takeIf { it.isNotEmpty() && !readMessages && !turn }
                     ?.let { OrbitSubagents.refresh(context, it, subagentCache) }
                     ?: OrbitSubagents.of(context, process, messages, subagentCache)
-                ProcessRecord(messages, failed = false, running = running || subagents.any { it.running }, subagents)
+                ProcessRecord(messages, failed = false, running = running || subagents.any { it.busyHere }, subagents)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -342,8 +344,16 @@ private fun SubagentCard(sub: OrbitSubagentRecord, onOpen: () -> Unit) {
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(sub.name, style = MaterialTheme.typography.titleMedium, maxLines = 1,
-                    overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                Column(Modifier.weight(1f)) {
+                    Text(sub.name, style = MaterialTheme.typography.titleMedium, maxLines = 1,
+                        overflow = TextOverflow.Ellipsis)
+                    // A nested agent says whose it is; the start of a long path gives way first.
+                    if (sub.startedBy.isNotBlank()) {
+                        Text(stringResource(R.string.orbit_process_subagent_started_by, sub.startedBy),
+                            style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant,
+                            maxLines = 1, overflow = TextOverflow.StartEllipsis)
+                    }
+                }
                 Spacer(Modifier.width(8.dp))
                 SubagentStatus(sub)
             }
