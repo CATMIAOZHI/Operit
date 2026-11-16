@@ -421,7 +421,9 @@ abstract class ReadmeScreenshots internal constructor(private val demo: Demo, pr
                 val task = "readme-browser-$i"
                 val session = "readme-web-$i"
                 StandardBrowserSessionTools.sessions[session] = StandardBrowserSessionTools.WebSession(
-                    id = session, webView = android.webkit.WebView(context), sessionName = null, browserTaskId = task)
+                    id = session,
+                    page = com.ai.assistance.operit.core.tools.defaultTool.websession.browser.WebViewBrowserPage(android.webkit.WebView(context)),
+                    sessionName = null, browserTaskId = task)
                 task to OrbitBrowserWatch.Work(
                     talkChatId = orbit.chatId, orbitId = orbit.id, orbitName = orbit.name, executorChatId = task,
                     sessionId = session, url = page.url, title = page.title,

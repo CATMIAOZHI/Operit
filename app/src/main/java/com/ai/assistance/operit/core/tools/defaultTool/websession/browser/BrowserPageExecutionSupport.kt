@@ -170,7 +170,7 @@ internal fun StandardBrowserSessionTools.createDownloadListener(
     }
 }
 
-internal fun StandardBrowserSessionTools.injectTextSelectionHelper(webView: WebView) {
+internal fun StandardBrowserSessionTools.injectTextSelectionHelper(page: BrowserPage) {
     val script =
         """
         (function() {
@@ -861,7 +861,7 @@ internal fun StandardBrowserSessionTools.injectTextSelectionHelper(webView: WebV
         })();
         """.trimIndent()
 
-    runCatching { webView.evaluateJavascript(script, null) }
+    runCatching { page.evaluateJavascript(script, null) }
         .onFailure { AppLogger.w(EXECUTION_SUPPORT_TAG, "Failed to inject text selection helper: ${it.message}") }
 }
 
@@ -881,7 +881,7 @@ internal fun StandardBrowserSessionTools.handleRegularDownload(
     )
 }
 
-internal fun StandardBrowserSessionTools.injectDownloadHelper(webView: WebView) {
+internal fun StandardBrowserSessionTools.injectDownloadHelper(page: BrowserPage) {
     val script =
         """
         (function() {
@@ -948,7 +948,7 @@ internal fun StandardBrowserSessionTools.injectDownloadHelper(webView: WebView) 
         })();
         """.trimIndent()
 
-    runCatching { webView.evaluateJavascript(script, null) }
+    runCatching { page.evaluateJavascript(script, null) }
         .onFailure { AppLogger.w(EXECUTION_SUPPORT_TAG, "Failed to inject download helper: ${it.message}") }
 }
 
@@ -987,8 +987,8 @@ internal fun StandardBrowserSessionTools.injectBlobDownloaderScript(
     runCatching {
         StandardBrowserSessionTools.mainHandler.post {
             runCatching {
-                if (session.webView.isAttachedToWindow) {
-                    session.webView.evaluateJavascript(script, null)
+                if (session.page.canRunScripts) {
+                    session.page.evaluateJavascript(script, null)
                 } else {
                     recordDownloadEvent(
                         session,
@@ -2053,8 +2053,8 @@ internal fun StandardBrowserSessionTools.renderPageState(session: BrowserToolSes
     val viewport =
         StandardBrowserSessionTools.browserHost?.takeIf { session.browserTaskId == null }?.currentViewportSize()
             ?: Pair(
-                (session.viewportWidthPx ?: session.webView.width).coerceAtLeast(0),
-                (session.viewportHeightPx ?: session.webView.height).coerceAtLeast(0)
+                (session.viewportWidthPx ?: session.page.view.width).coerceAtLeast(0),
+                (session.viewportHeightPx ?: session.page.view.height).coerceAtLeast(0)
             )
     return buildString {
         appendLine("- Title: ${session.pageTitle.ifBlank { "about:blank" }}")
@@ -2091,7 +2091,7 @@ internal class BrowserScriptSyntaxException(message: String) : RuntimeException(
  * A script the page cannot parse throws [BrowserScriptSyntaxException].
  */
 internal fun StandardBrowserSessionTools.evaluateJavascriptAsync(
-    webView: WebView,
+    page: BrowserPage,
     expression: String,
     timeoutMs: Long
 ): String {
@@ -2104,7 +2104,7 @@ internal fun StandardBrowserSessionTools.evaluateJavascriptAsync(
     StandardBrowserSessionTools.mainHandler.post {
         try {
             com.ai.assistance.operit.features.orbit.OrbitBrowserControl.check(orbitToken)
-            if (!webView.isAttachedToWindow) {
+            if (!page.canRunScripts) {
                 StandardBrowserSessionTools.pendingAsyncJsCalls.remove(callId)
                 pending.error = "WebView is not attached"
                 pending.latch.countDown()
@@ -2142,7 +2142,7 @@ $inlineExpression
                     return true;
                 })();
                 """.trimIndent()
-            webView.evaluateJavascript(wrapped) { started ->
+            page.evaluateJavascript(wrapped) { started ->
                 // A script that parsed always returns true; anything else means it never ran.
                 if (started != "true" && StandardBrowserSessionTools.pendingAsyncJsCalls.remove(callId) != null) {
                     pending.notParsed = true
@@ -2175,7 +2175,7 @@ internal fun extractAsyncJsValue(payload: String): String {
 }
 
 internal fun StandardBrowserSessionTools.evaluatePageFunction(
-    webView: WebView,
+    page: BrowserPage,
     functionSource: String,
     ref: String?,
     timeoutMs: Long
@@ -2199,7 +2199,7 @@ internal fun StandardBrowserSessionTools.evaluatePageFunction(
             return refValue ? await fn(target) : await fn();
         })()
         """.trimIndent()
-    return extractAsyncJsValue(evaluateJavascriptAsync(webView, expression, timeoutMs))
+    return extractAsyncJsValue(evaluateJavascriptAsync(page, expression, timeoutMs))
 }
 
 internal fun StandardBrowserSessionTools.parseFormFields(rawFields: String): List<JSONObject>? {
@@ -2216,7 +2216,7 @@ internal fun StandardBrowserSessionTools.parseFormFields(rawFields: String): Lis
 }
 
 internal fun StandardBrowserSessionTools.fillFormFields(
-    webView: WebView,
+    page: BrowserPage,
     rawFields: String
 ): String {
     val expression =
@@ -2260,7 +2260,7 @@ internal fun StandardBrowserSessionTools.fillFormFields(
         """.trimIndent()
     return extractAsyncJsValue(
         evaluateJavascriptAsync(
-            webView,
+            page,
             expression,
             StandardBrowserSessionTools.DEFAULT_TIMEOUT_MS.coerceAtLeast(12_000L)
         )
@@ -2268,7 +2268,7 @@ internal fun StandardBrowserSessionTools.fillFormFields(
 }
 
 internal fun StandardBrowserSessionTools.pressKeyOnPage(
-    webView: WebView,
+    page: BrowserPage,
     key: String
 ): String {
     val expression =
@@ -2289,7 +2289,7 @@ internal fun StandardBrowserSessionTools.pressKeyOnPage(
         """.trimIndent()
     return extractAsyncJsValue(
         evaluateJavascriptAsync(
-            webView,
+            page,
             expression,
             StandardBrowserSessionTools.DEFAULT_TIMEOUT_MS.coerceAtLeast(12_000L)
         )
@@ -2297,7 +2297,7 @@ internal fun StandardBrowserSessionTools.pressKeyOnPage(
 }
 
 internal fun StandardBrowserSessionTools.selectOptionsByRef(
-    webView: WebView,
+    page: BrowserPage,
     ref: String,
     values: List<String>
 ): String {
@@ -2322,7 +2322,7 @@ internal fun StandardBrowserSessionTools.selectOptionsByRef(
         """.trimIndent()
     return extractAsyncJsValue(
         evaluateJavascriptAsync(
-            webView,
+            page,
             expression,
             StandardBrowserSessionTools.DEFAULT_TIMEOUT_MS.coerceAtLeast(12_000L)
         )
@@ -2330,7 +2330,7 @@ internal fun StandardBrowserSessionTools.selectOptionsByRef(
 }
 
 internal fun StandardBrowserSessionTools.typeIntoElementByRef(
-    webView: WebView,
+    page: BrowserPage,
     ref: String,
     text: String,
     submit: Boolean,
@@ -2391,7 +2391,7 @@ internal fun StandardBrowserSessionTools.typeIntoElementByRef(
         """.trimIndent()
     return extractAsyncJsValue(
         evaluateJavascriptAsync(
-            webView,
+            page,
             expression,
             StandardBrowserSessionTools.DEFAULT_TIMEOUT_MS.coerceAtLeast(12_000L)
         )
@@ -2506,13 +2506,13 @@ internal fun StandardBrowserSessionTools.takeScreenshot(
             when {
                 fullPage ->
                     captureFullPageBitmap(
-                        session.webView,
+                        session.page,
                         session.viewportWidthPx,
                         session.viewportHeightPx
                     )
                 else ->
                     captureViewportBitmap(
-                        session.webView,
+                        session.page,
                         session.viewportWidthPx,
                         session.viewportHeightPx
                     )
@@ -2607,7 +2607,7 @@ private fun StandardBrowserSessionTools.captureElementScreenshot(
 ): BrowserScreenshotResult {
     runOnMainSync<Unit> { ensureSessionAttachedOnMain(session.id) }
     val geometry =
-        elementGeometry(session.webView, ref, "center")
+        elementGeometry(session.page, ref, "center")
             ?: throw BrowserInputException("Ref $ref was not found in the current snapshot. Capture a new snapshot and retry.")
     if (geometry.width < 1.0 || geometry.height < 1.0) {
         throw BrowserInputException("Ref $ref has no visible size, so there is nothing to capture.")
@@ -2624,11 +2624,11 @@ private fun StandardBrowserSessionTools.captureElementScreenshot(
             right > geometry.visualLeft + geometry.visualWidth || bottom > geometry.visualTop + geometry.visualHeight
     val path = runOnMainSync {
         ensureSessionAttachedOnMain(session.id)
-        val webView = session.webView
-        val bitmap = captureViewportBitmap(webView, session.viewportWidthPx, session.viewportHeightPx)
+        val page = session.page
+        val bitmap = captureViewportBitmap(page, session.viewportWidthPx, session.viewportHeightPx)
         try {
-            val viewWidth = webView.width.coerceAtLeast(1)
-            val viewHeight = webView.height.coerceAtLeast(1)
+            val viewWidth = page.view.width.coerceAtLeast(1)
+            val viewHeight = page.view.height.coerceAtLeast(1)
             val sx = bitmap.width.toFloat() / viewWidth
             val sy = bitmap.height.toFloat() / viewHeight
             val left = (geometry.toViewX(geometry.left, viewWidth) * sx).toInt().coerceIn(0, bitmap.width)
@@ -2680,8 +2680,8 @@ private fun StandardBrowserSessionTools.captureViewportWithDevtools(
         runOnMainSync {
             ensureSessionAttachedOnMain(session.id)
             Pair(
-                session.viewportWidthPx ?: session.webView.width,
-                session.viewportHeightPx ?: session.webView.height
+                session.viewportWidthPx ?: session.page.view.width,
+                session.viewportHeightPx ?: session.page.view.height
             )
         }
     if (size.first <= 0 || size.second <= 0) return null
@@ -2749,12 +2749,12 @@ private fun drawDevtoolsPng(png: ByteArray, target: Bitmap): Boolean {
 }
 
 internal fun StandardBrowserSessionTools.captureViewportBitmap(
-    webView: WebView,
+    page: BrowserPage,
     viewportWidthCssPx: Int? = null,
     viewportHeightCssPx: Int? = null
 ): Bitmap {
-    val sourceWidth = webView.width.coerceAtLeast(1)
-    val sourceHeight = webView.height.coerceAtLeast(1)
+    val sourceWidth = page.view.width.coerceAtLeast(1)
+    val sourceHeight = page.view.height.coerceAtLeast(1)
     val width = viewportWidthCssPx ?: sourceWidth
     val height = viewportHeightCssPx ?: sourceHeight
     val bitmap = createBrowserScreenshotBitmap(width, height)
@@ -2762,26 +2762,29 @@ internal fun StandardBrowserSessionTools.captureViewportBitmap(
     if (width != sourceWidth || height != sourceHeight) {
         canvas.scale(width.toFloat() / sourceWidth, height.toFloat() / sourceHeight)
     }
-    webView.draw(canvas)
+    page.view.draw(canvas)
     return bitmap
 }
 
 internal fun StandardBrowserSessionTools.captureFullPageBitmap(
-    webView: WebView,
+    page: BrowserPage,
     viewportWidthCssPx: Int? = null,
     viewportHeightCssPx: Int? = null
 ): Bitmap {
-    val pageSize = resolveFullPageCssSize(webView)
-    val originalWidth = webView.width.coerceAtLeast(1)
-    val originalHeight = webView.height.coerceAtLeast(1)
-    val originalScrollX = webView.scrollX
-    val originalScrollY = webView.scrollY
+    // Laying a WebView out at the page's full size is how it draws all of it; the engine's tabs
+    // take full-page pictures through DevTools instead.
+    val webView = page.webViewOrNull ?: throw IllegalStateException("Full-page pictures of this tab need DevTools")
+    val pageSize = resolveFullPageCssSize(page)
+    val originalWidth = page.view.width.coerceAtLeast(1)
+    val originalHeight = page.view.height.coerceAtLeast(1)
+    val originalScrollX = page.view.scrollX
+    val originalScrollY = page.view.scrollY
     val hasCssViewport = viewportWidthCssPx != null && viewportHeightCssPx != null
     val outputWidth =
         if (hasCssViewport) {
             pageSize.contentWidthCssPx
         } else {
-            (pageSize.contentWidthCssPx * (webView.scale.takeIf { it > 0f } ?: 1f))
+            (pageSize.contentWidthCssPx * (page.scale.takeIf { it > 0f } ?: 1f))
                 .toInt()
                 .coerceAtLeast(originalWidth)
         }
@@ -2789,7 +2792,7 @@ internal fun StandardBrowserSessionTools.captureFullPageBitmap(
         if (hasCssViewport) {
             pageSize.contentHeightCssPx
         } else {
-            (pageSize.contentHeightCssPx * (webView.scale.takeIf { it > 0f } ?: 1f))
+            (pageSize.contentHeightCssPx * (page.scale.takeIf { it > 0f } ?: 1f))
                 .toInt()
                 .coerceAtLeast(originalHeight)
         }
@@ -2846,11 +2849,11 @@ internal data class BrowserFullPageCssSize(
 )
 
 internal fun StandardBrowserSessionTools.resolveFullPageCssSize(
-    webView: WebView
+    page: BrowserPage
 ): BrowserFullPageCssSize {
     val pageSize =
         runJsonScript(
-            webView,
+            page,
             """
             (function() {
                 const doc = document.documentElement;
@@ -2881,9 +2884,9 @@ internal fun StandardBrowserSessionTools.resolveFullPageCssSize(
             "page_size_error"
         )
 
-    val fallbackScale = webView.scale.takeIf { it.isFinite() && it > 0f } ?: 1f
-    val fallbackViewportWidth = (webView.width / fallbackScale).toInt().coerceAtLeast(1)
-    val fallbackViewportHeight = (webView.height / fallbackScale).toInt().coerceAtLeast(1)
+    val fallbackScale = page.scale.takeIf { it.isFinite() && it > 0f } ?: 1f
+    val fallbackViewportWidth = (page.view.width / fallbackScale).toInt().coerceAtLeast(1)
+    val fallbackViewportHeight = (page.view.height / fallbackScale).toInt().coerceAtLeast(1)
     val viewportWidth =
         (pageSize?.optDouble("viewportWidth", 0.0) ?: 0.0)
             .toInt()
@@ -2920,7 +2923,7 @@ internal fun StandardBrowserSessionTools.createBrowserScreenshotBitmap(width: In
 }
 
 internal fun StandardBrowserSessionTools.resolveElementRect(
-    webView: WebView,
+    page: BrowserPage,
     ref: String
 ): Rect? {
     val script =
@@ -2969,7 +2972,7 @@ internal fun StandardBrowserSessionTools.resolveElementRect(
             });
         })();
         """.trimIndent()
-    val json = runJsonScript(webView, script, "element_rect_error") ?: return null
+    val json = runJsonScript(page, script, "element_rect_error") ?: return null
     if (!json.optBoolean("ok", false)) {
         return null
     }
@@ -3220,12 +3223,12 @@ $runner
             "    : async function() { return operitExpressionValue; };"
     val bodyForm = "const operitRunner = async function(page, console) {\n" + code + "\n};"
     try {
-        return extractAsyncJsValue(evaluateJavascriptAsync(session.webView, buildScript(expressionForm), timeoutMs))
+        return extractAsyncJsValue(evaluateJavascriptAsync(session.page, buildScript(expressionForm), timeoutMs))
     } catch (_: BrowserScriptSyntaxException) {
         // Statements such as "await page.click(); return 1" are not one expression.
     }
     return try {
-        extractAsyncJsValue(evaluateJavascriptAsync(session.webView, buildScript(bodyForm), timeoutMs))
+        extractAsyncJsValue(evaluateJavascriptAsync(session.page, buildScript(bodyForm), timeoutMs))
     } catch (_: BrowserScriptSyntaxException) {
         throw RuntimeException("code has a JavaScript syntax error, so it did not run")
     }
