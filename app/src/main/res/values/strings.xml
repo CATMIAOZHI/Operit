@@ -9720,6 +9720,8 @@
     <string name="orbit_chats_unread">有新消息</string>
     <string name="orbit_chats_title_unread">聊天，有新消息</string>
     <string name="orbit_menu_back_to_operit">回到 Operit</string>
+    <string name="orbit_menu_back_to_operit_confirm_title">回到 Operit？</string>
+    <string name="orbit_menu_back_to_operit_confirm_note">之后可以从 Operit 的菜单回到 Orbit。</string>
     <string name="orbit_chats_side_section">侧聊</string>
     <string name="orbit_sidebar_tabs">选项卡</string>
     <string name="orbit_chats_empty_title">发起侧聊</string>
