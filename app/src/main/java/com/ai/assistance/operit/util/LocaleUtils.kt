@@ -59,6 +59,14 @@ object LocaleUtils {
     private val supportedLanguageCodes =
             supportedLanguages.map { it.code }.filter { it != LanguageCodes.AUTO }.toSet()
 
+    /**
+     * Language picked while the app was running. The application context got its language when
+     * the process started, so text made outside an activity (Orbit's cards, notifications) needs
+     * it applied again, also after a system configuration change resets it.
+     */
+    @Volatile
+    private var appliedInProcess: String? = null
+
     /** 获取支持的语言列表 */
     fun getSupportedLanguages(): List<Language> {
         return supportedLanguages
@@ -160,6 +168,10 @@ object LocaleUtils {
         
         // 设置默认语言
         Locale.setDefault(localeToSet)
+        appliedInProcess = languageCode
+        // MainActivity is not an AppCompat activity, so on Android 13+ setApplicationLocales below
+        // does nothing; the application context is updated here on every version.
+        applyToApplication(context, localeToSet)
         
         // 根据Android版本应用语言设置
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -184,26 +196,33 @@ object LocaleUtils {
                 // 更新上下文资源配置
                 @Suppress("DEPRECATION")
                 context.resources.updateConfiguration(config, context.resources.displayMetrics)
-                
-                // 尝试更新Activity
-                try {
-                    val ctx = context.applicationContext
-                    if (ctx is ContextWrapper) {
-                        val baseContext = ctx.baseContext
-                        if (baseContext != null) {
-                            @Suppress("DEPRECATION")
-                            baseContext.resources.updateConfiguration(
-                                config, 
-                                baseContext.resources.displayMetrics
-                            )
-                        }
-                    }
-                } catch (e: Exception) {
-                    // 忽略无法更新的上下文
-                }
             } catch (e: Exception) {
                 // 错误时静默处理
             }
+        }
+    }
+
+    /** Called from the application after a configuration change, which brings back the start-up language. */
+    fun reapplyInProcess(context: Context) {
+        // Resolved again so that "follow system" picks up a new system language.
+        appliedInProcess?.let { applyToApplication(context, getLocaleForLanguageCode(it, context)) }
+    }
+
+    private fun applyToApplication(context: Context, locale: Locale) {
+        try {
+            val base = (context.applicationContext as? ContextWrapper)?.baseContext ?: return
+            val resources = base.resources
+            val config = Configuration(resources.configuration)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                config.setLocales(LocaleList(locale))
+            } else {
+                @Suppress("DEPRECATION")
+                config.locale = locale
+            }
+            @Suppress("DEPRECATION")
+            resources.updateConfiguration(config, resources.displayMetrics)
+        } catch (e: Exception) {
+            AppLogger.e("LocaleUtils", "更新应用上下文语言失败", e)
         }
     }
 

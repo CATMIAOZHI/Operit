@@ -110,6 +110,13 @@ fun LanguageSettingsScreen(
 
         // 延迟重启应用以确保语言设置完全生效
         scope.launch {
+            // The built-in character cards follow the new language unless the user edited them.
+            runCatching {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    com.ai.assistance.operit.data.preferences.CharacterCardManager
+                        .getInstance(context.applicationContext).relocalizeBuiltInCards()
+                }
+            }
             delay(600) // 短暂延迟确保设置已保存
             restartInPlace?.let {
                 it()
