@@ -111,6 +111,12 @@ val LocalShowHiddenChatRows = compositionLocalOf { false }
 val LocalTranscriptPreparing = compositionLocalOf<androidx.compose.runtime.MutableState<Boolean>?> { null }
 
 /**
+ * How visible the transcript's messages are. Entering an Orbit chat keeps them hidden until they
+ * are ready, so they show together instead of one by one. Read only while drawing.
+ */
+val LocalTranscriptAlpha = compositionLocalOf<androidx.compose.runtime.State<Float>?> { null }
+
+/**
  * In Orbit's developer view: Orbit's own picture, drawn beside replies signed with its [name]
  * (its chats and its background runs), so they never look like a role card's.
  */

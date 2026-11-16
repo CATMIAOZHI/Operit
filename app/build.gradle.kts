@@ -436,6 +436,7 @@ dependencies {
     // Base Android dependencies
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
+    implementation(libs.androidx.core.splashscreen)
     implementation(libs.material)
     implementation(libs.lifecycle.runtime.ktx)
     implementation("androidx.browser:browser:1.8.0")

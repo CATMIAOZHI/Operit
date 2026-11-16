@@ -13,4 +13,11 @@
         <!-- Customize your theme here. -->
         
     </style>
+
+    <!-- The launch screen: Orbit's mark on Orbit's background, held until the first page is ready. -->
+    <style name="Theme.Operit.Launch" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/orbit_launch_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/orbit_launch_logo</item>
+        <item name="postSplashScreenTheme">@style/Theme.Operit</item>
+    </style>
 </resources>

@@ -9,6 +9,8 @@
     <color name="rainy_secondary">#FFFF85A2</color>
     <color name="rainy_variant">#FFE91E63</color>
     <color name="rainy_background">#FFFFF0F5</color>
+    <!-- Orbit's page background, for the launch screen (LaunchReveal draws the same). -->
+    <color name="orbit_launch_background">#FFFAFBFC</color>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
 </resources>

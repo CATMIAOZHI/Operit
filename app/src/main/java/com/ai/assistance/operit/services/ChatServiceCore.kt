@@ -559,6 +559,10 @@ class ChatServiceCore(
     val currentChatId: StateFlow<String?>
         get() = chatHistoryDelegate.currentChatId
 
+    /** The chat whose message window has been loaded into [chatHistory] (empty chats included). */
+    val displayedChatId: StateFlow<String?>
+        get() = chatHistoryDelegate.displayedChatId
+
     val currentChatProcessMetadata get() = chatHistoryDelegate.processMetadata
     suspend fun loadTranscriptProcess(key: Long) = chatHistoryDelegate.loadTranscriptProcess(key)
 
