@@ -27,6 +27,13 @@ object CollaborationTools {
         "Do not use a different model unless the user prefers or agrees to it."
     }
 
+    /** Some models stop after spawning and never collect the result, so the reply says how. */
+    fun spawnNote(chinese: Boolean): String = if (chinese) {
+        "子代理已在后台开始。需要它的结果时，调用 wait_agent 等待；它完成后结果会送到你这里。"
+    } else {
+        "The subagent is now running in the background. When you need its result, call wait_agent to wait; its final answer is delivered to you when it finishes."
+    }
+
     fun category(chinese: Boolean, profiles: List<AgentProfile>, limitsOverride: CollaborationLimits? = null): SystemToolPromptCategory {
         val limits = limitsOverride
             ?: com.ai.assistance.operit.core.agent.AgentProfileRepository.instance.collaborationLimits.value

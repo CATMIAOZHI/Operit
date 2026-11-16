@@ -86,7 +86,11 @@ class CollaborationToolExecutor(context: Context) : ToolExecutor {
                         includeProfilePrompt = AgentFork.parse(optional("fork_turns")) != AgentFork.All ||
                             optional("agent_type") != null,
                     )
-                    buildJsonObject { put("task_name", agent.path); put("agent_id", agent.chatId) }
+                    buildJsonObject {
+                        put("task_name", agent.path)
+                        put("agent_id", agent.chatId)
+                        put("note", CollaborationTools.spawnNote(isChineseLanguage()))
+                    }
                 }
                 "send_message", "followup_task" -> {
                     val agentId = coordinator.send(chatId, required("target"), required("message"), tool.name == "followup_task")
