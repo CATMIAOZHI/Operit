@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="240" height="240" fill="none" stroke-width="1.8" stroke-linecap="round">
+  <title>Orbit</title>
+  <!-- The same shape as the app's logo: the user at the core, Orbit's ring and two moons around it. -->
+  <g stroke="#3D6FD1">
+    <path d="M20.339 6.481 A10 10 0 0 1 10.264 21.848"/>
+    <path d="M3.661 17.519 A10 10 0 0 1 13.736 2.152"/>
+    <circle cx="19" cy="5" r="2"/>
+    <circle cx="5" cy="19" r="2"/>
+  </g>
+  <circle cx="12" cy="12" r="3" stroke="#D9531F"/>
+</svg>
