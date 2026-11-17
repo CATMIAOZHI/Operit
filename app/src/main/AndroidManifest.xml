@@ -144,7 +144,7 @@
             android:launchMode="singleTask"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|screenLayout|smallestScreenSize|uiMode|density"
             android:windowSoftInputMode="adjustResize"
-            android:theme="@style/Theme.Operit" />
+            android:theme="@style/Theme.Operit.Browser" />
 
         <activity
             android:name=".ui.components.ResourceDownloadConfirmActivity"

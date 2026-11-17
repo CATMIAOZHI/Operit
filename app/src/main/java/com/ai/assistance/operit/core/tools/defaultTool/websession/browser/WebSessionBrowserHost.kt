@@ -339,6 +339,7 @@ internal class WebSessionBrowserHost(
         val activity = createdActivity?.get()
         createdActivity = null
         browserActivity = null
+        closingActivity = null
         overlayFallback = false
         composeView?.let { compose -> (compose.parent as? ViewGroup)?.takeIf { it !== rootView }?.removeView(compose) }
         activity?.takeIf { !it.isFinishing }?.finishAndRemoveTask()
@@ -557,7 +558,10 @@ internal class WebSessionBrowserHost(
             // Put away by the browser itself: its window goes too. Left for another app, the
             // window stays in the recent apps to come back to.
             if (!leavingActivity) {
-                createdActivity?.get()?.takeIf { !it.isFinishing }?.finishAndRemoveTask()
+                createdActivity?.get()?.takeIf { !it.isFinishing }?.let { closing ->
+                    closingActivity = closing
+                    closing.finishAndRemoveTask()
+                }
                 // A closing window shows nothing more: opening again right away starts a new one.
                 browserActivity = null
             }
@@ -569,6 +573,12 @@ internal class WebSessionBrowserHost(
 
     /** The activity the open browser shows in, while it is on screen; null otherwise. */
     private var browserActivity: WebSessionBrowserActivity? = null
+    /**
+     * The window the user just closed, while it leaves the screen: the browser stays in it so the
+     * closing animation shows the page, not an empty window. Its screen goes back to the overlay
+     * once the window is gone.
+     */
+    private var closingActivity: WebSessionBrowserActivity? = null
     /** The browser's activity while it exists, also when it waits in the recent apps. */
     private var createdActivity: java.lang.ref.WeakReference<WebSessionBrowserActivity>? = null
     /** The activity could not open (the system blocked it); the browser shows over everything as before. */
@@ -629,6 +639,11 @@ internal class WebSessionBrowserHost(
     }
 
     internal fun onActivityStopped(activity: WebSessionBrowserActivity) {
+        if (activity === closingActivity) {
+            closingActivity = null
+            placeBrowserScreen()
+            return
+        }
         if (browserActivity !== activity) return
         browserActivity = null
         if (!isExpanded || activity.isFinishing) {
@@ -653,6 +668,10 @@ internal class WebSessionBrowserHost(
     }
 
     internal fun onActivityDestroyed(activity: WebSessionBrowserActivity) {
+        if (activity === closingActivity) {
+            closingActivity = null
+            placeBrowserScreen()
+        }
         if (browserActivity === activity) {
             browserActivity = null
             placeBrowserScreen()
@@ -678,8 +697,11 @@ internal class WebSessionBrowserHost(
         val compose = composeView ?: return
         val params = overlayParams ?: return
         val activity = browserActivity?.takeIf { isExpanded }
-        hostedInActivity = activity != null
-        val target: ViewGroup = activity?.container ?: root
+        // A window being closed keeps showing the page until it is off the screen, also when the
+        // browser is opened again meanwhile, until the new window (or the overlay) takes over.
+        val leaving = closingActivity?.takeIf { activity == null && !(isExpanded && overlayFallback) && !it.isDestroyed }
+        hostedInActivity = activity != null || leaving != null
+        val target: ViewGroup = activity?.container ?: leaving?.container ?: root
         if (compose.parent !== target) {
             (compose.parent as? ViewGroup)?.removeView(compose)
             target.addView(
@@ -689,7 +711,7 @@ internal class WebSessionBrowserHost(
         }
         val overlayFull = isExpanded && activity == null && overlayFallback
         val shown = activity != null || overlayFull
-        compose.alpha = if (shown) 1f else 0.01f
+        compose.alpha = if (shown || leaving != null) 1f else 0.01f
         applyBrowserFocusability()
         if (overlayFull) {
             root.setMinimizedMeasure(false)

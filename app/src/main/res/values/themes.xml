@@ -15,6 +15,15 @@
     </style>
 
     <!-- The launch screen: Orbit's mark on Orbit's background, held until the first page is ready. -->
+    <!--
+        The browser window. No placeholder while it opens: the system would slide in a blank
+        window of the background colour and the page would pop up after the animation. Without
+        it, the opening animation waits for the browser and shows it.
+    -->
+    <style name="Theme.Operit.Browser" parent="Theme.Operit">
+        <item name="android:windowDisablePreview">true</item>
+    </style>
+
     <style name="Theme.Operit.Launch" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">@color/orbit_launch_background</item>
         <item name="windowSplashScreenAnimatedIcon">@drawable/orbit_launch_logo</item>
