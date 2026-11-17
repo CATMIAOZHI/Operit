@@ -6,6 +6,7 @@ import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.ui.features.codex.CodexOAuthLoopbackCallbackServer
+import com.ai.assistance.operit.util.AppLogger
 import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.TimeUnit
@@ -31,7 +32,16 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.suspendCancellableCoroutine
 
-internal class AccountHttpException(val status: Int) : IOException("Account request failed: HTTP $status")
+/** [oauthError] is the OAuth `error` code from a token endpoint's refusal, when it sent one. */
+internal class AccountHttpException(val status: Int, val oauthError: String? = null) :
+    IOException("Account request failed: HTTP $status" + (oauthError?.let { " ($it)" } ?: "")) {
+    /** The refresh grant itself was revoked or spent, so only a new login can recover. */
+    val loginRevoked: Boolean
+        get() = status in setOf(400, 401) && oauthError in setOf("invalid_grant", "refresh_token_reused", "revoked_token")
+}
+
+/** The server answered but its body was missing, cut off or not JSON; it may have acted on the request. */
+internal class AccountResponseException(message: String, cause: Throwable? = null) : IOException(message, cause)
 
 enum class AccountProvider(val type: ApiProviderType, val port: Int) {
     GROK(ApiProviderType.GROK_ACCOUNT, 56121),
@@ -103,11 +113,17 @@ class ProviderAccountManager private constructor(context: Context, val provider:
     }
 
     private fun save(value: ProviderAccount) {
-        preferences.edit().putString("account", JSONObject().apply {
+        val raw = JSONObject().apply {
             put("access", value.accessToken); put("refresh", value.refreshToken)
             put("expires", value.expiresAt); put("project", value.projectId)
             put("email", value.email); put("identity", value.identity)
-        }.toString()).apply()
+        }.toString()
+        // commit: a rotated refresh token lost to a process kill would leave only the spent one.
+        // If storage still refuses, the new grant stays in memory so the spent one is never sent.
+        if (!preferences.edit().putString("account", raw).commit() &&
+            !preferences.edit().putString("account", raw).commit()) {
+            AppLogger.e(TAG, "${provider.name} sign-in could not be written to storage; kept in memory only")
+        }
         mutableAccount.value = value
     }
 
@@ -215,9 +231,11 @@ class ProviderAccountManager private constructor(context: Context, val provider:
             value.copy(projectId = discoverProject(value.accessToken))
         } else value
         currentCoroutineContext().ensureActive()
-        preferences.edit().putString("client_id", session.clientId)
-            .putString("client_secret", session.clientSecret).apply()
-        save(complete)
+        withContext(Dispatchers.IO) {
+            preferences.edit().putString("client_id", session.clientId)
+                .putString("client_secret", session.clientSecret).apply()
+            save(complete)
+        }
     }
 
     suspend fun validAccount(): ProviderAccount = mutex.withLock {
@@ -225,7 +243,7 @@ class ProviderAccountManager private constructor(context: Context, val provider:
         if (provider == AccountProvider.COMMAND_CODE) return@withLock current
         if (current.expiresAt - System.currentTimeMillis() > 120_000) return@withLock current
         val endpoint = when (provider) {
-            AccountProvider.GROK -> discoverXai().second
+            AccountProvider.GROK -> retryTransient { discoverXai() }.second
             AccountProvider.CLAUDE -> ClaudeOAuthProtocol.TOKEN_ENDPOINT
             else -> GOOGLE_TOKEN
         }
@@ -238,12 +256,38 @@ class ProviderAccountManager private constructor(context: Context, val provider:
                 preferences.getString("client_secret", "").orEmpty(),
             ).add("grant_type", "refresh_token").add("refresh_token", current.refreshToken).build()
         }
-        val updated = withContext(NonCancellable) {
+        val updated = withContext(NonCancellable + Dispatchers.IO) {
             // Refresh grants can rotate. Persist the successful response even if the caller stops.
-            parseTokens(requestJson(endpoint, body), current).also(::save)
+            val tokens = try {
+                if (provider == AccountProvider.GROK) retryTransient { requestJson(endpoint, body) }
+                else requestJson(endpoint, body)
+            } catch (error: AccountHttpException) {
+                AppLogger.w(TAG, "${provider.name} token refresh refused: HTTP ${error.status} error=${error.oauthError}")
+                throw error
+            }
+            parseTokens(tokens, current).also(::save)
         }
         currentCoroutineContext().ensureActive()
         updated
+    }
+
+    /**
+     * Up to three tries for a failed connection, 429 or 5xx, as the Grok CLI does; anything else is
+     * final. A timeout or a broken answer is final too: the server may already have rotated the
+     * refresh grant, and sending the old one again would get the whole login revoked.
+     */
+    private suspend fun <T> retryTransient(block: suspend () -> T): T {
+        for (attempt in 1..2) {
+            try {
+                return block()
+            } catch (error: AccountHttpException) {
+                if (error.status != 429 && error.status < 500) throw error
+            } catch (error: IOException) {
+                if (error is java.io.InterruptedIOException || error is AccountResponseException) throw error
+            }
+            delay(if (attempt == 1) 100L else 250L)
+        }
+        return block()
     }
 
     suspend fun saveCommandCodeApiKey(rawKey: String) = mutex.withLock {
@@ -255,7 +299,7 @@ class ProviderAccountManager private constructor(context: Context, val provider:
         val name = user?.optString("userName").orEmpty()
         if (id.isBlank() || name.isBlank()) throw IOException("Invalid account identity")
         currentCoroutineContext().ensureActive()
-        save(ProviderAccount(key, "", Long.MAX_VALUE, email = name))
+        withContext(Dispatchers.IO) { save(ProviderAccount(key, "", Long.MAX_VALUE, email = name)) }
     }
 
     suspend fun availableCommandCodeModels(): List<com.ai.assistance.operit.data.model.ModelOption> {
@@ -504,13 +548,27 @@ class ProviderAccountManager private constructor(context: Context, val provider:
             }.build()
             client.newCall(request).execute().use { response ->
                 currentCoroutineContext().ensureActive()
-                if (!response.isSuccessful) throw AccountHttpException(response.code)
-                try { JSONObject(response.body?.string() ?: throw IOException("Empty account response")) }
-                catch (_: JSONException) { throw IOException("Invalid account response") }
+                if (!response.isSuccessful) throw AccountHttpException(response.code, oauthError(response))
+                val text = try {
+                    response.body?.string()
+                } catch (error: IOException) {
+                    throw AccountResponseException("Account response was cut off", error)
+                } ?: throw AccountResponseException("Empty account response")
+                try { JSONObject(text) }
+                catch (_: JSONException) { throw AccountResponseException("Invalid account response") }
             }
         }
 
+    /** The OAuth `error` code of a refusal; other bodies, and an `error` object, give none. */
+    private fun oauthError(response: okhttp3.Response): String? = try {
+        val text = response.peekBody(16_384).string()
+        (JSONObject(text).opt("error") as? String)?.trim()?.take(64)?.takeIf { it.isNotEmpty() }
+    } catch (_: Exception) {
+        null
+    }
+
     companion object {
+        private const val TAG = "ProviderAccountManager"
         const val CCA = "https://cloudcode-pa.googleapis.com"
         const val ANTIGRAVITY_UA = "antigravity/ide/2.5.5 (aidev_client; os_type=windows; arch=amd64)"
         private const val GOOGLE_TOKEN = "https://oauth2.googleapis.com/token"
