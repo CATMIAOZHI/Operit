@@ -65,10 +65,10 @@ class PricingCatalogRepository(
 ) {
     companion object {
         const val MAIN_REMOTE_URL =
-            "https://raw.githubusercontent.com/CATMIAOZHI/Operit/personal/main/" +
+            "https://raw.githubusercontent.com/CATMIAOZHI/orbit/main/" +
                 "app/src/main/assets/pricing/official_model_pricing_v1.json"
         const val DEV_REMOTE_URL =
-            "https://raw.githubusercontent.com/CATMIAOZHI/Operit/personal/dev/" +
+            "https://raw.githubusercontent.com/CATMIAOZHI/orbit/dev/" +
                 "app/src/main/assets/pricing/official_model_pricing_v1.json"
         const val MAX_RESPONSE_BYTES = 1024 * 1024
         private const val MAX_SOURCE_BYTES = 8 * 1024 * 1024

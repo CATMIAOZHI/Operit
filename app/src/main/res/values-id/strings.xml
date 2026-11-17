@@ -414,7 +414,7 @@
     <string name="about_description">Operit AI adalah aplikasi asisten cerdas yang membantu pengguna menggunakan perangkat dengan lebih efisien, menyediakan analisis antarmuka, percakapan obrolan, dan fungsi lainnya.</string>
     <string name="about_developer">Pengelola: &lt;a href="https://github.com/CATMIAOZHI"&gt;Rainy&lt;/a&gt;</string>
     <string name="about_contact">Proyek hulu: AAswordman / Operit</string>
-    <string name="about_website">&lt;a href="https://github.com/CATMIAOZHI/Operit"&gt;GitHub: https://github.com/CATMIAOZHI/Operit&lt;/a&gt;</string>
+    <string name="about_website">&lt;a href="https://github.com/CATMIAOZHI/orbit"&gt;GitHub: https://github.com/CATMIAOZHI/orbit&lt;/a&gt;</string>
     <string name="about_copyright">© 2025 - 2026 Operit. Hak cipta dilindungi undang-undang.</string>
     <string name="star_on_github">Beri Bintang di GitHub</string>
     <string name="update_log">Catatan Pembaruan</string>

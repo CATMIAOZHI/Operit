@@ -561,7 +561,7 @@
     <string name="about_description">Operit Ry是一个智能助手应用，能够帮助用户更高效地使用设备，提供界面分析、聊天对话等功能。</string>
     <string name="about_developer">维护者: &lt;a href="https://github.com/CATMIAOZHI"&gt;Rainy&lt;/a&gt;</string>
     <string name="about_contact">上游项目: AAswordman / Operit</string>
-    <string name="about_website">&lt;a href="https://github.com/CATMIAOZHI/Operit"&gt;GitHub: https://github.com/CATMIAOZHI/Operit&lt;/a&gt;</string>
+    <string name="about_website">&lt;a href="https://github.com/CATMIAOZHI/orbit"&gt;GitHub: https://github.com/CATMIAOZHI/orbit&lt;/a&gt;</string>
     <string name="about_copyright">© 2025 - 2026 Operit. 保留所有权利。</string>
     <string name="star_on_github">在 GitHub 点个 Star</string>
     <string name="update_log">更新日志</string>
