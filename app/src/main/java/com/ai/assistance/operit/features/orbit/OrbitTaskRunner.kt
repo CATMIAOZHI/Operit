@@ -189,7 +189,8 @@ object OrbitTaskRunner {
                         when (task.kind) {
                             "URL_CHANGE" -> readUrl(task.source)
                             OrbitWatchSources.KIND -> if (OrbitWatchSources.isScript(task.source)) {
-                                val result = OrbitWatchSources.readScript(context, task.orbitId, task.source)
+                                val result = OrbitWatchSources.readScript(context, task.orbitId, task.source,
+                                    taskId = task.id, title = task.title)
                                 if (!result.wake) {
                                     complete(context, state, result.observation(), "", "",
                                         context.getString(com.ai.assistance.operit.R.string.orbit_hook_silent, result.reason),

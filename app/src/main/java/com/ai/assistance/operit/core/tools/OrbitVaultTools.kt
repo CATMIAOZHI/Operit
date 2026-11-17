@@ -269,11 +269,15 @@ internal object OrbitVaultTools {
                         else -> error("field must be username or password")
                     }
                     val ref = arg("ref").ifEmpty { error("fill needs ref: the input box's ref from a browser snapshot of the login page") }
+                    com.ai.assistance.operit.features.orbit.OrbitVaultUsage.record(context, orbit.id, e,
+                        com.ai.assistance.operit.features.orbit.OrbitVaultUsage.BROWSER)
                     return@runBlockingIoPreservingToolRuntimeContext ToolGetter.getBrowserSessionTools(context)
                         .typeVaultValue(NAME, ref, value, e.site, arg("submit") == "true")
                 }
                 "http_request" -> {
                     val e = OrbitVault.forHttp(context, orbit.id, arg("credential_id"))
+                    com.ai.assistance.operit.features.orbit.OrbitVaultUsage.record(context, orbit.id, e,
+                        com.ai.assistance.operit.features.orbit.OrbitVaultUsage.ORBIT)
                     fun send(saved: OrbitVault.Entry) =
                         request(saved, arg("url"), arg("method").ifEmpty { "GET" }.uppercase(), arg("headers"), args["body"])
                     val response = send(e)

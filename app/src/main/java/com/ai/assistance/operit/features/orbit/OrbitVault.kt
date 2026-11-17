@@ -57,6 +57,11 @@ internal object OrbitVault {
          * that package. Only that package sees it, and only in this Orbit's chats. Empty otherwise.
          */
         val packageName: String = "",
+        /**
+         * The user chose "always allow" on a hook card: any of this Orbit's background checks
+         * (hooks) may load this key as its variable without asking again. Survives saving the key again.
+         */
+        val hookAlways: Boolean = false,
     )
 
     data class OAuth(
@@ -158,7 +163,7 @@ internal object OrbitVault {
                 o.optJSONObject("oauth")?.let { auth ->
                     OAuth(auth.getString("tokenUrl"), auth.getString("clientId"), auth.optString("scope"),
                         auth.optString("refreshToken"), auth.optLong("expiresAt"), auth.optString("authorizationUrl"))
-                }, o.optString("packageName"))
+                }, o.optString("packageName"), o.optBoolean("hookAlways"))
         }
     }
 
@@ -169,6 +174,7 @@ internal object OrbitVault {
                     .put("secret", it.secret).put("apiHosts", JSONArray(it.apiHosts)).put("placement", it.placement)
                     .put("savedAt", it.savedAt).put("card", it.card).put("envName", it.envName).put("slot", it.slot)
                     .apply { if (it.packageName.isNotEmpty()) put("packageName", it.packageName) }
+                    .apply { if (it.hookAlways) put("hookAlways", true) }
                     .apply { it.oauth?.let { auth ->
                         put("oauth", JSONObject().put("tokenUrl", auth.tokenUrl).put("clientId", auth.clientId)
                             .put("authorizationUrl", auth.authorizationUrl)
@@ -211,7 +217,8 @@ internal object OrbitVault {
                     card = if (request.newPassword) request.requestedAt else 0,
                     envName = envName,
                     slot = if (request.kind == API_KEY) request.envName else "",
-                    packageName = if (request.kind == API_KEY) request.packageName else "")
+                    packageName = if (request.kind == API_KEY) request.packageName else "",
+                    hookAlways = same?.hookAlways == true)
                 val next = current.filterNot { it.id == entry.id } + entry
                 require(next.size <= MAX_ENTRIES) { "The vault is full" }
                 write(context, orbitId, next)
@@ -357,7 +364,19 @@ internal object OrbitVault {
 
     private class EnvCache(val version: Int, val secrets: List<String>)
     private val envCache = ConcurrentHashMap<String, EnvCache>()
-    private class PackageEnvCache(val version: Int, val byPackage: Map<String, Map<String, String>>)
+    /** Turns "always allow for hooks" on or off for one entry; false when it is gone. */
+    suspend fun setHookAlways(context: Context, orbitId: String, id: String, on: Boolean): Boolean =
+        withContext(Dispatchers.IO) {
+            lock(orbitId).withLock {
+                val current = read(context, orbitId)
+                if (current.none { it.id == id }) return@withLock false
+                write(context, orbitId, current.map { if (it.id == id) it.copy(hookAlways = on) else it })
+                changes.value++
+                true
+            }
+        }
+
+    private class PackageEnvCache(val version: Int, val byPackage: Map<String, List<Entry>>)
     private val packageEnvCache = ConcurrentHashMap<String, PackageEnvCache>()
 
     /** Drops what is held in memory for [orbitId], once its vault file is gone with the Orbit. */
@@ -371,18 +390,21 @@ internal object OrbitVault {
      * The keys saved for tool package [packageName], by variable name, which the package reads as
      * its environment when this Orbit runs it. Kept in memory until the vault changes.
      */
-    suspend fun packageEnv(context: Context, orbitId: String, packageName: String): Map<String, String> {
+    suspend fun packageEnv(context: Context, orbitId: String, packageName: String, use: Boolean = false): Map<String, String> {
         val now = changes.value
         val all = packageEnvCache[orbitId]?.takeIf { it.version == now }?.byPackage
             ?: entries(context, orbitId).filter { it.kind == API_KEY && it.packageName.isNotEmpty() && it.slot.isNotEmpty() }
                 .groupBy { it.packageName }
-                .mapValues { (_, list) -> list.sortedBy { it.savedAt }.associate { it.slot to it.secret } }
+                .mapValues { (_, list) -> list.sortedBy { it.savedAt } }
                 .also {
                     // Values from before a change are never read again; do not keep them around.
                     packageEnvCache.entries.removeIf { e -> e.value.version != now }
                     packageEnvCache[orbitId] = PackageEnvCache(now, it)
                 }
-        return all[packageName].orEmpty()
+        val keys = all[packageName].orEmpty()
+        // [use]: the package is being run with these keys, as opposed to checking which it has.
+        if (use) keys.forEach { OrbitVaultUsage.record(context, orbitId, it, OrbitVaultUsage.pack(packageName)) }
+        return keys.associate { it.slot to it.secret }
     }
 
     /**

@@ -48,7 +48,9 @@ internal object OrbitVaultBroker {
     private const val MAX_HEAD = 64 * 1024
     private const val MAX_REQUEST = 10 * 1024 * 1024
     private const val MAX_RESPONSE = 20 * 1024 * 1024
-    private val SURROGATE = Regex("ovk\\.([A-Za-z0-9-]{1,64})\\.([A-Za-z0-9-]{1,40})\\.([0-9a-f]{32})")
+    /** Orbit's own stand-in (`ovk.<orbit>.<entry>.<mac>`) or a hook's (`ovh.<orbit>.<entry>.<task>.<mac>`). */
+    private val SURROGATE = Regex("ovk\\.([A-Za-z0-9-]{1,64})\\.([A-Za-z0-9-]{1,40})\\.([0-9a-f]{32})|" +
+        "ovh\\.([A-Za-z0-9-]{1,64})\\.([A-Za-z0-9-]{1,40})\\.([A-Za-z0-9-]{1,64})\\.([0-9a-f]{32})")
     private val BASIC = Regex("(?i)basic\\s+([A-Za-z0-9+/=_-]+)")
     private val HOST = Regex("[a-z0-9.-]{3,253}")
     private val METHODS = setOf("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE")
@@ -113,6 +115,25 @@ internal object OrbitVaultBroker {
     fun surrogate(context: Context, orbitId: String, entry: OrbitVault.Entry): String =
         "ovk.$orbitId.${entry.id}.${mac(context, orbitId, entry)}"
 
+    /** A hook's own stand-in for a key, so what it does is listed under that hook in the key's usage. */
+    fun hookSurrogate(context: Context, orbitId: String, entry: OrbitVault.Entry, taskId: String): String {
+        require(taskId.matches(Regex("[A-Za-z0-9-]{1,64}"))) { "Bad task id" }
+        return "ovh.$orbitId.${entry.id}.$taskId.${mac(context, orbitId, entry, OrbitVaultUsage.hook(taskId))}"
+    }
+
+    /** Orbit, entry and caller of a well-formed surrogate; the MAC is checked by [resolve]. */
+    private data class Parts(val orbitId: String, val entryId: String, val caller: String, val mac: String)
+    private fun parts(surrogate: String): Parts? {
+        val g = SURROGATE.matchEntire(surrogate)?.groupValues ?: return null
+        return if (g[1].isNotEmpty()) Parts(g[1], g[2], "", g[3]) else Parts(g[4], g[5], OrbitVaultUsage.hook(g[6]), g[7])
+    }
+
+    /** Notes who used which key, once the request is going out. */
+    private fun recordUse(context: Context, surrogate: String, entry: OrbitVault.Entry) {
+        val p = parts(surrogate) ?: return
+        OrbitVaultUsage.record(context, p.orbitId, entry, p.caller.ifEmpty { OrbitVaultUsage.ORBIT })
+    }
+
     /** A random key per Orbit, kept encrypted with its other private stores. */
     private fun macKey(context: Context, orbitId: String): ByteArray = keys[orbitId] ?: synchronized(this) {
         keys[orbitId] ?: run {
@@ -125,10 +146,12 @@ internal object OrbitVaultBroker {
         }.also { keys[orbitId] = it }
     }
 
-    private fun mac(context: Context, orbitId: String, entry: OrbitVault.Entry): String {
+    private fun mac(context: Context, orbitId: String, entry: OrbitVault.Entry, caller: String = ""): String {
         val mac = Mac.getInstance("HmacSHA256")
         mac.init(SecretKeySpec(macKey(context, orbitId), "HmacSHA256"))
-        return mac.doFinal("$orbitId|${entry.id}|${entry.kind}|${entry.savedAt}".toByteArray())
+        // Orbit's own stand-ins keep the original input, so ones already handed out stay valid.
+        val input = "$orbitId|${entry.id}|${entry.kind}|${entry.savedAt}" + if (caller.isEmpty()) "" else "|$caller"
+        return mac.doFinal(input.toByteArray())
             .take(16).joinToString("") { "%02x".format(it) }
     }
 
@@ -266,6 +289,7 @@ internal object OrbitVaultBroker {
         if (found.isEmpty()) throw Refused(403,
             "No vault surrogate in the request. Put the surrogate from orbit_vault action terminal where the key goes.")
         val swaps = found.associateWith { resolve(context, it, host) ?: throw Refused(403, "Invalid surrogate") }
+        swaps.forEach { (surrogate, entry) -> recordUse(context, surrogate, entry) }
         fun swap(text: String) = swaps.entries.fold(text) { acc, (surrogate, entry) -> acc.replace(surrogate, entry.secret) }
         // In the query the key goes in encoded, so characters like + & = keep their meaning.
         fun swapQuery(text: String) = swaps.entries.fold(text) { acc, (surrogate, entry) ->
@@ -334,6 +358,9 @@ internal object OrbitVaultBroker {
     private fun env(context: Context, incoming: Incoming): Outgoing {
         if (incoming.method != "GET") throw Refused(400, "Use GET for /env/")
         val surrogate = incoming.target.removePrefix("/env/").substringBefore('?')
+        // A hook gets real values only from its approved start-up, never by asking here.
+        if (parts(surrogate)?.caller?.isNotEmpty() == true) throw Refused(403,
+            "A hook's surrogate only works through the proxy; real values need the hook's vault_env approval")
         val entry = resolve(context, surrogate, null) ?: throw Refused(403, "Invalid surrogate")
         if (entry.envName.isEmpty()) throw Refused(403,
             "The user has not allowed this in the terminal; ask with an orbit_vault request_update card")
@@ -345,6 +372,7 @@ internal object OrbitVaultBroker {
             "export ${entry.envName}_USERNAME=${quoted(entry.username)}\n" else ""
         return Outgoing(200, listOf("Content-Type" to "text/plain; charset=utf-8", "Cache-Control" to "no-store"),
             (user + "export ${entry.envName}=${quoted(entry.secret)}\n").toByteArray(Charsets.UTF_8))
+            .also { recordUse(context, surrogate, entry) }
     }
 
     /** RFC 3986 path segment: unreserved, sub-delims, ':' and '@' stay; everything else is %XX. */
@@ -361,15 +389,14 @@ internal object OrbitVaultBroker {
 
     /** The entry behind [surrogate]; [host] null means a terminal variable, which has no host check. */
     private fun resolve(context: Context, surrogate: String, host: String?): OrbitVault.Entry? {
-        val match = SURROGATE.matchEntire(surrogate) ?: return null
-        val (orbitId, entryId, given) = match.destructured
+        val (orbitId, entryId, caller, given) = parts(surrogate) ?: return null
         val entries = runBlocking {
             OrbitPreferences.getInstance(context).current().orbits.firstOrNull { it.id == orbitId && !it.deleting }
                 ?.let { OrbitVault.entries(context, it.id) }
         } ?: throw Refused(403, "This surrogate's Orbit no longer exists")
         val entry = entries.firstOrNull { it.id == entryId }
             ?: throw Refused(403, "This key is no longer in the vault; it was deleted or replaced")
-        if (!MessageDigest.isEqual(mac(context, orbitId, entry).toByteArray(), given.toByteArray())) {
+        if (!MessageDigest.isEqual(mac(context, orbitId, entry, caller).toByteArray(), given.toByteArray())) {
             throw Refused(403, "This surrogate is out of date; get a new one with orbit_vault action terminal")
         }
         // A password the user allowed may be loaded as a variable; only keys go through the proxy.

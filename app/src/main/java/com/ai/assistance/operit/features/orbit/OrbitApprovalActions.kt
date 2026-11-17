@@ -384,6 +384,7 @@ internal object OrbitApprovalActions {
         val english = LocaleUtils.usesEnglishPrompt(context)
         return when (action.optString("type")) {
             OrbitConnectorSend.RUN_TOOL -> OrbitConnectorSend.run(context, orbit, approval, action, english, always)
+            OrbitHookVault.ACTION -> OrbitHookVault.run(context, orbit, action, english, always)
             IMPORT_PACKAGES -> importPackages(context, orbit, action, english)
             TOGGLE_PACKAGES -> togglePackages(context, orbit, action, english)
             TOGGLE_MCP -> toggleMcp(context, orbit, action, english)

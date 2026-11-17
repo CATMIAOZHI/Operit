@@ -389,7 +389,7 @@ class JsToolManager private constructor(
         return try {
             val orbit = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context, callerChatId)
                 ?: return emptyMap()
-            com.ai.assistance.operit.features.orbit.OrbitVault.packageEnv(context, orbit.id, packageName)
+            com.ai.assistance.operit.features.orbit.OrbitVault.packageEnv(context, orbit.id, packageName, use = true)
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
