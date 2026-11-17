@@ -247,7 +247,7 @@ object OrbitDelivery {
         val text = if (privatePreview) context.getString(R.string.orbit_chats_unread)
             else WaifuMessageProcessor.cleanContentForWaifu(body).ifBlank { body }
         val notification = NotificationCompat.Builder(context, channel)
-            .setSmallIcon(R.drawable.ic_launcher_simple_foreground).setContentTitle(title)
+            .setSmallIcon(R.drawable.ic_stat_orbit).setContentTitle(title)
             .setContentText(text).setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .apply {
