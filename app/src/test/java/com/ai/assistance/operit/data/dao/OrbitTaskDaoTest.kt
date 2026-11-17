@@ -130,8 +130,8 @@ class OrbitTaskDaoTest {
                 database.messageDao().insertMessage(MessageEntity(chatId = "chat", sender = "ai",
                     content = content, timestamp = timestamp, orderIndex = index))
             }
-        assertEquals(listOf("task intermediate", "task final"), dao.aiSaidThrough("chat", 10, 30))
-        assertTrue(dao.aiSaidThrough("chat", 10, 10).isEmpty())
+        assertEquals(listOf(20L, 30L), dao.aiMessagesThrough("chat", 10, 30))
+        assertTrue(dao.aiMessagesThrough("chat", 10, 10).isEmpty())
     }
 
     @Test fun `lost general tool turn pauses with one report instead of replaying after reboot`() = runBlocking {

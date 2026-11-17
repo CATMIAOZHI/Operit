@@ -517,9 +517,8 @@ internal object OrbitSetup {
         suspend fun greeted(): Boolean {
             if (sentAt <= 0) return false
             // An empty or thinking-only row is saved before the reply streams; only words the user sees count.
-            val said = dao.aiSaidAfter(orbit.chatId, sentAt).joinToString("\n\n")
-            return com.ai.assistance.operit.ui.features.chat.components.OrbitSpeech.words(said,
-                context.getString(com.ai.assistance.operit.R.string.orbit_sent_card)).isNotBlank()
+            return OrbitWake.aiSaid(context, orbit.chatId, dao.aiMessagesAfter(orbit.chatId, sentAt),
+                context.getString(com.ai.assistance.operit.R.string.orbit_sent_card), first = true).isNotBlank()
         }
         if (sentAt > 0) {
             if (greeted()) { done(); return }

@@ -48,6 +48,38 @@ object OrbitWake {
     /** A worker may stop waiting while the chat still owns its turn and terminal listener. */
     internal fun isWatching(turnId: String): Boolean = turnId.isNotEmpty() && turnId in activeTurns
 
+    /**
+     * What Orbit said to the user in its messages written at [timestamps] in [chatId], as
+     * [OrbitSpeech.words] gives it: [cardOnly] when they only hold cards, empty when they say nothing.
+     * Each message is read whole (a reply cut to its end can start inside a step, which would then
+     * show as words) and one at a time, so a long tool-heavy turn is never held in memory at once.
+     * [first] stops at the first message that says something.
+     */
+    internal suspend fun aiSaid(
+        context: android.content.Context, chatId: String, timestamps: List<Long>, cardOnly: String, first: Boolean = false,
+    ): String {
+        val messages = AppDatabase.getDatabase(context).chatContentDao()
+        val words = mutableListOf<String>()
+        var card = false
+        for (timestamp in timestamps) {
+            val content = messages.getMessageByTimestamp(chatId, timestamp)?.content ?: continue
+            val said = OrbitSpeech.words(content, "")
+            when {
+                said.isNotEmpty() -> words += said
+                // A card, or reply buttons whose set exists in this chat (only those draw).
+                OrbitSpeech.words(content, CARD_MARK) == CARD_MARK ||
+                    OrbitSpeech.optionIds(OrbitSpeech.of(content)).any { OrbitOptions.find(context, it)?.chatId == chatId } ->
+                    card = true
+                else -> continue
+            }
+            if (first) break
+        }
+        return words.joinToString("\n\n").ifEmpty { if (card) cardOnly else "" }
+    }
+
+    /** Stands for "only cards" while reading a reply; no text Orbit writes can equal it. */
+    private const val CARD_MARK = "\u0000card"
+
     /** How a [tell] ended. */
     enum class Told {
         /** The chat stayed busy or refused the turn; nothing was sent, try again later. */
@@ -301,9 +333,8 @@ object OrbitWake {
                             val signal = terminal!!.await()
                             val outcome = if (signal is ChatTurnTerminalSignal.Completed) {
                                 decision?.confirmed = true
-                                val reply = dao.aiSaidThrough(chatId, before, signal.assistantMessageTimestamp)
-                                    .joinToString("\n\n")
-                                val said = OrbitSpeech.words(reply, app.getString(com.ai.assistance.operit.R.string.orbit_sent_card))
+                                val said = aiSaid(app, chatId, dao.aiMessagesThrough(chatId, before, signal.assistantMessageTimestamp),
+                                    app.getString(com.ai.assistance.operit.R.string.orbit_sent_card))
                                 if (said.isBlank()) Told.QUIET else {
                                     OrbitDelivery.announce(app, chatId, orbit.name, said)
                                     Told.SPOKE
