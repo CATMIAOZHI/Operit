@@ -765,30 +765,10 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
 
             AppLogger.d(TAG, "获取语言设置: $languageCode")
 
-            // 立即应用语言设置
-            val locale = LocaleUtils.getLocaleForLanguageCode(languageCode, this)
-            // 设置默认语言
-            Locale.setDefault(locale)
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                // Android 13+ 使用AppCompatDelegate API
-                val localeList = LocaleListCompat.create(locale)
-                AppCompatDelegate.setApplicationLocales(localeList)
-                AppLogger.d(TAG, "使用AppCompatDelegate设置语言: $languageCode")
-            } else {
-                // 较旧版本Android - 此处使用的部分更新将在attachBaseContext中完成更完整更新
-                val config = Configuration()
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val localeList = LocaleList(locale)
-                    LocaleList.setDefault(localeList)
-                    config.setLocales(localeList)
-                } else {
-                    config.locale = locale
-                }
-
-                resources.updateConfiguration(config, resources.displayMetrics)
-                AppLogger.d(TAG, "使用Configuration设置语言: $languageCode")
-            }
+            // The same path as picking a language in settings. The application context then speaks
+            // the saved language from start-up (text made outside an activity, such as Orbit's
+            // approval cards and notifications), and keeps it after a system configuration change.
+            LocaleUtils.applyAppLanguage(this, languageCode)
         } catch (e: Exception) {
             AppLogger.e(TAG, "初始化语言设置失败", e)
         }
