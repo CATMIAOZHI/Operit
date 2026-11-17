@@ -1,12 +1,12 @@
 # dev → main 晋升操作手册
 
-本手册供 Agent 在用户确认功能测试通过后，将 `personal/dev` 上的通用功能改动晋升到 `personal/main` 稳定分支。
+本手册供 Agent 在用户确认功能测试通过后，将 `dev` 上的通用功能改动晋升到 `main` 稳定分支。
 
 ## 前提
 
-1. 功能已在 `personal/dev` 上构建并通过实际测试（可共存 debug APK）。
+1. 功能已在 `dev` 上构建并通过实际测试（可共存 debug APK）。
 2. 用户已明确同意晋升。
-3. `personal/dev` 工作区干净且与远端同步。
+3. `dev` 工作区干净且与远端同步。
 
 ## 版本号规则
 
@@ -20,13 +20,13 @@
 
 约束：
 
-- `personal/dev` 与 `personal/main` 的 `versionCode` 必须一致；它按基线版本推进，dev 不得落后或领先稳定分支。
+- `dev` 与 `main` 的 `versionCode` 必须一致；它按基线版本推进，dev 不得落后或领先稳定分支。
 - 晋升分支只更新 `versionName` 的 `ry` 序号，不调整 `versionCode`；混入 `versionCode` 改动视为晋升失败。
 - dev 的 `-dev.<build>` 后缀由 debug 变体的 `versionNameSuffix` 自动追加，不要在源码里手写。
 
 ## 晋升检查点
 
-每次晋升完成后，将最新 `personal/main` 回合并到 `personal/dev`，并在专用检查点提交上创建不可复用的 annotated tag：
+每次晋升完成后，将最新 `main` 回合并到 `dev`，并在专用检查点提交上创建不可复用的 annotated tag：
 
 ```bash
 promotion-checkpoint/main-<YYYYMMDD>-<main-short-sha>
@@ -34,36 +34,36 @@ promotion-checkpoint/main-<YYYYMMDD>-<main-short-sha>
 
 该标签同时表示：
 
-- 标签所在提交已经包含当时的 `personal/main`；
+- 标签所在提交已经包含当时的 `main`；
 - 标签之前的 dev 通用改动已经完成晋升审查；
 - 下一次晋升默认只需要审查该标签之后的 dev 改动。
 
 开始下一轮晋升时先定位最近检查点：
 
 ```bash
-git fetch origin personal/main personal/dev --tags
+git fetch origin main dev --tags
 CHECKPOINT=$(git describe \
   --tags \
   --match 'promotion-checkpoint/*' \
   --abbrev=0 \
-  origin/personal/dev)
+  origin/dev)
 
-git log --oneline "$CHECKPOINT"..origin/personal/dev
+git log --oneline "$CHECKPOINT"..origin/dev
 git log --no-merges --oneline \
-  "$CHECKPOINT"..origin/personal/dev \
-  --not origin/personal/main
-git diff --stat "$CHECKPOINT"..origin/personal/dev
-git diff "$CHECKPOINT"..origin/personal/dev
+  "$CHECKPOINT"..origin/dev \
+  --not origin/main
+git diff --stat "$CHECKPOINT"..origin/dev
+git diff "$CHECKPOINT"..origin/dev
 ```
 
-第一条日志和 diff 用于查看检查点后的完整变化；第二条日志排除以同一 commit 对象从 `personal/main` 同步到 dev 的提交，用作待晋升候选列表。squash 或 rebase 后 SHA 和 patch 边界可能变化，仍须结合检查点、PR 记录和逐提交 diff 人工确认；若检查点后同步过 main，不得只根据原始 diff 判断晋升范围。
+第一条日志和 diff 用于查看检查点后的完整变化；第二条日志排除以同一 commit 对象从 `main` 同步到 dev 的提交，用作待晋升候选列表。squash 或 rebase 后 SHA 和 patch 边界可能变化，仍须结合检查点、PR 记录和逐提交 diff 人工确认；若检查点后同步过 main，不得只根据原始 diff 判断晋升范围。
 
 检查点只缩小审查范围，不替代以下检查：
 
-- 确认标签可从当前 `personal/dev` 到达；
+- 确认标签可从当前 `dev` 到达；
 - 确认标签说明中记录的 main SHA 与上一轮实际晋升结果一致；
 - 继续排除检查点之后新增或修改的开发版专属文件；
-- 如果 `personal/main` 在检查点之后又有其他改动，先将最新 main 回合并到 dev；只有 dev 没有待晋升通用改动时才立即建立新检查点，否则保留旧检查点并使用上面的过滤日志。
+- 如果 `main` 在检查点之后又有其他改动，先将最新 main 回合并到 dev；只有 dev 没有待晋升通用改动时才立即建立新检查点，否则保留旧检查点并使用上面的过滤日志。
 
 检查点标签不得移动、覆盖或复用；每轮晋升创建一个新标签，以保留可审计历史。
 
@@ -71,54 +71,54 @@ git diff "$CHECKPOINT"..origin/personal/dev
 
 ### Dev-first：功能与高风险改动
 
-新功能、用户可见行为、持久化、共享业务代码、依赖、原生模块及需要真机验证的改动，必须先进入 `personal/dev`，完成构建和实际测试后再按本手册晋升。改动行数少不等于风险低。
+新功能、用户可见行为、持久化、共享业务代码、依赖、原生模块及需要真机验证的改动，必须先进入 `dev`，完成构建和实际测试后再按本手册晋升。改动行数少不等于风险低。
 
-### personal/main-first：小型维护
+### main-first：小型维护
 
-文档修正、低风险 CI 或仓库元数据、稳定版专属配置，以及范围明确且已有针对性验证的紧急修复，可以直接从 `personal/main` 创建独立分支并通过 PR 合入稳定分支：
+文档修正、低风险 CI 或仓库元数据、稳定版专属配置，以及范围明确且已有针对性验证的紧急修复，可以直接从 `main` 创建独立分支并通过 PR 合入稳定分支：
 
 ```bash
-git fetch origin personal/main
-git switch -c fix/<short-name> origin/personal/main
+git fetch origin main
+git switch -c fix/<short-name> origin/main
 # 修改并执行与范围匹配的最小充分验证
 git push origin fix/<short-name>
-gh pr create --base personal/main --head fix/<short-name>
+gh pr create --repo CATMIAOZHI/orbit --base main --head fix/<short-name>
 ```
 
-这里的“main-first”只指 PR 目标为 `personal/main`；`main` 仍是自动同步的只读兼容镜像，不得直接提交或接收 PR。`personal/main` PR 合并后，将它回合并到 `personal/dev`：
+这里的“main-first”只指 PR 目标为 orbit 的 `main`；`CATMIAOZHI/Operit` 的各分支都是自动同步的只读镜像，不得直接提交或接收 PR。`main` PR 合并后，将它回合并到 `dev`：
 
 ```bash
-git fetch origin personal/main personal/dev --tags
-git switch personal/dev || exit 1
-test "$(git branch --show-current)" = "personal/dev" || exit 1
-git pull --ff-only origin personal/dev
-git merge --no-ff origin/personal/main || {
+git fetch origin main dev --tags
+git switch dev || exit 1
+test "$(git branch --show-current)" = "dev" || exit 1
+git pull --ff-only origin dev
+git merge --no-ff origin/main || {
   echo "Resolve and run git merge --continue before validation; or run git merge --abort." >&2
   exit 1
 }
 # 保留并验证 dev 专属身份、Nightly 和热更新配置，执行范围匹配的检查。
-git push origin personal/dev
+git push origin dev
 ```
 
-若过滤后的待晋升候选为空，可立即按第 10 节建立新检查点；若仍有待晋升功能，只同步并验证 main，不要仅为这次小型维护执行 suspend/replay 或移动检查点。保留原检查点，下一次晋升时排除已经属于 `personal/main` 的提交，待晋升完成后再建立新检查点。
+若过滤后的待晋升候选为空，可立即按第 10 节建立新检查点；若仍有待晋升功能，只同步并验证 main，不要仅为这次小型维护执行 suspend/replay 或移动检查点。保留原检查点，下一次晋升时排除已经属于 `main` 的提交，待晋升完成后再建立新检查点。
 
 ## 步骤
 
 ### 1. 确认状态
 
 ```bash
-git checkout personal/dev
-git pull origin personal/dev
+git checkout dev
+git pull origin dev
 git log --oneline -20
 ```
 
 逐条审视最近的提交，标记哪些是通用功能、哪些是开发版专属改动。
 
-### 2. 更新 personal/main
+### 2. 更新 main
 
 ```bash
-git checkout personal/main
-git pull origin personal/main
+git checkout main
+git pull origin main
 ```
 
 ### 3. 创建晋升分支
@@ -126,12 +126,12 @@ git pull origin personal/main
 一个发布轮次对应一个晋升分支，用本轮稳定版本号命名（如 `promote/ry.8`）：
 
 ```bash
-git checkout -b promote/<release>   # 从 personal/main 创建；<release> 是本轮稳定版本号，如 ry.8
+git checkout -b promote/<release>   # 从 main 创建；<release> 是本轮稳定版本号，如 ry.8
 ```
 
 ### 4. 挑选通用功能提交
 
-从 `personal/dev` 中 cherry-pick 只包含通用功能的提交：
+从 `dev` 中 cherry-pick 只包含通用功能的提交：
 
 ```bash
 git cherry-pick <commit-sha>
@@ -172,7 +172,7 @@ git commit --amend --no-edit
 ### 6. 验证
 
 ```bash
-# === 拒绝所有 personal/dev 身份配置（无论是否在 debug 块中）===
+# === 拒绝所有 dev 身份配置（无论是否在 debug 块中）===
 
 # 以下任何匹配均应视为晋升失败，对应提交需重新 cherry-pick 并排除：
 #   applicationIdSuffix = ".dev"
@@ -208,57 +208,57 @@ test -f app/src/debug/res/drawable/ic_launcher_dev_badge.xml \
 
 ```bash
 git push origin promote/<release>
-gh pr create --base personal/main --head promote/<release> \
+gh pr create --repo CATMIAOZHI/orbit --base main --head promote/<release> \
   --title "<type>: promote <本轮的几组改动> for <release>" \
   --body-file <按功能域分组写好的晋升说明>
 ```
 
 ### 8. 等待 CI 并合并
 
-`personal/main` 的 Ruleset 只把 `Fast checks` 列为必需检查。`Full Android checks` 要在 GitHub 托管 runner 上跑完整测试与 lint，经常因为 `The runner has received a shutdown signal`、Gradle daemon 消失，或与本次改动无关的既有 flaky 用例（如 `TokenTrackingAIServiceTest`、`CleanupReliabilityTest`）失败，不作为晋升门槛。
+`main` 的 Ruleset 只把 `Fast checks` 列为必需检查。`Full Android checks` 要在 GitHub 托管 runner 上跑完整测试与 lint，经常因为 `The runner has received a shutdown signal`、Gradle daemon 消失，或与本次改动无关的既有 flaky 用例（如 `TokenTrackingAIServiceTest`、`CleanupReliabilityTest`）失败，不作为晋升门槛。
 
 晋升的判定标准是两条同时满足：
 
-1. `gh pr checks <pr>` 里除 `Full Android checks` 以外的检查全部通过；
+1. `gh pr checks <pr> --repo CATMIAOZHI/orbit` 里除 `Full Android checks` 以外的检查全部通过；
 2. 晋升分支上本地 `:app:compileDebugKotlin` 与 `:app:testDebugUnitTest` 通过。
 
 满足后直接开启自动合并，让它随必需检查一起完成：
 
 ```bash
-gh pr merge <pr> --repo CATMIAOZHI/Operit --auto --merge
+gh pr merge <pr> --repo CATMIAOZHI/orbit --auto --merge
 ```
 
 `Full Android checks` 可以继续在后台跑完。只有它失败且失败原因指向本轮改动时，才需要修复后重跑。
 
-合并后 `sync-main-mirror.yml` 会将同一 commit 自动快进到只读 `main` 镜像；也可将 `personal/main` 合并回 `personal/dev` 保持开发线同步。
+合并后 `sync-operit-mirror.yml` 会将同一 commit 自动快进到 `CATMIAOZHI/Operit` 的 `personal/main` 和 `main` 只读镜像；也可将 `main` 合并回 `dev` 保持开发线同步。
 
 ### 9. 发布稳定版
 
 晋升 PR 合并后发布稳定版。发布包只能来自 `workflow_dispatch` 手动触发的 `:app:assembleRelease`；本机不执行完整 `assembleRelease`：
 
-- `Android Build` 不随 `personal/main` 的 push 自动运行，避免合并后的调试包构建与正式发布重复；
+- `Android Build` 不随 `main` 的 push 自动运行，避免合并后的调试包构建与正式发布重复；
 - `workflow_dispatch` 按输入的 `gradle_task` 构建，选 `:app:assembleRelease` 才产出 `app-release.apk`。
 
 ```bash
-gh workflow run android-build.yml --repo CATMIAOZHI/Operit \
-  --ref personal/main \
+gh workflow run android-build.yml --repo CATMIAOZHI/orbit \
+  --ref main \
   -f gradle_task=:app:assembleRelease
 # 可选：-f run_unit_tests=true -f run_android_lint=true（默认均为 false）
 
 # 刚触发时 run 可能还没出现在列表里；取到空值就稍等重试，不要用旧的 run
-RUN_ID=$(gh run list --repo CATMIAOZHI/Operit --workflow android-build.yml \
-  --branch personal/main --event workflow_dispatch --limit 1 \
+RUN_ID=$(gh run list --repo CATMIAOZHI/orbit --workflow android-build.yml \
+  --branch main --event workflow_dispatch --limit 1 \
   --json databaseId -q '.[0].databaseId')
 test -n "$RUN_ID" || { echo "run 尚不可见，稍后重试" >&2; exit 1; }
-gh run watch "$RUN_ID" --repo CATMIAOZHI/Operit --exit-status --interval 60 >/dev/null 2>&1
+gh run watch "$RUN_ID" --repo CATMIAOZHI/orbit --exit-status --interval 60 >/dev/null 2>&1
 ```
 
 下载产物。`-n` 只指定一个 artifact 时，内容直接解压到 `-D` 目录，不再多一层 artifact 同名目录；同一次 run 还有 `operit-android-reports-<n>`，只取 `operit-android-<n>`：
 
 ```bash
-RUN_NUMBER=$(gh run view "$RUN_ID" --repo CATMIAOZHI/Operit --json number -q .number)
+RUN_NUMBER=$(gh run view "$RUN_ID" --repo CATMIAOZHI/orbit --json number -q .number)
 WORK=<临时目录>
-gh run download "$RUN_ID" --repo CATMIAOZHI/Operit \
+gh run download "$RUN_ID" --repo CATMIAOZHI/orbit \
   -n "operit-android-$RUN_NUMBER" -D "$WORK"
 
 # artifact 内部路径固定为 apk/release/app-release.apk；后续校验与打包都用这个 $APK
@@ -302,11 +302,11 @@ printf '%s\n' "${PATCH_ASSETS[@]}"
 # 为空说明仓库还没有更早的 Release，这一版只发 APK。
 ```
 
-创建 Release，`--target` 指向本轮 `personal/main` 合并后的 commit：
+创建 Release，`--target` 指向本轮 `main` 合并后的 commit：
 
 ```bash
 gh release create v<version> \
-  --repo CATMIAOZHI/Operit \
+  --repo CATMIAOZHI/orbit \
   --target <本轮 main 合并 commit> \
   --title "Operit Ry <version>" \
   --notes-file <release-notes.md> \
@@ -319,10 +319,10 @@ Release 只放一份补丁（上一版 → 本轮）。`SHA256SUMS.txt` 只记 A
 
 ```bash
 gh release upload v<version> Operit-Ry-<version>-arm64-v8a.apk SHA256SUMS.txt \
-  --repo CATMIAOZHI/Operit --clobber
+  --repo CATMIAOZHI/orbit --clobber
 
 # assets[].digest 的 sha256 须与本地一致；targetCommitish 须为本轮 main 合并 commit
-gh release view v<version> --repo CATMIAOZHI/Operit --json assets,targetCommitish
+gh release view v<version> --repo CATMIAOZHI/orbit --json assets,targetCommitish
 ```
 
 release notes 首行为 `# Operit Ry <version>`，正文按功能域分组（模型与提供商 / 记忆与历史 / 对话与上下文 / 搜索与工具 / 安全边界 / 基础修复 等），末尾固定一行：
@@ -333,33 +333,17 @@ release notes 首行为 `# Operit Ry <version>`，正文按功能域分组（模
 
 创建 Release 属于对外动作，必须先取得用户明确同意。
 
-Release 发布后，`sync-orbit-release.yml` 会把它连同全部文件复制到 `CATMIAOZHI/orbit`，在 Actions 里确认这次运行成功。之后要重新复制，可在 Actions 里手动运行它并填写 `v<version>`。
+Release 发布后，`sync-operit-release.yml` 会把它连同全部文件复制到 `CATMIAOZHI/Operit`，并让 Operit 的 Latest 跟 orbit 一致。迁到 orbit 之前装的 App 只在 Operit 检查更新，所以每个 Release 都必须复制过去；在 Actions 里确认这次运行成功。
 
-这个工作流进入 `personal/main` 之前既不会自动触发，也不能手动运行，用下面的命令手动复制（标签用普通 push，orbit 已有同名但不同提交的标签时会被拒绝；整段在子 shell 里遇错即停，标签推送失败就不会发布）：
+`release` 事件运行的是标签所在提交里的工作流文件。标签所在的 `main` 提交还没有这个文件、或者自动运行失败时，从默认分支 `dev` 手动运行它：
 
 ```bash
-(
-set -euo pipefail
-TAG=v<version>
-git fetch origin "refs/tags/$TAG:refs/tags/$TAG"
-git push https://github.com/CATMIAOZHI/orbit.git "refs/tags/$TAG:refs/tags/$TAG"
-rm -rf orbit-release && mkdir orbit-release
-gh release download "$TAG" --repo CATMIAOZHI/Operit --dir orbit-release
-gh release view "$TAG" --repo CATMIAOZHI/Operit --json body --jq '.body // ""' > orbit-release-notes.md
-TITLE=$(gh release view "$TAG" --repo CATMIAOZHI/Operit --json name --jq .name)
-PRERELEASE=$(gh release view "$TAG" --repo CATMIAOZHI/Operit --json isPrerelease --jq .isPrerelease)
-gh release create "$TAG" --repo CATMIAOZHI/orbit --verify-tag --title "$TITLE" \
-  --prerelease="$PRERELEASE" --latest=false \
-  --notes-file orbit-release-notes.md orbit-release/*
-# orbit 的 Latest 跟 Operit 一致
-LATEST=$(gh api repos/CATMIAOZHI/Operit/releases/latest --jq .tag_name)
-gh release edit "$LATEST" --repo CATMIAOZHI/orbit --latest
-)
+gh workflow run sync-operit-release.yml --repo CATMIAOZHI/orbit --ref dev -f tag=v<version>
 ```
 
 ### 10. 回合并 main 并建立新检查点
 
-晋升 PR 合并后，将稳定分支回合并到开发分支。由于晋升 PR 可能经过 squash，出现等价代码冲突时，通用代码以通过审查的 `personal/main` 为准，同时保留 dev 专属身份、Nightly 和热更新配置。
+晋升 PR 合并后，将稳定分支回合并到开发分支。由于晋升 PR 可能经过 squash，出现等价代码冲突时，通用代码以通过审查的 `main` 为准，同时保留 dev 专属身份、Nightly 和热更新配置。
 
 本节用于功能晋升完成后的检查点，或 main-first 维护后不存在待晋升通用改动的情况。main-first 维护后若仍有待晋升功能，只回合并 main 并保留旧检查点，不执行下面的 suspend/replay。
 
@@ -368,14 +352,14 @@ gh release edit "$LATEST" --repo CATMIAOZHI/orbit --latest
 检查点提交本身只允许包含“最新 main 通用代码 + dev 专属设施”。因此先按逆序暂时 revert 待晋升提交，再回合并 main；标签创建后，按原顺序逐提交 cherry-pick。这样即使通用改动和 dev 专属配置位于同一文件，也只移动待晋升提交实际修改的 hunk，并保留独立功能的提交边界。
 
 ```bash
-git fetch origin personal/main personal/dev --tags
-git checkout personal/dev || exit 1
-test "$(git branch --show-current)" = "personal/dev" || {
-  echo "Checkpoint preparation must run on personal/dev" >&2
+git fetch origin main dev --tags
+git checkout dev || exit 1
+test "$(git branch --show-current)" = "dev" || {
+  echo "Checkpoint preparation must run on dev" >&2
   exit 1
 }
-git pull --ff-only origin personal/dev
-MAIN_SHA=$(git rev-parse origin/personal/main)
+git pull --ff-only origin dev
+MAIN_SHA=$(git rev-parse origin/main)
 
 # 仅在仍有待晋升通用改动时执行本段。
 # 提交按从旧到新排列，并逐个检查不含 dev 专属配置或其他功能。
@@ -411,16 +395,16 @@ test -z "$(git diff --name-only --diff-filter=U)" || {
 CHECKPOINT_PARENT=$(git rev-parse HEAD)
 if git merge-base --is-ancestor "$MAIN_SHA" HEAD; then
   git commit --allow-empty \
-    -m "chore(dev): record personal/main checkpoint" || exit 1
+    -m "chore(dev): record main checkpoint" || exit 1
 else
-  git merge --no-ff --no-commit origin/personal/main || {
+  git merge --no-ff --no-commit origin/main || {
     echo "Resolve and run git merge --continue, then run the self-contained recovery block below; or abort and restore pending features as documented below." >&2
     exit 1
   }
 
   # 解决冲突：通用代码采用 main，dev 专属设施继续保留。
   git diff --name-only --diff-filter=U  # 必须无输出
-  git commit -m "chore(dev): sync personal/main checkpoint" || exit 1
+  git commit -m "chore(dev): sync main checkpoint" || exit 1
 fi
 
 # 空提交、clean merge 提交或 merge --continue 后都必须从这里继续验证。
@@ -435,17 +419,17 @@ test "$(git rev-parse HEAD^1)" = "$CHECKPOINT_PARENT" &&
 
 ```bash
 PENDING_COMMITS=(<same-oldest-commit> ... <same-newest-commit>)
-MAIN_SHA=$(git rev-parse origin/personal/main)
+MAIN_SHA=$(git rev-parse origin/main)
 ```
 
 若 merge 冲突导致 shell 退出，解决后使用下面的自包含恢复块；它不依赖退出前的变量。存在待晋升提交时重新声明同一列表，然后从创建标签的代码块继续：
 
 ```bash
 git merge --continue
-MAIN_SHA=$(git rev-parse origin/personal/main)
+MAIN_SHA=$(git rev-parse origin/main)
 test "$(git rev-parse HEAD^2)" = "$MAIN_SHA" &&
   git merge-base --is-ancestor "$MAIN_SHA" HEAD || {
-  echo "Recovered merge does not contain the expected personal/main tip" >&2
+  echo "Recovered merge does not contain the expected main tip" >&2
   exit 1
 }
 PENDING_COMMITS=(<same-oldest-commit> ... <same-newest-commit>)
@@ -456,12 +440,12 @@ PENDING_COMMITS=(<same-oldest-commit> ... <same-newest-commit>)
 在检查点提交上创建 annotated tag；若暂时移除了待晋升提交，随后按原顺序逐个重放：
 
 ```bash
-MAIN_SHORT=$(git rev-parse --short=8 origin/personal/main)
+MAIN_SHORT=$(git rev-parse --short=8 origin/main)
 CHECKPOINT="promotion-checkpoint/main-$(date +%Y%m%d)-$MAIN_SHORT"
 CHECKPOINT_SHA=$(git rev-parse HEAD)
 
 git tag -a "$CHECKPOINT" \
-  -m "Promotion checkpoint: personal/main $MAIN_SHA" || {
+  -m "Promotion checkpoint: main $MAIN_SHA" || {
   echo "Checkpoint tag already exists or could not be created; inspect it and do not continue." >&2
   exit 1
 }
@@ -479,9 +463,9 @@ git cherry-pick "${PENDING_COMMITS[@]}" || {
 若 cherry-pick 发生冲突，必须保留 main 已审查修复和 dev 专属配置，只重放该提交所属功能的 hunk，验证后执行 `git cherry-pick --continue`。若执行 `git cherry-pick --abort`，dev 会停在缺少待晋升功能的检查点提交；此时不得进入验证或推送，必须重新执行完整 cherry-pick 序列或放弃本轮检查点并先恢复功能。若没有待晋升通用改动，应省略 `PENDING_COMMITS`、revert 和 cherry-pick 段。确认 dev 专属配置仍然存在后，验证最终 dev 工作树：
 
 ```bash
-test "$(git branch --show-current)" = "personal/dev" &&
-  git merge-base --is-ancestor origin/personal/main HEAD || {
-  echo "personal/dev does not contain the fetched personal/main tip" >&2
+test "$(git branch --show-current)" = "dev" &&
+  git merge-base --is-ancestor origin/main HEAD || {
+  echo "dev does not contain the fetched main tip" >&2
   exit 1
 }
 ./gradlew :app:compileDebugKotlin
@@ -491,20 +475,20 @@ test "$(git branch --show-current)" = "personal/dev" &&
 最后原子推送 dev 与检查点标签，避免只发布其中一个：
 
 ```bash
-git fetch origin personal/main || exit 1
-test "$(git rev-parse origin/personal/main)" = "$MAIN_SHA" || {
-  echo "personal/main advanced; rebuild and retest the checkpoint from the new tip" >&2
+git fetch origin main || exit 1
+test "$(git rev-parse origin/main)" = "$MAIN_SHA" || {
+  echo "main advanced; rebuild and retest the checkpoint from the new tip" >&2
   exit 1
 }
-git push --atomic origin personal/dev "$CHECKPOINT"
+git push --atomic origin dev "$CHECKPOINT"
 ```
 
-确认远端标签指向本次检查点提交，并且标签说明记录了准确的 main SHA；`git diff "$CHECKPOINT"..origin/personal/dev` 应只显示标签之后尚未晋升的改动。原子推送失败时不得把该轮视为已建立检查点，应排查分支并发更新或远端规则后整体重试。
+确认远端标签指向本次检查点提交，并且标签说明记录了准确的 main SHA；`git diff "$CHECKPOINT"..origin/dev` 应只显示标签之后尚未晋升的改动。原子推送失败时不得把该轮视为已建立检查点，应排查分支并发更新或远端规则后整体重试。
 
 ## 注意事项
 
-- **不要直接 merge `personal/dev` 到 `personal/main`**：dev 分支包含大量开发版专属提交，直接 merge 会全部带入。
+- **不要直接 merge `dev` 到 `main`**：dev 分支包含大量开发版专属提交，直接 merge 会全部带入。
 - **不要省略测试**：晋升以「CI 必需检查（`Fast checks`）通过 + 本地 `:app:compileDebugKotlin` 与 `:app:testDebugUnitTest` 通过」为准，`Full Android checks` 的基础设施类失败不阻塞晋升，判定与自动合并见第 8 节。
-- **上游更新方向相反**：上游更新走 `upstream/main → personal/dev`（先测试）→ `personal/main`，晋升走 `personal/dev → personal/main`，两条路径都经过 dev 验证，不要混用。
-- **一个发布轮次一个晋升 PR**：检查点之后的所有通用改动一次性晋升，`personal/main` 每轮只推进一个稳定版本号。说明按功能域分组，每个功能仍保留自己的提交边界，需要回滚时只 revert 该功能的提交，不必放弃整轮。
+- **上游更新方向相反**：上游更新走 `upstream/main → dev`（先测试）→ `main`，晋升走 `dev → main`，两条路径都经过 dev 验证，不要混用。
+- **一个发布轮次一个晋升 PR**：检查点之后的所有通用改动一次性晋升，`main` 每轮只推进一个稳定版本号。说明按功能域分组，每个功能仍保留自己的提交边界，需要回滚时只 revert 该功能的提交，不必放弃整轮。
 - **发布资产必须来自 `:app:assembleRelease`**：手动触发 `Android Build` 并选择该任务，调试包不能当作发布包；发布步骤见第 9 节。

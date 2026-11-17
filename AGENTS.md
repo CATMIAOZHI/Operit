@@ -25,7 +25,7 @@
 - 根据改动范围运行最小充分验证：默认优先编译，只运行与本次修改直接相关的测试；没有直接相关测试时只做编译检查，小改动无明显回归风险时不额外补测试，已通过的测试不重复运行。不得仅为提高信心主动运行完整 `testDebugUnitTest`；全量测试和耗时的集成/UI 测试仅在用户明确要求、合并或 PR 最终验证、CI，或核心基础设施改动确有必要时运行。测试超时应覆盖 Gradle 冷启动和增量编译：聚焦 JVM 单测默认设置 10 分钟硬超时，其他任务按预计耗时设置明确上限；若连续 5 分钟没有新日志、CPU/进程活动或输出文件变化，应终止整个进程树并分析原因，不得仅因运行超过 60 秒判定失败。
 - 原生 Android 模块统一固定使用 SDK Manager 的 CMake 3.31.6（自带 Ninja 1.12.1）。Windows 必须启用 Win32 长路径，并移除指向旧版自定义 CMake 3.22.1 的 `local.properties` `cmake.dir`；构建后从 `build_command_*.bat` 或 `CMakeCache.txt` 核对 Gradle 实际使用 `cmake/3.31.6`。若支持长路径的工具链仍失败，再用 `subst` 将仓库根目录映射为短盘符并重试。第三方依赖产生的 CMake 兼容性弃用提示或 `CMAKE_OBJECT_PATH_MAX` 警告本身不等于构建失败。完整步骤见 `docs/agent/build-guide.md`。
 - 完整 APK 构建、release 构建和原生依赖升级后的验证优先使用 GitHub Actions（Nightly workflow 或手动触发），不要在本地执行完整 `assembleRelease`。本地构建仅用于快速迭代测试（`compileDebugKotlin`、`testDebugUnitTest`、`assembleDebug` 等），验证通过且用户授权推送后，由 CI 做完整构建。
-- 原生依赖 SHA 升级必须先推送 `personal/dev`，由 Nightly 构建验证 ccache 命中率和编译成功后，再考虑合并到 `personal/main`。
+- 原生依赖 SHA 升级必须先推送 `dev`，由 Nightly 构建验证 ccache 命中率和编译成功后，再考虑合并到 `main`。
 - Web Chat、ToolPkg 和仓库检查命令以 `docs/doc-src/dev-core/CONTRIBUTING.md` 与 `ci/README.md` 为准。
 - 等待 GitHub Actions workflow 时使用至少 60 秒的轮询间隔并默认静默输出（PowerShell 示例：`gh run watch <run-id> --exit-status --interval 60 *> $null`）；结束后用一次 `gh run view` 查询最终结果，仅在诊断失败时读取详细 job 日志。
 - 构建可能触碰 ObjectBox 模型或占位文件。提交前检查 `git status` 和 diff，不提交无内容的行尾变化或无关生成物。
@@ -35,19 +35,18 @@
 
 ## 分支与发布
 
-- `origin` 指向个人 fork，默认分支为 `personal/main`；`upstream` 指向官方仓库，默认分支为 `main`。
+- `origin` 指向主仓库 `CATMIAOZHI/orbit`，默认分支为 `dev`，稳定分支为 `main`；`operit` 指向个人 fork `CATMIAOZHI/Operit`，只做 orbit 的只读镜像和向上游提交 PR 的贡献分支；`upstream` 指向官方仓库，默认分支为 `main`。
 - 除非用户明确要求同步上游、分析上游或向上游贡献，否则所有规划、开发、审查和验证只以个人版当前目标分支为基线，不主动拉取、对比、合并或兼容 `upstream/main`。
-- `personal/main` 更新后由 `.github/workflows/sync-main-mirror.yml` 单向快进到 `main`，供仅支持 `main` 的安全工具读取。镜像使用仅授权本仓库 **Contents: read and write** 与 **Workflows: read and write** 的 `MAIN_MIRROR_TOKEN`，因为内置 `GITHUB_TOKEN` 不能推进包含 workflow 变更的提交。`main` 是只读兼容镜像，不得直接提交、合并 PR、强推或用作上游贡献分支；同步失败时先排查分叉，不得覆盖历史。
-- `personal/dev` 更新后由 `.github/workflows/sync-orbit-mirror.yml` 单向快进到 `CATMIAOZHI/orbit` 的 `main`，让 Orbit 仓库展示同一批提交和同一份 README。令牌 `ORBIT_MIRROR_TOKEN` 是仅授权 `CATMIAOZHI/orbit` 的 fine-grained PAT，权限为 **Contents: read and write** 与 **Workflows: read and write**。orbit 是只读镜像，关闭了 Actions，开发、发布、issue 和 PR 都留在本仓库；不得直接向 orbit 提交、合并 PR 或强推，同步失败时先排查分叉。README 要写成在两个仓库里读都通顺；简介、网站和话题标签是各仓库自己的设置，可以分别填写。
-- Operit 发布 Release 后，`.github/workflows/sync-orbit-release.yml` 用同一个 `ORBIT_MIRROR_TOKEN` 把标签、标题、说明和全部文件（APK、`SHA256SUMS.txt`、差异补丁）复制到 orbit，Latest 标记与 Operit 一致。`release` 事件读取标签所在提交里的工作流文件，手动运行要求它已在默认分支 `personal/main`；在此之前按 `docs/agent/dev-to-main-promotion.md` 第 9 节的命令手动复制。App 检查更新仍只读 Operit 的 Release。
+- `CATMIAOZHI/Operit` 是 orbit 的只读镜像：orbit `dev` 更新后由 `.github/workflows/sync-operit-mirror.yml` 单向快进到 Operit 的 `personal/dev`，orbit `main` 更新后快进到 Operit 的 `personal/main` 和 `main`（供仅支持 `main` 的安全工具读取）。迁到 orbit 之前装的 App 仍从 Operit 读取更新、价格表、模型能力表和插件黑名单，Nightly 构建也从 Operit 检出，所以镜像必须一直保持。令牌 `OPERIT_MIRROR_TOKEN` 存在 orbit 的 Secrets 中，是只授权 `CATMIAOZHI/Operit` 与 `CATMIAOZHI/OperitNightlyRelease` 的 fine-grained PAT，权限为 **Contents: read and write** 与 **Workflows: read and write**，因为内置 `GITHUB_TOKEN` 不能跨仓库推送。Operit 关闭了 Actions，开发、发布、issue 和 PR 都在 orbit；不得直接向 Operit 的 `personal/*` 或 `main` 提交、合并 PR 或强推，同步失败时先排查分叉，不得覆盖历史。README 要写成在两个仓库里读都通顺；简介、网站和话题标签是各仓库自己的设置，可以分别填写。
+- orbit 发布 Release 后，`.github/workflows/sync-operit-release.yml` 用同一个 `OPERIT_MIRROR_TOKEN` 把标签、标题、说明和全部文件（APK、`SHA256SUMS.txt`、差异补丁）复制到 Operit，Latest 标记与 orbit 一致。`release` 事件读取标签所在提交里的工作流文件；文件还不在该提交里或自动运行失败时，从默认分支 `dev` 手动运行，命令见 `docs/agent/dev-to-main-promotion.md` 第 9 节。新版 App 在 orbit 检查更新。
 - 上游贡献以最新 `upstream/dev` 为基线，PR 显式目标官方 `dev`；官方 `main` 用于稳定发布和维护者执行的发布同步。新建贡献分支按上游当前 `docs/doc-src/dev-core/CONTRIBUTING.md` 使用 `feat/`、`fix/`、`docs/`、`ci/`、`refactor/` 或 `test/` 前缀加简短描述，不使用 `contrib/`、代理、模型或个人身份前缀；已有分支维持原名。不得混入 Operit Ry 的品牌、服务路由或发布配置。
-- `personal/main` 是 Operit Ry 稳定发行分支，受规则保护；改动必须通过 PR 和必需检查，稳定 APK 与 `v*` Release tag 只从该分支发布。
+- orbit 的 `main` 是 Operit Ry 稳定发行分支，受规则保护；改动必须通过 PR 和必需检查，稳定 APK 与 `v*` Release tag 只从该分支发布。
 - `Android Build` 只手动触发，不在稳定分支每次 push 后重复构建调试包；正式发布选择 `:app:assembleRelease`。CodeQL 只保留每周与手动扫描，PR 的编译、测试及快速检查仍按变更范围执行。Dev Quality 只在开发分支的 Android 源码、资源或构建输入变化时跑 JVM 单测，完整 Android Lint 通过手动构建选项运行。
-- `personal/dev` 是所有新功能的集成与测试分支。新功能必须先进入该分支，构建并实际测试可共存的 debug APK；测试通过后，经用户同意再以只包含通用功能提交的 PR 晋升到 `personal/main`。晋升操作手册见 `docs/agent/dev-to-main-promotion.md`。不得绕过开发版验证直接向稳定分支加入新功能，也不得把开发版专属配置带入晋升 PR。
-- 上游更新先整合进 `personal/dev` 构建并测试，确认不破坏现有功能后再合并到 `personal/main`；不要用上游分支重置或覆盖任一个人分支。
+- orbit 的 `dev` 是所有新功能的集成与测试分支。新功能必须先进入该分支，构建并实际测试可共存的 debug APK；测试通过后，经用户同意再以只包含通用功能提交的 PR 晋升到 `main`。晋升操作手册见 `docs/agent/dev-to-main-promotion.md`。不得绕过开发版验证直接向稳定分支加入新功能，也不得把开发版专属配置带入晋升 PR。
+- 上游更新先整合进 `dev` 构建并测试，确认不破坏现有功能后再合并到 `main`；不要用上游分支重置或覆盖任一个人分支。
 - 上游正式版本按 GitHub Release 的实际 APK 构建提交分批审查，流程与持久台账格式见 `docs/agent/upstream-release-review.md`；不得把 Release 之后尚未正式发布的 `upstream/main` 提交混入当前批次。
-- `personal/dev` 的 `debug` 变体使用包名 `com.rainy.operitry.dev`、应用名 `Operit Ry Dev` 和 `-dev` 版本后缀，可与官方 Operit 及稳定版同时安装；`app/src/debug/res/` 维护 DEV 角标图标和指向开发包名的快捷方式，修改应用身份时必须同步核对这些资源。
-- `OperitNightlyRelease` 仓库在 `personal/dev` 有新提交时被 push 驱动的 `repository_dispatch` 即时触发，接收端支持手动触发，不再依赖定时轮询。触发由本仓库 `.github/workflows/trigger-nightly-build.yml` 完成，仅 `personal/dev` 的 push 自动触发，`personal/main` 需手动 `workflow_dispatch`（dev 与 main 走不同的 `event_type`）；调用 API 用的 `NIGHTLY_DISPATCH_TOKEN` 是只授予 `OperitNightlyRelease` 的 **Contents: write** fine-grained PAT（`repository_dispatch` 端点需要 Contents 而非 Actions 权限），存在 Operit 仓库 Secrets 中。发布使用递增的 `-dev.<build>` 版本和自身 `GITHUB_TOKEN` 发布 `personal-dev` 差分更新；发布链中的 APK 必须保持 `com.rainy.operitry.dev` 包名及与现有开发版相同的固定签名，首次或补丁链不匹配时保留完整 debug APK 回退。签名 Secret 只配置在 Actions 中，不得写入代码或日志。Nightly 构建使用 ccache（`CCACHE_COMPILERCHECK=content`、2G 滚动缓存）加速原生编译，修改 `cmake/operit_git_source.cmake` 或原生依赖 SHA 时需注意对缓存命中率的影响；ccache 相关环境变量（`CCACHE_*`、`CMAKE_C/CXX_COMPILER_LAUNCHER`）配置在 `build-and-publish` job 级别。Nightly 工作流仅含 `build-and-publish`（checkout、原生编译、APK 构建、验签、发布），质量检查已移至 Operit 主仓库的 `.github/workflows/dev-quality.yml`，在 `personal/dev` push 时独立运行，不阻塞 Nightly 发布。
+- `dev` 的 `debug` 变体使用包名 `com.rainy.operitry.dev`、应用名 `Operit Ry Dev` 和 `-dev` 版本后缀，可与官方 Operit 及稳定版同时安装；`app/src/debug/res/` 维护 DEV 角标图标和指向开发包名的快捷方式，修改应用身份时必须同步核对这些资源。
+- `OperitNightlyRelease` 仓库从 Operit 的 `personal/dev` 镜像检出代码，由 `repository_dispatch` 即时触发，接收端支持手动触发，不再依赖定时轮询。orbit `dev` 的 push 由 `sync-operit-mirror.yml` 在镜像快进成功后自动触发；需要重跑时在 orbit 的 `dev` 手动运行 `.github/workflows/trigger-nightly-build.yml`；接收端只监听 `personal-dev-updated`，从 `main` 出测试版改用 OperitNightlyRelease 自己的 `personal-beta-release.yml`。调用 API 用 `OPERIT_MIRROR_TOKEN`（`repository_dispatch` 端点需要 OperitNightlyRelease 的 Contents 而非 Actions 权限）。发布使用递增的 `-dev.<build>` 版本和自身 `GITHUB_TOKEN` 发布 `personal-dev` 差分更新；发布链中的 APK 必须保持 `com.rainy.operitry.dev` 包名及与现有开发版相同的固定签名，首次或补丁链不匹配时保留完整 debug APK 回退。签名 Secret 只配置在 Actions 中，不得写入代码或日志。Nightly 构建使用 ccache（`CCACHE_COMPILERCHECK=content`、2G 滚动缓存）加速原生编译，修改 `cmake/operit_git_source.cmake` 或原生依赖 SHA 时需注意对缓存命中率的影响；ccache 相关环境变量（`CCACHE_*`、`CMAKE_C/CXX_COMPILER_LAUNCHER`）配置在 `build-and-publish` job 级别。Nightly 工作流仅含 `build-and-publish`（checkout、原生编译、APK 构建、验签、发布），质量检查已移至 orbit 的 `.github/workflows/dev-quality.yml`，在 `dev` push 时独立运行，不阻塞 Nightly 发布。
 
 ## 修改原则
 
@@ -55,7 +54,7 @@
 - 修复 PR review 后，必须由未参与实现的独立 Agent 对最终差异做只读审计；若审计发现可操作问题，继续修复并重新独立审计，直到结论为 CLEAN。完成必要验证且独立审计 CLEAN 后，自动在 GitHub 将本轮已实际修复的对应 review 线程标记为 resolved；不得解决新增、未修复、存在歧义或审计未通过的线程。此规则不自动授权提交、推送或合并。
 - 持久化数据、公开接口、配置格式或已发布行为发生变化时，评估兼容性和迁移影响。未发布的内部方案无需保留无用途的旧路径。
 - 不以静默降级掩盖确定错误；是否需要兼容或恢复路径应由真实用户数据、外部调用方和产品契约决定。
-- 新增用户可见文字使用资源字符串并提供简体中文；`values/`（默认简体中文）和 `values-en/`（英语）为唯一需要维护的文案来源，不新增或同步其他语言。例外：同步上游官方 i18n PR 中已发布的非默认语言翻译时，允许带入并在 PR 说明中标注上游 PR 编号。`MissingTranslation` 检查已在 `personal/main` 的 `app/build.gradle.kts` 中禁用，其他语言的现有翻译由社区自行维护，不作为本仓库门槛。文档只在行为、接口、构建或使用方式变化时更新。
+- 新增用户可见文字使用资源字符串并提供简体中文；`values/`（默认简体中文）和 `values-en/`（英语）为唯一需要维护的文案来源，不新增或同步其他语言。例外：同步上游官方 i18n PR 中已发布的非默认语言翻译时，允许带入并在 PR 说明中标注上游 PR 编号。`MissingTranslation` 检查已在 `main` 的 `app/build.gradle.kts` 中禁用，其他语言的现有翻译由社区自行维护，不作为本仓库门槛。文档只在行为、接口、构建或使用方式变化时更新。
 - 注释解释非显而易见的约束和原因，不记录调试流水账。
 - 不修改第三方子模块来绕过主仓库问题；确需更新子模块时单独说明来源和版本。
 

@@ -3,7 +3,7 @@ name: Dev Quality
 on:
   push:
     branches:
-      - personal/dev
+      - dev
     paths:
       - '.github/workflows/dev-quality.yml'
       - '.gitmodules'

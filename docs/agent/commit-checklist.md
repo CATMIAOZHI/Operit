@@ -87,37 +87,30 @@ git diff --cached --check
 
 ## 分支相关
 
-### personal/dev
+### dev
 
-- 直接 push 即可，不需要 PR（但禁止删除和强推）
+- 在 `CATMIAOZHI/orbit` 开发；`dev` 是 orbit 的默认分支，直接 push 即可，不需要 PR（但禁止删除和强推）
 - 可以包含开发版专属配置（包名 `.dev`、DEV 图标、Nightly 子模块等）
-- 推送后由 Nightly 自动构建并发布 APK；Dev Quality 按变更路径独立执行 JVM 单测，完整 Lint 通过 Android Build 的手动选项运行。检查结果在各自的 workflow summary 和 reports artifact 中查看
+- 推送后 `sync-operit-mirror.yml` 把同一 commit 快进到 Operit 的 `personal/dev`，再触发 Nightly 构建并发布 APK；Dev Quality 按变更路径独立执行 JVM 单测，完整 Lint 通过 Android Build 的手动选项运行。检查结果在各自的 workflow summary 和 reports artifact 中查看
 
-### personal/main
+### main
 
-- 必须通过 PR 和必需检查
+- orbit 的稳定发行分支，必须通过 PR 和必需检查
 - 不得包含开发版专属配置
 - 晋升流程见 [dev → main 晋升操作手册](./dev-to-main-promotion.md)
-- 合并后由 `sync-main-mirror.yml` 自动将同一 commit 快进到 `main`
+- 合并后由 `sync-operit-mirror.yml` 自动将同一 commit 快进到 Operit 的 `personal/main` 和 `main`
 
-### main 镜像
+### Operit 镜像
 
-- 仅作为 `personal/main` 的只读兼容镜像，供仅支持 `main` 的安全工具读取
-- `MAIN_MIRROR_TOKEN` 必须是仅授权本仓库 **Contents: read and write** 与 **Workflows: read and write** 的 fine-grained PAT；不得改用权限不足的 `GITHUB_TOKEN` 或复用其他服务的 token
-- 不直接提交、不接受 PR、不强推；同步失败时排查分叉，不得覆盖历史
-
-### orbit 镜像
-
-- `CATMIAOZHI/orbit` 的 `main` 是 `personal/dev` 的只读镜像，由 `sync-orbit-mirror.yml` 在每次推送 `personal/dev` 后快进
-- `ORBIT_MIRROR_TOKEN` 必须是仅授权 `CATMIAOZHI/orbit` 的 fine-grained PAT，权限为 **Contents: read and write** 与 **Workflows: read and write**
-- 不直接提交、不接受 PR、不强推；orbit 关闭了 Actions，发布、issue 和 PR 留在 Operit
+- `CATMIAOZHI/Operit` 是官方仓库的 fork，只做 orbit 的只读镜像：`personal/dev` 跟 orbit `dev`，`personal/main` 和 `main` 跟 orbit `main`。迁到 orbit 之前装的 App 和 Nightly 构建仍从这里读取
+- `OPERIT_MIRROR_TOKEN` 存在 orbit 的 Secrets 里，必须是只授权 `CATMIAOZHI/Operit` 与 `CATMIAOZHI/OperitNightlyRelease` 的 fine-grained PAT，权限为 **Contents: read and write** 与 **Workflows: read and write**；不得改用权限不足的 `GITHUB_TOKEN`
+- 不直接提交、不接受 PR、不强推；Operit 关闭了 Actions，发布、issue 和 PR 都在 orbit。同步失败时排查分叉，不得覆盖历史
 - README 在两个仓库里共用，写法要两边都通顺
-- Operit 发布 Release 后由 `sync-orbit-release.yml` 复制到 orbit；该文件进入 `personal/main` 前按晋升手册第 9 节手动复制
-
+- orbit 发布 Release 后由 `sync-operit-release.yml` 复制到 Operit，并让 Operit 的 Latest 跟 orbit 一致
 ### 上游 dev
 
 - 以最新 `upstream/dev` 为基线，为每个 PR 创建独立分支；按改动类型使用 `feat/`、`fix/`、`docs/`、`ci/`、`refactor/` 或 `test/` 前缀，例如 `fix/<topic>`，已有分支维持原名
-- 创建 PR 时显式指定官方仓库及目标：`gh pr create --repo AAswordman/Operit --base dev --head CATMIAOZHI:fix/<topic>`
+- 贡献分支推到 Operit 这个 fork（本地远端 `operit`，例如 `git push operit fix/<topic>`），创建 PR 时显式指定官方仓库及目标：`gh pr create --repo AAswordman/Operit --base dev --head CATMIAOZHI:fix/<topic>`
 - 官方 `main` 用于稳定发布和维护者执行的发布同步，不作为日常贡献目标
 - 不得混入 Operit Ry 的品牌、服务路由或发布配置
 - PR 流程以 `docs/doc-src/dev-core/CONTRIBUTING.md` 为准

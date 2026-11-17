@@ -2,7 +2,7 @@ name: PR Check
 
 on:
   pull_request:
-    branches: [personal/main]
+    branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
 
 concurrency:

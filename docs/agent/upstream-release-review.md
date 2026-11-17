@@ -1,8 +1,8 @@
 # 上游正式版本审查与吸收手册
 
-本手册用于在上游发布新的正式 APK 版本后，审查该正式版本相对上一审查边界的变化，选择性吸收到 `personal/dev`，并建立可恢复、可审计的检查点。
+本手册用于在上游发布新的正式 APK 版本后，审查该正式版本相对上一审查边界的变化，选择性吸收到 `dev`，并建立可恢复、可审计的检查点。
 
-本流程只以实际发布的正式版本为批次边界，不追逐持续变化的 `upstream/main`。上游更新必须先进入 `personal/dev` 并完成验证；不得用上游分支重置或覆盖个人分支。
+本流程只以实际发布的正式版本为批次边界，不追逐持续变化的 `upstream/main`。上游更新必须先进入 `dev` 并完成验证；不得用上游分支重置或覆盖个人分支。
 
 ## 两类持久记录
 
@@ -47,14 +47,14 @@ git show <tag>:app/build.gradle.kts | Select-String 'versionCode|versionName'
 下界按以下顺序确定：
 
 1. 已完成过审查：读取最近一份已完成台账中的 `release_sha`。
-2. 首次建立机制：使用当前 `origin/personal/dev` 与目标 Release tag 的 merge-base。
+2. 首次建立机制：使用当前 `origin/dev` 与目标 Release tag 的 merge-base。
 
 第一轮示例：
 
 ```powershell
 $ReleaseTag = 'v1.12.1'
 $ReleaseSha = git rev-list -n 1 $ReleaseTag
-$PreviousReleaseSha = git merge-base origin/personal/dev $ReleaseSha
+$PreviousReleaseSha = git merge-base origin/dev $ReleaseSha
 git log --first-parent --reverse --oneline "$PreviousReleaseSha..$ReleaseSha"
 ```
 
@@ -66,7 +66,7 @@ git log --first-parent --reverse --oneline "$PreviousReleaseSha..$ReleaseSha"
 
 - 上下界 tag、SHA、发布时间和 Release URL；
 - APK 资产名、大小和服务端提供的 digest；
-- 审查开始时的 `personal/dev` SHA；
+- 审查开始时的 `dev` SHA；
 - 范围内提交数、非 merge 提交数和一方主线批次数；
 - 范围外的上游后续提交数；
 - 每个功能簇的状态、结论、证据和验证；
@@ -82,8 +82,8 @@ git log --first-parent --reverse --oneline "$PreviousReleaseSha..$ReleaseSha"
 git log --first-parent --reverse --date=short `
   --format='%h`t%ad`t%s' "<previous-release-sha>..<release-sha>"
 git log --no-merges --reverse --date=short `
-  --format='%h`t%ad`t%s' "origin/personal/dev..<release-sha>"
-git cherry origin/personal/dev <release-sha>
+  --format='%h`t%ad`t%s' "origin/dev..<release-sha>"
+git cherry origin/dev <release-sha>
 ```
 
 `git cherry` 只识别 patch-id 等价，不能识别 squash、rebase、重写或由个人版更强实现覆盖的变化。最终结论必须结合真实调用链和最终代码树。
@@ -96,7 +96,7 @@ git cherry origin/personal/dev <release-sha>
 | `INVESTIGATING` | 正在追踪实现和调用链 |
 | `ADOPT` | 行为应吸收，预计可直接或小幅适配落地 |
 | `ADAPT` | 目标有价值，但必须按个人版架构重新实现 |
-| `EQUIVALENT` | `personal/dev` 已有等价或更强实现，不重复引入 |
+| `EQUIVALENT` | `dev` 已有等价或更强实现，不重复引入 |
 | `DEFER` | 有价值，但本轮因依赖、风险或产品选择延后 |
 | `SKIP` | 明确不属于个人版或没有同步价值 |
 | `BLOCKED` | 缺少必要证据或外部条件，暂时无法下结论 |
@@ -105,7 +105,7 @@ git cherry origin/personal/dev <release-sha>
 
 ## 5. 先证明运行路径，再决定保护和测试
 
-对任何用户行为、持久化、兼容性、安全或回归相关变化，先在当前 `personal/dev` 证明：
+对任何用户行为、持久化、兼容性、安全或回归相关变化，先在当前 `dev` 证明：
 
 1. 用户或系统入口；
 2. ViewModel / service / repository / provider 等真实调用链；
@@ -126,7 +126,7 @@ git cherry origin/personal/dev <release-sha>
 
 ## 6. 分批实施
 
-完成审查并确认处置后，从最新 `origin/personal/dev` 建立隔离 worktree 和独立分支。按功能簇分别实施，避免一次性 merge 整个 `upstream/main`。
+完成审查并确认处置后，从最新 `origin/dev` 建立隔离 worktree 和独立分支。按功能簇分别实施，避免一次性 merge 整个 `upstream/main`。
 
 - 低耦合且个人版代码未分叉：可 cherry-pick 后复核最终 diff。
 - 与个人版重叠：按已证明的当前调用链手工适配。
@@ -155,7 +155,7 @@ git cherry origin/personal/dev <release-sha>
 1. 范围内所有功能簇不再是 `PENDING` / `INVESTIGATING`。
 2. 所有 `ADOPT` / `ADAPT` 项已实施，或经用户确认改为 `DEFER`。
 3. 必要验证已完成并记录。
-4. 台账记录最终 `personal/dev` SHA 和剩余风险。
+4. 台账记录最终 `dev` SHA 和剩余风险。
 5. 工作区和远端状态已复核。
 
 选择性吸收不意味着 dev 包含上游 Release commit，因此检查点使用“已审查”语义：

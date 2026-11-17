@@ -6,20 +6,20 @@
 
 | 分支 | 用途 | 主要构建变体 | 包名 |
 |---|---|---|---|
-| `personal/dev` | 功能集成与测试 | `debug` | `com.rainy.operitry.dev` |
-| `personal/dev` | 共存测试 | `clone` | `com.rainy.operitry.clone` |
-| `personal/main` | 稳定发行 | `release` | `com.rainy.operitry` |
-| `personal/main` | Nightly | `nightly` | `com.rainy.operitry` |
+| `dev` | 功能集成与测试 | `debug` | `com.rainy.operitry.dev` |
+| `dev` | 共存测试 | `clone` | `com.rainy.operitry.clone` |
+| `main` | 稳定发行 | `release` | `com.rainy.operitry` |
+| `main` | Nightly | `nightly` | `com.rainy.operitry` |
 
 构建变体定义在 `app/build.gradle.kts` 的 `buildTypes` 块中。`debug` 变体自动添加 `.dev` 包名后缀和 `-dev` 版本后缀，`clone` 变体添加 `.clone` 后缀。
 
-`personal/dev` 发布 dev/beta 时固定 `versionCode = 100203`，不随 `ry.x` 修订或 CI
+`dev` 发布 dev/beta 时固定 `versionCode = 100203`，不随 `ry.x` 修订或 CI
 构建次数递增；仅在主版本（如 `1.12.1`）更新时手动增加。`OPERIT_DEV_BUILD_NUMBER`
 只用于 `-dev.<build>` 显示版本后缀。更新检查继续依据显示版本判断新旧，安装校验允许
 同 `versionCode`，仍检查包名、签名并拒绝更低编号。旧客户端需要从 GitHub 手动安装
 采用此规则的最新版，不发布过渡递增版本。
 
-> **注意**：`debug` 变体的 `.dev` 包名后缀、应用名 `Operit Ry Dev` 和 `PERSONAL_DEV_UPDATE_CHANNEL=true` 仅在 `personal/dev` 分支存在。在 `personal/main` 上构建 `assembleDebug` 使用稳定的 `com.rainy.operitry` 包名，**不具备**与开发版共存的能力，会覆盖已安装的 Operit Ry 稳定版（官方 Operit `com.ai.assistance.operit` 包名不同，可共存）。
+> **注意**：`debug` 变体的 `.dev` 包名后缀、应用名 `Operit Ry Dev` 和 `PERSONAL_DEV_UPDATE_CHANNEL=true` 仅在 `dev` 分支存在。在 `main` 上构建 `assembleDebug` 使用稳定的 `com.rainy.operitry` 包名，**不具备**与开发版共存的能力，会覆盖已安装的 Operit Ry 稳定版（官方 Operit `com.ai.assistance.operit` 包名不同，可共存）。
 
 ## 前置步骤
 
@@ -95,7 +95,7 @@ GitHub OAuth 的 `client_secret` 只能配置在 broker 的服务端 secret stor
 `local.properties`、Gradle BuildConfig 或 APK。broker 协议与安全边界见
 `docs/agent/github-oauth-broker.md`。
 
-稳定版签名需要额外配置（仅 `personal/main` release 构建）：
+稳定版签名需要额外配置（仅 `main` release 构建）：
 
 ```properties
 RELEASE_STORE_FILE=<keystore 路径>
@@ -178,7 +178,7 @@ python3 ./tools/example_packages/sync_example_packages.py --no-hot-reload
 
 ## 构建命令
 
-### 开发版（personal/dev）
+### 开发版（dev）
 
 ```bash
 # 完整 APK：先同步内置 ToolPkg，再构建 Debug APK
@@ -204,7 +204,7 @@ python3 ./tools/example_packages/sync_example_packages.py --no-hot-reload
 # 包名：com.rainy.operitry.clone
 ```
 
-### 稳定版（personal/main）
+### 稳定版（main）
 
 ```bash
 ./gradlew :app:assembleRelease
@@ -239,7 +239,7 @@ git diff --exit-code -- examples/github.js
 
 ## CI 构建（Nightly）
 
-Nightly 构建由 `OperitNightlyRelease` 仓库的 `personal-dev-update.yml` workflow 执行。开发分支通过 `trigger-nightly-build.yml` 在 push 后发送 `repository_dispatch` 事件，接收端也支持手动触发，不依赖定时轮询。
+Nightly 构建由 `OperitNightlyRelease` 仓库的 `personal-dev-update.yml` workflow 执行。orbit 的 `dev` 每次 push 后，`sync-operit-mirror.yml` 先把同一 commit 快进到 `CATMIAOZHI/Operit` 的 `personal/dev`，成功后发送 `repository_dispatch` 事件，Nightly 再从这个镜像检出构建；需要重跑时在 orbit 手动运行 `trigger-nightly-build.yml`，不依赖定时轮询。
 
 Nightly 负责 dev 分支的**构建与发布**：
 
@@ -248,7 +248,7 @@ Nightly 负责 dev 分支的**构建与发布**：
 
 JVM 单测由本仓库的 `Dev Quality` 在 Android 源码、资源及构建输入变化时独立执行，报告上传为 `operit-dev-quality-reports-<run>`（保留 14 天），不阻塞 Nightly 发布。完整 Android Lint 通过 `Android Build` 的手动选项按需执行。
 
-Agent 推送 `personal/dev` 后**直接结束**，无需手动触发 Android Build 或等待 Nightly。检查结果在 workflow run summary 和 reports artifact 中查看。
+Agent 推送 `dev` 后**直接结束**，无需手动触发 Android Build 或等待 Nightly。检查结果在 workflow run summary 和 reports artifact 中查看。
 
 Android Build workflow（`android-build.yml`）仍可手动触发用于 release、clone 或独立验证，但 dev 日常迭代不需要。
 
