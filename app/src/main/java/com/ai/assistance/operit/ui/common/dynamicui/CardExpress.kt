@@ -124,7 +124,8 @@ internal object CardExpress {
                 while (offset < source.length) {
                     val c = source[offset]
                     val valid = when {
-                        first == '$' -> c.isLetterOrDigit() || c in "_/"
+                        // '.' is read into the path only to explain the mistake in [pathToken].
+                        first == '$' -> c.isLetterOrDigit() || c in "_/."
                         first.isDigit() || first == '-' -> c.isDigit() || c == '.'
                         else -> c.isLetterOrDigit() || c == '_'
                     }
@@ -140,13 +141,66 @@ internal object CardExpress {
             if (!isNext(text)) fail(next, "Expected '$text'.")
             take()
         }
+        /** The token after [next], without consuming anything. */
+        private fun peekAfterNext(): Token? {
+            val saved = Triple(offset, line, column)
+            return try { read() } catch (_: SyntaxFailure) { null }
+                finally { offset = saved.first; line = saved.second; column = saved.third }
+        }
+        /**
+         * The comma between items, or a message that says what is actually missing. For a call,
+         * [args] are the names it already has. `name =` on the same line is an argument (declarations
+         * need their own line). On a later line it is the next declaration when it is not one of the
+         * call's parameters (or repeats one); a parameter it still lacks could be either, so say both.
+         */
+        private fun separator(open: Token, close: String, label: String, args: Set<String>? = null) {
+            if (isNext(",")) { take(); return }
+            val n = next
+            val where = "${clip(label)} opened at line ${open.line}, column ${open.column}"
+            val shown = if (n.quoted) "\"${clip(n.text)}\"" else "'${clip(n.text)}'"
+            val assignment = !n.quoted && n.text.isNotEmpty() &&
+                peekAfterNext()?.let { !it.quoted && it.text == "=" } == true
+            val known = if (args == null) null else parameters(open.text)
+            when {
+                n.text.isEmpty() && !n.quoted -> fail(n, "Missing '$close' to close $where.")
+                !n.quoted && n.text in setOf(")", "]", "}") ->
+                    fail(n, "Expected '$close' to close $where, found '${n.text}'.")
+                !assignment -> fail(n, "Missing ',' before $shown.")
+                n.line == lineOfEnd -> fail(n, "Missing ',' before the argument $shown.")
+                args == null || (known != null && (n.text !in known || n.text in args)) ->
+                    fail(n, "Missing '$close' to close $where before the next declaration $shown.")
+                else -> fail(n, "Missing ',' before the argument $shown, or '$close' to close $where " +
+                    "before the next declaration $shown.")
+            }
+        }
+        /** Parameter names of a component or local function; null when [name] is neither. */
+        private fun parameters(name: String): Set<String>? =
+            CardAuthoringCatalog.components[name]?.map { it.name }?.toSet()
+                ?: CardFunctions.specs[name]?.let { it.required + it.optional }
+                ?: when (name) {
+                    "Event" -> setOf("name", "context")
+                    "item", "event_value" -> setOf("field")
+                    "item_state" -> setOf("field", "default")
+                    else -> null
+                }
+        /** Diagnostics quote source text; keep a long token from flooding the model's context. */
+        private fun clip(text: String) = if (text.length <= 40) text else text.take(40) + "…"
+        private fun pathToken(t: Token): Token {
+            if ('.' in t.text) {
+                val fixed = "$/" + t.text.removePrefix("$/").split('.', '/').filter { it.isNotEmpty() }.joinToString("/")
+                // Paths may be up to 256 characters; show a usable fix whole, and only the rule beyond that.
+                fail(t, "State paths use '/' between keys, not '.'." +
+                    if (fixed.length <= 257) " Write $fixed." else " Replace each '.' in this path with '/'.")
+            }
+            return t
+        }
         fun parse(): Map<String, Node> {
             val statements = linkedMapOf<String, Node>()
             while (next.text.isNotEmpty() || next.quoted) {
                 val name = take()
                 if (name.quoted || !(name.text.matches(Regex("[A-Za-z_][A-Za-z0-9_]*")) || name.text.startsWith("$/")))
                     fail(name, "Expected a component name or absolute state path.")
-                if (!name.text.startsWith("$/")) safeName(name)
+                if (!name.text.startsWith("$/")) safeName(name) else pathToken(name)
                 if (statements.size >= 256 || name.text in statements) fail(name, "Duplicate declaration or too many declarations.")
                 expect("=")
                 statements[name.text] = value(0)
@@ -166,7 +220,7 @@ internal object CardExpress {
                         if (items.size >= 128) fail(next, "Array exceeds 128 items.")
                         items += value(depth + 1)
                         if (isNext("]")) break
-                        expect(",")
+                        separator(t, "]", "the list '['")
                     }
                     lineOfEnd = take().line
                     return Node(t, "array", items = items)
@@ -181,7 +235,7 @@ internal object CardExpress {
                         if (fields.size >= 128 || key.text in fields) fail(key, "Duplicate key or too many fields.")
                         expect(":"); fields[key.text] = value(depth + 1)
                         if (isNext("}")) break
-                        expect(",")
+                        separator(t, "}", "the object '{'")
                     }
                     lineOfEnd = take().line
                     return Node(t, "object", fields)
@@ -189,7 +243,7 @@ internal object CardExpress {
                 "true", "false", "null" -> Node(t, "literal")
                 "" -> fail(t, "Unexpected end of source.")
                 else -> when {
-                    t.text.startsWith("$/") -> Node(t, "path")
+                    t.text.startsWith("$/") -> Node(pathToken(t), "path")
                     t.text.matches(Regex("-?(0|[1-9][0-9]*)(\\.[0-9]+)?")) -> Node(t, "literal")
                     t.text.matches(Regex("[\\p{L}_][\\p{L}\\p{N}_]*")) -> {
                         safeName(t)
@@ -204,7 +258,7 @@ internal object CardExpress {
                                 if (args.size >= 32 || key.text in args) fail(key, "Duplicate argument or too many arguments.")
                                 expect("="); args[key.text] = value(depth + 1)
                                 if (isNext(")")) break
-                                expect(",")
+                                separator(t, ")", "${t.text}(", args.keys)
                             }
                             lineOfEnd = take().line
                             return Node(t, "call", args)

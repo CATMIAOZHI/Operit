@@ -68,6 +68,34 @@ class CardExpressTest {
         }
     }
 
+    @Test fun syntaxMistakesGetTheirOwnMessages() {
+        fun reason(source: String) = try {
+            CardExpress.compile(source); fail("compiled: $source"); ""
+        } catch (e: CardExpress.Failure) { e.reason }
+        val dot = reason("${'$'}/ui = {grid:1}\nroot = Text(text=${'$'}/ui.grid)")
+        assertTrue(dot, dot.contains("Write ${'$'}/ui/grid"))
+        val unclosed = reason("root = Column(children=[Text(text=\"a\")]\nother = Text(text=\"b\")")
+        assertTrue(unclosed, unclosed.startsWith("Missing ')' to close Column( opened at line 1"))
+        val atEnd = reason("root = Column(children=[Text(text=\"a\")]")
+        assertTrue(atEnd, atEnd.startsWith("Missing ')' to close Column("))
+        val comma = reason("root = Text(text=\"a\" variant=\"h1\")")
+        assertEquals("Missing ',' before the argument 'variant'.", comma)
+        // A parameter on the next line could start a declaration too; the comma is named first.
+        val multiline = reason("root = Text(\ntext=\"a\"\nvariant=\"h1\")")
+        assertTrue(multiline, multiline.startsWith("Missing ',' before the argument 'variant', or ')' to close Text("))
+        val collision = reason("root = Column(children=[align, body]\n  align = Heading(text=\"Hello\")\n  body = Text(text=\"World\")")
+        assertTrue(collision, collision.contains("or ')' to close Column( opened at line 1"))
+        val longPath = "${'$'}/ui.selectedTravelDestination.displayLabel"
+        assertTrue(reason("${'$'}/ui = {a:1}\nroot = Text(text=$longPath)").endsWith("Write ${'$'}/ui/selectedTravelDestination/displayLabel."))
+        // An indented next declaration is still recognised as one.
+        val indented = reason("root = Column(children=[title, body]\n  title = Heading(text=\"Hello\")\n  body = Text(text=\"World\")")
+        assertTrue(indented, indented.startsWith("Missing ')' to close Column( opened at line 1"))
+        assertTrue(indented, indented.endsWith("before the next declaration 'title'."))
+        val wrong = reason("root = Column(children=[Text(text=\"a\"))")
+        assertTrue(wrong, wrong.startsWith("Expected ']' to close the list '[' opened at line 1"))
+        assertEquals(5, setOf(dot, unclosed, atEnd, comma, wrong).size)
+    }
+
     @Test fun flowStepsMayComeFromStateButStayValidated() {
         val ok = CardExpress.report("${'$'}/plan = {steps:[{title:\"A\"},{title:\"B\"}]}\nroot = Flow(label=\"x\",steps=${'$'}/plan/steps)")
         assertEquals(ok.toString(), JsonPrimitive(true), ok["valid"])
