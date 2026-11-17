@@ -1,11 +1,10 @@
-name: Sync Orbit Release
+name: Sync Operit Release
 
 # Copies each published Operit Ry release (tag, title, notes and every file: APK, SHA256SUMS,
-# update patch) to CATMIAOZHI/orbit, so the APK can be downloaded there too. The app still
-# checks for updates on CATMIAOZHI/Operit.
-# A release event runs the workflow file of the tagged commit, and a manual run needs the file on
-# the default branch (personal/main). Until it gets there, copy releases by hand as described in
-# docs/agent/dev-to-main-promotion.md, section 9.
+# update patch) from CATMIAOZHI/orbit to CATMIAOZHI/Operit. App versions from before the move to
+# orbit check for updates on Operit, so every release has to reach them there too.
+# A release event runs the workflow file of the tagged commit; a manual run uses the default
+# branch (dev), so a release made before this file reached main can be copied by hand from there.
 on:
   release:
     types:
@@ -13,13 +12,13 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Operit release tag to copy, for example v1.12.2-ry.18
+        description: orbit release tag to copy, for example v1.12.2-ry.20
         required: true
         type: string
 
 concurrency:
   # One queue per tag, so releases published close together are all copied.
-  group: sync-orbit-release-${{ github.event.release.tag_name || inputs.tag }}
+  group: sync-operit-release-${{ github.event.release.tag_name || inputs.tag }}
   cancel-in-progress: false
 
 permissions:
@@ -27,21 +26,21 @@ permissions:
 
 jobs:
   copy:
-    name: Copy the release to orbit
-    if: github.repository == 'CATMIAOZHI/Operit'
+    name: Copy the release to Operit
+    if: github.repository == 'CATMIAOZHI/orbit'
     runs-on: ubuntu-latest
     env:
-      SOURCE_REPO: CATMIAOZHI/Operit
-      ORBIT_REPO: CATMIAOZHI/orbit
+      SOURCE_REPO: CATMIAOZHI/orbit
+      MIRROR_REPO: CATMIAOZHI/Operit
       TAG: ${{ github.event.release.tag_name || inputs.tag }}
     steps:
       - name: Check the tag and the mirror token
         env:
-          ORBIT_MIRROR_TOKEN: ${{ secrets.ORBIT_MIRROR_TOKEN }}
+          OPERIT_MIRROR_TOKEN: ${{ secrets.OPERIT_MIRROR_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
-          : "${ORBIT_MIRROR_TOKEN:?ORBIT_MIRROR_TOKEN secret is required}"
+          : "${OPERIT_MIRROR_TOKEN:?OPERIT_MIRROR_TOKEN secret is required}"
           if [[ ! "$TAG" =~ ^v[0-9A-Za-z._-]+$ ]]; then
             echo "::error::Not a release tag: $TAG"
             exit 1
@@ -51,91 +50,91 @@ jobs:
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           fetch-depth: 0
-          # The checkout's own GitHub credentials would be sent to orbit too; keep them out.
+          # The checkout's own GitHub credentials would be sent to Operit too; keep them out.
           persist-credentials: false
 
-      - name: Push the tag to orbit
+      - name: Push the tag to Operit
         env:
-          ORBIT_MIRROR_TOKEN: ${{ secrets.ORBIT_MIRROR_TOKEN }}
+          OPERIT_MIRROR_TOKEN: ${{ secrets.OPERIT_MIRROR_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
           git rev-parse --verify "refs/tags/$TAG^{commit}"
-          # A plain push: if orbit already has this tag on another commit, it is refused.
-          git push "https://x-access-token:${ORBIT_MIRROR_TOKEN}@github.com/${ORBIT_REPO}.git" \
+          # A plain push: if Operit already has this tag on another commit, it is refused.
+          git push "https://x-access-token:${OPERIT_MIRROR_TOKEN}@github.com/${MIRROR_REPO}.git" \
             "refs/tags/$TAG:refs/tags/$TAG"
 
-      - name: Download the release from Operit
+      - name: Download the release from orbit
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          work="$RUNNER_TEMP/orbit-release"
+          work="$RUNNER_TEMP/operit-release"
           mkdir -p "$work/assets"
           gh release view "$TAG" --repo "$SOURCE_REPO" --json isDraft,isPrerelease,name,body > "$work/release.json"
           if [ "$(jq -r .isDraft "$work/release.json")" = "true" ]; then
-            echo "::error::$TAG is still a draft on Operit."
+            echo "::error::$TAG is still a draft on orbit."
             exit 1
           fi
           jq -r '.body // ""' "$work/release.json" > "$work/notes.md"
           gh release download "$TAG" --repo "$SOURCE_REPO" --dir "$work/assets"
           ls -l "$work/assets"
 
-      - name: Create or update the release on orbit
+      - name: Create or update the release on Operit
         env:
-          GH_TOKEN: ${{ secrets.ORBIT_MIRROR_TOKEN }}
+          GH_TOKEN: ${{ secrets.OPERIT_MIRROR_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
-          work="$RUNNER_TEMP/orbit-release"
+          work="$RUNNER_TEMP/operit-release"
           title="$(jq -r .name "$work/release.json")"
           prerelease="$(jq -r .isPrerelease "$work/release.json")"
-          # Latest is set in the next step, from Operit's Latest at the very end of the run.
+          # Latest is set in the next job, from orbit's Latest at the very end of the run.
           shopt -s nullglob
           assets=("$work"/assets/*)
-          if gh release view "$TAG" --repo "$ORBIT_REPO" > /dev/null 2>&1; then
+          if gh release view "$TAG" --repo "$MIRROR_REPO" > /dev/null 2>&1; then
             if [ "${#assets[@]}" -gt 0 ]; then
-              gh release upload "$TAG" --repo "$ORBIT_REPO" --clobber "${assets[@]}"
+              gh release upload "$TAG" --repo "$MIRROR_REPO" --clobber "${assets[@]}"
             fi
             # Publishes a draft left behind by an earlier run that stopped while uploading.
-            gh release edit "$TAG" --repo "$ORBIT_REPO" --title "$title" --notes-file "$work/notes.md" \
+            gh release edit "$TAG" --repo "$MIRROR_REPO" --title "$title" --notes-file "$work/notes.md" \
               --prerelease="$prerelease" --draft=false --latest=false
           else
-            gh release create "$TAG" --repo "$ORBIT_REPO" --verify-tag --title "$title" \
+            gh release create "$TAG" --repo "$MIRROR_REPO" --verify-tag --title "$title" \
               --notes-file "$work/notes.md" --prerelease="$prerelease" --latest=false "${assets[@]}"
           fi
-          gh release view "$TAG" --repo "$ORBIT_REPO" --json assets --jq '.assets[] | "\(.name) \(.size)"'
+          gh release view "$TAG" --repo "$MIRROR_REPO" --json assets --jq '.assets[] | "\(.name) \(.size)"'
           {
-            echo "### Copied $TAG to orbit"
-            echo "https://github.com/$ORBIT_REPO/releases/tag/$TAG"
+            echo "### Copied $TAG to Operit"
+            echo "https://github.com/$MIRROR_REPO/releases/tag/$TAG"
           } >> "$GITHUB_STEP_SUMMARY"
 
   latest:
-    name: Match orbit's Latest to Operit's
+    name: Match Operit's Latest to orbit's
     needs: copy
     runs-on: ubuntu-latest
     # One run at a time across all tags. Latest is read only after this job gets its turn, so
     # the run that goes last always sees the newest release. A newer run replacing a waiting one
-    # is fine here, since each run just copies Operit's current Latest.
+    # is fine here, since each run just copies orbit's current Latest.
     concurrency:
-      group: sync-orbit-release-latest
+      group: sync-operit-release-latest
       cancel-in-progress: false
     env:
-      SOURCE_REPO: CATMIAOZHI/Operit
-      ORBIT_REPO: CATMIAOZHI/orbit
+      SOURCE_REPO: CATMIAOZHI/orbit
+      MIRROR_REPO: CATMIAOZHI/Operit
     steps:
-      - name: Set orbit's Latest
+      - name: Set Operit's Latest
         env:
           SOURCE_TOKEN: ${{ github.token }}
-          ORBIT_TOKEN: ${{ secrets.ORBIT_MIRROR_TOKEN }}
+          MIRROR_TOKEN: ${{ secrets.OPERIT_MIRROR_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
           latest="$(GH_TOKEN="$SOURCE_TOKEN" gh api "repos/$SOURCE_REPO/releases/latest" --jq .tag_name)"
-          if GH_TOKEN="$ORBIT_TOKEN" gh release view "$latest" --repo "$ORBIT_REPO" > /dev/null 2>&1; then
-            GH_TOKEN="$ORBIT_TOKEN" gh release edit "$latest" --repo "$ORBIT_REPO" --latest
-            echo "Latest on orbit: $latest"
+          if GH_TOKEN="$MIRROR_TOKEN" gh release view "$latest" --repo "$MIRROR_REPO" > /dev/null 2>&1; then
+            GH_TOKEN="$MIRROR_TOKEN" gh release edit "$latest" --repo "$MIRROR_REPO" --latest
+            echo "Latest on Operit: $latest"
           else
-            echo "::notice::Operit's Latest ($latest) is not on orbit yet; orbit's Latest is unchanged."
+            echo "::notice::orbit's Latest ($latest) is not on Operit yet; Operit's Latest is unchanged."
           fi

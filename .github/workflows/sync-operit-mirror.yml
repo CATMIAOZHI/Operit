@@ -1,0 +1,73 @@
+name: Sync Operit Mirror
+
+# Operit Ry is developed in CATMIAOZHI/orbit. CATMIAOZHI/Operit, the fork of the official
+# repository, mirrors it because installed apps and the Nightly builds still read from there:
+#   orbit dev  -> Operit personal/dev, then the Nightly dev build is started
+#   orbit main -> Operit personal/main and main
+# Fast-forward only: if an Operit branch has drifted, the push fails instead of overwriting it.
+on:
+  push:
+    branches:
+      - dev
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: sync-operit-mirror-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    name: Fast-forward the Operit mirror
+    # The same file reaches Operit through the mirror; it must only ever push from orbit, and a
+    # manual run from any other branch must not push that branch.
+    if: >-
+      github.repository == 'CATMIAOZHI/orbit' &&
+      (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the mirror token
+        env:
+          OPERIT_MIRROR_TOKEN: ${{ secrets.OPERIT_MIRROR_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${OPERIT_MIRROR_TOKEN:?OPERIT_MIRROR_TOKEN secret is required}"
+
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          # The checkout's own GitHub credentials would be sent to Operit too; keep them out.
+          persist-credentials: false
+
+      - name: Push to Operit
+        env:
+          OPERIT_MIRROR_TOKEN: ${{ secrets.OPERIT_MIRROR_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$GITHUB_REF" in
+            refs/heads/dev)  refspecs=(HEAD:refs/heads/personal/dev) ;;
+            refs/heads/main) refspecs=(HEAD:refs/heads/personal/main HEAD:refs/heads/main) ;;
+            *) echo "Unsupported branch: $GITHUB_REF" >&2; exit 1 ;;
+          esac
+          git push --atomic "https://x-access-token:${OPERIT_MIRROR_TOKEN}@github.com/CATMIAOZHI/Operit.git" \
+            "${refspecs[@]}"
+
+      # The Nightly build checks out Operit's personal/dev, so it starts only once the mirror has it.
+      - name: Start the Nightly dev build
+        if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+        env:
+          GH_TOKEN: ${{ secrets.OPERIT_MIRROR_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api --method POST \
+            repos/CATMIAOZHI/OperitNightlyRelease/dispatches \
+            -f event_type=personal-dev-updated \
+            -F "client_payload[sourceSha]=${{ github.sha }}"

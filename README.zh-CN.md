@@ -10,14 +10,14 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/CATMIAOZHI/Operit/releases/latest"><img src="https://img.shields.io/github/v/release/CATMIAOZHI/Operit?label=release&color=3D6FD1" alt="最新版本"></a>
+  <a href="https://github.com/CATMIAOZHI/orbit/releases/latest"><img src="https://img.shields.io/github/v/release/CATMIAOZHI/orbit?label=release&color=3D6FD1" alt="最新版本"></a>
   <img src="https://img.shields.io/badge/Android-8.0%2B-3D6FD1" alt="Android 8.0+">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-LGPL--3.0-D9531F" alt="LGPL-3.0"></a>
   <a href="https://github.com/CATMIAOZHI/orbit/stargazers"><img src="https://img.shields.io/github/stars/CATMIAOZHI/orbit?color=D9531F" alt="Stars"></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/CATMIAOZHI/Operit/releases/latest">下载</a> ·
+  <a href="https://github.com/CATMIAOZHI/orbit/releases/latest">下载</a> ·
   <a href="#orbit-能做什么">功能</a> ·
   <a href="#开始使用">开始使用</a> ·
   <a href="README.md">English</a>
@@ -31,7 +31,7 @@ Orbit 是一个长期陪着你的私人代理。它和你聊天，记住重要�
 
 Orbit 内置在 **Operit Ry** 里。Operit Ry 是 [Operit](https://github.com/AAswordman/Operit) 的个人发行版，由 [水晴喵（WaterRainCat）](https://github.com/CATMIAOZHI) 维护。
 
-> Orbit 在 [CATMIAOZHI/Operit](https://github.com/CATMIAOZHI/Operit) 开发和发布，[CATMIAOZHI/orbit](https://github.com/CATMIAOZHI/orbit) 是它的同步镜像。两个仓库的 Releases 一样，安装包从哪边下载都行；反馈和 PR 请去 Operit。
+> Orbit 在 [CATMIAOZHI/orbit](https://github.com/CATMIAOZHI/orbit) 开发和发布，从官方 Operit 复制来的 [CATMIAOZHI/Operit](https://github.com/CATMIAOZHI/Operit) 是它的同步镜像。两个仓库的 Releases 一样，安装包从哪边下载都行；反馈和 PR 请去 orbit。
 
 ## Orbit 能做什么
 
@@ -127,12 +127,12 @@ Orbit 用你选的模型运行：OpenAI、Claude、Gemini、DeepSeek、OpenRoute
 
 ## 开始使用
 
-1. 从 [Releases](https://github.com/CATMIAOZHI/Operit/releases/latest) 下载最新 APK。需要 Android 8.0 及以上的 arm64 手机，建议 6 GB 及以上内存。
+1. 从 [Releases](https://github.com/CATMIAOZHI/orbit/releases/latest) 下载最新 APK。需要 Android 8.0 及以上的 arm64 手机，建议 6 GB 及以上内存。
 2. 安装后打开 App，同意条款。
 3. 添加一个模型，填上它的 API Key。
 4. 打开 Orbit，跟它打个招呼。
 
-> 只从本仓库的 Releases 下载 Operit Ry。其他地方的安装包可能被改过。
+> 只从 [CATMIAOZHI/orbit](https://github.com/CATMIAOZHI/orbit/releases) 或它的镜像 [CATMIAOZHI/Operit](https://github.com/CATMIAOZHI/Operit/releases) 的 Releases 下载 Operit Ry。其他地方的安装包可能被改过。
 
 Orbit 是一个完整安卓 AI 助手的一部分。除了 Orbit，Operit 还有内置 Ubuntu 环境、40 多个工具、MCP 服务器和 Skills、工具包和工作流、角色卡和悬浮窗。更多内容见[文档](docs)。
 
@@ -140,20 +140,20 @@ Orbit 是一个完整安卓 AI 助手的一部分。除了 Orbit，Operit 还有
 
 | | 分支 | 包名 | 更新 |
 |---|---|---|---|
-| **正式版** | [`personal/main`](https://github.com/CATMIAOZHI/Operit/tree/personal/main) | `com.rainy.operitry` | [Releases](https://github.com/CATMIAOZHI/Operit/releases)，版本之间走补丁更新 |
-| **开发版** | [`personal/dev`](https://github.com/CATMIAOZHI/Operit/tree/personal/dev) | `com.rainy.operitry.dev` | [Nightly](https://github.com/CATMIAOZHI/OperitNightlyRelease) |
+| **正式版** | [`main`](https://github.com/CATMIAOZHI/orbit/tree/main) | `com.rainy.operitry` | [Releases](https://github.com/CATMIAOZHI/orbit/releases)，版本之间走补丁更新 |
+| **开发版** | [`dev`](https://github.com/CATMIAOZHI/orbit/tree/dev) | `com.rainy.operitry.dev` | [Nightly](https://github.com/CATMIAOZHI/OperitNightlyRelease) |
 
-新功能先进 `personal/dev`，测试后再晋升到 `personal/main`。开发版可以和正式版、官方 Operit 同时安装。
+新功能先进 `dev`，测试后再晋升到 `main`。开发版可以和正式版、官方 Operit 同时安装。
 
 ## 参与贡献
 
-欢迎在 [CATMIAOZHI/Operit](https://github.com/CATMIAOZHI/Operit/issues) 提 issue 和 PR。提之前先搜一下有没有重复的；日志和截图里不要带 API Key、令牌和 Cookie。
+欢迎在 [CATMIAOZHI/orbit](https://github.com/CATMIAOZHI/orbit/issues) 提 issue 和 PR。提之前先搜一下有没有重复的；日志和截图里不要带 API Key、令牌和 Cookie。
 
 - 编译 App：[BUILDING.md](docs/doc-src/dev-core/BUILDING.md)
 - 写脚本、Skills 和工具包：[SCRIPT_DEV_GUIDE.md](docs/SCRIPT_DEV_GUIDE.md)
 
-<a href="https://github.com/CATMIAOZHI/Operit/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=CATMIAOZHI/Operit" alt="贡献者">
+<a href="https://github.com/CATMIAOZHI/orbit/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=CATMIAOZHI/orbit" alt="贡献者">
 </a>
 
 ## 许可和致谢

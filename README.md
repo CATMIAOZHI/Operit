@@ -10,14 +10,14 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/CATMIAOZHI/Operit/releases/latest"><img src="https://img.shields.io/github/v/release/CATMIAOZHI/Operit?label=release&color=3D6FD1" alt="Latest release"></a>
+  <a href="https://github.com/CATMIAOZHI/orbit/releases/latest"><img src="https://img.shields.io/github/v/release/CATMIAOZHI/orbit?label=release&color=3D6FD1" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/Android-8.0%2B-3D6FD1" alt="Android 8.0+">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-LGPL--3.0-D9531F" alt="LGPL-3.0"></a>
   <a href="https://github.com/CATMIAOZHI/orbit/stargazers"><img src="https://img.shields.io/github/stars/CATMIAOZHI/orbit?color=D9531F" alt="Stars"></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/CATMIAOZHI/Operit/releases/latest">Download</a> ·
+  <a href="https://github.com/CATMIAOZHI/orbit/releases/latest">Download</a> ·
   <a href="#what-orbit-does">Features</a> ·
   <a href="#getting-started">Getting started</a> ·
   <a href="README.zh-CN.md">中文</a>
@@ -31,7 +31,7 @@ Orbit is a long-term personal agent. It talks with you, remembers what matters, 
 
 Orbit ships inside **Operit Ry**, a personal distribution of [Operit](https://github.com/AAswordman/Operit) maintained by [WaterRainCat (水晴喵)](https://github.com/CATMIAOZHI).
 
-> Orbit is developed and released in [CATMIAOZHI/Operit](https://github.com/CATMIAOZHI/Operit); [CATMIAOZHI/orbit](https://github.com/CATMIAOZHI/orbit) is its synced mirror. Both repositories carry the same Releases, so you can download the APK from either; issues and pull requests go to Operit.
+> Orbit is developed and released in [CATMIAOZHI/orbit](https://github.com/CATMIAOZHI/orbit); [CATMIAOZHI/Operit](https://github.com/CATMIAOZHI/Operit), the fork of official Operit, is its synced mirror. Both repositories carry the same Releases, so you can download the APK from either; issues and pull requests go to orbit.
 
 ## What Orbit does
 
@@ -127,12 +127,12 @@ Weekly token allowances and usage statistics keep background work within a budge
 
 ## Getting started
 
-1. Download the latest APK from [Releases](https://github.com/CATMIAOZHI/Operit/releases/latest). It needs Android 8.0 or later on an arm64 phone; 6 GB of RAM or more is recommended.
+1. Download the latest APK from [Releases](https://github.com/CATMIAOZHI/orbit/releases/latest). It needs Android 8.0 or later on an arm64 phone; 6 GB of RAM or more is recommended.
 2. Install it, open the app and agree to the terms.
 3. Add a model and its API key.
 4. Open Orbit and say hello.
 
-> Only download Operit Ry from this repository's Releases. Packages from other places may have been modified.
+> Only download Operit Ry from the Releases of [CATMIAOZHI/orbit](https://github.com/CATMIAOZHI/orbit/releases) or its mirror [CATMIAOZHI/Operit](https://github.com/CATMIAOZHI/Operit/releases). Packages from other places may have been modified.
 
 Orbit is part of a full Android AI assistant. Beyond Orbit, Operit offers a built-in Ubuntu environment, 40+ tools, MCP servers and Skills, tool packages and workflows, character cards and a floating window. See the [documentation](docs) for more.
 
@@ -140,20 +140,20 @@ Orbit is part of a full Android AI assistant. Beyond Orbit, Operit offers a buil
 
 | | Branch | Package | Updates |
 |---|---|---|---|
-| **Stable** | [`personal/main`](https://github.com/CATMIAOZHI/Operit/tree/personal/main) | `com.rainy.operitry` | [Releases](https://github.com/CATMIAOZHI/Operit/releases), patch updates between versions |
-| **Dev** | [`personal/dev`](https://github.com/CATMIAOZHI/Operit/tree/personal/dev) | `com.rainy.operitry.dev` | [Nightly](https://github.com/CATMIAOZHI/OperitNightlyRelease) |
+| **Stable** | [`main`](https://github.com/CATMIAOZHI/orbit/tree/main) | `com.rainy.operitry` | [Releases](https://github.com/CATMIAOZHI/orbit/releases), patch updates between versions |
+| **Dev** | [`dev`](https://github.com/CATMIAOZHI/orbit/tree/dev) | `com.rainy.operitry.dev` | [Nightly](https://github.com/CATMIAOZHI/OperitNightlyRelease) |
 
-New features land in `personal/dev` first and move to `personal/main` after testing. The dev build installs alongside the stable one and official Operit.
+New features land in `dev` first and move to `main` after testing. The dev build installs alongside the stable one and official Operit.
 
 ## Contributing
 
-Issues and pull requests are welcome on [CATMIAOZHI/Operit](https://github.com/CATMIAOZHI/Operit/issues). Please search for existing ones first, and keep API keys, tokens and cookies out of logs and screenshots.
+Issues and pull requests are welcome on [CATMIAOZHI/orbit](https://github.com/CATMIAOZHI/orbit/issues). Please search for existing ones first, and keep API keys, tokens and cookies out of logs and screenshots.
 
 - Build the app: [BUILDING.md](docs/doc-src/dev-core/BUILDING.md)
 - Write scripts, Skills and tool packages: [SCRIPT_DEV_GUIDE.md](docs/SCRIPT_DEV_GUIDE.md)
 
-<a href="https://github.com/CATMIAOZHI/Operit/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=CATMIAOZHI/Operit" alt="Contributors">
+<a href="https://github.com/CATMIAOZHI/orbit/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=CATMIAOZHI/orbit" alt="Contributors">
 </a>
 
 ## License and credits
