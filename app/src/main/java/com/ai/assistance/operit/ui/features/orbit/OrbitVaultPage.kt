@@ -296,6 +296,41 @@ internal fun OrbitVaultEntryPage(
                                 monospace = true,
                             )
                         }
+                        // Only keys allowed in the terminal can be loaded by a hook; one already on can always be turned off.
+                        if (entry.envName.isNotEmpty() || entry.hookAlways) {
+                            HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = divider)
+                            var saving by remember(entry.id) { mutableStateOf(false) }
+                            Row(
+                                Modifier.fillMaxWidth().heightIn(min = 60.dp)
+                                    .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text(stringResource(R.string.orbit_vault_hook_always), style = MaterialTheme.typography.bodyLarge)
+                                    Text(stringResource(R.string.orbit_vault_hook_always_desc), style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                androidx.compose.material3.Switch(
+                                    checked = entry.hookAlways,
+                                    enabled = !saving && !deleting,
+                                    onCheckedChange = { on ->
+                                        saving = true
+                                        scope.launch {
+                                            try {
+                                                OrbitVault.setHookAlways(context, orbit.id, entry.id, on)
+                                            } catch (e: kotlinx.coroutines.CancellationException) {
+                                                throw e
+                                            } catch (e: Exception) {
+                                                Toast.makeText(context, resources.getString(R.string.orbit_vault_hook_always_failed),
+                                                    Toast.LENGTH_SHORT).show()
+                                            }
+                                            saving = false
+                                            reload++
+                                        }
+                                    },
+                                )
+                            }
+                        }
                     }
                 }
                 Text(

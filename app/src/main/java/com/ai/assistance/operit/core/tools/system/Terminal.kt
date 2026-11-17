@@ -175,12 +175,16 @@ class Terminal internal constructor(private val terminalManager: TerminalManager
     suspend fun executeHiddenCommand(
         command: String,
         executorKey: String = "default",
-        timeoutMs: Long = 120000L
+        timeoutMs: Long = 120000L,
+        local: Boolean = false,
+        quiet: Boolean = false
     ): HiddenExecResult {
         return terminalManager.executeHiddenCommand(
             command = command,
             executorKey = executorKey,
-            timeoutMs = timeoutMs
+            timeoutMs = timeoutMs,
+            local = local,
+            quiet = quiet
         )
     }
 

@@ -254,12 +254,16 @@ class OrbitTaskRepository(private val context: Context) {
             }
             OrbitHookChecks.forget(context, task.id)
         }
-        val result = OrbitWatchSources.readScript(context, task.orbitId, task.source, dryRun = true)
+        val result = OrbitWatchSources.readScript(context, task.orbitId, task.source, dryRun = true,
+            taskId = task.id, title = task.title)
         OrbitExecutionGate.serialized {
             check(dao.task(task.id)?.let { it.version == task.version && it.state == "PAUSED" } == true) {
                 "The task changed during dry_run; read detail and retry"
             }
             OrbitHookChecks.remember(context, task)
+            // It ran with these keys, so they were allowed for this script: keep that even if
+            // "always allow" is turned off later.
+            if (OrbitWatchSources.hook(task.source)?.env?.isNotEmpty() == true) OrbitHookVault.approve(context, task.id, task.source)
         }
         return result
     }

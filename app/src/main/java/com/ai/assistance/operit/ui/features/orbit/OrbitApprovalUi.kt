@@ -130,8 +130,8 @@ internal fun OrbitApprovalCard(card: JSONObject) {
     val detail = a?.detail ?: if (loading) card.optString("detail") else ""
     // While the list is read the card is laid out as a waiting request, which it nearly always is.
     val waiting = a?.pending ?: loading
-    // A sending tool's call: allow once, or always allow that tool.
-    val sendTool = a?.let { com.ai.assistance.operit.features.orbit.OrbitConnectorSend.toolOf(it.action) }
+    // A sending tool's call or a hook loading keys: allow once, or always allow.
+    val offersAlways = a?.let { OrbitApprovals.offersAlways(it.action) } == true
     Column(
         Modifier.widthIn(max = 300.dp).clip(RoundedCornerShape(16.dp))
             .orbitCardGestures(onClick = { if (a != null) sheet = true })
@@ -205,12 +205,12 @@ internal fun OrbitApprovalCard(card: JSONObject) {
                     modifier = Modifier.weight(1f).height(46.dp),
                 ) {
                     Box(contentAlignment = Alignment.Center) {
-                        Text(stringResource(if (sendTool != null) R.string.orbit_approval_allow_once else R.string.orbit_approval_approve),
+                        Text(stringResource(if (offersAlways) R.string.orbit_approval_allow_once else R.string.orbit_approval_approve),
                             style = MaterialTheme.typography.titleMedium)
                     }
                 }
             }
-            if (sendTool != null) {
+            if (offersAlways) {
                 Spacer(Modifier.height(10.dp))
                 Surface(
                     onClick = { approve(always = true) },
@@ -308,9 +308,7 @@ internal fun OrbitApprovalSheet(
             onDismiss()
         }
     }
-    val sendTool = remember(approval.id, approval.action) {
-        com.ai.assistance.operit.features.orbit.OrbitConnectorSend.toolOf(approval.action)
-    }
+    val offersAlways = remember(approval.id, approval.action) { OrbitApprovals.offersAlways(approval.action) }
     fun answer(approve: Boolean, always: Boolean = false) {
         busy = true
         scope.launch {
@@ -514,10 +512,10 @@ internal fun OrbitApprovalSheet(
                             CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = colors.onPrimary)
                             Spacer(Modifier.width(8.dp))
                         }
-                        Text(stringResource(if (sendTool != null) R.string.orbit_approval_allow_once else R.string.orbit_approval_approve),
+                        Text(stringResource(if (offersAlways) R.string.orbit_approval_allow_once else R.string.orbit_approval_approve),
                             style = MaterialTheme.typography.titleMedium)
                     }
-                    if (sendTool != null) {
+                    if (offersAlways) {
                         Spacer(Modifier.height(8.dp))
                         Surface(
                             onClick = { answer(true, always = true) }, enabled = !busy, shape = RoundedCornerShape(50),

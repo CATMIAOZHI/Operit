@@ -33,21 +33,40 @@ import org.json.JSONObject
  * - `calendar` or `calendar:<days>`: calendar events in the next days (1 to 30, default 7)
  * - `reading` or `reading:<chapters>`: the book open in Legado; keeps Orbit's comments ready that many
  *   chapters ahead (2 to 50, default 20), waking it once fewer than half are (see [OrbitReadingWatch])
- * - `script:files/hooks/<name>.sh@<hash>`: a small shell script Orbit wrote; its final verdict
- *   chooses whether to wake. The hash pins the reviewed script: if edited, the check stops until the
- *   task is updated with the new script.
+ * - `script:files/hooks/<name>.sh@<hash>` or `.py`: a small script Orbit wrote, in the phone's shell
+ *   or in Python in the Ubuntu terminal; its final verdict chooses whether to wake. The hash pins the
+ *   reviewed script: if edited, the check stops until the task is updated with the new script.
+ *   `?proxy=<id>,…` hands it surrogates of those vault keys for the proxy; `&env=<id>,…` loads those
+ *   keys' real values, which the user approves for the pinned script (see [OrbitHookVault]).
  */
 object OrbitWatchSources {
     const val KIND = "WATCH"
     private const val MAX_TEXT = 20_000
     /** Below the plain shell executor's own 30 s kill, so the script's `timeout` fires first. */
     private const val SCRIPT_SECONDS = 25
+    /** Python starts inside the Ubuntu environment, which takes a few seconds by itself. */
+    private const val PYTHON_SECONDS = 60
+    private val pythonTurn = kotlinx.coroutines.sync.Mutex()
 
     /** The source is not ready yet (the notification listener is still binding); skip this check quietly. */
     class NotReady(message: String) : IllegalStateException(message)
     private val PACKAGE = Regex("[A-Za-z0-9_.]{1,120}")
-    val SCRIPT = Regex("script:(files/hooks/[^/@]{1,80}\\.sh)@([0-9a-f]{16})")
+    val SCRIPT = Regex("script:(files/hooks/[^/@?&]{1,80}\\.(sh|py))@([0-9a-f]{16})" +
+        "(?:\\?proxy=([A-Za-z0-9,-]{1,400}))?(?:[?&]env=([A-Za-z0-9,-]{1,400}))?")
     fun isScript(source: String) = SCRIPT.matches(source)
+
+    /** A script source taken apart: [proxy] and [env] are vault entry ids. */
+    data class Hook(val path: String, val python: Boolean, val hash: String, val proxy: List<String>, val env: List<String>)
+
+    fun hook(source: String): Hook? {
+        val g = SCRIPT.matchEntire(source)?.groupValues ?: return null
+        fun ids(text: String) = text.split(',').map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+        return Hook(g[1], g[2] == "py", g[3], ids(g[4]), ids(g[5]))
+    }
+
+    fun scriptSource(path: String, hash: String, proxy: List<String>, env: List<String>): String =
+        "script:$path@$hash" + (if (proxy.isEmpty()) "" else "?proxy=" + proxy.joinToString(",")) +
+            (if (env.isEmpty()) "" else (if (proxy.isEmpty()) "?" else "&") + "env=" + env.joinToString(","))
 
     data class ScriptResult(val outcome: String, val reason: String, val payload: String, val output: String) {
         val wake get() = outcome == "wake"
@@ -103,7 +122,7 @@ object OrbitWatchSources {
             "notifications" -> notifications(context, arg)
             "sms" -> sms(context, arg)
             "calendar" -> calendar(context, arg.toIntOrNull() ?: 7)
-            else -> readScript(context, orbitId, source).observation()
+            else -> error("Scripts are read with readScript and reading with OrbitReadingWatch")
         }
         if (text.length <= MAX_TEXT) return text
         // Only the head is shown, but the full-text digest rides along so a change past the cut
@@ -222,13 +241,132 @@ object OrbitWatchSources {
         }.orEmpty().ifEmpty { "(no events in the next $days days)" }
     }
 
-    suspend fun readScript(context: Context, orbitId: String, source: String, dryRun: Boolean = false): ScriptResult {
-        val match = checkNotNull(SCRIPT.matchEntire(source))
-        val path = match.groupValues[1]
+    /**
+     * The variables a hook starts with: proxy surrogates of [Hook.proxy] keys and, once approved,
+     * the real values of [Hook.env] keys. Also returns those real values, to mask them in what comes back.
+     */
+    private suspend fun hookVariables(context: Context, orbitId: String, source: String, hook: Hook, taskId: String,
+        title: String): Pair<Map<String, String>, List<String>> {
+        if (hook.proxy.isEmpty() && hook.env.isEmpty()) return emptyMap<String, String>() to emptyList()
+        // The phone's shells log the commands they run, so real values only go to Python in Ubuntu.
+        check(hook.env.isEmpty() || hook.python) { "Only Python hooks can load real values (vault_env)" }
+        val entries = OrbitVault.entries(context, orbitId)
+        fun entry(id: String) = entries.firstOrNull { it.id == id }
+            ?: error("Vault entry $id used by this hook is no longer in the vault; update the hook")
+        val vars = linkedMapOf<String, String>()
+        hook.proxy.forEach { id ->
+            vars[OrbitHookVault.surrogateVariable(id)] = OrbitVaultBroker.hookSurrogate(context, orbitId, entry(id), taskId)
+        }
+        if (hook.proxy.isNotEmpty()) vars["ORBIT_VAULT_PROXY"] = OrbitVaultBroker.base(context)
+        val secrets = mutableListOf<String>()
+        val missing = OrbitHookVault.unapproved(context, taskId, source, hook.env.map(::entry))
+        check(missing.isEmpty()) {
+            "The user has not approved this hook loading ${missing.joinToString { it.site }}; wait for the approval card"
+        }
+        hook.env.forEach { id ->
+            val e = entry(id)
+            check(e.envName.isNotEmpty() && e.secret.length >= OrbitVault.MIN_ENV_SECRET) {
+                "${e.site} is not allowed in the terminal any more; use vault_proxy or ask with orbit_vault request_update"
+            }
+            vars[e.envName] = e.secret
+            if (e.kind == OrbitVault.LOGIN && e.username.isNotEmpty()) {
+                vars[e.envName + "_USERNAME"] = e.username
+                // Masked like the terminal masks it, when long enough to mask.
+                if (e.username.length >= OrbitVault.MIN_ENV_SECRET) secrets += e.username
+            }
+            secrets += e.secret
+            OrbitVaultUsage.record(context, orbitId, e, OrbitVaultUsage.hook(taskId), title)
+        }
+        return vars to secrets
+    }
+
+    suspend fun readScript(context: Context, orbitId: String, source: String, dryRun: Boolean = false,
+        taskId: String, title: String): ScriptResult {
+        val hook = checkNotNull(hook(source))
+        val path = hook.path
         val text = OrbitFiles.of(context, orbitId).read(path)
-        check(hash(text) == match.groupValues[2]) {
+        check(hash(text) == hook.hash) {
             context.getString(R.string.orbit_watch_script_changed, path.substringAfterLast('/'))
         }
+        val (vars, secrets) = hookVariables(context, orbitId, source, hook, taskId, title)
+        // Also the escaped forms (JSON, URL, HTML) a value takes in a payload.
+        fun mask(value: String) = if (secrets.isEmpty()) value else OrbitVault.redact(value, secrets)
+        val result = try {
+            if (hook.python) runPython(context, text, vars, dryRun, ::mask) else runShell(context, text, vars, dryRun, ::mask)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Failures quote the script's output, which may hold a loaded value.
+            if (secrets.isEmpty()) throw e
+            throw IllegalStateException(mask(e.message ?: e.javaClass.simpleName))
+        }
+        if (secrets.isEmpty()) return result
+        // The payload is masked value by value: escaped text could hide a value from plain matching.
+        fun maskJson(value: Any?): Any? = when (value) {
+            is String -> mask(value)
+            is JSONObject -> JSONObject().also { out -> value.keys().forEach { k -> out.put(mask(k), maskJson(value.get(k))) } }
+            is org.json.JSONArray -> org.json.JSONArray().also { out -> (0 until value.length()).forEach { out.put(maskJson(value.get(it))) } }
+            else -> value
+        }
+        val payload = runCatching { (maskJson(JSONObject(result.payload)) as JSONObject).toString() }.getOrElse { mask(result.payload) }
+        return result.copy(reason = mask(result.reason), payload = payload, output = mask(result.output))
+    }
+
+    /** Python 3 in the Ubuntu terminal, on this phone even when the terminal is set to SSH. */
+    private suspend fun runPython(context: Context, text: String, vars: Map<String, String>, dryRun: Boolean,
+        mask: (String) -> String): ScriptResult {
+        check(com.ai.assistance.operit.util.OnDemandResources.terminalInstalled(context)) {
+            "Python hooks run in the Ubuntu terminal, which is not installed; install it first or write a sh hook"
+        }
+        fun b64(value: String) = java.util.Base64.getEncoder().encodeToString(value.toByteArray(Charsets.UTF_8))
+        val env = JSONObject(vars + ("HATCH_HOOK_DRY_RUN" to if (dryRun) "1" else "0")).toString()
+        // The script runs as hook.py with silent()/wake() given; values travel as base64, never as
+        // arguments. The terminal logs the start of each command, so the values come last.
+        val runtime = """
+            import os as _o, sys as _s, json as _j, base64 as _b
+            def _verdict(kind, reason, payload):
+                if not isinstance(reason, str) or not reason.strip():
+                    _s.stderr.write(kind + ' needs a reason\n'); _s.stderr.flush(); _o._exit(2)
+                text = payload if isinstance(payload, str) else _j.dumps({} if payload is None else payload, ensure_ascii=False)
+                _s.stdout.write('\n$RESULT_MARKER\t%s\t%s\t%s\n' % (kind, _b.b64encode(reason.encode()).decode(), _b.b64encode(text.encode()).decode()))
+                _s.stdout.flush(); _o._exit(0)
+            def silent(reason, payload=None): _verdict('silent', reason, payload)
+            def wake(reason, payload=None): _verdict('wake', reason, payload)
+            _o.environ.update(_j.loads(_b.b64decode('${b64(env)}').decode()))
+            exec(compile(_b.b64decode('${b64(text)}').decode(), 'hook.py', 'exec'), {'__name__': '__main__', 'silent': silent, 'wake': wake})
+        """.trimIndent()
+        val command = "printf '%s' '${b64(runtime)}' | base64 -d | timeout $PYTHON_SECONDS python3 -u - 2>&1"
+        // One at a time, so a hook waiting for the shared shell does not spend its own time limit waiting.
+        val result = pythonTurn.withLock {
+            com.ai.assistance.operit.core.tools.system.Terminal.getInstance(context)
+                .executeHiddenCommand(command, executorKey = "orbit-hooks", timeoutMs = (PYTHON_SECONDS + 30) * 1000L,
+                    local = true, quiet = true)
+        }
+        check(result.state != com.ai.assistance.operit.terminal.provider.type.HiddenExecResult.State.TIMEOUT &&
+            result.exitCode != 124) { context.getString(R.string.orbit_watch_script_timeout, PYTHON_SECONDS) }
+        check(result.isOk) { context.getString(R.string.orbit_watch_script_failed, mask(result.error.ifBlank { result.output }).trim().take(300)) }
+        check(result.exitCode == 0) {
+            context.getString(R.string.orbit_watch_script_failed, mask(result.output).trim().takeLast(300))
+        }
+        return verdict(result.output, mask)
+    }
+
+    /** [mask] runs on the whole output before any of it is cut for an error. */
+    private fun verdict(stdout: String, mask: (String) -> String): ScriptResult {
+        check(stdout.length <= MAX_TEXT) { "Hook output exceeds $MAX_TEXT characters; keep logs and payload short" }
+        // The result line carries reason and payload in base64, which masking cannot see; it is left out of errors.
+        fun shown() = mask(stdout.lineSequence().filterNot { it.startsWith(RESULT_MARKER) }.joinToString("\n")).take(2000)
+        return try { parseScriptOutput(stdout) }
+        catch (e: IllegalArgumentException) {
+            error("${e.message}\nScript output:\n${shown()}")
+        } catch (e: org.json.JSONException) {
+            error("The terminal payload must be a JSON object.\nScript output:\n${shown()}")
+        }
+    }
+
+    private suspend fun runShell(context: Context, text: String, vars: Map<String, String>, dryRun: Boolean,
+        mask: (String) -> String): ScriptResult {
+        fun quoted(value: String) = "'" + value.replace("'", "'\\''") + "'"
         // The checked text travels as base64 so no shell (plain, root or Shizuku) re-splits its quotes,
         // and the pipe makes the plain executor hand the whole line to `sh -c`. `timeout` stops the
         // script itself where the device has it; the coroutine timeout is only a backstop.
@@ -246,6 +384,7 @@ object OrbitWatchSources {
                 exit 0
             }
             export HATCH_HOOK_DRY_RUN=${if (dryRun) 1 else 0}
+            ${vars.entries.joinToString("\n") { (name, value) -> "export $name=${quoted(value)}" }}
             $text
         """.trimIndent()
         val encoded = android.util.Base64.encodeToString(runtime.toByteArray(), android.util.Base64.NO_WRAP)
@@ -258,14 +397,8 @@ object OrbitWatchSources {
             context.getString(R.string.orbit_watch_script_timeout, SCRIPT_SECONDS)
         }
         check(result.success) {
-            context.getString(R.string.orbit_watch_script_failed, result.stderr.ifBlank { result.stdout }.trim().take(300))
+            context.getString(R.string.orbit_watch_script_failed, mask(result.stderr.ifBlank { result.stdout }).trim().take(300))
         }
-        check(result.stdout.length <= MAX_TEXT) { "Hook output exceeds $MAX_TEXT characters; keep logs and payload short" }
-        return try { parseScriptOutput(result.stdout) }
-        catch (e: IllegalArgumentException) {
-            error("${e.message}\nScript output:\n${result.stdout.take(2000)}")
-        } catch (e: org.json.JSONException) {
-            error("The terminal payload must be a JSON object.\nScript output:\n${result.stdout.take(2000)}")
-        }
+        return verdict(result.stdout, mask)
     }
 }
