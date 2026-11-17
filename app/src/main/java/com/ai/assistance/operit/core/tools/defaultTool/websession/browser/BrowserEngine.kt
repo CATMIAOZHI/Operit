@@ -66,6 +66,14 @@ internal interface BrowserDevTools {
  */
 internal object BrowserPageMenus {
     var open: android.widget.PopupWindow? = null
+        set(value) {
+            if (field === value) return
+            field = value
+            onChanged?.invoke()
+        }
+
+    /** Told when a menu shows or goes; the browser window then decides again who takes back. */
+    var onChanged: (() -> Unit)? = null
 
     /** Closes the menu if one shows; true when it did. */
     fun dismissOpen(): Boolean {
