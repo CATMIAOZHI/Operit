@@ -27,10 +27,15 @@ class TerminalCommandProtocolTest {
                 val token = session.commandLifecycle.protocol.activeToken!!
                 fun output(text: String) = processor.processOutput(session.id, text, manager)
 
+                // A multi-line command echoes over several lines and PS2 prompts before it starts.
+                output("__operit_start_x '$token'; builtin eval -- 'watch\r\n> sleep 3; '\\''q'\\''\r\n> ")
+                output("false'; __operit_result_x \"\$?\" '$token'\r\n")
+                output("\u001b]633;OperitStart;$token\u0007")
                 output("before")
                 output("\u001b[?104")
                 output("9h\u001b[2J\u001b[Hbuilding")
                 assertTrue(events.any { it.screen?.contains("building") == true })
+                assertTrue(events.last { it.screen?.contains("building") == true }.screenFullscreen)
                 assertFalse(events.any { it.isCompleted })
                 output("\u001b[?1049l")
                 output("not done #\n")
@@ -46,6 +51,9 @@ class TerminalCommandProtocolTest {
                 assertFalse(end.outputChunk.contains('\u001b'))
                 assertTrue(end.outputChunk.contains("before"))
                 assertTrue(end.outputChunk.contains("value #"))
+                assertFalse(end.outputChunk, end.outputChunk.contains("builtin eval"))
+                assertFalse(end.outputChunk, end.outputChunk.contains("sleep 3"))
+                assertFalse(end.screenFullscreen)
                 assertEquals(1, advanced)
             }
         }

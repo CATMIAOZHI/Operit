@@ -22,6 +22,8 @@ internal class TerminalTaskRegistry(
         val exitCode: Int?,
         val sessionExitCode: Int?,
         val screen: String?,
+        /** [screen] shows a full-screen program; its content never reached [output]. */
+        val screenFullscreen: Boolean = false,
     )
 
     private class Run(val id: String, val sessionId: String) {
@@ -34,6 +36,7 @@ internal class TerminalTaskRegistry(
         var exitCode: Int? = null
         var sessionExitCode: Int? = null
         var screen: String? = null
+        var screenFullscreen = false
     }
 
     private val runs = linkedMapOf<String, Run>()
@@ -60,7 +63,10 @@ internal class TerminalTaskRegistry(
                             else run.output + "\n" + event.outputChunk
                             run.truncated = run.truncated || text.length > outputLimit
                             run.output = text.takeLast(outputLimit)
-                            event.screen?.let { run.screen = it.takeLast(12_000) }
+                            event.screen?.let {
+                                run.screen = it.takeLast(12_000)
+                                run.screenFullscreen = event.screenFullscreen
+                            }
                             if (event.isCompleted) {
                                 run.exitCode = event.exitCode
                                 run.sessionExitCode = event.sessionExitCode
@@ -133,7 +139,7 @@ internal class TerminalTaskRegistry(
         return synchronized(this) {
             Snapshot(run.id, run.sessionId, run.status, run.output.takeLast(12_000),
                 run.truncated || run.output.length > 12_000, run.reason,
-                run.exitCode, run.sessionExitCode, run.screen)
+                run.exitCode, run.sessionExitCode, run.screen, run.screenFullscreen)
         }
     }
 
