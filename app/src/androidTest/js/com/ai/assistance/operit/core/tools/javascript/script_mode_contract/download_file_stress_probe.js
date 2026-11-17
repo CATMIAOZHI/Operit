@@ -92,7 +92,7 @@ async function highLevelToolCall(toolType, toolName, params) {
   }
 }
 
-const CDN_BASE = 'https://raw.githubusercontent.com/CATMIAOZHI/Operit/personal/main';
+const CDN_BASE = 'https://raw.githubusercontent.com/CATMIAOZHI/orbit/main';
 const TYPE_FILES = [
   'android.d.ts',
   'chat.d.ts',

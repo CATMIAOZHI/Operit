@@ -11,7 +11,7 @@ const SandboxPackageDevInstaller = (function () {
   const SCRIPTS_DIR = `${SKILL_ROOT}/scripts`;
   const EXAMPLES_DIR = `${SKILL_ROOT}/examples`;
   const EXAMPLE_PACKAGES_DIR = `${EXAMPLES_DIR}/packages`;
-  const CDN_BASE = "https://raw.githubusercontent.com/CATMIAOZHI/Operit/personal/main";
+  const CDN_BASE = "https://raw.githubusercontent.com/CATMIAOZHI/orbit/main";
   const MAX_DOWNLOAD_CONCURRENCY = 8;
   const TYPE_FILES = [
     "android.d.ts",

@@ -88,7 +88,7 @@
     <string name="about_description">Operit AI es una aplicación de asistente inteligente que ayuda a los usuarios a utilizar sus dispositivos de manera más eficiente, proporcionando funciones como análisis de interfaz y chat.</string>
     <string name="about_developer">Mantenedor: &lt;a href="https://github.com/CATMIAOZHI"&gt;Rainy&lt;/a&gt;</string>
     <string name="about_contact">Proyecto original: AAswordman / Operit</string>
-    <string name="about_website">&lt;a href="https://github.com/CATMIAOZHI/Operit"&gt;GitHub: https://github.com/CATMIAOZHI/Operit&lt;/a&gt;</string>
+    <string name="about_website">&lt;a href="https://github.com/CATMIAOZHI/orbit"&gt;GitHub: https://github.com/CATMIAOZHI/orbit&lt;/a&gt;</string>
     <string name="about_copyright">© 2025 - 2026 Operit. Todos los derechos reservados.</string>
 
     <!-- AI Chat Screen -->
