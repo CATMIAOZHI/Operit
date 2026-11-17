@@ -115,6 +115,20 @@ Cefrium 维护者在 [issue #75](https://github.com/CATMIAOZHI/Operit/issues/75)
    - 引擎默认直接离开有未保存内容的页面，现在 `beforeunload` 会弹 App 自己的确认框。
    - 模拟器是 x86_64，arm64 的 `libcef.so` 在模拟器的 ARM 翻译层里会崩；模拟器测试用 `-PoperitAbi=x86_64` 打包（见 `docs/agent/build-guide.md`）。
 3. 发版（待做）：CI 同时打两种 APK，每个版本两种补丁，nightly 检查、回退完整包和发版手册都要认两种 APK。
+4. 通行密钥（权限已有，白名单待申请）：见下面「通行密钥（第二版）」。
+
+## 通行密钥（第二版）
+
+- 现状：带浏览器版的合并清单里已有 `CREDENTIAL_MANAGER_SET_ORIGIN` 和 `CREDENTIAL_MANAGER_QUERY_CANDIDATE_CREDENTIALS`，由 Cefrium SDK 自动加入，App 清单不要用 `tools:node="remove"` 删掉它们（删掉前者通行密钥报 `NotAllowedError`，删掉后者遇到带通行密钥的登录框会崩）。只在 Android 14 及以上生效。普通版（WebView）没有开启网页通行密钥。
+- 浏览器代表网站请求通行密钥时，密码管理器会自己判断 App 是否可信，光有权限不够：
+  - Google 密码管理器只认官方白名单 [apps.json](https://www.gstatic.com/gpm-passkeys-privileged-apps/apps.json)，用户不能自己加。Operit 不在名单里，所以存在 Google 密码管理器里的通行密钥用不了。
+  - Bitwarden（设置 → 自动填充 → 通行密钥管理 → 特权应用）和 KeePassDX（设置 → 表单填充 → 通行密钥设置 → 特权应用）可以让用户手动信任 Operit。
+- 以后要做：申请进 Google 密码管理器白名单。
+  1. 先在 Android 14 及以上的真机上，用 Bitwarden 或 KeePassDX 跑通一次带浏览器版的通行密钥登录，证明我们这边没问题（审核可能会实测）。
+  2. 用用户的 Google 账号填[官方申请表](https://docs.google.com/forms/d/e/1FAIpQLScRuk9tTg0QPfSWl9SbpbIorX8xx2FCXlmoUYftCX2MxG4qyg/viewform)（说明见 [Android 文档](https://developer.android.com/identity/sign-in/privileged-apps)），提交后开工单人工审核。
+  3. 要填：包名 `com.rainy.operitry`，开发版也要的话加 `com.rainy.operitry.dev`；发布签名证书的 SHA-256 指纹（公开信息，可以填）；说明内置浏览器基于 Cefrium、按网页来源设置 origin、登录仍需用户指纹或锁屏确认。
+- 白名单按「包名 + 签名证书指纹」登记。指纹来自签名证书，每次发版不变；只有换了发布签名文件才要重新申请，所以签名文件和密码要备份好。
+- 风险：审核标准和时间都没公开。名单里有小型开源浏览器（Helium、Vanadium、Waterfox）和 AI 浏览器 Perplexity Comet，但 Operit 主体是 AI 助手，审核可能问得更细。
 
 ## 两套登录空间（第二版）
 
