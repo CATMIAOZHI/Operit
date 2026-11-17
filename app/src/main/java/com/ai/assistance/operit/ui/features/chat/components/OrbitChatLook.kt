@@ -492,6 +492,11 @@ object OrbitSpeech {
     private val blank = Regex("\n{3,}")
     private val cardFence = Regex("```(?:a2ui(?:-ref)?|${ORBIT_CARD_FENCE}|${ORBIT_OPTIONS_FENCE})[^\\n]*\\n[\\s\\S]*?(?:```|$)")
     private val shownCard = Regex("```(?:a2ui(?:[ \\t]+card-\\d{1,2})?|${ORBIT_CARD_FENCE})[ \\t]*\\n")
+    private val optionsFence = Regex("```${ORBIT_OPTIONS_FENCE}\\n([a-z0-9]+)\\n```")
+
+    /** The reply option sets [shown] (cleaned text) draws, by id; each still has to exist to show. */
+    fun optionIds(shown: String): List<String> =
+        if (!shown.contains(ORBIT_OPTIONS_FENCE)) emptyList() else optionsFence.findAll(shown).map { it.groupValues[1] }.toList()
     // Orbit's own words can never draw an Orbit card; only a tool's result can (see [cards]).
     // The renderer reads the tag after trimming, so "``` orbit-card" counts as the same fence.
     private val writtenOrbitCard = Regex("```[ \\t]*${ORBIT_CARD_FENCE}[^\\n]*(?:\\n[\\s\\S]*?```|[\\s\\S]*$)")
