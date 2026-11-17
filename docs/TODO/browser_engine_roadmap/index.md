@@ -106,7 +106,14 @@ Cefrium 维护者在 [issue #75](https://github.com/CATMIAOZHI/Operit/issues/75)
 ## 第二版接入进度
 
 1. 工具链与构建开关（2026-11-16，已完成）：Gradle 升到 9.7.1、AGP 升到 9.4.0，普通版仍用 JDK 21/17 构建，单测通过。命令行加 `-PoperitBrowser=true` 打出带浏览器版：加入 Cefrium 插件和 `cefrium-sdk:0.21.0`，`minSdk 29`，`BuildConfig.BROWSER_ENGINE_BUILT_IN = true`，需要 JDK 25。arm64 调试包：普通版 166 MB，带浏览器版 308 MB（`libcef.so` 压缩后 93 MB，`icudtl.dat` 9 MB）。用法见 `docs/agent/build-guide.md`。
-2. 引擎接入（待做）：带浏览器版把 Orbit 的后台浏览器（现在是 1×1 悬浮窗里的 WebView）换成离屏 Cefrium，主应用和 Orbit 各用一个持久 Profile，CDP 走 Cefrium 的公开接口；普通版保持 WebView。Cefrium 自带的 `CefriumInitProvider` 会在启动时初始化，接入时评估改成用到时再初始化。
+2. 引擎接入（2026-11-17，已完成，待真机验证）：带浏览器版的所有浏览器标签页都跑在离屏 Cefrium 上（`app/src/browser/java`），普通版保持 WebView（`app/src/webview/java` 里是空实现）。主应用用引擎默认 Profile，Orbit 用 `orbit-<id>` Profile；CDP 走 `executeDevToolsMethod`；引擎建页失败时这个标签页自动回退 WebView。模拟器（x86_64 包）实测通过：打开网页、UA 与 Client Hints（Google Chrome 品牌、无 Cefrium 字样）、截图、点击、中文输入、GitHub 严格 CSP 登录页填字、读 DOM、异步 JS、网络日志状态码、确认弹窗、新窗口、下载交给 App 下载列表、真人触摸、App 在后台继续工作、两套登录不串号。接入中踩到的坑：
+   - 引擎的网页进程和 GPU 进程也会创建 `OperitApplication`；沙盒进程不能注册广播，原来会一启动就崩，网页永远加载不出来。现在这些子进程跳过 App 初始化。
+   - Cefrium 0.21 的 DevTools 消息编号会错位：浏览器建好前发的调用要等到第一次开始加载才发出，建好后发的调用立即发出；后者插队后前者被 CEF 改号，之后这个标签页的每个 DevTools 调用（包括带返回值的执行 JS）都被拒绝，回复也会对错号。新窗口每次都会触发。现在每个标签页在第一次开始加载前不发任何 DevTools 调用，先在 App 里排队。源码：`libcef/browser/android/cefrium_sdk_devtools.cc`（`ExecuteDevTools` 比较返回编号）、`cefrium_sdk_handlers.h`（`OnLoadStart` 才放行排队的调用）。
+   - 文档开头脚本运行时 `window.cefriumQuery` 可能还没注入，新窗口的第一个页面也可能错过开头脚本；App 的脚本桥改成调用时才找 `cefriumQuery`，并在每次执行 JS 前补上。
+   - 新窗口的设置（脚本通道、各种回调）也被引擎扣到第一个页面提交时才生效；第一次加载没提交就停了（比如直接变成下载），窗口就一直半残。现在这种窗口会自动加载一次 `about:blank`，DevTools 排队也在加载停止或出错时放行。
+   - 引擎的查询通道只能回答发起查询的那个框架，也不支持一次查询多次回答；页面里的子框架靠一个一直挂着的 listen 查询批量收回复（用户脚本在 iframe 里要靠它拿到启动数据）。
+   - 引擎默认直接离开有未保存内容的页面，现在 `beforeunload` 会弹 App 自己的确认框。
+   - 模拟器是 x86_64，arm64 的 `libcef.so` 在模拟器的 ARM 翻译层里会崩；模拟器测试用 `-PoperitAbi=x86_64` 打包（见 `docs/agent/build-guide.md`）。
 3. 发版（待做）：CI 同时打两种 APK，每个版本两种补丁，nightly 检查、回退完整包和发版手册都要认两种 APK。
 
 ## 两套登录空间（第二版）

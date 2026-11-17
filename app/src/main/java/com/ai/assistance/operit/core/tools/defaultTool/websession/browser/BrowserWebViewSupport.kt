@@ -48,7 +48,16 @@ internal fun StandardBrowserSessionTools.createSessionOnMain(
     customUserAgent: String?,
     profileName: String = BrowserProfiles.currentScope() ?: BrowserProfiles.MAIN,
     browserTaskId: String? = BrowserTaskScope.current(),
+    enginePopup: EngineBrowserPage? = null,
+    /** False for a WebView page's window, which must be a WebView too. */
+    useEngine: Boolean = true,
 ): BrowserToolSession {
+    // The browser build opens its tabs on the built-in engine; the WebView stays the fallback.
+    if (useEngine || enginePopup != null) {
+        createEngineSessionOnMain(sessionId, sessionName, customUserAgent, profileName, browserTaskId, enginePopup)
+            ?.let { return it }
+    }
+    check(enginePopup == null) { "The engine's window could not get a tab" }
     BrowserCdp.enableDebuggingOnMain()
     val webView = WebView(resolveWebViewContext(appContext))
     try {
@@ -184,11 +193,7 @@ internal fun StandardBrowserSessionTools.configureWebView(
 
             override fun onReceivedTitle(view: WebView?, title: String?) {
                 super.onReceivedTitle(view, title)
-                session.pageTitle = title.orEmpty()
-                refreshSessionUiOnMain(session.id)
-                ioScope.launch {
-                    historyStore.updateTitle(session.currentUrl, session.pageTitle)
-                }
+                sessionTitleChanged(session, title)
             }
 
             override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
@@ -214,25 +219,12 @@ internal fun StandardBrowserSessionTools.configureWebView(
                 if (filePathCallback == null) {
                     return false
                 }
-
-                session.pendingFileChooserCallback?.onReceiveValue(null)
-                session.pendingFileChooserCallback = filePathCallback
-                session.pendingFileChooserAccept =
-                    fileChooserParams?.acceptTypes.orEmpty()
-                        .flatMap { it.split(',') }
-                        .map { it.trim() }
-                        .filter { it.isNotEmpty() }
-                        .distinct()
-                session.pendingFileChooserMultiple =
-                    fileChooserParams?.mode == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE
-                session.pendingFileChooserCapture = fileChooserParams?.isCaptureEnabled == true
-                session.lastFileChooserRequestAt = System.currentTimeMillis()
-                notifySessionStateChanged(session)
-
-                AppLogger.d(
-                    WEBVIEW_SUPPORT_TAG,
-                    "Captured file chooser request for session=${session.id}, " +
-                        "mode=${fileChooserParams?.mode}, multiple=${fileChooserParams?.mode == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE}"
+                sessionFileChooser(
+                    session,
+                    filePathCallback,
+                    fileChooserParams?.acceptTypes.orEmpty().toList(),
+                    multiple = fileChooserParams?.mode == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE,
+                    capture = fileChooserParams?.isCaptureEnabled == true
                 )
                 return true
             }
@@ -261,16 +253,15 @@ internal fun StandardBrowserSessionTools.configureWebView(
                 message: String?,
                 result: android.webkit.JsResult?
             ): Boolean {
-                session.pendingDialog =
+                sessionJsDialog(
+                    session,
                     PendingDialog(
                         type = "alert",
                         message = message.orEmpty(),
                         url = url,
                         jsResult = result
                     )
-                notifySessionStateChanged(session)
-                refreshSessionUiOnMain(session.id)
-                AppLogger.d(WEBVIEW_SUPPORT_TAG, "web_session js alert pending: ${message.orEmpty()}")
+                )
                 return true
             }
 
@@ -280,16 +271,15 @@ internal fun StandardBrowserSessionTools.configureWebView(
                 message: String?,
                 result: android.webkit.JsResult?
             ): Boolean {
-                session.pendingDialog =
+                sessionJsDialog(
+                    session,
                     PendingDialog(
                         type = "confirm",
                         message = message.orEmpty(),
                         url = url,
                         jsResult = result
                     )
-                notifySessionStateChanged(session)
-                refreshSessionUiOnMain(session.id)
-                AppLogger.d(WEBVIEW_SUPPORT_TAG, "web_session js confirm pending: ${message.orEmpty()}")
+                )
                 return true
             }
 
@@ -300,7 +290,8 @@ internal fun StandardBrowserSessionTools.configureWebView(
                 defaultValue: String?,
                 result: android.webkit.JsPromptResult?
             ): Boolean {
-                session.pendingDialog =
+                sessionJsDialog(
+                    session,
                     PendingDialog(
                         type = "prompt",
                         message = message.orEmpty(),
@@ -308,9 +299,7 @@ internal fun StandardBrowserSessionTools.configureWebView(
                         url = url,
                         jsPromptResult = result
                     )
-                notifySessionStateChanged(session)
-                refreshSessionUiOnMain(session.id)
-                AppLogger.d(WEBVIEW_SUPPORT_TAG, "web_session js prompt pending: ${message.orEmpty()}")
+                )
                 return true
             }
         }
@@ -319,70 +308,21 @@ internal fun StandardBrowserSessionTools.configureWebView(
         object : WebViewClient() {
             override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
                 super.onPageStarted(view, url, favicon)
-                session.currentUrl = url
-                session.pageLoaded = false
-                session.isLoading = true
-                // The error page shown after a refused certificate starts with the same URL; keep its reason.
-                if (url != session.sslErrorUrl) {
-                    session.hasSslError = false
-                    session.sslErrorDetail = null
-                    session.sslErrorUrl = null
-                }
-                session.lastPermissionNote = null
-                session.lastSnapshot = null
-                clearEventLogs(session)
-                session.pendingDialog = null
-                notifySessionStateChanged(session)
-                userscriptManager.onPageChanged(session.id, url, forceReset = true)
-                syncNavigationStateUi(session)
+                sessionPageStarted(session, url)
             }
 
             override fun onPageCommitVisible(view: WebView, url: String) {
                 super.onPageCommitVisible(view, url)
-                session.currentUrl = url
-                session.lastSnapshot = null
-                notifySessionStateChanged(session)
-                userscriptManager.onPageChanged(session.id, url)
-                refreshNavigationStateFromWebView(view, session)
+                sessionPageCommitted(session, url)
             }
 
             override fun onPageFinished(view: WebView, url: String) {
                 super.onPageFinished(view, url)
-                session.currentUrl = url
-                userscriptManager.onPageChanged(session.id, url)
-                session.pageTitle = view.title ?: ""
-                session.pageLoaded = true
-                session.isLoading = false
-                notifySessionStateChanged(session)
-                applyViewportOverride(session)
-                refreshNavigationStateFromWebView(view, session)
-                injectDownloadHelper(session.page)
-                injectTextSelectionHelper(session.page)
-                ioScope.launch {
-                    historyStore.updateTitle(url, session.pageTitle)
-                }
+                sessionPageFinished(session, url)
             }
 
-            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                val uri = request.url
-                val scheme = uri.scheme?.lowercase()
-                if (scheme == "blob") {
-                    injectBlobDownloaderScript(session, uri.toString())
-                    return true
-                }
-                if (scheme == "data") {
-                    handleInlineDownload(
-                        session = session,
-                        base64Data = uri.toString(),
-                        fileName = "download_${System.currentTimeMillis()}",
-                        mimeType = guessMimeTypeFromDataUrl(uri.toString()),
-                        type = "data",
-                        sourceUrl = uri.toString()
-                    )
-                    return true
-                }
-                return handleNavigationOverrideOnMain(session, uri)
-            }
+            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
+                sessionShouldOverrideNavigation(session, request.url)
 
             override fun shouldInterceptRequest(
                 view: WebView,
@@ -395,13 +335,7 @@ internal fun StandardBrowserSessionTools.configureWebView(
 
             override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
                 super.doUpdateVisitedHistory(view, url, isReload)
-                session.currentUrl = url
-                val pageTitle = view.title.orEmpty()
-                notifySessionStateChanged(session)
-                refreshNavigationStateFromWebView(view, session)
-                ioScope.launch {
-                    historyStore.recordVisit(url, pageTitle, isReload)
-                }
+                sessionHistoryUpdated(session, url, isReload)
             }
 
             override fun onReceivedSslError(
@@ -409,11 +343,6 @@ internal fun StandardBrowserSessionTools.configureWebView(
                 handler: SslErrorHandler,
                 error: android.net.http.SslError
             ) {
-                AppLogger.w(
-                    WEBVIEW_SUPPORT_TAG,
-                    "web_session SSL error, refusing the connection. " +
-                        "session=${session.id}, url=${error.url}, primaryError=${error.primaryError}"
-                )
                 val reason =
                     when (error.primaryError) {
                         android.net.http.SslError.SSL_EXPIRED -> "the certificate has expired"
@@ -423,12 +352,7 @@ internal fun StandardBrowserSessionTools.configureWebView(
                         android.net.http.SslError.SSL_DATE_INVALID -> "the certificate date is invalid"
                         else -> "the certificate is invalid"
                     }
-                session.hasSslError = true
-                session.sslErrorDetail = "$reason (${error.url})"
-                session.sslErrorUrl = error.url
-                notifySessionStateChanged(session)
-                updateNavigationState(session)
-                refreshSessionUiOnMain(session.id)
+                sessionSslError(session, error.url, reason)
                 // Proceeding would let anyone on the network read or change the page, logins included.
                 handler.cancel()
             }
@@ -437,43 +361,8 @@ internal fun StandardBrowserSessionTools.configureWebView(
                 view: WebView,
                 detail: android.webkit.RenderProcessGoneDetail
             ): Boolean {
-                AppLogger.e(
-                    WEBVIEW_SUPPORT_TAG,
-                    "web_session render process gone: session=${session.id}, " +
-                        "didCrash=${detail.didCrash()}, priority=${detail.rendererPriorityAtExit()}"
-                )
-                session.pageLoaded = false
-                session.isLoading = false
-                session.lastSnapshot = null
-                session.pendingDialog?.jsPromptResult?.cancel()
-                session.pendingDialog?.jsResult?.cancel()
-                session.pendingDialog = null
-                session.pendingFileChooserCallback?.onReceiveValue(null)
-                session.pendingFileChooserCallback = null
-                notifySessionStateChanged(session)
-                session.currentUrl.takeIf { it.isNotBlank() && it != "about:blank" }?.let { url ->
-                    StandardBrowserSessionTools.crashedTabs.add(
-                        StandardBrowserSessionTools.CrashedTab(
-                            url = url,
-                            title = session.pageTitle,
-                            profileName = session.profileName,
-                            at = System.currentTimeMillis(),
-                            crashed = detail.didCrash(),
-                            browserTaskId = session.browserTaskId,
-                        )
-                    )
-                    while (StandardBrowserSessionTools.crashedTabs.size > 10) {
-                        StandardBrowserSessionTools.crashedTabs.removeAt(0)
-                    }
-                }
-                closeSession(session.id)
-                showToast(
-                    if (detail.didCrash()) {
-                        context.getString(R.string.web_session_render_process_crashed)
-                    } else {
-                        context.getString(R.string.web_session_render_process_gone)
-                    }
-                )
+                AppLogger.e(WEBVIEW_SUPPORT_TAG, "WebView renderer priority at exit: ${detail.rendererPriorityAtExit()}")
+                sessionRenderProcessGone(session, detail.didCrash())
                 return true
             }
         }
@@ -1033,18 +922,6 @@ internal fun StandardBrowserSessionTools.syncNavigationStateUi(session: BrowserT
     refreshSessionUiOnMain(session.id)
 }
 
-internal fun StandardBrowserSessionTools.refreshNavigationStateFromWebView(
-    view: WebView,
-    session: BrowserToolSession
-) {
-    syncNavigationStateUi(session)
-    view.post {
-        if (session.webView === view) {
-            syncNavigationStateUi(session)
-        }
-    }
-}
-
 internal fun StandardBrowserSessionTools.refreshNavigationStateAsync(session: BrowserToolSession) {
     session.page.view.post {
         syncNavigationStateUi(session)
@@ -1157,7 +1034,8 @@ internal fun StandardBrowserSessionTools.configureCookiePolicy(webView: WebView,
 }
 
 internal fun StandardBrowserSessionTools.createPopupSessionOnMain(
-    parentSession: BrowserToolSession
+    parentSession: BrowserToolSession,
+    enginePopup: EngineBrowserPage? = null,
 ): BrowserToolSession {
     val popupSession =
         createSessionOnMain(
@@ -1167,6 +1045,9 @@ internal fun StandardBrowserSessionTools.createPopupSessionOnMain(
             customUserAgent = parentSession.customUserAgent,
             profileName = parentSession.profileName,
             browserTaskId = parentSession.browserTaskId,
+            enginePopup = enginePopup,
+            // A window takes its opener's browser: a WebView hands its window a WebView.
+            useEngine = parentSession.page is EngineBrowserPage,
         )
     StandardBrowserSessionTools.sessions[popupSession.id] = popupSession
     addSessionOrder(popupSession.id)
@@ -1482,6 +1363,8 @@ internal fun StandardBrowserSessionTools.resolvePendingDialogOnMain(
         } else {
             pending.jsResult.cancel()
         }
+    } else if (pending.answer != null) {
+        pending.answer.invoke(accept, if (pending.type == "prompt") promptText ?: pending.defaultValue.orEmpty() else null)
     }
     session.pendingDialog = null
     notifySessionStateChanged(session)
@@ -1534,8 +1417,7 @@ internal fun StandardBrowserSessionTools.closeSession(sessionId: String): Boolea
     }
     session.pendingFileChooserCallback?.onReceiveValue(null)
     session.pendingFileChooserCallback = null
-    session.pendingDialog?.jsPromptResult?.cancel()
-    session.pendingDialog?.jsResult?.cancel()
+    session.pendingDialog?.cancel()
     session.pendingDialog = null
     notifySessionStateChanged(session)
     session.webView?.let { cleanupWebViewOnMain(it) } ?: session.page.destroy()

@@ -210,7 +210,9 @@ android {
             // Explicitly specify the ABIs we package for the app process.
             // terminal now also ships x86_64 runtime binaries for the Android Studio emulator,
             // while the rest of the app remains primarily ARM-focused.
-            abiFilters.addAll(listOf("arm64-v8a"))
+            // -PoperitAbi=x86_64 is only for testing on the x86_64 emulator: the arm64 Cefrium
+            // engine crashes under the emulator's arm translation.
+            abiFilters.addAll(listOf(gradle.startParameter.projectProperties["operitAbi"] ?: "arm64-v8a"))
         }
 
         externalNativeBuild {
@@ -286,6 +288,8 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
         isCoreLibraryDesugaringEnabled = true
     }
+    // The Cefrium tab code compiles only into the browser build; the usual build gets a stub.
+    sourceSets["main"].java.srcDir(if (browserBuild) "src/browser/java" else "src/webview/java")
     buildFeatures {
         compose = true
         aidl = true

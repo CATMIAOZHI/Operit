@@ -662,6 +662,8 @@ internal class WebSessionBrowserHost(
 
     /** The back key in the browser window: Orbit's watch screen decides, else back in the page, else put away. */
     internal fun handleBack() {
+        // The page's long-press menu closes first.
+        if (BrowserPageMenus.dismissOpen()) return
         rootView?.onBackKey?.let { return it() }
         if (hostState.browserState.canGoBack) callbacks.onBack() else callbacks.onMinimize()
     }
@@ -1265,6 +1267,10 @@ private class DeceptiveMinimizedLayout(context: Context) : FrameLayout(context) 
                     }
                     override fun onBackInvoked() {
                         if (backCommitting) return
+                        if (BrowserPageMenus.dismissOpen()) {
+                            onBackCancelled()
+                            return
+                        }
                         backCommitting = true
                         animate().scaleX(0.94f).scaleY(0.94f).alpha(0.8f).setDuration(140)
                             .withEndAction {
@@ -1274,7 +1280,7 @@ private class DeceptiveMinimizedLayout(context: Context) : FrameLayout(context) 
                     }
                 }
             } else {
-                android.window.OnBackInvokedCallback { onBackKey?.invoke() }
+                android.window.OnBackInvokedCallback { if (!BrowserPageMenus.dismissOpen()) onBackKey?.invoke() }
             }
             dispatcher.registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, callback)
             backCallback = callback
@@ -1318,7 +1324,7 @@ private class DeceptiveMinimizedLayout(context: Context) : FrameLayout(context) 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         val back = onBackKey
         if (back != null && event.keyCode == KeyEvent.KEYCODE_BACK) {
-            if (event.action == KeyEvent.ACTION_UP && !event.isCanceled) back()
+            if (event.action == KeyEvent.ACTION_UP && !event.isCanceled && !BrowserPageMenus.dismissOpen()) back()
             return true
         }
         return super.dispatchKeyEvent(event)

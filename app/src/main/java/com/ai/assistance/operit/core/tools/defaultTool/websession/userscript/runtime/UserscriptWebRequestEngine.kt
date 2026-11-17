@@ -49,6 +49,11 @@ internal class UserscriptWebRequestEngine {
     private val registrations = ConcurrentHashMap<String, UserscriptWebRequestRegistration>()
     private val registrationOrder = AtomicLong(0L)
 
+    /** Gets the session whose rules were added or removed. Any thread. */
+    @Volatile var onRulesChanged: ((sessionId: String) -> Unit)? = null
+
+    fun hasRules(sessionId: String): Boolean = registrations.values.any { it.sessionId == sessionId }
+
     fun register(
         scriptId: Long,
         sessionId: String,
@@ -66,14 +71,18 @@ internal class UserscriptWebRequestEngine {
                 source = source,
                 order = registrationOrder.incrementAndGet()
             )
+        onRulesChanged?.invoke(sessionId)
         return registrationId
     }
 
-    fun unregister(registrationId: String): Boolean =
-        registrations.remove(registrationId) != null
+    fun unregister(registrationId: String): Boolean {
+        val removed = registrations.remove(registrationId) ?: return false
+        onRulesChanged?.invoke(removed.sessionId)
+        return true
+    }
 
     fun clearSession(sessionId: String) {
-        registrations.entries.removeIf { it.value.sessionId == sessionId }
+        if (registrations.entries.removeIf { it.value.sessionId == sessionId }) onRulesChanged?.invoke(sessionId)
     }
 
     fun resolve(

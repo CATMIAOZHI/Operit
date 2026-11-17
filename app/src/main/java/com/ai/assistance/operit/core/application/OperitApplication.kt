@@ -136,6 +136,9 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
 
     override fun onCreate() {
         super.onCreate()
+        // The browser engine's page and GPU processes run this class too; the app has nothing to
+        // do there, and the page ones are sandboxed and crash on most of it (registerReceiver).
+        if (isEngineChildProcess()) return
         val startTime = System.currentTimeMillis()
         appStartupTimeMs = startTime
         instance = this
@@ -175,13 +178,24 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
     }
 
     private fun isMainAppProcess(): Boolean {
-        val name =
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-                getProcessName()
-            } else {
-                runCatching { java.io.File("/proc/self/cmdline").readText().trim('\u0000', ' ', '\n') }.getOrNull()
-            }
+        val name = currentProcessName()
         return name == null || name == packageName
+    }
+
+    private fun currentProcessName(): String? =
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+            getProcessName()
+        } else {
+            runCatching { java.io.File("/proc/self/cmdline").readText().trim('\u0000', ' ', '\n') }.getOrNull()
+        }
+
+    /** The Cefrium engine's child processes (pages, GPU, network), declared by its library. */
+    private fun isEngineChildProcess(): Boolean {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P && android.os.Process.isIsolated()) {
+            return true
+        }
+        val suffix = currentProcessName()?.substringAfter(':', "") ?: return false
+        return suffix.startsWith("sandboxed_process") || suffix.startsWith("privileged_process")
     }
 
     /**
@@ -781,6 +795,10 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
     }
 
     override fun attachBaseContext(base: Context) {
+        if (isEngineChildProcess()) {
+            super.attachBaseContext(base)
+            return
+        }
         configureOpenMpEnvironment()
         // 在基础上下文附加前应用语言设置
         try {
