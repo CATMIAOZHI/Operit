@@ -119,7 +119,7 @@ Cefrium 维护者在 [issue #75](https://github.com/CATMIAOZHI/Operit/issues/75)
 
 ## 通行密钥（第二版）
 
-- 现状：带浏览器版的合并清单里已有 `CREDENTIAL_MANAGER_SET_ORIGIN` 和 `CREDENTIAL_MANAGER_QUERY_CANDIDATE_CREDENTIALS`，由 Cefrium SDK 自动加入，App 清单不要用 `tools:node="remove"` 删掉它们（删掉前者通行密钥报 `NotAllowedError`，删掉后者遇到带通行密钥的登录框会崩）。只在 Android 14 及以上生效。普通版（WebView）没有开启网页通行密钥。
+- 现状：两个版本都声明了 `CREDENTIAL_MANAGER_SET_ORIGIN` 和 `CREDENTIAL_MANAGER_QUERY_CANDIDATE_CREDENTIALS`（App 清单里写了；带浏览器版 Cefrium SDK 也会自动加入），不要用 `tools:node="remove"` 删掉它们（Cefrium 实测：删掉前者通行密钥报 `NotAllowedError`，删掉后者遇到带通行密钥的登录框会崩）。只在 Android 14 及以上生效。普通版的浏览器标签页在 WebView 支持 `WEB_AUTHENTICATION` 时打开浏览器模式通行密钥（`WEB_AUTHENTICATION_SUPPORT_FOR_BROWSER`，`configureWebView`），手机 WebView 太旧就保持原样。
 - 浏览器代表网站请求通行密钥时，密码管理器会自己判断 App 是否可信，光有权限不够：
   - Google 密码管理器只认官方白名单 [apps.json](https://www.gstatic.com/gpm-passkeys-privileged-apps/apps.json)，用户不能自己加。Operit 不在名单里，所以存在 Google 密码管理器里的通行密钥用不了。
   - Bitwarden（设置 → 自动填充 → 通行密钥管理 → 特权应用）和 KeePassDX（设置 → 表单填充 → 通行密钥设置 → 特权应用）可以让用户手动信任 Operit。

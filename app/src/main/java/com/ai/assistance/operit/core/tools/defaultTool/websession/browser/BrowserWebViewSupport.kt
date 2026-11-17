@@ -122,6 +122,17 @@ internal fun StandardBrowserSessionTools.configureWebView(
                 AppLogger.w(WEBVIEW_SUPPORT_TAG, "Failed to enable safe browsing: ${e.message}")
             }
         }
+        // Passkeys for the page's own site. Credential Manager takes an origin only on Android 14+,
+        // and each password manager still decides whether it trusts Operit as a browser.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
+            WebViewFeature.isFeatureSupported(WebViewFeature.WEB_AUTHENTICATION)
+        ) {
+            try {
+                WebSettingsCompat.setWebAuthenticationSupport(this, WebSettingsCompat.WEB_AUTHENTICATION_SUPPORT_FOR_BROWSER)
+            } catch (e: Throwable) {
+                AppLogger.w(WEBVIEW_SUPPORT_TAG, "Failed to enable passkeys: ${e.message}")
+            }
+        }
     }
     applySessionUserAgent(session, userAgent)
     configureCookiePolicy(webView, session.profileName)
