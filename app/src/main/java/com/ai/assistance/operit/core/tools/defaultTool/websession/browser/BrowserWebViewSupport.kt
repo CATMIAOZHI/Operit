@@ -1399,11 +1399,13 @@ internal fun StandardBrowserSessionTools.closeSession(sessionId: String): Boolea
     BrowserCdp.forget(sessionId)
     session.browserTaskId?.let { com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.tabClosed(it, sessionId) }
 
-    val watched = com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.watching.value
-    if (watched != null && session.browserTaskId == watched &&
-        StandardBrowserSessionTools.sessions.values.none { it.browserTaskId == watched }) {
-        com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.handBack(watched)
-        setExpandedOnMain(false)
+    // A task's last page is gone: whoever held it has nothing left to hand back, also when the user
+    // is looking at another task meanwhile. The watch screen closes if it showed this task.
+    val task = session.browserTaskId
+    if (task != null && StandardBrowserSessionTools.sessions.values.none { it.browserTaskId == task }) {
+        val watched = com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.watching.value == task
+        com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.handBack(task)
+        if (watched) setExpandedOnMain(false)
     }
     userscriptManager.detachSession(sessionId)
     if (wasActive) {

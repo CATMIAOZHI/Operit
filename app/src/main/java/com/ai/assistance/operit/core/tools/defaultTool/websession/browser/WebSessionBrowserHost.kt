@@ -59,12 +59,6 @@ import org.json.JSONTokener
 /** How long the browser window may take to open before the browser shows as an overlay instead. */
 private const val ACTIVITY_OPEN_TIMEOUT_MS = 2_000L
 
-/** A back swipe the browser handles itself: how much the screen shrinks, slides and darkens behind. */
-private const val BACK_SCALE = 0.08f
-private const val BACK_SHIFT = 0.06f
-private const val BACK_DIM = 0.18f
-private const val BACK_CORNER_DP = 28f
-
 /**
  * Shows the browser in the app's own language, like the main window, also when the phone's
  * differs. The browser outlives any one window, so the language comes from the host (read again
@@ -170,14 +164,7 @@ internal class WebSessionBrowserHost(
     private var selectionActionsParams: WindowManager.LayoutParams? = null
 
     private var isExpanded: Boolean = false
-    private val hostStateHolder = mutableStateOf(WebSessionBrowserHostState())
-    private var hostState: WebSessionBrowserHostState
-        get() = hostStateHolder.value
-        set(value) {
-            val couldGoBack = hostStateHolder.value.browserState.canGoBack
-            hostStateHolder.value = value
-            if (value.browserState.canGoBack != couldGoBack) syncBrowserBack()
-        }
+    private var hostState by mutableStateOf(WebSessionBrowserHostState())
     /** The app's own language, read again each time the browser opens so a change in settings shows. */
     private var uiLanguage by mutableStateOf(com.ai.assistance.operit.util.LocaleUtils.getCurrentLanguage(appContext))
     /** True while the browser shows in its activity, which leaves room for the keyboard itself. */
@@ -242,23 +229,29 @@ internal class WebSessionBrowserHost(
                     val locked = watch != null && !watch.controlling
                     androidx.compose.runtime.SideEffect {
                         setWatchLocked(locked)
-                        // The phone's back key closes the watch screen like the X, also while the user
-                        // drives the page: going back in the page is the back button in its controls.
-                        // A dialog the page put up is dismissed first, like any popup.
-                        root.onBackKey = watch?.let { w ->
+                        // The phone's back key puts the watch screen away, also while the user drives
+                        // the page; control stays with the user until they hand it back with the
+                        // button. Going back in the page is the back button in the bottom bar. A
+                        // dialog the page put up is dismissed first, like any popup; the same in
+                        // the plain browser. Watching Orbit work, the user has nothing to close.
+                        backDismiss = if (watch != null && !watch.controlling) null else {
                             when {
-                                w.controlling && hostState.browserState.pendingDialog != null ->
+                                hostState.browserState.pendingDialog != null ->
                                     ({ callbacks.onHandlePendingDialog(false, null) })
-                                // The download sheet and the "open in another app" prompt close first, too.
-                                w.controlling && hostState.externalOpenPrompt != null -> {
+                                // The "open in another app" prompt and the sheets close first, too.
+                                hostState.externalOpenPrompt != null -> {
                                     val id = hostState.externalOpenPrompt!!.requestId
                                     ({ callbacks.onCancelExternalOpen(id) })
                                 }
-                                w.controlling && hostState.sheetRoute == WebSessionBrowserSheetRoute.DOWNLOADS ->
+                                hostState.sheetRoute != WebSessionBrowserSheetRoute.NONE ->
                                     ({ updateHostState { it.copy(sheetRoute = WebSessionBrowserSheetRoute.NONE) } })
-                                else -> w.onClose
+                                else -> null
                             }
                         }
+                        watchPutAway = watchWork?.executorChatId?.let { talk ->
+                            { com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.close(talk, handBack = false) }
+                        }
+                        root.onBackKey = watch?.let { backDismiss ?: watchPutAway }
                         syncBrowserBack()
                         val ended = lastWatchTalk?.takeIf { watchWork == null && it !in orbitWorks }
                         lastWatchTalk = watchWork?.executorChatId
@@ -351,9 +344,9 @@ internal class WebSessionBrowserHost(
 
     fun destroy() {
         launchToken++
-        if (BrowserPageMenus.onChanged != null) BrowserPageMenus.onChanged = null
-        backAnimator?.cancel()
-        backAnimator = null
+        BrowserPageMenus.onChanged = null
+        backDismiss = null
+        watchPutAway = null
         val activity = createdActivity?.get()
         createdActivity = null
         browserActivity = null
@@ -664,7 +657,6 @@ internal class WebSessionBrowserHost(
             return
         }
         if (browserActivity !== activity) return
-        endBackMotion()
         browserActivity = null
         if (!isExpanded || activity.isFinishing) {
             placeBrowserScreen()
@@ -699,132 +691,48 @@ internal class WebSessionBrowserHost(
         if (createdActivity?.get() === activity) createdActivity = null
     }
 
-    /** The back key in the browser window: Orbit's watch screen decides, else back in the page, else put away. */
+    /**
+     * Back in the browser window while it has something of its own to close: the page's long-press
+     * menu, or a popup on Orbit's watch screen. Going back in the page is the button in the bottom
+     * bar; anything else closes the window ([onActivityFinishing]).
+     */
     internal fun handleBack() {
-        // The page's long-press menu closes first.
-        if (BrowserPageMenus.dismissOpen()) {
-            settleBackMotion()
-            return
-        }
-        val action: () -> Unit =
-            rootView?.onBackKey
-                ?: if (hostState.browserState.canGoBack) callbacks::onBack else callbacks::onMinimize
-        settleBackMotion()
-        action()
+        if (BrowserPageMenus.dismissOpen()) return
+        backDismiss?.let { return it() }
+        // Only when the window's back state is stale: put away as the system's back would.
+        callbacks.onMinimize()
+        watchPutAway?.invoke()
     }
+
+    /** What back closes on the watch screen (a page dialog, a prompt, the downloads sheet). */
+    private var backDismiss: (() -> Unit)? = null
+    /** Leaves the watch screen without handing control back: only its button does that. */
+    private var watchPutAway: (() -> Unit)? = null
 
     /**
      * Whether back is the browser's own right now (see [WebSessionBrowserActivity]); otherwise the
-     * system takes it and closes the window.
+     * system takes it, shrinks the window with the finger and closes it.
      */
-    private fun browserTakesBack(): Boolean =
-        BrowserPageMenus.open != null || rootView?.onBackKey != null || hostState.browserState.canGoBack
-
     private fun syncBrowserBack() {
         if (Looper.myLooper() != Looper.getMainLooper()) {
             mainHandler.post(::syncBrowserBack)
             return
         }
-        val activity = browserActivity ?: return
-        val takes = browserTakesBack()
-        // Back given to the system mid-swipe: the page settles before the system takes over.
-        if (!takes && backFollows) settleBackMotion()
-        activity.setBrowserTakesBack(takes)
+        browserActivity?.setBrowserTakesBack(BrowserPageMenus.open != null || backDismiss != null)
     }
-
-    /** The browser screen follows a back swipe it handles itself, as Orbit's pages do. */
-    private var backAnimator: android.animation.ValueAnimator? = null
-    private var backProgress = 0f
-    private var backFromLeft = true
-    private var backFollows = false
-
-    internal fun onBackGestureStarted(fromLeft: Boolean) {
-        backAnimator?.cancel()
-        backAnimator = null
-        backFromLeft = fromLeft
-        // A page menu just closes; nothing moves for it.
-        backFollows = BrowserPageMenus.open == null
-        if (!backFollows) applyBackProgress(0f)
-    }
-
-    internal fun onBackGestureProgressed(progress: Float) {
-        if (backFollows) applyBackProgress(progress.coerceIn(0f, 1f))
-    }
-
-    internal fun onBackGestureCancelled() = settleBackMotion()
-
-    /** The page goes back to its place from wherever the swipe left it. */
-    private fun settleBackMotion() {
-        // Already on its way back: let it finish rather than start over.
-        if (!backFollows && backAnimator?.isRunning == true) return
-        backFollows = false
-        backAnimator?.cancel()
-        val from = backProgress
-        if (from <= 0f) {
-            backAnimator = null
-            applyBackProgress(0f)
-            return
-        }
-        backAnimator =
-            android.animation.ValueAnimator.ofFloat(from, 0f).apply {
-                duration = 220
-                interpolator = android.view.animation.DecelerateInterpolator()
-                addUpdateListener { applyBackProgress(it.animatedValue as Float) }
-                start()
-            }
-    }
-
-    /** Drops the swipe at once, when the window goes. */
-    private fun endBackMotion() {
-        backFollows = false
-        backAnimator?.cancel()
-        backAnimator = null
-        applyBackProgress(0f)
-    }
-
-    /**
-     * Shrinks the screen toward the swipe and rounds its corners on a darker backdrop, so it reads
-     * as a page being pulled away. All of it is view properties: nothing recomposes.
-     */
-    private fun applyBackProgress(progress: Float) {
-        val was = backProgress
-        backProgress = progress
-        val compose = composeView ?: return
-        val scale = 1f - BACK_SCALE * progress
-        compose.scaleX = scale
-        compose.scaleY = scale
-        compose.translationX = compose.width * BACK_SHIFT * progress * if (backFromLeft) 1f else -1f
-        val moving = progress > 0f
-        if (moving != (was > 0f) || moving != compose.clipToOutline) {
-            compose.outlineProvider = if (moving) backOutline else android.view.ViewOutlineProvider.BACKGROUND
-            compose.clipToOutline = moving
-        }
-        if (moving) compose.invalidateOutline()
-        val backdrop = browserBackground ?: return
-        (compose.parent as? ViewGroup)?.takeIf { it !== rootView }?.setBackgroundColor(
-            if (moving) androidx.core.graphics.ColorUtils.blendARGB(backdrop, AndroidColor.BLACK, BACK_DIM * progress)
-            else backdrop
-        )
-    }
-
-    private val backOutline =
-        object : android.view.ViewOutlineProvider() {
-            override fun getOutline(view: View, outline: android.graphics.Outline) {
-                val radius = BACK_CORNER_DP * view.resources.displayMetrics.density * backProgress.coerceAtMost(0.25f) * 4f
-                outline.setRoundRect(0, 0, view.width, view.height, radius)
-            }
-        }
 
     /**
      * The window is closing on its own: the system's back closed it. The browser is put away now
-     * and keeps showing in the window until it is off the screen, as when it closes itself.
+     * and keeps showing in the window until it is off the screen, as when it closes itself. A user
+     * holding control keeps it.
      */
     internal fun onActivityFinishing(activity: WebSessionBrowserActivity) {
         if (activity !== browserActivity || createdActivity?.get() !== activity || !isExpanded) return
-        endBackMotion()
         closingActivity = activity
         browserActivity = null
+        val putAway = watchPutAway
         callbacks.onMinimize()
+        putAway?.invoke()
     }
 
     /**

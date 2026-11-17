@@ -550,8 +550,7 @@ internal object OrbitBrowserWatch {
             return
         }
         overlayWait?.cancel()
-        _works.value.values.firstOrNull { it.executorChatId != talkChatId && it.control != Control.NONE }
-            ?.let { handBack(it.executorChatId) }
+        // Looking at another task keeps the browser the user holds: only its button hands it back.
         _watching.value = talkChatId
         withContext(Dispatchers.Main) {
             val browser = StandardBrowserSessionTools(context.applicationContext)
@@ -566,8 +565,12 @@ internal object OrbitBrowserWatch {
     }
 
     /** Leaves the watch screen; a user still in control hands the browser back first. */
-    fun close(talkChatId: String) {
-        if (_works.value[talkChatId]?.control != Control.NONE) handBack(talkChatId)
+    /**
+     * Closes the watch screen. The X hands control back with it; the phone's back key does not
+     * ([handBack] false): the user keeps the page until they press the hand-back button.
+     */
+    fun close(talkChatId: String, handBack: Boolean = true) {
+        if (handBack && _works.value[talkChatId]?.control != Control.NONE) handBack(talkChatId)
         unwatch()
         scope.launch(Dispatchers.Main) {
             runCatching { StandardBrowserSessionTools(app).setExpandedOnMain(false) }
@@ -600,7 +603,9 @@ internal object OrbitBrowserWatch {
         if (work.stopping) return false
         if (work.control != Control.NONE) return true
         if (!OrbitBrowserControl.takeOver(ownerId(talkChatId))) {
-            Toast.makeText(app, R.string.orbit_browser_watch_busy, Toast.LENGTH_SHORT).show()
+            val heldByUser = _works.value.values.any { it.executorChatId != talkChatId && it.control != Control.NONE }
+            Toast.makeText(app, if (heldByUser) R.string.orbit_browser_watch_held_by_you else R.string.orbit_browser_watch_busy,
+                Toast.LENGTH_SHORT).show()
             return false
         }
         change(talkChatId) { it.copy(control = Control.WAITING) }
