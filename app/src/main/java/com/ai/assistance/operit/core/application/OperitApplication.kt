@@ -559,6 +559,9 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
                 com.ai.assistance.operit.features.orbit.OrbitWeixin.restore(applicationContext)
             }.onFailure { AppLogger.e(TAG, "Failed to restore the Orbit WeChat link", it) }
             runCatching {
+                com.ai.assistance.operit.features.orbit.OrbitAppUpdate.onAppStart(applicationContext)
+            }.onFailure { AppLogger.e(TAG, "Failed to tell Orbit about the app update", it) }
+            runCatching {
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                     com.ai.assistance.operit.features.orbit.OrbitFiles.dropOldTrash(applicationContext)
                 }
