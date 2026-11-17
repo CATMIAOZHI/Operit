@@ -4,7 +4,6 @@ import android.content.Context
 import android.os.Bundle
 import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
-import androidx.activity.BackEventCompat
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
 import com.ai.assistance.operit.core.tools.defaultTool.standard.StandardBrowserSessionTools
@@ -26,25 +25,13 @@ class WebSessionBrowserActivity : ComponentActivity() {
     private var firstStart = true
 
     /**
-     * On only while the browser has its own use for back: a page menu to close, Orbit's watch
-     * screen, or a page to go back to; the page then follows the finger. Otherwise back belongs to
-     * the system, which shrinks the whole window with the finger and shows what is below; the
-     * browser is put away when the window goes ([onPause]).
+     * On only while back has something of the browser's own to close: a page menu, or a popup on
+     * Orbit's watch screen. Otherwise back belongs to the system, which shrinks the whole window
+     * with the finger and shows what is below; the browser is put away when the window goes
+     * ([onPause]). Going back in the page is the button in the browser's bottom bar.
      */
     private val backCallback =
         object : OnBackPressedCallback(false) {
-            override fun handleOnBackStarted(backEvent: BackEventCompat) {
-                host()?.onBackGestureStarted(backEvent.swipeEdge == BackEventCompat.EDGE_LEFT)
-            }
-
-            override fun handleOnBackProgressed(backEvent: BackEventCompat) {
-                host()?.onBackGestureProgressed(backEvent.progress)
-            }
-
-            override fun handleOnBackCancelled() {
-                host()?.onBackGestureCancelled()
-            }
-
             override fun handleOnBackPressed() {
                 host()?.handleBack() ?: finishAndRemoveTask()
             }
