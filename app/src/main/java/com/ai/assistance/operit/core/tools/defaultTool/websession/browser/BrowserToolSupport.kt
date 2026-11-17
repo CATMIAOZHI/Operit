@@ -61,6 +61,8 @@ internal data class PendingDialog(
     val url: String? = null,
     val jsResult: JsResult? = null,
     val jsPromptResult: JsPromptResult? = null,
+    /** How an engine tab's dialog is answered: OK or Cancel, and a prompt's text. */
+    val answer: ((Boolean, String?) -> Unit)? = null,
     val timestamp: Long = System.currentTimeMillis()
 )
 

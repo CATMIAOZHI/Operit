@@ -19,7 +19,8 @@ android {
         }
 
         ndk {
-            abiFilters.addAll(listOf("arm64-v8a"))
+            // -PoperitAbi=x86_64: emulator test builds only (see app/build.gradle.kts).
+            abiFilters.addAll(listOf(gradle.startParameter.projectProperties["operitAbi"] ?: "arm64-v8a"))
         }
     }
 

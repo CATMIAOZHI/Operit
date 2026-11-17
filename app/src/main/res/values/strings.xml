@@ -8317,6 +8317,7 @@
     <string name="web_session_accessibility_minimized_indicator">已最小化网页会话面板，双击展开</string>
     <string name="web_session_render_process_crashed">当前网页渲染进程已崩溃，已关闭该标签页。</string>
     <string name="web_session_render_process_gone">当前网页渲染进程已被系统回收，已关闭该标签页。</string>
+    <string name="web_session_before_unload_message">这个网页可能有没保存的内容，确定要离开吗？（确定：离开，取消：留下）</string>
     <string name="web_session_back">后退</string>
     <string name="web_session_forward">前进</string>
     <string name="web_session_refresh">刷新</string>

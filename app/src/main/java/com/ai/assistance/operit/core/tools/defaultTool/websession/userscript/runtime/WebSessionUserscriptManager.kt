@@ -19,6 +19,8 @@ import androidx.core.content.ContextCompat
 import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserMessageReply
 import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserPage
 import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserScriptHandle
+import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserEngines
+import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.EngineBrowserPage
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import com.ai.assistance.operit.R
@@ -105,13 +107,16 @@ internal class WebSessionUserscriptManager(
     private val audioMuteStates = ConcurrentHashMap<String, Boolean>()
     @Volatile
     private var visibleSessionId: String? = null
+    /** Whether the phone's WebView can run userscripts; the built-in engine always can. */
+    private val webViewSupportsUserscripts =
+        WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT) &&
+            WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)
     private val supportState =
         UserscriptSupportState(
-            isSupported =
-                WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT) &&
-                    WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER),
+            isSupported = BrowserEngines.current != null || webViewSupportsUserscripts,
             reason =
                 when {
+                    BrowserEngines.current != null -> null
                     !WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT) ->
                         "Current WebView does not support document-start script injection"
                     !WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER) ->
@@ -123,6 +128,7 @@ internal class WebSessionUserscriptManager(
     val uiStore = WebSessionUserscriptUiStateStore(initialSupportState = supportState)
 
     init {
+        webRequestEngine.onRulesChanged = { sessionId -> syncRequestInterception(sessionId) }
         scope.launch {
             repository.installedScriptsFlow.collectLatest { scripts ->
                 uiStore.updateScripts(scripts)
@@ -190,7 +196,8 @@ internal class WebSessionUserscriptManager(
         sessionId: String,
         page: BrowserPage
     ) {
-        if (!supportState.isSupported) {
+        // A tab the engine could not open runs on the WebView, which may not run userscripts.
+        if (!supportState.isSupported || (page !is EngineBrowserPage && !webViewSupportsUserscripts)) {
             return
         }
         val existing = sessionBindings[sessionId]
@@ -225,6 +232,7 @@ internal class WebSessionUserscriptManager(
                     page = page,
                     scriptHandler = scriptHandler
                 )
+            syncRequestInterception(sessionId)
         }
         if (Looper.myLooper() == Looper.getMainLooper()) {
             attachNow()
@@ -426,6 +434,18 @@ internal class WebSessionUserscriptManager(
             val item = repository.getInstalledScript(scriptId)
             mainHandler.post { callback(item) }
         }
+    }
+
+    /**
+     * A built-in engine tab hands its requests to [interceptWebRequest] only while the tab has
+     * webRequest rules: asking about every request costs the engine a thread hop each.
+     */
+    private fun syncRequestInterception(sessionId: String) {
+        val apply = {
+            val page = sessionBindings[sessionId]?.page as? EngineBrowserPage
+            page?.interceptsRequests = webRequestEngine.hasRules(sessionId)
+        }
+        if (Looper.myLooper() == Looper.getMainLooper()) apply() else mainHandler.post { apply() }
     }
 
     fun interceptWebRequest(

@@ -59,6 +59,18 @@ internal object BrowserCdp {
      * tab waits for the page to answer.
      */
     fun connection(tools: StandardBrowserSessionTools, session: BrowserToolSession): CdpConnection? {
+        if (Looper.myLooper() == Looper.getMainLooper()) return null
+        // An engine tab has DevTools in process, attached when the tab opened.
+        (session.page as? EngineBrowserPage)?.let { page ->
+            if (StandardBrowserSessionTools.sessions[session.id] !== session) return null
+            connections[session.id]?.takeIf { it.isOpen }?.let { return it }
+            val latch = CountDownLatch(1)
+            StandardBrowserSessionTools.mainHandler.post {
+                try { attachEngineOnMain(tools, session, page) } finally { latch.countDown() }
+            }
+            latch.await(3, TimeUnit.SECONDS)
+            return connections[session.id]?.takeIf { it.isOpen }
+        }
         if (Looper.myLooper() == Looper.getMainLooper() || !debuggingEnabled.get()) return null
         connections[session.id]?.takeIf { it.isOpen }?.let { return it }
         val lock = attachLocks.getOrPut(session.id) { Any() }
@@ -92,6 +104,17 @@ internal object BrowserCdp {
         screenshotFailedAt.remove(sessionId)
     }
 
+    /**
+     * Main thread. Gives an engine tab its DevTools connection as it opens, so its requests are
+     * logged from the first one, as the WebView's are.
+     */
+    fun attachEngineOnMain(tools: StandardBrowserSessionTools, session: BrowserToolSession, page: EngineBrowserPage) {
+        connections[session.id]?.takeIf { it.isOpen }?.let { return }
+        val connection = EngineCdpConnection(page.devTools)
+        connections[session.id] = connection
+        listenForNetwork(tools, session, connection, waitForReply = false)
+    }
+
     /** A tab whose page is not being drawn (for example, a hidden browser) times out; skip it for a minute. */
     fun screenshotsWork(sessionId: String): Boolean =
         (screenshotFailedAt[sessionId] ?: 0L) + 60_000L < System.currentTimeMillis()
@@ -106,7 +129,7 @@ internal object BrowserCdp {
         val webView = session.webView ?: return null
         if (!tagPage(webView, tag)) return null
         val taken = connections.values.filter { it.isOpen }.map { it.targetId }.toSet()
-        val targets = JSONArray(CdpConnection.httpGet(socketName, "/json/list"))
+        val targets = JSONArray(SocketCdpConnection.httpGet(socketName, "/json/list"))
         val candidates =
             (0 until targets.length())
                 .mapNotNull { targets.optJSONObject(it) }
@@ -117,7 +140,7 @@ internal object BrowserCdp {
             val path =
                 target.optString("webSocketDebuggerUrl").substringAfter("ws://", "").substringAfter('/', "")
                     .takeIf { it.isNotBlank() }?.let { "/$it" } ?: "/devtools/page/$targetId"
-            val connection = runCatching { CdpConnection.open(socketName, path, targetId) }.getOrNull() ?: continue
+            val connection = runCatching { SocketCdpConnection.open(socketName, path, targetId) }.getOrNull() ?: continue
             val found =
                 runCatching {
                     connection.send(
@@ -149,7 +172,8 @@ internal object BrowserCdp {
     private fun listenForNetwork(
         tools: StandardBrowserSessionTools,
         session: BrowserToolSession,
-        connection: CdpConnection
+        connection: CdpConnection,
+        waitForReply: Boolean = true
     ) {
         val methods = object : LinkedHashMap<String, String>(64, 0.75f, false) {
             override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?) = size > 300
@@ -201,12 +225,10 @@ internal object BrowserCdp {
             }
         }
         // Small buffers: bodies are only kept for a short look through the DevTools tool.
+        val params = JSONObject().put("maxTotalBufferSize", 8_000_000).put("maxResourceBufferSize", 2_000_000)
         runCatching {
-            connection.send(
-                "Network.enable",
-                JSONObject().put("maxTotalBufferSize", 8_000_000).put("maxResourceBufferSize", 2_000_000),
-                3_000L
-            )
+            if (waitForReply) connection.send("Network.enable", params, 3_000L)
+            else connection.sendWithoutWaiting("Network.enable", params)
         }.onFailure { AppLogger.w(CDP_TAG, "Network events unavailable: ${it.message}") }
     }
 
@@ -218,24 +240,14 @@ internal object BrowserCdp {
         }.getOrNull()
 }
 
-/** One WebSocket to one DevTools target, over the app's abstract local socket. */
-internal class CdpConnection private constructor(
-    private val socket: LocalSocket,
-    val targetId: String
-) {
-    private val input: InputStream = BufferedInputStream(socket.inputStream, 64 * 1024)
-    private val output: OutputStream = socket.outputStream
-    private val nextId = AtomicInteger(1)
-    private val pending = ConcurrentHashMap<Int, CompletableFuture<JSONObject>>()
-    private val writeLock = Any()
-    private val random = SecureRandom()
+/** One tab's DevTools connection: a WebView's socket, or the engine's in-process channel. */
+internal abstract class CdpConnection(val targetId: String) {
     private val urls = object : LinkedHashMap<String, String>(64, 0.75f, false) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?) = size > 300
     }
-    @Volatile private var closed = false
     @Volatile var eventListener: ((String, JSONObject) -> Unit)? = null
 
-    val isOpen: Boolean get() = !closed
+    abstract val isOpen: Boolean
 
     /** The URL a request was sent to, forgotten once read. */
     fun urlFor(requestId: String): String? = synchronized(urls) { urls.remove(requestId) }
@@ -267,8 +279,96 @@ internal class CdpConnection private constructor(
             events to dropped
         }
 
-    /** Sends one command and waits for its answer; a DevTools error becomes [CdpException]. */
-    fun send(method: String, params: JSONObject = JSONObject(), timeoutMs: Long = 10_000L): JSONObject {
+    /** Sends one command and waits for its answer; a DevTools error becomes [CdpException]. Never on the main thread. */
+    abstract fun send(method: String, params: JSONObject = JSONObject(), timeoutMs: Long = 10_000L): JSONObject
+
+    /** Cleanup events need delivery, but must not wait for an unresponsive page to acknowledge them. */
+    abstract fun sendWithoutWaiting(method: String, params: JSONObject)
+
+    /** Safe on the main thread. */
+    abstract fun close(reason: String = "DevTools connection closed")
+
+    /** Hands an event to [eventListener], remembering where each request went. */
+    protected fun deliverEvent(method: String, params: JSONObject) {
+        if (method == "Network.requestWillBeSent") {
+            params.optJSONObject("request")?.optString("url")?.let { url ->
+                synchronized(urls) { urls[params.optString("requestId")] = url }
+            }
+        }
+        runCatching { eventListener?.invoke(method, params) }
+    }
+}
+
+/** The built-in engine's DevTools, called in process on the main thread. */
+internal class EngineCdpConnection(private val devTools: BrowserDevTools) : CdpConnection("engine") {
+    @Volatile private var closed = false
+
+    init {
+        devTools.eventListener = { method, params ->
+            if (!closed) deliverEvent(method, runCatching { JSONObject(params) }.getOrElse { JSONObject() })
+        }
+    }
+
+    override val isOpen: Boolean get() = !closed
+
+    override fun send(method: String, params: JSONObject, timeoutMs: Long): JSONObject {
+        if (closed) throw CdpException("DevTools connection closed")
+        check(Looper.myLooper() != Looper.getMainLooper()) { "DevTools calls wait for the main thread" }
+        val reply = CompletableFuture<Pair<Boolean, String>>()
+        // Set on the main thread once the call is handed over; a timeout drops it if still unsent.
+        val dropIfUnsent = java.util.concurrent.atomic.AtomicReference<(() -> Unit)?>(null)
+        StandardBrowserSessionTools.mainHandler.post {
+            runCatching {
+                if (reply.isDone) return@runCatching
+                dropIfUnsent.set(devTools.execute(method, params.toString()) { ok, json -> reply.complete(ok to json) })
+                // An off-screen page answers a screenshot with its next frame; ask for one.
+                if (method == "Page.captureScreenshot") devTools.requestFrame()
+            }.onFailure { reply.complete(false to JSONObject().put("message", it.message ?: "DevTools error").toString()) }
+        }
+        val (ok, json) =
+            try {
+                reply.get(timeoutMs, TimeUnit.MILLISECONDS)
+            } catch (e: java.util.concurrent.TimeoutException) {
+                // Nobody waits for it any more: a call still held for the page is not sent later.
+                reply.complete(false to "{}")
+                StandardBrowserSessionTools.mainHandler.post { dropIfUnsent.getAndSet(null)?.invoke() }
+                throw CdpException("DevTools did not answer $method in ${timeoutMs}ms")
+            }
+        val body = runCatching { JSONObject(json) }.getOrElse { JSONObject() }
+        if (!ok) throw CdpException(body.optString("message", "DevTools error"))
+        return body
+    }
+
+    override fun sendWithoutWaiting(method: String, params: JSONObject) {
+        if (closed) throw CdpException("DevTools connection closed")
+        val run = { runCatching { devTools.execute(method, params.toString(), null) }; Unit }
+        if (Looper.myLooper() == Looper.getMainLooper()) run() else StandardBrowserSessionTools.mainHandler.post { run() }
+    }
+
+    override fun close(reason: String) {
+        if (closed) return
+        closed = true
+        val detach = { runCatching { devTools.eventListener = null }; Unit }
+        if (Looper.myLooper() == Looper.getMainLooper()) detach() else StandardBrowserSessionTools.mainHandler.post { detach() }
+    }
+}
+
+/** One WebSocket to one DevTools target, over the app's abstract local socket. */
+internal class SocketCdpConnection private constructor(
+    private val socket: LocalSocket,
+    targetId: String
+) : CdpConnection(targetId) {
+    private val input: InputStream = BufferedInputStream(socket.inputStream, 64 * 1024)
+    private val output: OutputStream = socket.outputStream
+    private val nextId = AtomicInteger(1)
+    private val pending = ConcurrentHashMap<Int, CompletableFuture<JSONObject>>()
+    private val writeLock = Any()
+    private val random = SecureRandom()
+    @Volatile private var closed = false
+
+    override val isOpen: Boolean get() = !closed
+
+    override fun send(method: String, params: JSONObject, timeoutMs: Long): JSONObject {
         if (closed) throw CdpException("DevTools connection closed")
         val id = nextId.getAndIncrement()
         val future = CompletableFuture<JSONObject>()
@@ -290,8 +390,7 @@ internal class CdpConnection private constructor(
         }
     }
 
-    /** Cleanup events need delivery, but must not wait for an unresponsive page to acknowledge them. */
-    fun sendWithoutWaiting(method: String, params: JSONObject) {
+    override fun sendWithoutWaiting(method: String, params: JSONObject) {
         if (closed) throw CdpException("DevTools connection closed")
         writeText(JSONObject().put("id", nextId.getAndIncrement()).put("method", method).put("params", params).toString())
     }
@@ -300,7 +399,7 @@ internal class CdpConnection private constructor(
      * Safe on the main thread: never waits for a write in progress. Closing the socket wakes a
      * blocked reader or writer, and DevTools treats a dropped socket as a normal disconnect.
      */
-    fun close(reason: String = "DevTools connection closed") {
+    override fun close(reason: String) {
         if (closed) return
         closed = true
         runCatching { socket.close() }
@@ -317,14 +416,7 @@ internal class CdpConnection private constructor(
                     if (json.has("id")) {
                         pending[json.optInt("id")]?.complete(json)
                     } else {
-                        val method = json.optString("method")
-                        val params = json.optJSONObject("params") ?: JSONObject()
-                        if (method == "Network.requestWillBeSent") {
-                            params.optJSONObject("request")?.optString("url")?.let { url ->
-                                synchronized(urls) { urls[params.optString("requestId")] = url }
-                            }
-                        }
-                        runCatching { eventListener?.invoke(method, params) }
+                        deliverEvent(json.optString("method"), json.optJSONObject("params") ?: JSONObject())
                     }
                 }
             } catch (e: CdpException) {
@@ -426,7 +518,7 @@ internal class CdpConnection private constructor(
                 connect(LocalSocketAddress(socketName, LocalSocketAddress.Namespace.ABSTRACT))
             }
 
-        fun open(socketName: String, path: String, targetId: String): CdpConnection {
+        fun open(socketName: String, path: String, targetId: String): SocketCdpConnection {
             val socket = connect(socketName)
             try {
                 socket.soTimeout = 3_000
@@ -439,7 +531,7 @@ internal class CdpConnection private constructor(
                 val head = readHead(socket.inputStream)
                 if (!head.startsWith("HTTP/1.1 101")) throw CdpException("DevTools refused the connection")
                 socket.soTimeout = 0
-                return CdpConnection(socket, targetId).also { it.startReader() }
+                return SocketCdpConnection(socket, targetId).also { it.startReader() }
             } catch (e: Exception) {
                 runCatching { socket.close() }
                 throw e

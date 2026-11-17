@@ -7796,6 +7796,7 @@
     <string name="web_session_accessibility_minimized_indicator">Web sessions panel minimized, double tap to expand</string>
     <string name="web_session_render_process_crashed">The current web page render process crashed. This tab has been closed.</string>
     <string name="web_session_render_process_gone">The current web page render process was reclaimed by the system. This tab has been closed.</string>
+    <string name="web_session_before_unload_message">This page may have unsaved changes. Leave it? (OK: leave, Cancel: stay)</string>
     <string name="web_session_back">Back</string>
     <string name="web_session_forward">Forward</string>
     <string name="web_session_refresh">Refresh</string>

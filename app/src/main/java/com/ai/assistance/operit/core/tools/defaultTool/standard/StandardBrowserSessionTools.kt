@@ -102,11 +102,12 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
             )
 
         /**
-         * Chrome's version from the phone's WebView, so the user agent and its client hints name
-         * the engine that really runs the page.
+         * Chrome's version of the engine that runs the pages (the built-in one, or the phone's
+         * WebView), so the user agent and its client hints name it.
          */
         internal val chromeFullVersion: String by lazy {
-            runCatching {
+            com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserEngines.current?.chromeFullVersion
+                ?: runCatching {
                 androidx.webkit.WebViewCompat.getCurrentWebViewPackage(
                     com.ai.assistance.operit.core.application.OperitApplication.instance.applicationContext
                 )?.versionName

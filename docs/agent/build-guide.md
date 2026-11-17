@@ -47,8 +47,17 @@ $env:JAVA_HOME = "<JDK 25 目录>"
 .\gradlew.bat :app:assembleDebug -PoperitBrowser=true
 ```
 
-开关只认命令行的 `-P`，写进 `gradle.properties` 不生效。现阶段只把引擎打进包里，页面
-仍然用 WebView；带浏览器版启动时 Cefrium 会通过它自带的 `CefriumInitProvider` 初始化。
+开关只认命令行的 `-P`，写进 `gradle.properties` 不生效。带浏览器版的浏览器标签页都跑在
+Cefrium 上，引擎建页失败时该标签页回退 WebView；启动时 Cefrium 会通过它自带的
+`CefriumInitProvider` 初始化。
+
+在 x86_64 安卓模拟器上测试时再加 `-PoperitAbi=x86_64`，打出只含 x86_64 原生库的包
+（arm64 的 Cefrium 在模拟器的 ARM 翻译层里会崩）。这个开关只用于模拟器，正式包仍是 arm64。
+终端子模块不认这个开关，这种包里终端用不了。
+
+```powershell
+.\gradlew.bat :app:assembleDebug -PoperitBrowser=true -PoperitAbi=x86_64
+```
 
 ### 1. 初始化子模块
 

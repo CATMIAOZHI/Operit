@@ -1137,7 +1137,7 @@ internal fun StandardBrowserSessionTools.startBrowserManagedDownload(
     if (userAgent.isNotBlank()) {
         headers["User-Agent"] = userAgent
     }
-    BrowserProfiles.cookieFor(session.profileName, url)?.takeIf { it.isNotBlank() }?.let {
+    BrowserProfiles.cookieFor(session.profileName, url, onEngine = session.page is EngineBrowserPage)?.takeIf { it.isNotBlank() }?.let {
         headers["Cookie"] = it
     }
     session.currentUrl.takeIf { it.isNotBlank() }?.let {
