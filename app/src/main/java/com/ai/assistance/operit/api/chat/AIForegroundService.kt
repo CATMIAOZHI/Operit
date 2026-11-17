@@ -382,7 +382,7 @@ class AIForegroundService : Service() {
                 }
                 val notificationBuilder =
                     NotificationCompat.Builder(appContext, replyChannelId)
-                        .setSmallIcon(if (orbit != null) R.drawable.ic_launcher_simple_foreground else android.R.drawable.ic_dialog_info)
+                        .setSmallIcon(if (orbit != null) R.drawable.ic_stat_orbit else android.R.drawable.ic_dialog_info)
                         .setContentTitle(
                             title
                                 ?: appContext.getString(R.string.notification_ai_reply_title)
@@ -2313,7 +2313,7 @@ class AIForegroundService : Service() {
         // Opens the Orbit at its chat, even when the main app was on screen last.
         val open = com.ai.assistance.operit.features.orbit.OrbitDelivery.openChatIntent(this, orbit.chatId, "ongoing")
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_launcher_simple_foreground)
+            .setSmallIcon(R.drawable.ic_stat_orbit)
             .setContentTitle(orbit.name.ifBlank { text.getString(R.string.service_operit_running) })
             .setContentText(text.getString(activity.label ?: R.string.orbit_profile_status_online))
             .setPriority(NotificationCompat.PRIORITY_LOW)
