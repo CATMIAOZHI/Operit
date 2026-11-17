@@ -107,6 +107,8 @@ class AIForegroundService : Service() {
 
     companion object {
         private const val TAG = "AIForegroundService"
+        /** Stands for an Orbit reply that is only a card or buttons, with no words. */
+        private const val CARD_ONLY = "\u0001"
         private const val NOTIFICATION_ID = 1
         private const val REPLY_NOTIFICATION_ID = 2001
         private const val CHANNEL_ID = "AI_SERVICE_CHANNEL"
@@ -372,7 +374,27 @@ class AIForegroundService : Service() {
                         enableVibration = enableReplyNotificationVibration
                     )
 
-                val cleanedReplyContent = WaifuMessageProcessor.cleanContentForWaifu(rawReplyContent)
+                // An Orbit reply as its chat shows it: tool steps, cards and option buttons stay out of the
+                // text; one with only a card says the default line, one with nothing to say posts nothing.
+                val orbitSaid = if (orbit != null) {
+                    val speech = com.ai.assistance.operit.ui.features.chat.components.OrbitSpeech
+                    speech.words(rawReplyContent, CARD_ONLY).ifEmpty {
+                        // Only reply buttons that really show in this chat: still worth a notification.
+                        val buttons = speech.optionIds(speech.of(rawReplyContent)).any {
+                            com.ai.assistance.operit.features.orbit.OrbitOptions.find(appContext, it)?.chatId == chatId
+                        }
+                        if (buttons) CARD_ONLY else ""
+                    }
+                } else null
+                if (orbitSaid != null && orbitSaid.isEmpty()) {
+                    AppLogger.d(TAG, "Orbit 这次没有说话，跳过发送回复通知: chatId=$chatId")
+                    return
+                }
+                val cleanedReplyContent = when (orbitSaid) {
+                    null -> WaifuMessageProcessor.cleanContentForWaifu(rawReplyContent)
+                    CARD_ONLY -> ""
+                    else -> WaifuMessageProcessor.cleanContentForWaifu(orbitSaid)
+                }
                 var notificationDefaults = NotificationCompat.DEFAULT_LIGHTS
                 if (enableReplyNotificationSound) {
                     notificationDefaults = notificationDefaults or NotificationCompat.DEFAULT_SOUND
