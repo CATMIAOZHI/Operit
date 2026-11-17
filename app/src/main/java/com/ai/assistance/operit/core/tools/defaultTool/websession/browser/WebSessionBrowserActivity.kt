@@ -4,7 +4,8 @@ import android.content.Context
 import android.os.Bundle
 import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
-import androidx.activity.addCallback
+import androidx.activity.BackEventCompat
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
 import com.ai.assistance.operit.core.tools.defaultTool.standard.StandardBrowserSessionTools
 
@@ -23,6 +24,31 @@ class WebSessionBrowserActivity : ComponentActivity() {
      * recent apps; a later start is a return from there.
      */
     private var firstStart = true
+
+    /**
+     * On only while the browser has its own use for back: a page menu to close, Orbit's watch
+     * screen, or a page to go back to; the page then follows the finger. Otherwise back belongs to
+     * the system, which shrinks the whole window with the finger and shows what is below; the
+     * browser is put away when the window goes ([onPause]).
+     */
+    private val backCallback =
+        object : OnBackPressedCallback(false) {
+            override fun handleOnBackStarted(backEvent: BackEventCompat) {
+                host()?.onBackGestureStarted(backEvent.swipeEdge == BackEventCompat.EDGE_LEFT)
+            }
+
+            override fun handleOnBackProgressed(backEvent: BackEventCompat) {
+                host()?.onBackGestureProgressed(backEvent.progress)
+            }
+
+            override fun handleOnBackCancelled() {
+                host()?.onBackGestureCancelled()
+            }
+
+            override fun handleOnBackPressed() {
+                host()?.handleBack() ?: finishAndRemoveTask()
+            }
+        }
 
     /** The app's own language, as the main window has it, also when the phone's differs. */
     override fun attachBaseContext(newBase: Context) {
@@ -44,10 +70,12 @@ class WebSessionBrowserActivity : ComponentActivity() {
         enableEdgeToEdge()
         container = FrameLayout(this)
         setContentView(container)
-        onBackPressedDispatcher.addCallback(this) {
-            host()?.handleBack() ?: finishAndRemoveTask()
-        }
+        onBackPressedDispatcher.addCallback(this, backCallback)
         host()?.onActivityCreated(this)
+    }
+
+    internal fun setBrowserTakesBack(takes: Boolean) {
+        backCallback.isEnabled = takes
     }
 
     override fun onStart() {
@@ -56,6 +84,12 @@ class WebSessionBrowserActivity : ComponentActivity() {
         val host = host() ?: return finishAndRemoveTask()
         host.onActivityStarted(this, firstStart)
         firstStart = false
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // Closed by the system's back: the browser is put away while the window leaves.
+        if (isFinishing) host()?.onActivityFinishing(this)
     }
 
     override fun onStop() {
