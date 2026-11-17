@@ -69,10 +69,12 @@ object OrbitCompanion {
                 if (existing != null) ensureChatLocked(appContext, existing)
                 else createLocked(appContext, onCreated)
             preferences.setActive(profile.id)
-            profile
+            profile to (existing != null)
         }
         applySchedule(appContext)
-        return profile
+        // Started again, not made now: a version change from while it was paused is told.
+        if (profile.second) OrbitAppUpdate.onOrbitResumed(appContext)
+        return profile.first
     }
 
     /** Starts the paused Orbit [orbitId] and pauses the one that was running. */
@@ -86,6 +88,7 @@ object OrbitCompanion {
         }
         stopInFlightUnlessActive(appContext)
         applySchedule(appContext)
+        if (profile != null) OrbitAppUpdate.onOrbitResumed(appContext)
         return profile
     }
 
