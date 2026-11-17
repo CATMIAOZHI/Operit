@@ -3,6 +3,9 @@ package com.ai.assistance.operit.features.orbit
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.locks.ReentrantLock
 import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserTaskScope
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * Guards AI browser calls while a user handles the page: a task's hand-off page, or the browser the
@@ -24,6 +27,10 @@ internal object OrbitBrowserControl {
     private data class Call(val task: String?, val epoch: Long)
     private val activeCalls = mutableMapOf<Long, Call>()
     private val taskEpochs = mutableMapOf<String, Long>()
+    private val waitingCounts = mutableMapOf<String, Int>()
+    private val _waitingForUser = MutableStateFlow<Set<String>>(emptySet())
+    /** Tasks whose AI call is held until the user hands the browser back; the status shows it waits for them. */
+    val waitingForUser: StateFlow<Set<String>> = _waitingForUser.asStateFlow()
 
     /** Told once to the next AI call for the same Orbit chat after the user hands the browser back. */
     private class Notice(val talkChatId: String, val text: String, val until: Long)
@@ -107,13 +114,23 @@ internal object OrbitBrowserControl {
 
     /** While the user drives the browser from the watch screen, AI calls wait for it back. */
     @Synchronized private fun awaitUser(task: String?) {
+        if (!watching(task)) return
         val until = System.currentTimeMillis() + USER_WAIT_MS
-        while (watching(task)) {
-            val left = until - System.currentTimeMillis()
-            check(left > 0) {
-                "The user is still using the browser. Stop browsing for now and tell them you will continue when they hand it back."
+        task?.let { waitingCounts[it] = (waitingCounts[it] ?: 0) + 1; _waitingForUser.value = waitingCounts.keys.toSet() }
+        try {
+            while (watching(task)) {
+                val left = until - System.currentTimeMillis()
+                check(left > 0) {
+                    "The user is still using the browser. Stop browsing for now and tell them you will continue when they hand it back."
+                }
+                (this as Object).wait(left)
             }
-            (this as Object).wait(left)
+        } finally {
+            task?.let {
+                val left = (waitingCounts[it] ?: 1) - 1
+                if (left > 0) waitingCounts[it] = left else waitingCounts.remove(it)
+                _waitingForUser.value = waitingCounts.keys.toSet()
+            }
         }
     }
 

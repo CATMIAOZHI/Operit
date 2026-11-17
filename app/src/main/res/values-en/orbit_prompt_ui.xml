@@ -99,6 +99,7 @@
     <string name="orbit_review_continues_observation">The alignment review is partway through: %1$s read and written down; it goes on next run</string>
     <string name="orbit_activity_working">Working hard</string>
     <string name="orbit_activity_compacting">Tidying up the conversation</string>
+    <string name="orbit_activity_waiting_for_you">Waiting for you to hand it back</string>
     <string name="chat_steer_after_compaction">Tidying up the conversation; this sends once it is done</string>
     <string name="chat_held_send_build_failed">The message was not sent; it is back in the input box</string>
     <string name="orbit_section_troubleshoot">Troubleshooting</string>

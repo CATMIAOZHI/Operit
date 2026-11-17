@@ -13,6 +13,7 @@ import com.ai.assistance.operit.api.chat.ChatRuntimeSlot
 import com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator
 import com.ai.assistance.operit.data.model.InputProcessingState
 import com.ai.assistance.operit.data.preferences.OrbitProfile
+import com.ai.assistance.operit.features.orbit.OrbitBrowserControl
 import com.ai.assistance.operit.features.orbit.OrbitTaskRunner
 import com.ai.assistance.operit.pet.PetActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -75,12 +76,32 @@ internal fun orbitActivityFlow(
             val mine = (mainStreaming + floatingStreaming + summarizing.keys).distinct()
                 .filter { it in roots || coordinator.rootChatOf(it) in roots }
             val ordered = listOfNotNull(currentChatId?.takeIf { it in mine }) + mine
-            orbitLiveActivity(ordered.map { states[it] }, tasks.isNotEmpty())
+            OrbitRuns(ordered, states, tasks)
+        }.combine(OrbitBrowserControl.waitingForUser) { runs, waiting ->
+            // A run held until the user hands the browser back is not browsing; it waits for them.
+            // So does a parent that only waits on its agents while nothing else runs.
+            val held = runs.ordered.filter { it in waiting }.toSet()
+            val rest = runs.ordered - held
+            val blocked = if (held.isNotEmpty() && rest.all { waitsOnAgents(runs.states[it]) }) runs.ordered.toSet() else held
+            val active = runs.ordered - blocked
+            val background = (runs.tasks - blocked).isNotEmpty()
+            orbitLiveActivity(active.map { runs.states[it] }, background, waitingForUser = blocked.isNotEmpty())
         }.distinctUntilChanged().flowOn(Dispatchers.Default)
 }
 
-internal fun orbitLiveActivity(states: List<InputProcessingState?>, hasBackgroundTask: Boolean): OrbitLiveActivity {
-    if (states.isEmpty() && !hasBackgroundTask) return OrbitLiveActivity()
+private class OrbitRuns(val ordered: List<String>, val states: Map<String, InputProcessingState>, val tasks: Set<String>)
+
+private fun waitsOnAgents(state: InputProcessingState?): Boolean =
+    (state as? InputProcessingState.ExecutingTool)?.toolName?.substringAfterLast(':')?.lowercase() == "wait_agent"
+
+internal fun orbitLiveActivity(
+    states: List<InputProcessingState?>,
+    hasBackgroundTask: Boolean,
+    waitingForUser: Boolean = false,
+): OrbitLiveActivity {
+    if (states.isEmpty() && !hasBackgroundTask) {
+        return if (waitingForUser) OrbitLiveActivity(R.string.orbit_activity_waiting_for_you, PetActivity.IDLE) else OrbitLiveActivity()
+    }
     val tool = states.firstNotNullOfOrNull(::toolLabel)
     return when {
         tool != null -> OrbitLiveActivity(tool, PetActivity.TOOL)
