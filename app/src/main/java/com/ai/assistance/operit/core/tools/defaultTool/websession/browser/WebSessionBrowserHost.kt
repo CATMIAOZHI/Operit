@@ -249,7 +249,7 @@ internal class WebSessionBrowserHost(
                             }
                         }
                         watchPutAway = watchWork?.executorChatId?.let { talk ->
-                            { com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.close(talk, handBack = false) }
+                            { com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.close(talk) }
                         }
                         root.onBackKey = watch?.let { backDismiss ?: watchPutAway }
                         syncBrowserBack()

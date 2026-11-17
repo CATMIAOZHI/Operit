@@ -564,19 +564,16 @@ internal object OrbitBrowserWatch {
         _watching.value = talkChatId
     }
 
-    /** Leaves the watch screen; a user still in control hands the browser back first. */
     /**
-     * Closes the watch screen. The X hands control back with it; the phone's back key does not
-     * ([handBack] false): the user keeps the page until they press the hand-back button.
+     * Closes the watch screen, with the X or the phone's back. A user holding the page keeps it
+     * until they press the hand-back button; the chat card shows it and opens the page again.
      */
-    fun close(talkChatId: String, handBack: Boolean = true) {
-        if (handBack && _works.value[talkChatId]?.control != Control.NONE) handBack(talkChatId)
+    fun close(talkChatId: String) {
         unwatch()
         scope.launch(Dispatchers.Main) {
             runCatching { StandardBrowserSessionTools(app).setExpandedOnMain(false) }
-            // A stopped task's page rests again once nobody looks at it.
-            val work = _works.value[talkChatId]
-            if (work?.finished == true && work.control == Control.NONE && _watching.value != talkChatId) {
+            // A stopped task's page, or one the user holds but put away, rests once nobody looks at it.
+            if (resting(talkChatId)) {
                 StandardBrowserSessionTools.sessions.values.filter { it.browserTaskId == talkChatId }
                     .forEach { rest(it.page) }
             }
@@ -614,6 +611,13 @@ internal object OrbitBrowserWatch {
             // Do not unlock after a timeout while native input may still be running.
             while (_works.value[talkChatId]?.control == Control.WAITING && !OrbitBrowserControl.idle(talkChatId)) delay(150)
             change(talkChatId) { if (it.control == Control.WAITING) it.copy(control = Control.USER) else it }
+            // Put away while it still waited: now that the user holds it, it rests like any page they put away.
+            withContext(Dispatchers.Main) {
+                if (resting(talkChatId)) {
+                    StandardBrowserSessionTools.sessions.values.filter { it.browserTaskId == talkChatId }
+                        .forEach { rest(it.page) }
+                }
+            }
         }
         return true
     }
@@ -694,10 +698,14 @@ internal object OrbitBrowserWatch {
     }
 
     /** Hidden and paused, so Chromium slows the page down in the background; opening or the next AI call shows it again. */
-    /** True while [task]'s page should rest: Orbit stopped there and nobody watches or drives it. */
+    /**
+     * True while [task]'s page should rest and nobody watches it: Orbit stopped there, or the user
+     * holds it but put it away (Orbit cannot use it until they hand it back, which wakes it again).
+     */
     fun resting(task: String?): Boolean {
         val work = task?.let { _works.value[it] } ?: return false
-        return work.finished && !work.stopping && work.control == Control.NONE && _watching.value != task
+        if (work.stopping || _watching.value == task) return false
+        return (work.finished && work.control == Control.NONE) || work.control == Control.USER
     }
 
     internal fun rest(page: com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserPage) {

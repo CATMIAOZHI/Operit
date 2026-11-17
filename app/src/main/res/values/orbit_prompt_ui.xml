@@ -99,6 +99,7 @@
     <string name="orbit_review_continues_observation">对齐复盘读到一半，已读并记下 %1$s 条，接着读</string>
     <string name="orbit_activity_working">努力工作中</string>
     <string name="orbit_activity_compacting">正在整理上下文</string>
+    <string name="orbit_activity_waiting_for_you">等你交还</string>
     <string name="chat_steer_after_compaction">正在整理上下文，整理完会自动发出</string>
     <string name="chat_held_send_build_failed">消息没发出去，已放回输入框</string>
     <string name="orbit_section_troubleshoot">排查问题</string>
