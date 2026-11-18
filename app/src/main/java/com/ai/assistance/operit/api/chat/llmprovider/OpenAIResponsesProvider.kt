@@ -312,6 +312,8 @@ object OpenAIResponsesPayloadAdapter {
         val inputKnown: Boolean = true,
         /** False when the provider sent no cache hit count; the local estimate stays. */
         val cacheKnown: Boolean = true,
+        /** False when the provider sent no output count; the local estimate stays. */
+        val outputKnown: Boolean = true,
     )
 
     data class ParsedResponseOutput(
@@ -337,27 +339,32 @@ object OpenAIResponsesPayloadAdapter {
         // 不能按 “>0” 过滤；P2-1：数值全程 Long 解析，只在旧 UI 计数边界饱和 Int。
         val hasInput = usage.has("prompt_tokens") || usage.has("input_tokens")
         val hasOutput = usage.has("completion_tokens") || usage.has("output_tokens")
-        val cachedDetails =
-            usage.optJSONObject("prompt_tokens_details")
-                ?: usage.optJSONObject("input_tokens_details")
+        // Same lookup order as ProviderUsageSnapshot, so the message and the stats page agree.
+        val detailsCached =
+            usage.optJSONObject("prompt_tokens_details")?.optLong("cached_tokens", -1)?.takeIf { it >= 0 }
+                ?: usage.optJSONObject("input_tokens_details")?.optLong("cached_tokens", -1)?.takeIf { it >= 0 }
         // DeepSeek reports its hits as a top-level prompt_cache_hit_tokens.
-        val hasCached = usage.has("cached_tokens") || cachedDetails?.has("cached_tokens") == true ||
+        // Presence, not a usable value, decides whether usage was seen: the stats normalizer still
+        // books other fields (cache writes, reasoning) from a snapshot whose hit count is null.
+        val hasCached = usage.has("cached_tokens") ||
+            usage.optJSONObject("prompt_tokens_details")?.has("cached_tokens") == true ||
+            usage.optJSONObject("input_tokens_details")?.has("cached_tokens") == true ||
             usage.has("prompt_cache_hit_tokens")
         if (!hasInput && !hasOutput && !hasCached) return null
 
         val rawInput = usage.optLong("prompt_tokens", usage.optLong("input_tokens", -1))
         val totalInputTokens = rawInput.saturateToInt()
-        val outputTokens = usage.optLong("completion_tokens", usage.optLong("output_tokens", -1))
-            .saturateToInt()
+        val rawOutput = usage.optLong("completion_tokens", usage.optLong("output_tokens", -1))
+        val outputTokens = rawOutput.saturateToInt()
         // A field that is null or not a number is not a reported count.
-        val rawCached = cachedDetails?.optLong("cached_tokens", -1)?.takeIf { it >= 0 }
+        val rawCached = detailsCached
             ?: usage.optLong("prompt_cache_hit_tokens", -1).takeIf { it >= 0 }
             ?: usage.optLong("cached_tokens", -1)
         val cachedInputTokens = rawCached.coerceAtLeast(0).saturateToInt()
         val actualInputTokens = (totalInputTokens - cachedInputTokens).coerceAtLeast(0)
 
         return UsageCounts(totalInputTokens, actualInputTokens, cachedInputTokens, outputTokens,
-            inputKnown = rawInput >= 0, cacheKnown = rawCached >= 0)
+            inputKnown = rawInput >= 0, cacheKnown = rawCached >= 0, outputKnown = rawOutput >= 0)
     }
 
     /** 旧 UI 计数边界（P2-1）：Long 饱和为 Int，绝不回绕为负。 */
