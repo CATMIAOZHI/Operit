@@ -178,7 +178,7 @@ open class StandardSystemOperationTools(private val context: Context) {
 
             val builder =
                 NotificationCompat.Builder(context, AI_REPLY_CHANNEL_ID)
-                    .setSmallIcon(android.R.drawable.ic_dialog_info)
+                    .setSmallIcon(com.ai.assistance.operit.core.application.AppLauncherIdentity.notificationIcon(context))
                     .setContentTitle(title)
                     .setContentText(message.take(100))
                     .setPriority(NotificationCompat.PRIORITY_HIGH)

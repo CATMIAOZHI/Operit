@@ -7765,14 +7765,21 @@
 
     <!-- AIForegroundService (新增) -->
     <string name="service_operit_running">Operit 正在运行</string>
+    <string name="service_app_running">%1$s 正在运行</string>
     <string name="service_chat_complete_reminder">对话完成提醒</string>
     <string name="service_chat_complete_reminder_sound">对话完成提醒（提示音）</string>
     <string name="service_chat_complete_reminder_vibration">对话完成提醒（震动）</string>
     <string name="service_chat_complete_reminder_sound_vibration">对话完成提醒（提示音和震动）</string>
     <string name="service_keep_background">保持 Operit 在后台运行。</string>
+    <string name="service_channel_description">让应用在后台保持运行。</string>
+    <string name="service_channel_name">后台运行</string>
+    <string name="screen_capture_notification_title">正在读取屏幕</string>
+    <string name="screen_capture_notification_text">正在读取屏幕内容</string>
     <string name="service_notify_when_complete">对话完成后提醒你。</string>
     <string name="service_running_wake_pause">Operit 正在运行（唤醒暂停）</string>
     <string name="service_running_wake_listening">Operit 正在运行（唤醒监听中）</string>
+    <string name="service_app_running_wake_pause">%1$s 正在运行（唤醒暂停）</string>
+    <string name="service_app_running_wake_listening">%1$s 正在运行（唤醒监听中）</string>
     <string name="service_running_stats">运行对话 %1$d · 调用工具 %2$d</string>
     <string name="service_running_http_listening">外部 HTTP 正在监听端口 %1$d</string>
     <string name="service_running_with_http">%1$s · 外部 HTTP %2$d</string>
