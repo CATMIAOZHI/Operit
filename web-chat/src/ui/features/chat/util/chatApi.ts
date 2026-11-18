@@ -154,6 +154,8 @@ export async function createChat(
     character_card_name?: string | null;
     character_group_id?: string | null;
     set_current?: boolean;
+    /** The new chat's own thinking level, picked on the page before it existed. */
+    thinking_quality_level?: number;
   }
 ): Promise<WebChatSummary> {
   return requestJson<WebChatSummary>('/api/web/chats', token, { method: 'POST' }, payload ?? {});
@@ -314,8 +316,13 @@ export async function deleteGroup(
   await requestJson('/api/web/chat-groups/delete', token, { method: 'POST' }, payload);
 }
 
-export async function getInputSettings(token: string): Promise<WebInputSettingsState> {
-  return requestJson<WebInputSettingsState>('/api/web/input-settings', token);
+/** `chatId` names the chat whose thinking level is shown; null is the next chat, omitted the open one. */
+export async function getInputSettings(
+  token: string,
+  chatId?: string | null
+): Promise<WebInputSettingsState> {
+  const query = chatId === undefined ? '' : `?chat_id=${encodeURIComponent(chatId ?? '')}`;
+  return requestJson<WebInputSettingsState>(`/api/web/input-settings${query}`, token);
 }
 
 export async function getMemorySelector(token: string): Promise<WebMemorySelectorState> {
@@ -337,7 +344,7 @@ export async function selectMemoryProfile(
 export async function updateInputSettings(
   token: string,
   payload: Partial<{
-    chat_id: string;
+    chat_id: string | null;
     enable_thinking_mode: boolean;
     thinking_quality_level: number;
     enable_memory_auto_update: boolean;

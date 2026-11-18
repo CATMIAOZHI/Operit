@@ -77,12 +77,13 @@ object OrbitModels {
         }
         // The chat's own quick switch counts for turns the user starts there. A task turn that
         // names its model role keeps the model the Orbit's settings give that role.
-        val chatChoice = if (function == FunctionType.CHAT && role == null) {
-            com.ai.assistance.operit.data.preferences.ChatModelSelections.getInstance(context).mapping(chatId)
-        } else null
+        val selections = com.ai.assistance.operit.data.preferences.ChatModelSelections.getInstance(context)
+        val chatChoice = if (function == FunctionType.CHAT && role == null) selections.mapping(chatId) else null
+        // So does the thinking level the chat set in its composer.
+        val chatLevel = if (function == FunctionType.CHAT && role == null) chatId?.let { selections.level(it) } else null
         val mapping = chatChoice ?: mappingForOrbit(context, orbitId, function, chatRole)
         return Route(mapping, mapping.thinkingQualityLevel.takeIf {
-            function == FunctionType.CHAT && chatRole == ASSISTANT && chatChoice == null
+            function == FunctionType.CHAT && chatRole == ASSISTANT && chatChoice == null && chatLevel == null
         }, fromChatChoice = chatChoice != null)
     }
 

@@ -497,10 +497,14 @@ class EnhancedAIService private constructor(
     private data class ModelExecutionSnapshot(
         val lease: MultiServiceManager.ServiceLease,
         val reasoningLevel: Int? = null,
+        /** The thinking level this chat turn runs at, sent the way the composer level is. */
+        val chatThinkingLevel: Int? = null,
     ) {
         val service: AIService =
             reasoningLevel?.let {
                 lease.service.withFunctionalReasoning(config = lease.modelConfig, thinkingQualityLevel = it)
+            } ?: chatThinkingLevel?.let {
+                com.ai.assistance.operit.api.chat.llmprovider.ChatThinkingAIService(lease.service, it)
             } ?: lease.service
         val config: ModelConfigData
             get() = lease.modelConfig
@@ -530,6 +534,12 @@ class EnhancedAIService private constructor(
         val terminalToolNames: Set<String> = emptySet(),
         val promptHooksEnabled: Boolean = true,
         val chatReasoningLevel: Int? = null,
+        /**
+         * The thinking level a chat turn runs at, fixed when it starts: the chat's own, else the
+         * saved one. Every request of the turn, and the prediction and summary that reuse its
+         * cache, send this level even if the saved one changes meanwhile.
+         */
+        val chatThinkingLevel: Int? = null,
         val toolSequence: AssistantToolSequence = AssistantToolSequence(toolTimingScopeId),
         val emittedReplayCharCount: AtomicInteger = AtomicInteger(0),
         /** Failed calls of a finishing tool in this turn whose error went back to the model. */
@@ -668,7 +678,8 @@ class EnhancedAIService private constructor(
                 multiServiceManager.acquireServiceForFunction(functionType)
             }
         val snapshot = ModelExecutionSnapshot(lease,
-            context.chatReasoningLevel.takeIf { functionType == FunctionType.CHAT && overrideConfigId != null })
+            context.chatReasoningLevel.takeIf { functionType == FunctionType.CHAT && overrideConfigId != null },
+            context.chatThinkingLevel.takeIf { functionType == FunctionType.CHAT })
         context.modelExecutionSnapshot = snapshot
         return snapshot
     }
@@ -1550,6 +1561,19 @@ class EnhancedAIService private constructor(
                     terminalToolNames = terminalToolNames,
                     promptHooksEnabled = promptHooksEnabled,
                     chatReasoningLevel = options.chatReasoningLevelOverride,
+                    chatThinkingLevel =
+                        if (functionType == FunctionType.CHAT) {
+                            chatId?.takeIf { it.isNotBlank() }?.let {
+                                com.ai.assistance.operit.data.preferences.ChatModelSelections.getInstance(context).level(it)
+                            } ?: try {
+                                apiPreferences.thinkingQualityLevelFlow.first()
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                AppLogger.w(TAG, "Failed to read the saved thinking level; using the default", e)
+                                ApiPreferences.DEFAULT_THINKING_QUALITY_LEVEL
+                            }
+                        } else null,
                     turnCompactor = options.turnCompactor,
                 )
             registerExecutionContext(execContext)
@@ -2614,6 +2638,7 @@ class EnhancedAIService private constructor(
                         providerSessionId = context.providerSessionId,
                         workspacePath = context.workspacePath,
                         enableThinking = context.composerPredictionEnableThinking,
+                        thinkingQualityLevel = modelSnapshot.chatThinkingLevel,
                     )
                 } catch (_: IllegalArgumentException) {
                     // Unknown hook-owned mutable metadata cannot safely cross the isolation boundary.
@@ -2634,6 +2659,9 @@ class EnhancedAIService private constructor(
             completedCompactionSnapshot = null
             if (context.composerPredictionAllowed && !isSubTask && !chatId.isNullOrBlank() &&
                 !context.toolTimingScopeId.isNullOrBlank() && modelSnapshot != null &&
+                // A turn at an Orbit assistant's own reasoning sends a request the summary cannot
+                // repeat, so its summary is written the usual way.
+                modelSnapshot.reasoningLevel == null &&
                 finalTurn?.kind == PromptTurnKind.ASSISTANT &&
                 finalTurn.metadata[com.ai.assistance.operit.core.agent.collaboration.CollaborationPromptHistory.INTERMEDIATE_METADATA] != true &&
                 !com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(this@EnhancedAIService.context).isAgent(chatId)
@@ -2650,6 +2678,7 @@ class EnhancedAIService private constructor(
                     providerSessionId = context.providerSessionId,
                     workspacePath = context.workspacePath,
                     enableThinking = context.composerPredictionEnableThinking,
+                    thinkingQualityLevel = modelSnapshot.chatThinkingLevel,
                 )
             }
         } catch (cancelled: CancellationException) {

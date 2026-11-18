@@ -2,6 +2,7 @@ package com.ai.assistance.operit.api.chat.prediction
 
 import android.content.Context
 import com.ai.assistance.operit.api.chat.enhance.MultiServiceManager
+import com.ai.assistance.operit.api.chat.llmprovider.withChatThinkingLevel
 import com.ai.assistance.operit.api.chat.llmprovider.OpenCodeSessionContext
 import com.ai.assistance.operit.api.chat.llmprovider.providerSessionIdForScope
 import com.ai.assistance.operit.core.chat.hooks.PromptTurn
@@ -71,7 +72,8 @@ class ComposerPredictionService internal constructor(
                             val output = StringBuilder()
                             var providerFailed = false
                             lease.service.sendMessage(
-                                context = context,
+                                // At the chat's own thinking level, like the request it reuses.
+                                context = context.withChatThinkingLevel(snapshot.thinkingQualityLevel),
                                 chatHistory = predictionHistory(snapshot.history),
                                 modelParameters = parameters,
                                 // Closing thinking costs quality and shifts the request shape some

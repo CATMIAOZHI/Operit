@@ -302,6 +302,20 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 .distinctUntilChanged().drop(1).collect { onPredictionThinkingChanged() }
         }
         viewModelScope.launch {
+            // The open chat's own level, also when the web chat sets it; a chat switch is handled above.
+            var last: Pair<String?, Int?>? = null
+            combine(
+                currentChatId,
+                com.ai.assistance.operit.data.preferences.ChatModelSelections.getInstance(context).levels,
+            ) { chatId, levels -> chatId to chatId?.let(levels::get) }
+                .distinctUntilChanged()
+                .collect { now ->
+                    val before = last
+                    last = now
+                    if (before != null && before.first == now.first) onPredictionThinkingChanged()
+                }
+        }
+        viewModelScope.launch {
             combine(
                 enableTools, toolPromptVisibility,
                 disableUserPreferenceDescription,
@@ -914,6 +928,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     fun updateThinkingQualityLevel(level: Int) {
         onPredictionThinkingChanged()
         apiConfigDelegate.updateThinkingQualityLevel(level)
+    }
+
+    /** The composer's thinking level: only [chatId] changes, other chats keep theirs. */
+    fun updateChatThinkingQualityLevel(chatId: String?, level: Int) {
+        onPredictionThinkingChanged()
+        com.ai.assistance.operit.ui.features.orbit.selectChatThinkingLevel(context, chatId, level)
     }
 
     // 切换记忆自动更新的方法现在委托给ApiConfigDelegate

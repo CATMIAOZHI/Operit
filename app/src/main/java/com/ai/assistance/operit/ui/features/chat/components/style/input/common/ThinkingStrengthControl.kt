@@ -263,6 +263,12 @@ private fun ThinkingStrengthPopup(
     var touched by remember { mutableStateOf(false) }
     val shownLevel = localLevel.roundToInt().coerceIn(minLevel, maxLevel)
 
+    // Untouched, the dial follows the stored level: one that loads, or another chat's when the
+    // shown chat changes, appears here while the popup is open.
+    LaunchedEffect(storedLevel) {
+        if (!touched) localLevel = storedLevel.toFloat()
+    }
+
     LaunchedEffect(localLevel, touched) {
         if (!touched) return@LaunchedEffect
         delay(180)

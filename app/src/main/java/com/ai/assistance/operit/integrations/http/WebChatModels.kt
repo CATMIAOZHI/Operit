@@ -564,7 +564,10 @@ data class WebCreateChatRequest(
     @SerialName("character_group_id")
     val characterGroupId: String? = null,
     @SerialName("set_current")
-    val setCurrent: Boolean = true
+    val setCurrent: Boolean = true,
+    /** The new chat's own thinking level, picked on the web page before the chat existed. */
+    @SerialName("thinking_quality_level")
+    val thinkingQualityLevel: Int? = null,
 )
 
 @Serializable

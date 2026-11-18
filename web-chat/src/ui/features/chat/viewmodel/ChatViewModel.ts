@@ -640,11 +640,32 @@ export function useChatViewModel(): ChatViewModel {
     readStoredBoolean(AUTO_SWITCH_CHAT_ON_CHARACTER_SELECT_KEY, false)
   );
   const [inputSettings, setInputSettings] = useState<WebInputSettingsState | null>(null);
+  // The chat whose thinking level `inputSettings` holds (null: the next chat; undefined: not known).
+  const [inputSettingsChatId, setInputSettingsChatId] = useState<string | null | undefined>(undefined);
   const [memorySelector, setMemorySelector] = useState<WebMemorySelectorState | null>(null);
   const streamAbortRef = useRef<AbortController | null>(null);
   const queueIdRef = useRef(1);
   const skipNextConversationLoadRef = useRef(false);
   const selectedChatIdRef = useRef<string | null>(null);
+  // A thinking level picked here with no chat open. The page keeps it and hands it to the chat it
+  // makes next, in the same request, so it can never land on another chat.
+  const [nextChatLevel, setNextChatLevelState] = useState<number | null>(null);
+  const nextChatLevelRef = useRef<number | null>(null);
+
+  function setNextChatLevel(level: number | null) {
+    nextChatLevelRef.current = level;
+    setNextChatLevelState(level);
+  }
+
+  function nextChatLevelPayload(): { thinking_quality_level?: number } {
+    const level = nextChatLevelRef.current;
+    return selectedChatIdRef.current === null && level !== null ? { thinking_quality_level: level } : {};
+  }
+
+  function showInputSettings(chatId: string | null | undefined, settings: WebInputSettingsState) {
+    setInputSettings(settings);
+    setInputSettingsChatId(chatId);
+  }
   const messageInputRef = useRef('');
   const messageDraftsByChatIdRef = useRef<Record<string, string>>({});
 
@@ -673,6 +694,10 @@ export function useChatViewModel(): ChatViewModel {
   }
 
   function activateChat(chatId: string | null, saveCurrentDraft = true) {
+    if (chatId !== null) {
+      // A chat is open: a level picked with none open does not carry over to it.
+      setNextChatLevel(null);
+    }
     const previousChatId = selectedChatIdRef.current;
     if (previousChatId === chatId) {
       setSelectedChatId(chatId);
@@ -773,7 +798,9 @@ export function useChatViewModel(): ChatViewModel {
       setBoot(bootData);
       setCharacterSelector(selectorData);
       setModelSelector(modelSelectorData);
-      setInputSettings(inputSettingsData);
+      // Asked alongside the bootstrap, so which chat its level belongs to is not known; the opened
+      // chat's own settings are loaded next.
+      showInputSettings(undefined, inputSettingsData);
       setMemorySelector(memorySelectorData);
       const nextChatId = preferredChatId ?? bootData.current_chat_id ?? null;
       activateChat(nextChatId);
@@ -808,12 +835,15 @@ export function useChatViewModel(): ChatViewModel {
         getMessages(currentToken, chatId, { limit: INITIAL_MESSAGES_PAGE_SIZE }),
         getCharacterSelector(currentToken),
         getModelSelector(currentToken),
-        getInputSettings(currentToken)
+        getInputSettings(currentToken, chatId)
       ]);
       setTheme(themeData);
       setCharacterSelector(selectorData);
       setModelSelector(modelSelectorData);
-      setInputSettings(inputSettingsData);
+      // A late answer for a chat left meanwhile must not show its level on the chat now open.
+      if (selectedChatIdRef.current === chatId) {
+        showInputSettings(chatId, inputSettingsData);
+      }
       setMessages((currentMessages) =>
         mode === 'merge-latest'
           ? mergeLatestConversationPage(currentMessages, messagePage.messages)
@@ -875,6 +905,22 @@ export function useChatViewModel(): ChatViewModel {
       handleApiFailure(loadError);
     });
   }, [selectedChatId, token]);
+
+  useEffect(() => {
+    // With no chat open, the composer shows the level picked for the next chat.
+    if (!token || !boot || selectedChatId) {
+      return;
+    }
+    void getInputSettings(token, null)
+      .then((settings) => {
+        if (selectedChatIdRef.current === null) {
+          showInputSettings(null, settings);
+        }
+      })
+      .catch((loadError: unknown) => {
+        handleApiFailure(loadError);
+      });
+  }, [selectedChatId, token, boot]);
 
   async function loadOlderMessages() {
     if (!token || !selectedChatId || !hasMoreHistoryBefore || isLoadingHistoryBefore) {
@@ -1004,11 +1050,21 @@ export function useChatViewModel(): ChatViewModel {
       if (!targetChatId) {
         const chat = await createChat(token, {
           ...buildCreateChatBinding(characterSelector?.active_prompt ?? null),
+          ...nextChatLevelPayload(),
           set_current: true
         });
         targetChatId = chat.id;
         skipNextConversationLoadRef.current = true;
         activateChat(chat.id);
+        // The new chat took the level picked for the next chat; show its own as the app has it.
+        const createdChatId = chat.id;
+        void getInputSettings(token, createdChatId)
+          .then((settings) => {
+            if (selectedChatIdRef.current === createdChatId) {
+              showInputSettings(createdChatId, settings);
+            }
+          })
+          .catch(() => undefined);
         if (historyLoaded) {
           setChats((currentChats) => [chat, ...currentChats.filter((item) => item.id !== chat.id)]);
         }
@@ -1133,6 +1189,7 @@ export function useChatViewModel(): ChatViewModel {
       const chat = await createChat(token, {
         group: options?.group ?? null,
         ...buildCreateChatBinding(characterSelector?.active_prompt ?? null),
+        ...nextChatLevelPayload(),
         set_current: true
       });
       if (historyLoaded) {
@@ -1572,12 +1629,23 @@ export function useChatViewModel(): ChatViewModel {
 
     try {
       const chatId = selectedChatIdRef.current;
+      let serverPayload: typeof payload = payload;
+      if (chatId === null && payload.thinking_quality_level !== undefined) {
+        // No chat open: the level stays on this page until it makes a chat.
+        setNextChatLevel(payload.thinking_quality_level);
+        const { thinking_quality_level: _pickedLevel, ...rest } = payload;
+        if (Object.keys(rest).length === 0) {
+          return;
+        }
+        serverPayload = rest;
+      }
       const nextSettings = await updateInputSettingsOnServer(token, {
-        ...payload,
-        ...(chatId ? { chat_id: chatId } : {}),
+        ...serverPayload,
+        // Always named, so with no chat open nothing reaches the app's open chat.
+        chat_id: chatId,
       });
       if (selectedChatIdRef.current !== chatId) return;
-      setInputSettings(nextSettings);
+      showInputSettings(chatId, nextSettings);
       setError(null);
     } catch (actionError: unknown) {
       handleApiFailure(actionError);
@@ -1692,6 +1760,19 @@ export function useChatViewModel(): ChatViewModel {
     return buildContextStats(messages, messageInput, inputSettings);
   }, [inputSettings, messageInput, messages]);
 
+  // Until the open chat's own settings arrive, its thinking level is not known, so none is shown.
+  const shownInputSettings = useMemo<WebInputSettingsState | null>(
+    () =>
+      !inputSettings
+        ? inputSettings
+        : selectedChatId === null && nextChatLevel !== null
+          ? { ...inputSettings, thinking_quality_level: nextChatLevel }
+          : inputSettingsChatId !== selectedChatId
+            ? { ...inputSettings, thinking_quality_level: null }
+            : inputSettings,
+    [inputSettings, inputSettingsChatId, nextChatLevel, selectedChatId]
+  );
+
   async function selectModelConfig(
     configId: string,
     modelIndex: number,
@@ -1763,7 +1844,7 @@ export function useChatViewModel(): ChatViewModel {
     historyDisplayMode,
     autoSwitchCharacterCard,
     autoSwitchChatOnCharacterSelect,
-    inputSettings,
+    inputSettings: shownInputSettings,
     memorySelector,
     setTokenDraft,
     submitToken,

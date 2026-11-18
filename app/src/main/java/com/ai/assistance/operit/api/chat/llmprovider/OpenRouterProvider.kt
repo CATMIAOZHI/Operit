@@ -145,7 +145,7 @@ open class OpenRouterProvider(
     ): Int? {
         val qualityLevel = runCatching {
             runBlocking {
-                ApiPreferences.getInstance(context).thinkingQualityLevelFlow.first()
+                requestThinkingQualityLevel(context)
             }
         }.getOrElse {
             AppLogger.w(
