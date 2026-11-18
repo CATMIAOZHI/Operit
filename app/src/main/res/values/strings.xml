@@ -9582,9 +9582,15 @@
     <string name="orbit_system_empty">这个文件夹是空的。</string>
     <string name="orbit_system_folder">文件夹</string>
     <string name="orbit_system_copy_path">复制路径</string>
-    <string name="orbit_builds_book_text">书的原文 · %1$d 章</string>
-    <string name="orbit_builds_book_text_show">展开章节</string>
-    <string name="orbit_builds_book_text_hide">收起章节</string>
+    <plurals name="orbit_builds_folder_files">
+        <item quantity="other">%1$d 个文件</item>
+    </plurals>
+    <string name="orbit_builds_sort_current">排序方式：%1$s</string>
+    <string name="orbit_builds_sort_time">最近修改</string>
+    <string name="orbit_builds_sort_added">最近添加</string>
+    <string name="orbit_builds_sort_name">名称</string>
+    <string name="orbit_builds_sort_size">大小</string>
+    <string name="orbit_builds_sort_type">类型</string>
     <string name="orbit_builds_made_empty">%1$s 给你做的东西和存下的文件会出现在这里。</string>
     <string name="orbit_uploads_used">已用 %1$s / %2$s</string>
     <string name="orbit_uploads_hint">你发给 %1$s 的图片和文件都存在这里。满了以后会先删最早的，但最近的 100 个一直保留。</string>
