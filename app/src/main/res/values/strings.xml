@@ -9366,6 +9366,7 @@
     <string name="orbit_tracking_notes">进展</string>
     <string name="orbit_goal_steps">执行步骤</string>
     <string name="orbit_builds_versions">%1$d 个版本</string>
+    <string name="orbit_builds_has_versions">有版本记录</string>
     <string name="orbit_notifications_row">通知方式</string>
     <string name="orbit_notifications_row_desc">安静时段和汇报频率</string>
     <string name="orbit_profile_open">查看 %1$s 的资料</string>
@@ -9583,7 +9584,6 @@
     <string name="orbit_builds_files_empty">%1$s 存下的文件会出现在这里。</string>
     <string name="orbit_builds_made">构件</string>
     <string name="orbit_builds_uploads">文件库</string>
-    <string name="orbit_builds_work">构件</string>
     <string name="orbit_builds_system">系统文件</string>
     <string name="orbit_system_hint">%1$s 自己的全部文件都在这里。这里只能查看，想改什么直接跟 %1$s 说。</string>
     <string name="orbit_system_empty">这个文件夹是空的。</string>

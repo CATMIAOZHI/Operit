@@ -204,6 +204,8 @@ test -f app/src/debug/res/drawable/ic_launcher_dev_badge.xml \
 
 ### 7. 推送并创建 PR
 
+在晋升分支把本轮的更新内容加到 `docs/CHANGELOG.md` 最上面，单独提交：标题写 `## <version> · <晋升日期>`，正文和第 9 节的 release notes 相同，但去掉首行标题和末尾固定那行，小节标题用 `###`。这样 main 上的更新日志和 Release 一致；Release 晚一两天发出时不用回头改日期。
+
 晋升说明按功能域分组，交代本轮带入了什么，并列出检查点 tag、本轮基线、提交数和排除掉的开发版专属内容：
 
 ```bash
