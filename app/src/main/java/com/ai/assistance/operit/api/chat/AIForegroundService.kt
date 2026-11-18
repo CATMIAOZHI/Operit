@@ -65,6 +65,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
@@ -404,7 +405,7 @@ class AIForegroundService : Service() {
                 }
                 val notificationBuilder =
                     NotificationCompat.Builder(appContext, replyChannelId)
-                        .setSmallIcon(if (orbit != null) R.drawable.ic_stat_orbit else android.R.drawable.ic_dialog_info)
+                        .setSmallIcon(if (orbit != null) R.drawable.ic_stat_orbit else com.ai.assistance.operit.core.application.AppLauncherIdentity.notificationIcon(appContext))
                         .setContentTitle(
                             title
                                 ?: appContext.getString(R.string.notification_ai_reply_title)
@@ -1156,6 +1157,7 @@ class AIForegroundService : Service() {
             }
         }
         observeBackgroundKeepAlivePreference()
+        observeLauncherIdentity()
         observeChatRuntimeStats()
         observeOrbitNotice()
         startWakeMonitoring()
@@ -1215,6 +1217,16 @@ class AIForegroundService : Service() {
             } catch (e: Exception) {
                 AppLogger.e(TAG, "监听运行时任务视图隐藏设置失败: ${e.message}", e)
             }
+        }
+    }
+
+    /** The home-screen name and icon were switched in settings: the ongoing notification follows. */
+    private fun observeLauncherIdentity() {
+        serviceScope.launch {
+            com.ai.assistance.operit.core.application.AppLauncherIdentity.known
+                .filterNotNull()
+                .distinctUntilChanged()
+                .collect { refreshServiceNotification() }
         }
     }
 
@@ -1613,7 +1625,7 @@ class AIForegroundService : Service() {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channelName = getString(R.string.service_operit_running)
+            val channelName = getString(R.string.service_channel_name)
             val serviceChannel =
                     NotificationChannel(
                             CHANNEL_ID,
@@ -1621,7 +1633,7 @@ class AIForegroundService : Service() {
                             NotificationManager.IMPORTANCE_LOW // 低重要性，避免打扰用户
                     )
                     .apply {
-                        description = getString(R.string.service_keep_background)
+                        description = getString(R.string.service_channel_description)
                     }
             val manager = getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(serviceChannel)
@@ -2189,18 +2201,19 @@ class AIForegroundService : Service() {
         val wakeListeningEnabledSnapshot = wakeListeningEnabled
         val wakeListeningSuspendedSnapshot = wakeListeningSuspendedForIme || wakeListeningSuspendedForExternalRecording || wakeListeningSuspendedForFloatingFullscreen
         val externalHttpSnapshot = externalHttpStateFlow.value
+        val appName = com.ai.assistance.operit.core.application.AppLauncherIdentity.displayName(this)
         val title =
             if (isAiBusy) {
-                characterName ?: getString(R.string.service_operit_running)
+                characterName ?: getString(R.string.service_app_running, appName)
             } else {
                 if (wakeListeningEnabledSnapshot) {
                     if (wakeListeningSuspendedSnapshot) {
-                        getString(R.string.service_running_wake_pause)
+                        getString(R.string.service_app_running_wake_pause, appName)
                     } else {
-                        getString(R.string.service_running_wake_listening)
+                        getString(R.string.service_app_running_wake_listening, appName)
                     }
                 } else {
-                    getString(R.string.service_operit_running)
+                    getString(R.string.service_app_running, appName)
                 }
             }
         val activeConversationCount = chatRuntimeHolder.activeConversationCount.value
@@ -2227,12 +2240,13 @@ class AIForegroundService : Service() {
                     externalHttpSnapshot.port
                 )
             } else {
-                getString(R.string.service_operit_running)
+                // The title already says it is running.
+                null
             }
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(title)
             .setContentText(contentText)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(com.ai.assistance.operit.core.application.AppLauncherIdentity.notificationIcon(this))
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true) // 使通知不可被用户清除
 
@@ -2336,7 +2350,7 @@ class AIForegroundService : Service() {
         val open = com.ai.assistance.operit.features.orbit.OrbitDelivery.openChatIntent(this, orbit.chatId, "ongoing")
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_orbit)
-            .setContentTitle(orbit.name.ifBlank { text.getString(R.string.service_operit_running) })
+            .setContentTitle(orbit.name.ifBlank { text.getString(R.string.service_app_running, com.ai.assistance.operit.core.application.AppLauncherIdentity.displayName(text)) })
             .setContentText(text.getString(activity.label ?: R.string.orbit_profile_status_online))
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)

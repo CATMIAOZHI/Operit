@@ -170,6 +170,8 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
         // Logins of deleted Orbits can only be removed before any tab loads them, so do it now.
         // Other processes never open browser tabs and must not start WebView.
         if (isMainAppProcess()) {
+            // Notifications show the home-screen name and icon; read which one it is, off the main thread.
+            AppLauncherIdentity.load(this)
             runCatching {
                 com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserProfiles
                     .deletePendingAtStartup(this)

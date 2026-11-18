@@ -70,14 +70,17 @@ object CompanionNotification {
 
     fun fallback(context: Context): Notification {
         manager(context).createNotificationChannel(
-            NotificationChannel(CHANNEL, context.getString(R.string.service_operit_running), NotificationManager.IMPORTANCE_LOW)
-                .apply { setShowBadge(false) },
+            NotificationChannel(CHANNEL, context.getString(R.string.service_channel_name), NotificationManager.IMPORTANCE_LOW)
+                .apply {
+                    description = context.getString(R.string.service_channel_description)
+                    setShowBadge(false)
+                },
         )
         val open = PendingIntent.getActivity(context, 0, Intent(context, MainActivity::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         return NotificationCompat.Builder(context, CHANNEL)
-            .setSmallIcon(R.drawable.ic_launcher_simple_foreground)
-            .setContentTitle(context.getString(R.string.service_operit_running))
+            .setSmallIcon(AppLauncherIdentity.notificationIcon(context))
+            .setContentTitle(context.getString(R.string.service_app_running, AppLauncherIdentity.displayName(context)))
             .setContentIntent(open)
             .addAction(petAction(context))
             .setOngoing(true).setSilent(true).setPriority(NotificationCompat.PRIORITY_LOW).build()

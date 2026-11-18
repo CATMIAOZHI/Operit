@@ -100,9 +100,9 @@ class ScreenCaptureService : Service() {
 
     private fun createNotification(): Notification {
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Screen Capture Active")
-            .setContentText("Operit is capturing screen content")
-            .setSmallIcon(R.drawable.ic_launcher_simple_foreground)
+            .setContentTitle(getString(R.string.screen_capture_notification_title))
+            .setContentText(getString(R.string.screen_capture_notification_text))
+            .setSmallIcon(com.ai.assistance.operit.core.application.AppLauncherIdentity.notificationIcon(this))
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
     }
