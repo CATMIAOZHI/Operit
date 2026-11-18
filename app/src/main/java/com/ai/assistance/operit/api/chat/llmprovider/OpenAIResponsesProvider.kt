@@ -47,6 +47,24 @@ open class OpenAIResponsesProvider(
 ) {
     override val useResponsesApi: Boolean = true
 
+    /**
+     * Encrypted reasoning only verifies for the backend, account and model that wrote it; sent
+     * anywhere else after a switch, every later request of the chat fails. A short hash, so the
+     * saved chat names neither the endpoint nor the account.
+     */
+    override fun responsesReasoningScope(request: okhttp3.Request?): String {
+        val host = runCatching { java.net.URI(responsesApiEndpoint).host }.getOrNull().orEmpty().lowercase()
+        val source = "${responsesProviderType.name}|$host|$modelName|${reasoningScopeAccount(request)}"
+        val digest = MessageDigest.getInstance("SHA-256").digest(source.toByteArray(Charsets.UTF_8))
+        return digest.take(8).joinToString("") { "%02x".format(it) }
+    }
+
+    /**
+     * The account, for providers whose login (not the endpoint) decides it; taken from [request]
+     * when there is one, so it is the account that request was actually sent with.
+     */
+    protected open fun reasoningScopeAccount(request: okhttp3.Request?): String = ""
+
     override fun createRequestBody(
         context: Context,
         chatHistory: List<PromptTurn>,
@@ -345,7 +363,12 @@ object OpenAIResponsesPayloadAdapter {
     /** 旧 UI 计数边界（P2-1）：Long 饱和为 Int，绝不回绕为负。 */
     private fun Long.saturateToInt(): Int = coerceIn(0L, Int.MAX_VALUE.toLong()).toInt()
 
-    fun toResponsesRequest(chatStyleRequest: JSONObject): JSONObject {
+    /**
+     * [reasoningScope] is where this request goes (see [OpenAIResponsesProvider.reasoningReplayScope]);
+     * encrypted reasoning written for another one is left out, since only its own backend, account and
+     * model can read it back.
+     */
+    fun toResponsesRequest(chatStyleRequest: JSONObject, reasoningScope: String? = null): JSONObject {
         val converted = JSONObject(chatStyleRequest.toString())
 
         if (converted.has("max_tokens") && !converted.has("max_output_tokens")) {
@@ -373,7 +396,7 @@ object OpenAIResponsesPayloadAdapter {
         if (converted.has("messages")) {
             val messages = converted.optJSONArray("messages")
             if (messages != null) {
-                converted.put("input", convertMessagesToResponsesInput(messages))
+                converted.put("input", convertMessagesToResponsesInput(messages, reasoningScope))
                 converted.remove("messages")
             }
         }
@@ -400,7 +423,7 @@ object OpenAIResponsesPayloadAdapter {
         requestJson.put("reasoning", reasoningObject)
     }
 
-    fun parseNonStreamingResponse(jsonResponse: JSONObject): ParsedResponseOutput {
+    fun parseNonStreamingResponse(jsonResponse: JSONObject, reasoningScope: String? = null): ParsedResponseOutput {
         val textChunks = mutableListOf<String>()
         val reasoningChunks = mutableListOf<String>()
         val reasoningMetadataTags = mutableListOf<String>()
@@ -438,7 +461,7 @@ object OpenAIResponsesPayloadAdapter {
 
                     "reasoning" -> {
                         reasoningObserved = true
-                        createReasoningMetadataTag(item)?.let { reasoningMetadataTags.add(it) }
+                        createReasoningMetadataTag(item, reasoningScope)?.let { reasoningMetadataTags.add(it) }
                         val summaryArray = item.optJSONArray("summary")
                         if (summaryArray != null) {
                             for (j in 0 until summaryArray.length()) {
@@ -508,7 +531,7 @@ object OpenAIResponsesPayloadAdapter {
         return converted
     }
 
-    private fun convertMessagesToResponsesInput(messages: JSONArray): JSONArray {
+    private fun convertMessagesToResponsesInput(messages: JSONArray, reasoningScope: String?): JSONArray {
         val input = JSONArray()
 
         for (i in 0 until messages.length()) {
@@ -532,7 +555,7 @@ object OpenAIResponsesPayloadAdapter {
             }
 
             if (role == "assistant") {
-                appendReasoningItemsFromAssistantMessage(message, input)
+                appendReasoningItemsFromAssistantMessage(message, input, reasoningScope)
                 val toolCalls = message.optJSONArray("tool_calls")
                 if (toolCalls != null && toolCalls.length() > 0) {
                     for (j in 0 until toolCalls.length()) {
@@ -714,7 +737,8 @@ object OpenAIResponsesPayloadAdapter {
         }
     }
 
-    fun createReasoningMetadataTag(item: JSONObject): String? {
+    /** [scope] records where the reasoning came from, so it is only sent back there. */
+    fun createReasoningMetadataTag(item: JSONObject, scope: String? = null): String? {
         if (item.optString("type", "") != "reasoning") {
             return null
         }
@@ -730,12 +754,13 @@ object OpenAIResponsesPayloadAdapter {
             put("encrypted_content", encryptedContent)
             val summaryArray = item.optJSONArray("summary") ?: JSONArray()
             put("summary", JSONArray(summaryArray.toString()))
+            if (!scope.isNullOrBlank()) put("scope", scope)
         }
         val payloadBase64 = Base64.encodeToString(payload.toString().toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
         return ChatMarkupRegex.openAiResponsesReasoningMetaTag(payloadBase64)
     }
 
-    private fun appendReasoningItemsFromAssistantMessage(message: JSONObject, input: JSONArray) {
+    private fun appendReasoningItemsFromAssistantMessage(message: JSONObject, input: JSONArray, reasoningScope: String?) {
         val content = message.opt("content")
         val payloads = when (content) {
             is String -> ChatMarkupRegex.extractOpenAiResponsesReasoningPayloads(content)
@@ -746,7 +771,12 @@ object OpenAIResponsesPayloadAdapter {
         payloads.forEach { payloadBase64 ->
             runCatching {
                 val decodedPayload = String(Base64.decode(payloadBase64, Base64.DEFAULT), Charsets.UTF_8)
-                appendReasoningItemFromMetadata(JSONObject(decodedPayload), input)
+                val metadata = JSONObject(decodedPayload)
+                // Written for another backend, account or model: it would be rejected as unverifiable.
+                // Reasoning saved before scopes were kept has none and is still sent.
+                val writtenFor = metadata.optString("scope", "")
+                if (reasoningScope != null && writtenFor.isNotEmpty() && writtenFor != reasoningScope) return@runCatching
+                appendReasoningItemFromMetadata(metadata, input)
             }.onFailure { e ->
                 AppLogger.w("OpenAIResponsesProvider", "OpenAI Responses reasoning metadata decode failed", e)
             }

@@ -256,6 +256,62 @@ class Gemini37ProviderTest {
     }
 
     @Test
+    fun functionCallFromAnotherModel_getsGooglesPlaceholderSignature() = runBlocking {
+        val capturedBody = AtomicReference<JSONObject>()
+        val provider =
+            GeminiProvider(
+                apiEndpoint = "https://generativelanguage.googleapis.com/v1beta/models",
+                apiKeyProvider = SingleApiKeyProvider("test-key"),
+                modelName = GEMINI_37_FLASH_MODEL,
+                client = clientForGemini { _, body -> capturedBody.set(body) },
+                enableToolCall = true,
+            )
+        val weatherTool =
+            ToolPrompt(
+                name = "get_weather",
+                description = "Get weather",
+                parametersStructured = listOf(ToolParameterSchema(name = "city", description = "City name")),
+            )
+
+        withoutAndroidLogging {
+            provider
+                .sendMessage(
+                    context = mockContext(),
+                    // Written by another model before the switch: a tool call without a signature.
+                    chatHistory =
+                        listOf(
+                            PromptTurn(PromptTurnKind.USER, "What is the weather?"),
+                            PromptTurn(
+                                PromptTurnKind.ASSISTANT,
+                                "<tool name=\"get_weather\"><param name=\"city\">Shanghai</param></tool>",
+                            ),
+                            PromptTurn(
+                                PromptTurnKind.TOOL_RESULT,
+                                "<tool_result name=\"get_weather\" status=\"success\"><content>22 C</content></tool_result>",
+                            ),
+                        ),
+                    modelParameters = emptyList(),
+                    enableThinking = true,
+                    stream = false,
+                    availableTools = listOf(weatherTool),
+                    preserveThinkInHistory = false,
+                    onTokensUpdated = { _, _, _ -> },
+                    onNonFatalError = {},
+                    enableRetry = false,
+                ).collect {}
+        }
+
+        val contents = capturedBody.get().getJSONArray("contents")
+        val callParts =
+            (0 until contents.length()).map { contents.getJSONObject(it) }
+                .filter { it.getString("role") == "model" }
+                .flatMap { content -> content.getJSONArray("parts").let { parts -> (0 until parts.length()).map { parts.getJSONObject(it) } } }
+                .filter { it.has("functionCall") }
+        assertEquals(1, callParts.size)
+        assertEquals("skip_thought_signature_validator", callParts[0].getString("thought_signature"))
+    }
+
+    @Test
     fun combinedGoogleSearchAndFunctions_enableServerSideInvocationHistory() = runBlocking {
         val capturedBody = AtomicReference<JSONObject>()
         val provider =

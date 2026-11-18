@@ -1048,6 +1048,8 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                             com.ai.assistance.operit.ui.features.chat.components.LocalOrbitTurnFloor provides orbitTurnFloor,
                             com.ai.assistance.operit.ui.features.chat.components.LocalOrbitBottomNoteLift provides
                                 with(density) { orbitNoteHeightPx.toDp() },
+                            com.ai.assistance.operit.ui.features.chat.components.LocalSubagentTranscriptRole provides
+                                transcriptSubagentName.takeIf { isReadOnlyTranscript && it.isNotBlank() },
                         ) {
                         ChatScreenContent(
                                 modifier = Modifier.fillMaxSize(),

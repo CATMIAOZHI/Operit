@@ -47,6 +47,12 @@ import org.json.JSONArray
 import org.json.JSONObject
 import com.ai.assistance.operit.api.chat.llmprovider.MediaLinkParser
 
+/**
+ * Google's documented stand-in for a function call's missing thought signature, for history
+ * another model wrote: https://ai.google.dev/gemini-api/docs/thought-signatures
+ */
+private const val SKIP_THOUGHT_SIGNATURE_VALIDATOR = "skip_thought_signature_validator"
+
 internal fun buildGeminiThinkingConfig(
     enableThinking: Boolean,
     modelParameters: List<ModelParameter<*>>,
@@ -903,6 +909,12 @@ open class GeminiProvider(
         var queuedAssistantThoughtSignature: String? = null
         val queuedFunctionCalls = mutableListOf<JSONObject>()
         val openFunctionCalls = mutableListOf<GeminiPendingFunctionCall>()
+        // Gemini 3 refuses a step whose first function call has no thought signature, which is the
+        // case for calls another model made before a switch (or whose signature was dropped as
+        // another account's). Google documents this placeholder for such history. Antigravity also
+        // runs Claude, which must not get it.
+        val placeholderSignature =
+            if (antigravity == null || modelName.contains("gemini", ignoreCase = true)) SKIP_THOUGHT_SIGNATURE_VALIDATOR else null
 
         fun appendParts(target: JSONArray, parts: JSONArray) {
             for (index in 0 until parts.length()) {
@@ -944,7 +956,7 @@ open class GeminiProvider(
                     JSONObject().apply {
                         put("functionCall", functionCall)
                         if (index == 0) {
-                            queuedAssistantThoughtSignature?.let { signature ->
+                            (queuedAssistantThoughtSignature ?: placeholderSignature)?.let { signature ->
                                 put("thought_signature", signature)
                             }
                         }
@@ -978,11 +990,20 @@ open class GeminiProvider(
             emitQueuedFunctionCallsIfNeeded()
 
             val partsArray = JSONArray()
+            var signedCall = false
             rawContents.forEach { rawContent ->
                 val rawParts = rawContent.optJSONArray("parts") ?: return@forEach
                 for (index in 0 until rawParts.length()) {
                     val sourcePart = rawParts.optJSONObject(index) ?: continue
                     val part = JSONObject(sourcePart.toString())
+                    if (part.has("functionCall")) {
+                        val hasSignature = part.optString("thoughtSignature").isNotBlank() ||
+                            part.optString("thought_signature").isNotBlank()
+                        if (!hasSignature && !signedCall && placeholderSignature != null) {
+                            part.put("thoughtSignature", placeholderSignature)
+                        }
+                        signedCall = true
+                    }
                     partsArray.put(part)
                     part.optJSONObject("functionCall")?.let { functionCall ->
                         openFunctionCalls.add(

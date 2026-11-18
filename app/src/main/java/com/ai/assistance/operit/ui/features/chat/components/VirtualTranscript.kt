@@ -90,6 +90,9 @@ internal fun VirtualTranscript(
     footer: @Composable () -> Unit,
     splitMarkdown: Boolean = true,
     skipMessage: ((ChatMessage) -> Boolean)? = null,
+    // True while something drawn at the top of a row (a model switch line) is still being read;
+    // returning to a saved place waits for it, so the reply there is not pushed down after.
+    holdRestore: Boolean = false,
 ) {
     if (!process.ready) {
         Box(modifier) { CircularProgressIndicator(Modifier.align(Alignment.Center)) }
@@ -174,12 +177,24 @@ internal fun VirtualTranscript(
     var restoring by remember(chatId) { mutableStateOf(bookmark != null) }
     var restoreUnavailable by remember(chatId) { mutableStateOf(false) }
     val restoreTimestamp = bookmark?.timestamp
+    // Whether the saved place is on the page the chat opened with. Only then does the return wait
+    // for the switch lines, under a cover lifted once the place is set (or after a short time);
+    // a place on another page returns as it always did. Fixed when the chat opens.
+    val restoreOnPage = remember(chatId) { bookmark != null && rows.any { it.key == bookmark.key } }
+    var restoreCoverExpired by remember(chatId) { mutableStateOf(false) }
+    LaunchedEffect(chatId) {
+        if (restoreOnPage) {
+            kotlinx.coroutines.delay(800)
+            restoreCoverExpired = true
+        }
+    }
     val listState = remember(chatId) {
         LazyListState(
             cacheWindow = LazyLayoutCacheWindow(aheadFraction = 1f, behindFraction = 1f),
             firstVisibleItemIndex = rows.indexOfFirst { it.key == bookmark?.key }.coerceAtLeast(0),
-            // The saved markdown slice may not exist until preparation finishes.
-            firstVisibleItemScrollOffset = 0,
+            // The saved markdown slice may not exist until preparation finishes; when its row is
+            // already here, start at the saved offset so the first frame is the saved place.
+            firstVisibleItemScrollOffset = if (rows.any { it.key == bookmark?.key }) bookmark?.offset ?: 0 else 0,
         )
     }
     val scope = rememberCoroutineScope()
@@ -302,8 +317,10 @@ internal fun VirtualTranscript(
         }
         SideEffect { sink.value = preparing }
     }
-    LaunchedEffect(chatId, rows.map { it.key to it.preparingMarkdown }, restoring, restoreUnavailable) {
-        if (!restoring || bookmark == null) return@LaunchedEffect
+    // Waits for the switch lines only for a place on the opening page, and not past the cover.
+    val restoreWaits = holdRestore && restoreOnPage && !restoreCoverExpired
+    LaunchedEffect(chatId, rows.map { it.key to it.preparingMarkdown }, restoring, restoreUnavailable, restoreWaits) {
+        if (!restoring || bookmark == null || restoreWaits) return@LaunchedEffect
         onFollowingChange?.invoke(false)
         val index = rows.indexOfFirst { it.key == bookmark.key }
         val messageIndex = messages.indexOfFirst { it.timestamp == restoreTimestamp }
@@ -716,10 +733,19 @@ internal fun VirtualTranscript(
             onRelease = { view -> if (screenshotBridge === view) screenshotBridge = null },
         )
         val transcriptAlpha = LocalTranscriptAlpha.current
+        // A place on the opening page is covered until it is set, so the list never shows at a
+        // place it is about to leave; the cover lifts after a short time whatever happens.
+        val waitingToRestore = restoreOnPage && restoring && !restoreCoverExpired
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize()
-                .then(if (transcriptAlpha != null) Modifier.graphicsLayer { alpha = transcriptAlpha.value } else Modifier)
+                .then(
+                    if (transcriptAlpha != null || waitingToRestore) {
+                        Modifier.graphicsLayer { alpha = if (waitingToRestore) 0f else transcriptAlpha?.value ?: 1f }
+                    } else {
+                        Modifier
+                    }
+                )
                 .nestedScroll(connection).onPlaced { listPlacement[0] = it },
             contentPadding = PaddingValues(
                 start = horizontalPadding, end = horizontalPadding,

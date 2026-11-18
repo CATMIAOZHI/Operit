@@ -10098,6 +10098,7 @@
     <string name="orbit_browser_login_shared_desc">This phone\'s WebView can\'t keep logins apart, so Orbit shares the app\'s.</string>
     <string name="orbit_browser_login_split_notice">Browser logins are now always kept apart from the app\'s. The app\'s logins are all still there; Orbit used them before, so some sites may ask Orbit to sign in again.</string>
     <string name="orbit_browser_login_split_notice_ok">Got it</string>
+    <string name="chat_model_switched">Model changed from %1$s to %2$s</string>
     <string name="web_session_tab_owner">%1$s\'s logins</string>
     <string name="orbit_import_row">Import memory from another AI</string>
     <string name="orbit_import_row_desc">Bring over what ChatGPT, Claude and others know about you</string>
