@@ -215,7 +215,7 @@ open class OpenAIResponsesProvider(
     protected open fun resolveResponsesReasoningEffort(context: Context): String? {
         val qualityLevel = runCatching {
             runBlocking {
-                ApiPreferences.getInstance(context).thinkingQualityLevelFlow.first()
+                requestThinkingQualityLevel(context)
             }
         }.getOrElse {
             AppLogger.w(

@@ -334,7 +334,8 @@ export interface ContextStatsSnapshot {
 
 export interface WebInputSettingsState {
   enable_thinking_mode: boolean;
-  thinking_quality_level: number;
+  /** Null while the open chat's own level is still loading. */
+  thinking_quality_level: number | null;
   enable_memory_auto_update: boolean;
   enable_auto_read: boolean;
   enable_max_context_mode: boolean;

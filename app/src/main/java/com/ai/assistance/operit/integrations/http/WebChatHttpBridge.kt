@@ -140,7 +140,7 @@ class WebChatHttpBridge(
                 handleSelectMemoryProfile(session)
 
             session.uri == INPUT_SETTINGS_PATH && session.method == NanoHTTPD.Method.GET ->
-                handleInputSettings()
+                handleInputSettings(session)
 
             session.uri == INPUT_SETTINGS_PATH && session.method == NanoHTTPD.Method.PATCH ->
                 handleUpdateInputSettings(session)
@@ -515,14 +515,30 @@ class WebChatHttpBridge(
                         folderId = folderId,
                         characterCardName = request.characterCardName?.trim()?.takeIf { it.isNotBlank() },
                         characterGroupId = request.characterGroupId?.trim()?.takeIf { it.isNotBlank() },
-                        setAsCurrentChat = request.setCurrent
+                        // Made current only below, after it has taken what was picked with none open.
+                        setAsCurrentChat = false
                     )
                     val normalizedTitle = request.title?.trim()?.takeIf { it.isNotBlank() }
                     if (normalizedTitle != null) {
                         chatHistoryManager.updateChatTitle(newChat.id, normalizedTitle)
                     }
+                    val selections =
+                        com.ai.assistance.operit.data.preferences.ChatModelSelections.getInstance(appContext)
                     if (request.setCurrent) {
-                        switchAppChatContext(newChat.id)
+                        // Like a chat made in the app: it takes what was picked with none open.
+                        // Taken first: the switch then drops only the picks this chat takes, not
+                        // ones made while it opens.
+                        val pendingMark = selections.pendingMark()
+                        val pendingClaim = selections.adoptPending(newChat.id)
+                        // The level the page picked for this chat wins; set before the chat is shown.
+                        request.thinkingQualityLevel?.let { selections.selectLevel(newChat.id, it) }
+                        try {
+                            switchAppChatContext(newChat.id, pendingMark = pendingMark)
+                        } finally {
+                            pendingClaim?.let(selections::releasePending)
+                        }
+                    } else {
+                        request.thinkingQualityLevel?.let { selections.selectLevel(newChat.id, it) }
                     }
                     val updatedChat = currentChatMeta(newChat.id) ?: newChat
                     buildChatSummary(updatedChat)
@@ -537,8 +553,13 @@ class WebChatHttpBridge(
         return jsonResponse(NanoHTTPD.Response.Status.OK, created)
     }
 
-    private fun handleInputSettings(): NanoHTTPD.Response {
-        val settings = runBlocking { inputSettingsBridge.resolveState() }
+    private fun handleInputSettings(session: NanoHTTPD.IHTTPSession): NanoHTTPD.Response {
+        // `chat_id` names the chat whose thinking level to show; empty means none (the next chat).
+        val chatParam = session.parameters["chat_id"]?.firstOrNull()
+        val settings = runBlocking {
+            if (chatParam == null) inputSettingsBridge.resolveState()
+            else inputSettingsBridge.resolveState(chatParam.trim().takeIf { it.isNotEmpty() })
+        }
         return jsonResponse(NanoHTTPD.Response.Status.OK, settings)
     }
 
@@ -568,7 +589,15 @@ class WebChatHttpBridge(
                 WebErrorResponse("Invalid JSON body")
             )
 
-        val updated = runBlocking { inputSettingsBridge.update(request) }
+        val updated =
+            try {
+                runBlocking { inputSettingsBridge.update(request) }
+            } catch (error: IllegalArgumentException) {
+                return jsonResponse(
+                    NanoHTTPD.Response.Status.BAD_REQUEST,
+                    WebErrorResponse(error.message ?: "Invalid input settings"),
+                )
+            }
         return jsonResponse(NanoHTTPD.Response.Status.OK, updated)
     }
 
@@ -2489,12 +2518,13 @@ class WebChatHttpBridge(
 
     private suspend fun switchAppChatContext(
         chatId: String,
-        syncActivePromptFromBinding: Boolean = true
+        syncActivePromptFromBinding: Boolean = true,
+        pendingMark: com.ai.assistance.operit.data.preferences.ChatModelSelections.PendingMark? = null,
     ): Boolean {
         val chatMeta = currentChatMeta(chatId) ?: return false
         val chatChanged = core.currentChatId.value != chatId
         if (chatChanged) {
-            core.switchChat(chatId)
+            core.switchChat(chatId, pendingMark = pendingMark)
         }
         val switched = if (chatChanged) {
             withTimeoutOrNull(CHAT_SWITCH_TIMEOUT_MS) {

@@ -707,7 +707,7 @@ export function ClassicChatSettingsBar({
   const [showDisableSettingsDropdown, setShowDisableSettingsDropdown] = useState(false);
   const [infoPopupContent, setInfoPopupContent] = useState<InfoContent | null>(null);
   const thinkingEnabled = inputSettings?.enable_thinking_mode ?? false;
-  const thinkingQuality = inputSettings
+  const thinkingQuality = inputSettings && inputSettings.thinking_quality_level != null
     ? {
         maxLevel: MAX_THINKING_QUALITY_LEVEL,
         level: clampThinkingQualityLevel(inputSettings.thinking_quality_level)

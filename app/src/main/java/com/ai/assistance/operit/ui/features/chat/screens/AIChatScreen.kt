@@ -285,7 +285,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
 
     val featureStates by actualViewModel.featureToggles.collectAsState()
     val enableThinkingMode by actualViewModel.enableThinkingMode.collectAsState() // 收集思考模式状态
-    val thinkingQualityLevel by actualViewModel.thinkingQualityLevel.collectAsState()
+    val savedThinkingQualityLevel by actualViewModel.thinkingQualityLevel.collectAsState()
     val enableMemoryAutoUpdate by actualViewModel.enableMemoryAutoUpdate.collectAsState()
     val enableMaxContextMode by actualViewModel.enableMaxContextMode.collectAsState()
     val enableTools by actualViewModel.enableTools.collectAsState()
@@ -579,6 +579,10 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
         !isFloatingMode && !embedded && currentChatId?.let { it in orbitChatIds } == true -> null
         else -> currentChatId
     }
+    // The shown chat's own thinking level; a chat that never set one shows the saved level.
+    val thinkingQualityLevel =
+        com.ai.assistance.operit.ui.features.orbit.rememberChatThinkingLevel(composerChatId)
+            ?: savedThinkingQualityLevel
     val localizedUserRoleName = stringResource(R.string.message_role_user)
     // Only the two names matter: the chat list and the run record change on every saved message
     // or tool call, which must not rebuild every row of a running subagent's transcript.
@@ -1169,7 +1173,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                                     onToggleThinkingMode = { actualViewModel.toggleThinkingMode() },
                                     thinkingQualityLevel = thinkingQualityLevel,
                                     onThinkingQualityLevelChange = {
-                                        actualViewModel.updateThinkingQualityLevel(it)
+                                        actualViewModel.updateChatThinkingQualityLevel(composerChatId, it)
                                     },
                                     maxWindowSizeInK =
                                             actualViewModel.maxWindowSizeInK.collectAsState().value,
@@ -2232,7 +2236,7 @@ private fun ChatInputBottomBar(
                 enableThinkingMode = enableThinkingMode,
                 onToggleThinkingMode = actualViewModel::toggleThinkingMode,
                 thinkingQualityLevel = thinkingQualityLevel,
-                onThinkingQualityLevelChange = actualViewModel::updateThinkingQualityLevel,
+                onThinkingQualityLevelChange = { actualViewModel.updateChatThinkingQualityLevel(currentChatId, it) },
                 replyToMessage = replyToMessage,
                 onClearReply = actualViewModel::clearReplyToMessage,
                 isWorkspaceOpen = isWorkspaceOpen,
@@ -2327,7 +2331,7 @@ private fun ChatInputBottomBar(
                 enableThinkingMode = enableThinkingMode,
                 onSetThinkingMode = actualViewModel::setThinkingMode,
                 thinkingQualityLevel = thinkingQualityLevel,
-                onThinkingQualityLevelChange = actualViewModel::updateThinkingQualityLevel,
+                onThinkingQualityLevelChange = { actualViewModel.updateChatThinkingQualityLevel(currentChatId, it) },
                 onClearReply = actualViewModel::clearReplyToMessage,
                 isWorkspaceOpen = isWorkspaceOpen,
                 pendingQueueMessages = shownQueueMessages,

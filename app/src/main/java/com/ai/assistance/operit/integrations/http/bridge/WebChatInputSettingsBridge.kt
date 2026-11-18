@@ -15,7 +15,11 @@ internal class WebChatInputSettingsBridge(
     private val appContext: Context,
     private val core: ChatServiceCore
 ) {
-    suspend fun resolveState(): WebInputSettingsState {
+    /**
+     * [thinkingChatId] is the chat whose thinking level is shown, by default the open one; null
+     * shows the level picked with no chat open.
+     */
+    suspend fun resolveState(thinkingChatId: String? = core.currentChatId.value): WebInputSettingsState {
         val apiConfigDelegate = core.getApiConfigDelegate()
         val toolPermissionSystem = ToolPermissionSystem.getInstance(appContext)
         val permissionLevel = core.getUiStateDelegate().masterPermissionLevel.first()
@@ -28,7 +32,9 @@ internal class WebChatInputSettingsBridge(
         val activeContextLengthK = resolved.effectiveContextLength
         return WebInputSettingsState(
             enableThinkingMode = apiConfigDelegate.enableThinkingMode.first(),
-            thinkingQualityLevel = apiConfigDelegate.thinkingQualityLevel.first(),
+            // The chat's own level, as the app's composer shows it.
+            thinkingQualityLevel = chatThinkingLevel(thinkingChatId)
+                ?: apiConfigDelegate.thinkingQualityLevel.first(),
             enableMemoryAutoUpdate = apiConfigDelegate.enableMemoryAutoUpdate.first(),
             enableAutoRead = apiConfigDelegate.enableAutoRead.first(),
             enableMaxContextMode = resolved.enableMaxContextMode,
@@ -45,6 +51,9 @@ internal class WebChatInputSettingsBridge(
         )
     }
 
+    private suspend fun chatThinkingLevel(chatId: String?): Int? =
+        com.ai.assistance.operit.data.preferences.ChatModelSelections.getInstance(appContext).level(chatId)
+
     suspend fun update(request: WebUpdateInputSettingsRequest): WebInputSettingsState {
         val apiConfigDelegate = core.getApiConfigDelegate()
         val uiStateDelegate = core.getUiStateDelegate()
@@ -56,6 +65,13 @@ internal class WebChatInputSettingsBridge(
                 "Select the target conversation before changing Max mode"
             }
         }
+        // The web chat always names its chat; null is the next chat, made when it first sends.
+        val thinkingChatId = request.chatId
+        if (request.thinkingQualityLevel != null && thinkingChatId != null) {
+            require(thinkingChatId == targetChatId) {
+                "Select the target conversation before changing the thinking level"
+            }
+        }
 
         request.enableThinkingMode?.let { target ->
             if (apiConfigDelegate.enableThinkingMode.value != target) {
@@ -63,8 +79,10 @@ internal class WebChatInputSettingsBridge(
             }
         }
         request.thinkingQualityLevel?.let { target ->
-            if (apiConfigDelegate.thinkingQualityLevel.value != target) {
-                apiConfigDelegate.updateThinkingQualityLevel(target)
+            // Only the named chat changes level (with none, the chat made for the next send).
+            val shown = chatThinkingLevel(thinkingChatId) ?: apiConfigDelegate.thinkingQualityLevel.value
+            if (shown != target) {
+                com.ai.assistance.operit.ui.features.orbit.selectChatThinkingLevel(appContext, thinkingChatId, target)
             }
         }
         request.enableMemoryAutoUpdate?.let { target ->
@@ -120,18 +138,19 @@ internal class WebChatInputSettingsBridge(
             }
         }
 
-        return waitForUpdate(request)
+        return waitForUpdate(request, thinkingChatId)
     }
 
     private suspend fun waitForUpdate(
-        request: WebUpdateInputSettingsRequest
+        request: WebUpdateInputSettingsRequest,
+        thinkingChatId: String?,
     ): WebInputSettingsState {
         val requestedStop =
             request.permissionStop
                 ?.trim()
                 ?.let { rawValue -> ToolPermissionStop.fromString(rawValue.uppercase(Locale.US)) }
         repeat(12) {
-            val snapshot = resolveState()
+            val snapshot = resolveState(thinkingChatId)
             val matches =
                 (request.enableThinkingMode == null || snapshot.enableThinkingMode == request.enableThinkingMode) &&
                     (request.thinkingQualityLevel == null || snapshot.thinkingQualityLevel == request.thinkingQualityLevel) &&
@@ -158,6 +177,6 @@ internal class WebChatInputSettingsBridge(
             }
             delay(30)
         }
-        return resolveState()
+        return resolveState(thinkingChatId)
     }
 }

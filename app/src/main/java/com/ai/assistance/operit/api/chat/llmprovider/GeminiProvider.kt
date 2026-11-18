@@ -1746,8 +1746,7 @@ open class GeminiProvider(
 
         if (antigravity != null) {
             val selectedQuality = kotlinx.coroutines.runBlocking {
-                com.ai.assistance.operit.data.preferences.ApiPreferences.getInstance(context)
-                    .thinkingQualityLevelFlow.first()
+                requestThinkingQualityLevel(context)
             }
             generationConfig.put("thinkingConfig", JSONObject().put("thinkingLevel",
                 antigravityThinkingEffort(modelName, selectedQuality, enableThinking, modelParameters)))

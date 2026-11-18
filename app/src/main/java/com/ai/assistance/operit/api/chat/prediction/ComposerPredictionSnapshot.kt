@@ -34,6 +34,11 @@ data class ComposerPredictionSnapshot(
      * cache. It also decides how much output room the bounded prediction needs.
      */
     val enableThinking: Boolean = false,
+    /**
+     * The completed request's own chat thinking level, or null when it ran at the saved composer
+     * level. Repeated for the same reason as [enableThinking]: the effort is part of the prefix.
+     */
+    val thinkingQualityLevel: Int? = null,
 )
 
 internal fun freezePredictionTools(tools: List<ToolPrompt>?): List<ToolPrompt> =

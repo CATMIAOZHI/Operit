@@ -54,3 +54,20 @@ internal fun selectChatModel(context: android.content.Context, chatId: String?,
     val ref = OrbitModelRef(configId, modelName)
     if (chatId.isNullOrBlank()) selections.selectForNextChat(ref) else selections.select(chatId, ref)
 }
+
+/** This chat's own thinking level, or null when it follows the saved composer level. */
+@Composable
+internal fun rememberChatThinkingLevel(chatId: String?): Int? {
+    val context = LocalContext.current
+    val selections = remember(context) { ChatModelSelections.getInstance(context) }
+    // Read from the kept levels, so another chat's level is never shown while switching chats.
+    val levels by selections.levels.collectAsState()
+    val pending by selections.pendingLevel.collectAsState()
+    return if (chatId.isNullOrBlank()) pending else levels[chatId]
+}
+
+/** Only [chatId] changes thinking level (with no chat open, the chat made for the next send). */
+internal fun selectChatThinkingLevel(context: android.content.Context, chatId: String?, level: Int) {
+    val selections = ChatModelSelections.getInstance(context)
+    if (chatId.isNullOrBlank()) selections.selectLevelForNextChat(level) else selections.selectLevel(chatId, level)
+}

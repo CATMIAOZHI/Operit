@@ -391,8 +391,12 @@ class ChatServiceCore(
     }
 
     /** 切换聊天 */
-    fun switchChat(chatId: String, scrollToBottom: Boolean = true) {
-        chatHistoryDelegate.switchChat(chatId, scrollToBottom = scrollToBottom)
+    fun switchChat(
+        chatId: String,
+        scrollToBottom: Boolean = true,
+        pendingMark: com.ai.assistance.operit.data.preferences.ChatModelSelections.PendingMark? = null,
+    ) {
+        chatHistoryDelegate.switchChat(chatId, scrollToBottom = scrollToBottom, pendingMark = pendingMark)
     }
 
     /**
