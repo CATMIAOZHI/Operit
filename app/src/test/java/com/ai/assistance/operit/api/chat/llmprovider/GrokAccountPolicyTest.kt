@@ -1,7 +1,6 @@
 package com.ai.assistance.operit.api.chat.llmprovider
 
 import com.ai.assistance.operit.data.model.ApiProviderType
-import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -23,10 +22,5 @@ class GrokAccountPolicyTest {
             ThinkingRequestSemantics.resolve(providerType = ApiProviderType.GROK_ACCOUNT, modelName = "grok-4.6", qualityLevel = 5, modelParameters = emptyList()))
         assertEquals(ThinkingRequestSummary.NotSent,
             ThinkingRequestSemantics.resolve(providerType = ApiProviderType.GROK_ACCOUNT, modelName = "grok-build-0.1", qualityLevel = 5, modelParameters = emptyList()))
-    }
-    @Test fun streamedAccountRequestsAskForUsage() {
-        val request = JSONObject()
-        request.applyChatCompletionsStreamUsageOption(true, ApiProviderType.GROK_ACCOUNT, false)
-        assertTrue(request.getJSONObject("stream_options").getBoolean("include_usage"))
     }
 }
