@@ -22,7 +22,7 @@ internal object OrbitTaskTools {
                 "python：在本机 Ubuntu 终端用 python3 跑（要先装终端），60秒超时；每轮调用 silent(\"理由\", {\"数据\": 1}) 或 wake(\"理由\", {})，第二个参数是 dict 或 JSON 字符串。" +
                 "函数已注入，调用后立即结束。silent 不叫醒 Orbit；wake 把理由和 JSON 对象交给 Orbit。输出最多20000字符，JSON最多8000字符。" +
                 "新建/换脚本后暂停，先 dry_run 看输出，核对通过再 resume；试跑时环境变量 HATCH_HOOK_DRY_RUN=1，不叫醒 Orbit", required = false),
-            ToolParameterSchema("language", description = "script 的语言：sh（默认）或 python", required = false),
+            ToolParameterSchema("language", description = "script 的语言：sh 或 python；create 不填为 sh，update 不填沿用原来的", required = false),
             ToolParameterSchema("vault_proxy", description = "可选，脚本要调用的保险箱 API 密钥 credential_id，逗号分隔，最多8个。脚本拿到替身值 \$ORBIT_VAULT_<大写编号>，以及代理地址 \$ORBIT_VAULT_PROXY（后面接 域名/路径，如 \$ORBIT_VAULT_PROXY+api.example.com/v1/x）；把替身值放在密钥原本的位置，代理换成真值转发，只能发往这把密钥允许的网站。不用用户批准。更新时要连同 script 一起传", required = false),
             ToolParameterSchema("vault_env", description = "可选，只有 language=python 能用：要直接拿到真值的保险箱 credential_id（比如签名要用密钥本身），逗号分隔，最多8个；条目必须已允许在终端使用。真值在环境变量里（变量名同 orbit_vault env 的 env_name），输出里会被打码。需要用户在批准卡上同意（这把密钥设了始终允许就不用），没同意前 dry_run 会失败。能用 vault_proxy 就别用这个。更新时要连同 script 一起传", required = false),
             ToolParameterSchema("schedule_mode", description = "ONCE 一次执行（ASSIST默认，配 run_at 即日程提醒）；DAILY 每天；WEEKLY 每周；MONTHLY 每月；YEARLY 每年（这四种在 daily_time 执行）；INTERVAL 每隔 interval_minutes 执行（网页监控默认）；EVENT 指定任务成功后执行。update 时也能改，但只能在 INTERVAL/DAILY/WEEKLY/MONTHLY/YEARLY 之间改", required = false),
@@ -159,11 +159,15 @@ internal object OrbitTaskTools {
                         .apply { if (applied && !force && fields.isEmpty()) put("note", "The task was already like this; nothing changed.") }
                         .apply {
                             if (OrbitHookChecks.needed(now)) {
-                                val passed = OrbitHookChecks.passed(context, now)
+                                val intact = OrbitHookChecks.intact(context, now)
+                                val passed = intact && OrbitHookChecks.passed(context, now)
                                 put("dry_run_passed", passed)
-                                if (applied && now.state == "PAUSED") put("next", if (passed)
-                                    "The pinned script passed dry_run. Review its output, then explicitly resume to enable."
-                                    else "The script is paused. Call dry_run, inspect the output, then resume if correct.")
+                                if (applied && now.state == "PAUSED") put("next", when {
+                                    !intact -> "The hook file was changed after it was pinned, so it will not run. " +
+                                        "Update the task with the full script (and its language) to pin the new text, then dry_run."
+                                    passed -> "The pinned script passed dry_run. Review its output, then explicitly resume to enable."
+                                    else -> "The script is paused. Call dry_run, inspect the output, then resume if correct."
+                                })
                             }
                         }
                         .also { it.extra() }
@@ -179,13 +183,16 @@ internal object OrbitTaskTools {
                         } else {
                             val result = repository.dryRun(task)
                             after(true) {
-                                put("dry_run_passed", true).put("orbit_woken", false)
+                                put("orbit_woken", false)
                                 put("outcome", result.outcome).put("reason", result.reason)
                                 put("payload", JSONObject(result.payload)).put("output", result.output)
                                 put("note", "The script ran once with HATCH_HOOK_DRY_RUN=1" +
                                     (if (OrbitWatchSources.hook(task.source)?.python == true) " in the Ubuntu terminal"
                                     else " using the configured shell identity") + ". It is still paused.")
-                                put("next", "Review the output and confirm the script only reads. If correct, call resume; otherwise update the script and dry_run again.")
+                                // Changed while it ran: the answer above already says so.
+                                if (optBoolean("dry_run_passed")) {
+                                    put("next", "Review the output and confirm the script only reads. If correct, call resume; otherwise update the script and dry_run again.")
+                                }
                             }
                         }
                     }
@@ -204,7 +211,9 @@ internal object OrbitTaskTools {
                             arguments["location"]?.let { OrbitGeofence.source(context, it) } ?: task.source
                         } else if (task.kind == OrbitWatchSources.KIND &&
                             (arguments["watch"] != null || arguments["script"] != null || arguments["url"] != null)) {
-                            watchSource(context, orbit.id, arguments, task.title, runtime?.callId ?: java.util.UUID.randomUUID().toString())
+                            watchSource(context, orbit.id, arguments, task.title, runtime?.callId ?: java.util.UUID.randomUUID().toString(),
+                                // A new script without language keeps the hook's language.
+                                keepPython = OrbitWatchSources.hook(task.source)?.python == true)
                         } else arguments["url"] ?: task.source,
                         parseInterval(arguments["interval_minutes"]) ?: task.intervalMinutes,
                         arguments["notify_policy"] ?: task.notifyPolicy,
@@ -221,7 +230,10 @@ internal object OrbitTaskTools {
                     }
                     "detail" -> json(task, context).put("instruction", OrbitRoutines.runningInstruction(context, task))
                         .put("timezone", zone()).put("execution_record", repository.executionRecord(id))
-                        .apply { if (OrbitHookChecks.needed(task)) put("dry_run_passed", OrbitHookChecks.passed(context, task)) }
+                        .apply {
+                            if (OrbitHookChecks.needed(task)) put("dry_run_passed",
+                                OrbitHookChecks.intact(context, task) && OrbitHookChecks.passed(context, task))
+                        }
                         .put("last_run", repository.dao.latestRun(id)?.let {
                         JSONObject().put("state", it.state).put("observation", it.observation)
                             .put("error", it.error)
@@ -345,7 +357,7 @@ internal object OrbitTaskTools {
      * script that was reviewed with this call is the only one the background check will run.
      */
     private suspend fun watchSource(context: Context, orbitId: String, args: Map<String, String>,
-        title: String, requestId: String): String {
+        title: String, requestId: String, keepPython: Boolean = false): String {
         val watch = args["watch"]?.trim()?.takeIf { it.isNotEmpty() }
             ?: if (!args["script"].isNullOrBlank()) "script" else error("WATCH needs watch")
         // A script is only ever pinned here, from the text given in this call.
@@ -361,7 +373,8 @@ internal object OrbitTaskTools {
         val script = args["script"]?.takeIf { it.isNotBlank() } ?: error("watch=script needs the script text in script")
         require(script.length <= 8000) { "script is longer than 8000 characters" }
         val python = when (args["language"]?.trim()?.lowercase().orEmpty()) {
-            "", "sh", "shell" -> false
+            "" -> keepPython
+            "sh", "shell" -> false
             "python", "py", "python3" -> true
             else -> error("language must be sh or python")
         }

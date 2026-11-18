@@ -653,7 +653,8 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
                 "memory.md is changed only with memory_review notes."
             else -> "Not one of Orbit's files: $path"
         }
-        private val TEXT_EXTENSIONS = setOf("md", "txt", "yaml", "yml", "json", "csv", "html", "htm", "xml", "sh")
+        // Hooks are .sh or .py scripts the Orbit writes and edits as text.
+        private val TEXT_EXTENSIONS = setOf("md", "txt", "yaml", "yml", "json", "csv", "html", "htm", "xml", "sh", "py")
         private val locks = ConcurrentHashMap<String, Mutex>()
 
         // Orbit ids whose templates were written in this app run.

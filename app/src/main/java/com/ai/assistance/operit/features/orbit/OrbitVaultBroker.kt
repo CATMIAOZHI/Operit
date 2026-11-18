@@ -84,6 +84,38 @@ internal object OrbitVaultBroker {
     /** The proxy's base address, starting it if needed: append `<host>/<path>`. */
     fun base(context: Context): String = "${origin(context)}/https/"
 
+    /** Values handed to one hook run, by one-time token, with the time they stop being given out. */
+    private val handoffs = ConcurrentHashMap<String, Pair<ByteArray, Long>>()
+
+    /**
+     * An address that gives [body] once, within [ttlMs], then nothing. A hook's command (which the
+     * terminal keeps in a temporary file while it runs) carries only this address, never the values.
+     */
+    fun handoff(context: Context, body: String, ttlMs: Long = 180_000L): String {
+        // Started first, so a service that cannot start leaves nothing behind.
+        val origin = origin(context)
+        val now = android.os.SystemClock.elapsedRealtime()
+        handoffs.entries.removeIf { it.value.second < now }
+        val token = ByteArray(24).also { java.security.SecureRandom().nextBytes(it) }
+            .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+        handoffs[token] = body.toByteArray(Charsets.UTF_8) to now + ttlMs
+        return "$origin/handoff/$token"
+    }
+
+    /** Forgets [address] if it was never fetched. */
+    fun dropHandoff(address: String) {
+        handoffs.remove(address.substringAfterLast('/'))
+    }
+
+    private fun takeHandoff(incoming: Incoming): Outgoing {
+        if (incoming.method != "GET") throw Refused(400, "Use GET for /handoff/")
+        val token = incoming.target.removePrefix("/handoff/").substringBefore('?')
+        // Taken at most once, and only in time.
+        val (body, until) = handoffs.remove(token) ?: throw Refused(404, "Gone")
+        if (until < android.os.SystemClock.elapsedRealtime()) throw Refused(404, "Gone")
+        return Outgoing(200, listOf("Content-Type" to "application/json; charset=utf-8", "Cache-Control" to "no-store"), body)
+    }
+
     /** The command that loads a key the user let into the terminal into its variable. */
     fun envCommand(context: Context, orbitId: String, entry: OrbitVault.Entry): String =
         // Fails, and stops what follows with &&, when the key cannot be fetched.
@@ -265,6 +297,7 @@ internal object OrbitVaultBroker {
         if (incoming.method !in METHODS) throw Refused(400, "Unsupported method ${incoming.method}")
         val target = incoming.target
         if (target.startsWith("/env/")) return env(context, incoming)
+        if (target.startsWith("/handoff/")) return takeHandoff(incoming)
         if (!target.startsWith("/https/")) throw Refused(404,
             "Use http://127.0.0.1:<port>/https/<host>/<path>; get the address from orbit_vault action terminal")
         if (target.any { it <= ' ' || it.code == 0x7f } || '#' in target) throw Refused(400, "Bad characters in the address")

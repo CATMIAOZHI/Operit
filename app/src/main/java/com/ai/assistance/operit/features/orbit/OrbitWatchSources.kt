@@ -320,10 +320,12 @@ object OrbitWatchSources {
         }
         fun b64(value: String) = java.util.Base64.getEncoder().encodeToString(value.toByteArray(Charsets.UTF_8))
         val env = JSONObject(vars + ("HATCH_HOOK_DRY_RUN" to if (dryRun) "1" else "0")).toString()
-        // The script runs as hook.py with silent()/wake() given; values travel as base64, never as
-        // arguments. The terminal logs the start of each command, so the values come last.
-        val runtime = """
-            import os as _o, sys as _s, json as _j, base64 as _b
+        // The script runs as hook.py with silent()/wake() given; its text travels as base64, never as
+        // arguments. The terminal logs the start of each command, so the text comes last.
+        // The values are fetched once from the app's local vault service: the terminal keeps the
+        // command in a temporary file while it runs, so the command carries only a one-time address.
+        fun runtime(handoff: String?) = """
+            import os as _o, sys as _s, json as _j, base64 as _b, urllib.request as _u
             def _verdict(kind, reason, payload):
                 if not isinstance(reason, str) or not reason.strip():
                     _s.stderr.write(kind + ' needs a reason\n'); _s.stderr.flush(); _o._exit(2)
@@ -332,15 +334,32 @@ object OrbitWatchSources {
                 _s.stdout.flush(); _o._exit(0)
             def silent(reason, payload=None): _verdict('silent', reason, payload)
             def wake(reason, payload=None): _verdict('wake', reason, payload)
-            _o.environ.update(_j.loads(_b.b64decode('${b64(env)}').decode()))
+            ${if (handoff == null) "_o.environ.update(_j.loads(_b.b64decode('${b64(env)}').decode()))" else """
+            def _env():
+                import time as _t
+                for _i in range(30):
+                    try: return _u.build_opener(_u.ProxyHandler({})).open('$handoff', timeout=15).read().decode()
+                    except _u.HTTPError as e:
+                        if e.code != 503: raise
+                        _t.sleep(0.5)
+                raise RuntimeError('The vault service stayed busy')
+            _o.environ.update(_j.loads(_env()))""".trimIndent().replace("\n", "\n            ")}
             exec(compile(_b.b64decode('${b64(text)}').decode(), 'hook.py', 'exec'), {'__name__': '__main__', 'silent': silent, 'wake': wake})
         """.trimIndent()
-        val command = "printf '%s' '${b64(runtime)}' | base64 -d | timeout $PYTHON_SECONDS python3 -u - 2>&1"
         // One at a time, so a hook waiting for the shared shell does not spend its own time limit waiting.
         val result = pythonTurn.withLock {
-            com.ai.assistance.operit.core.tools.system.Terminal.getInstance(context)
-                .executeHiddenCommand(command, executorKey = "orbit-hooks", timeoutMs = (PYTHON_SECONDS + 30) * 1000L,
-                    local = true, quiet = true)
+            // Only a hook given vault values fetches them; made once this run's turn has come, so it
+            // cannot expire while waiting for it (starting the terminal also counts against its time).
+            val handoff = if (vars.isEmpty()) null else OrbitVaultBroker.handoff(context, env)
+            try {
+                val command = "printf '%s' '${b64(runtime(handoff))}' | base64 -d | timeout $PYTHON_SECONDS python3 -u - 2>&1"
+                com.ai.assistance.operit.core.tools.system.Terminal.getInstance(context)
+                    .executeHiddenCommand(command, executorKey = "orbit-hooks", timeoutMs = (PYTHON_SECONDS + 30) * 1000L,
+                        local = true, quiet = true)
+            } finally {
+                // Never fetched (the run failed to start): it stops being given out now.
+                handoff?.let(OrbitVaultBroker::dropHandoff)
+            }
         }
         check(result.state != com.ai.assistance.operit.terminal.provider.type.HiddenExecResult.State.TIMEOUT &&
             result.exitCode != 124) { context.getString(R.string.orbit_watch_script_timeout, PYTHON_SECONDS) }
