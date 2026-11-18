@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_icon_setting_title">桌面图标和名称</string>
+    <string name="app_icon_switch_title">换成「%1$s」？</string>
+    <string name="app_icon_switch_body">换好后 App 可能会先回到桌面。桌面可能要过几秒才显示新图标，点新图标就能打开。</string>
+    <string name="app_icon_switch_confirm">换</string>
+</resources>

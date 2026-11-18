@@ -119,6 +119,10 @@ internal object CardFlow : A2uiComponent {
         }
         val requested = properties.bind(direction) ?: "auto"
         val fontScale = LocalDensity.current.fontScale
+        val density = LocalDensity.current
+        val measurer = androidx.compose.ui.text.rememberTextMeasurer()
+        val titleStyle = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold)
+        val captionStyle = MaterialTheme.typography.labelSmall
         // One summary for screen readers; the tile texts are not read a second time.
         BoxWithConstraints(modifier.fillMaxWidth().clearAndSetSemantics {
             contentDescription = (listOf(description).filter(String::isNotBlank) +
@@ -128,18 +132,61 @@ internal object CardFlow : A2uiComponent {
             // Each horizontal tile needs room for a short title; otherwise stack vertically.
             val tileMin = 84.dp * fontScale.coerceAtLeast(1f)
             val fits = maxWidth >= tileMin * items.size + 24.dp * (items.size - 1)
-            val horizontal = when (requested) { "horizontal" -> fits; "vertical" -> false; else -> fits && items.size <= 4 }
-            if (horizontal) Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), verticalAlignment = Alignment.CenterVertically) {
-                items.forEachIndexed { i, step ->
-                    FlowTile(step, Modifier.weight(1f).fillMaxHeight(), centered = true)
-                    if (i < items.lastIndex) Icon(Icons.AutoMirrored.Outlined.ArrowForward, null,
-                        Modifier.padding(horizontal = 4.dp).size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            // Side by side only when every title stays on one line and every caption within two:
+            // a broken title reads badly, and the choice no longer flips on a few dp of width.
+            val textWidth = with(density) { ((maxWidth - 24.dp * (items.size - 1)) / items.size - 16.dp).roundToPx() }
+            val textFits = remember(items, textWidth, titleStyle, captionStyle, density, measurer) {
+                textWidth > 0 && items.all { step ->
+                    measurer.measure(step.title, titleStyle, softWrap = false, maxLines = 1).size.width <= textWidth &&
+                        (step.caption.isBlank() || measurer.measure(step.caption, captionStyle,
+                            constraints = androidx.compose.ui.unit.Constraints(maxWidth = textWidth)).lineCount <= 2)
                 }
-            } else Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+            }
+            val horizontal = when (requested) {
+                "horizontal" -> fits; "vertical" -> false; else -> fits && textFits && items.size <= 4
+            }
+            if (horizontal) FlowTilesInRow(items)
+            else Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
                 items.forEachIndexed { i, step ->
                     FlowTile(step, Modifier.fillMaxWidth(), centered = false)
                     if (i < items.lastIndex) Icon(Icons.Outlined.ArrowDownward, null,
                         Modifier.padding(vertical = 4.dp).size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Tiles side by side at one height: each is measured at its real width first, so a caption's
+ * second line is never cut off (an intrinsic row height could come out short and clip it).
+ */
+@Composable
+private fun FlowTilesInRow(items: List<CardFlowStep>) {
+    val arrowTint = MaterialTheme.colorScheme.onSurfaceVariant
+    androidx.compose.ui.layout.SubcomposeLayout(Modifier.fillMaxWidth()) { constraints ->
+        val gap = 24.dp.roundToPx()
+        val count = items.size
+        val width = constraints.maxWidth
+        val tile = ((width - gap * (count - 1)) / count).coerceAtLeast(0)
+        val height = subcompose("measure") { items.forEach { FlowTile(it, Modifier, centered = true) } }
+            .maxOfOrNull { it.measure(androidx.compose.ui.unit.Constraints(minWidth = tile, maxWidth = tile)).height } ?: 0
+        val tiles = subcompose("tiles") { items.forEach { FlowTile(it, Modifier.fillMaxSize(), centered = true) } }
+            .map { it.measure(androidx.compose.ui.unit.Constraints.fixed(tile, height)) }
+        val arrows = subcompose("arrows") {
+            repeat(count - 1) {
+                Icon(Icons.AutoMirrored.Outlined.ArrowForward, null, Modifier.size(16.dp), tint = arrowTint)
+            }
+        }.map { it.measure(androidx.compose.ui.unit.Constraints()) }
+        layout(width, height) {
+            var x = 0
+            tiles.forEachIndexed { i, placeable ->
+                // Relative: in a right-to-left language the steps run right to left, as the arrows do.
+                placeable.placeRelative(x, 0)
+                x += tile
+                arrows.getOrNull(i)?.let { arrow ->
+                    arrow.placeRelative(x + (gap - arrow.width) / 2, (height - arrow.height) / 2)
+                    x += gap
                 }
             }
         }

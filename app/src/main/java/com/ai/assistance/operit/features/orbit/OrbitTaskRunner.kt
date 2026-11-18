@@ -189,7 +189,8 @@ object OrbitTaskRunner {
                         when (task.kind) {
                             "URL_CHANGE" -> readUrl(task.source)
                             OrbitWatchSources.KIND -> if (OrbitWatchSources.isScript(task.source)) {
-                                val result = OrbitWatchSources.readScript(context, task.orbitId, task.source)
+                                val result = OrbitWatchSources.readScript(context, task.orbitId, task.source,
+                                    taskId = task.id, title = task.title)
                                 if (!result.wake) {
                                     complete(context, state, result.observation(), "", "",
                                         context.getString(com.ai.assistance.operit.R.string.orbit_hook_silent, result.reason),
@@ -790,6 +791,8 @@ object OrbitTaskRunner {
                     deliveredByTool = true, disableSummary = true, useComposerReply = false,
                     toolsEnabled = true,
                     terminalToolNames = setOf(FINISH, OrbitTaskActionTools.WAIT),
+                    // The task's own model role, so a quick switch made in this chat does not replace it.
+                    orbitModelRole = OrbitModels.taskRole(task),
                     // It runs with Orbit's own prompt, so its replies carry Orbit's name, not the default card's.
                     assistantRoleNameOverride = OrbitPreferences.getInstance(context).current().orbits
                         .firstOrNull { it.id == task.orbitId }?.name?.takeIf { it.isNotBlank() }),

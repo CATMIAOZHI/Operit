@@ -31,6 +31,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 class MultiServiceManager(private val context: Context, private val chatId: String? = null) {
     companion object {
         private const val TAG = "MultiServiceManager"
+        /** Providers kept for models picked apart from the functions' own (quick switch, role cards). */
+        private const val MAX_CUSTOM_SERVICES = 3
     }
 
     class ServiceLease internal constructor(
@@ -238,6 +240,12 @@ class MultiServiceManager(private val context: Context, private val chatId: Stri
                 ),
         )
         customServiceInstances[cacheKey] = managedService
+        // A chat that tries model after model with the quick switch keeps only the latest few; an
+        // older one still streaming is closed once its turn lets go of it.
+        while (customServiceInstances.size > MAX_CUSTOM_SERVICES) {
+            val oldest = customServiceInstances.keys.first()
+            customServiceInstances.remove(oldest)?.let(::retireManagedServiceLocked)
+        }
 
         AppLogger.d(TAG, "已为自定义配置创建服务实例，配置=$configId，模型索引=$normalizedIndex")
         return managedService

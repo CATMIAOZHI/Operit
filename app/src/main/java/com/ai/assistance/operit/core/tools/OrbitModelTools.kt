@@ -371,8 +371,12 @@ internal object OrbitModelTools {
             throw e
         } catch (e: Exception) {
             val why = (e.message ?: e.javaClass.simpleName).take(200)
-            error("The ${provider.name} account did not return its model list ($why). If it is a sign-in error (401, expired, " +
-                "sign in again), put a sign-in card with ${OrbitApprovalActions.signInWith(provider)} relogin=true; otherwise try again later.")
+            if ((e as? com.ai.assistance.operit.data.api.AccountHttpException)?.loginRevoked == true) {
+                error("The ${provider.name} sign-in is no longer valid ($why): put a sign-in card with " +
+                    "${OrbitApprovalActions.signInWith(provider)} relogin=true.")
+            }
+            error("The ${provider.name} account did not return its model list ($why). If it says the sign-in expired or must be " +
+                "redone, put a sign-in card with ${OrbitApprovalActions.signInWith(provider)} relogin=true; otherwise try again later.")
         }
 
     /** A failed lookup says why without ever echoing the key. */

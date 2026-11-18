@@ -61,6 +61,8 @@ internal data class PendingDialog(
     val url: String? = null,
     val jsResult: JsResult? = null,
     val jsPromptResult: JsPromptResult? = null,
+    /** How an engine tab's dialog is answered: OK or Cancel, and a prompt's text. */
+    val answer: ((Boolean, String?) -> Unit)? = null,
     val timestamp: Long = System.currentTimeMillis()
 )
 
@@ -419,7 +421,7 @@ internal fun StandardBrowserSessionTools.captureActionMarkers(
 ): BrowserToolActionMarkers =
     BrowserToolActionMarkers(
         initialSessionId = session.id,
-        initialUrl = readCurrentUrl(session.webView, session.currentUrl).ifBlank { session.currentUrl },
+        initialUrl = readCurrentUrl(session.page, session.currentUrl).ifBlank { session.currentUrl },
         consoleTimestamp = latestConsoleTimestamp(session),
         downloadTimestamp = latestProfileDownloadEventAt(session.profileName),
         snapshotGeneration = session.lastSnapshot?.generation ?: 0L,
@@ -434,7 +436,7 @@ internal fun StandardBrowserSessionTools.isDocumentReady(session: BrowserToolSes
         runCatching {
             extractAsyncJsValue(
                 evaluateJavascriptAsync(
-                    session.webView,
+                    session.page,
                     "(function(){ return String(document.readyState || ''); })();",
                     2_000L
                 )
@@ -476,7 +478,7 @@ internal fun StandardBrowserSessionTools.matchesTextState(
         runCatching {
             extractAsyncJsValue(
                 evaluateJavascriptAsync(
-                    session.webView,
+                    session.page,
                     "(function(){ return String((document.body && document.body.innerText) || ''); })();",
                     2_000L
                 )
@@ -675,7 +677,7 @@ private fun StandardBrowserSessionTools.actionSettled(
     }
 
     val activeSwitched = policy.allowActivePageSwitch && session.id != markers.initialSessionId
-    val currentUrl = readCurrentUrl(session.webView, session.currentUrl).ifBlank { session.currentUrl }
+    val currentUrl = readCurrentUrl(session.page, session.currentUrl).ifBlank { session.currentUrl }
     val urlChanged = currentUrl != markers.initialUrl
 
     if (policy.waitForNavigationChange && !activeSwitched && !urlChanged) {
@@ -1280,7 +1282,7 @@ internal fun StandardBrowserSessionTools.captureSnapshotModel(
             }
         })();
         """.trimIndent()
-    val json = runJsonScript(session.webView, script, "snapshot_capture_error")
+    val json = runJsonScript(session.page, script, "snapshot_capture_error")
     if (json?.optBoolean("ok", false) != true) {
         throw RuntimeException(json?.optString("error").orEmpty().ifBlank { "snapshot_capture_error" })
     }

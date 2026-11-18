@@ -3,10 +3,10 @@ package com.ai.assistance.operit.features.draw
 import android.content.Context
 import android.net.Uri
 import android.util.Base64
-import com.ai.assistance.operit.data.api.AccountHttpException
 import com.ai.assistance.operit.data.api.AccountProvider
 import com.ai.assistance.operit.data.api.GrokClientIdentity
 import com.ai.assistance.operit.data.api.ProviderAccountManager
+import com.ai.assistance.operit.data.api.grokAccessToken
 import com.ai.assistance.operit.util.ImageSourcePathPolicy
 import com.ai.assistance.operit.util.OperitPaths
 import java.io.File
@@ -248,18 +248,7 @@ object GrokVideoBridge {
     private fun isMp4(bytes: ByteArray): Boolean =
         bytes.size >= 12 && String(bytes, 4, 4, Charsets.US_ASCII) == "ftyp"
 
-    private suspend fun token(manager: ProviderAccountManager): String = try {
-        manager.validAccount().accessToken
-    } catch (error: AccountHttpException) {
-        // The token server only answers 400/401 when the saved login itself was refused.
-        throw IOException(
-            if (error.status in setOf(400, 401)) "Grok 登录已失效，请重新登录 Grok 账号"
-            else "刷新 Grok 登录时服务器出错（HTTP ${error.status}），请稍后再试，不用重新登录",
-            error,
-        )
-    } catch (error: IOException) {
-        throw IOException("连不上 Grok 登录服务器，请检查网络后稍后再试，不用重新登录", error)
-    }
+    private suspend fun token(manager: ProviderAccountManager): String = manager.grokAccessToken()
 
     /** Waits for the task to reach a final status; returns the finished task body. */
     private suspend fun poll(manager: ProviderAccountManager, task: Submitted): JSONObject =

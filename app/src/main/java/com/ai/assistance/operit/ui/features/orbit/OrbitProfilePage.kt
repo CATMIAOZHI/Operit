@@ -158,6 +158,11 @@ internal fun OrbitProfilePage(
         com.ai.assistance.operit.features.orbit.OrbitApprovals.observe(context, orbit.id).catch { emit(emptyList()) }
     }.collectAsState(initial = null)
     var openApproval by remember(orbit.id) { mutableStateOf<com.ai.assistance.operit.features.orbit.OrbitApprovals.Approval?>(null) }
+    val vaultUsage by remember(orbit.id) {
+        com.ai.assistance.operit.features.orbit.OrbitVaultUsage.observe(context, orbit.id).catch { emit(emptyList()) }
+    }.collectAsState(initial = emptyList())
+    // The approval list keeps every answer; it is shown a page at a time.
+    var recordsShown by rememberSaveable(orbit.id) { mutableIntStateOf(APPROVAL_PAGE) }
     val tasks by remember(orbit.id) { dao.observeTasks(orbit.id).catch { emit(emptyList()) } }
         .collectAsState(initial = null)
     // Work done while chatting. Read when the profile comes into view, then now and then while open.
@@ -261,7 +266,8 @@ internal fun OrbitProfilePage(
                 }
                 activitySection(who, activity, chatTurns, liveTurns, liveAgents, onOpenProcess)
             }
-            OrbitProfileTab.APPROVALS -> approvalsSection(tasks, approvals, onOpenTask) { openApproval = it }
+            OrbitProfileTab.APPROVALS -> approvalsSection(tasks, approvals, vaultUsage, recordsShown,
+                { recordsShown += APPROVAL_PAGE }, onOpenTask) { openApproval = it }
             OrbitProfileTab.BROWSER -> browserSection(who, pages, apps, onOpenApp = { screen ->
                 com.ai.assistance.operit.core.tools.phone.PhoneBackgroundControl.watch(screen.id)
             }) { work ->
@@ -1008,6 +1014,8 @@ private fun LazyListScope.activitySection(
                                     timestamps = row.turns.flatMap { it.process.timestamps }.distinct().sorted(),
                                     title = title,
                                     time = oldest.process.time,
+                                    // The merged turns end where the newest of them does.
+                                    nextTurnAt = row.turns.maxByOrNull { it.process.time }?.process?.nextTurnAt,
                                 )
                             )
                         },
@@ -1064,6 +1072,9 @@ private fun runDetail(run: OrbitActivityRow): String = when (run.state) {
 private fun LazyListScope.approvalsSection(
     tasks: List<OrbitTaskEntity>?,
     approvals: List<com.ai.assistance.operit.features.orbit.OrbitApprovals.Approval>?,
+    usage: List<com.ai.assistance.operit.features.orbit.OrbitVaultUsage.Key>,
+    recordsShown: Int,
+    onMoreRecords: () -> Unit,
     onOpenTask: (String) -> Unit,
     onOpenApproval: (com.ai.assistance.operit.features.orbit.OrbitApprovals.Approval) -> Unit,
 ) {
@@ -1071,7 +1082,7 @@ private fun LazyListScope.approvalsSection(
     val waiting = tasks.filter { it.state == "WAITING_USER" || it.state == "VERIFY" }
     val asking = approvals.filter { it.pending }
     val records = approvals.filterNot { it.pending }
-    if (waiting.isEmpty() && approvals.isEmpty()) {
+    if (waiting.isEmpty() && approvals.isEmpty() && usage.isEmpty()) {
         item(key = "empty") { EmptyHint(stringResource(R.string.orbit_profile_approvals_empty)) }
         return
     }
@@ -1102,9 +1113,14 @@ private fun LazyListScope.approvalsSection(
             )
         }
     }
+    // Which saved keys were used, one row per key, most recently used first; kept apart from the approvals.
+    if (usage.isNotEmpty()) {
+        item(key = "usage-title") { SectionTitle(stringResource(R.string.orbit_vault_usage_title)) }
+        items(usage, key = { "usage-${it.entryId}" }) { key -> VaultUsageRow(key) }
+    }
     if (records.isNotEmpty()) {
         item(key = "actions-title") { SectionTitle(stringResource(R.string.orbit_profile_approval_records)) }
-        items(records, key = { "record-${it.id}" }) { a ->
+        items(records.take(recordsShown), key = { "record-${it.id}" }) { a ->
             val vault = a.kind == com.ai.assistance.operit.features.orbit.OrbitApprovals.VAULT_SAVED
             // "Don't remind me" on a permission card is a choice, not a refusal, so it is not shown in red.
             val denied = a.state == com.ai.assistance.operit.features.orbit.OrbitApprovals.DENIED &&
@@ -1118,7 +1134,55 @@ private fun LazyListScope.approvalsSection(
                 onClick = { onOpenApproval(a) },
             )
         }
+        if (records.size > recordsShown) {
+            item(key = "records-more") {
+                TextButton(onClick = onMoreRecords, modifier = Modifier.padding(start = 4.dp)) {
+                    Text(stringResource(R.string.orbit_profile_approval_more, records.size - recordsShown))
+                }
+            }
+        }
     }
+}
+
+private const val APPROVAL_PAGE = 50
+
+/** One saved key's use: tap to see everyone who used it. */
+@Composable
+private fun VaultUsageRow(key: com.ai.assistance.operit.features.orbit.OrbitVaultUsage.Key) {
+    var open by rememberSaveable(key.entryId) { mutableStateOf(false) }
+    Column {
+        val first = key.callers.firstOrNull()
+        OrbitListRow(
+            icon = orbitIcon("key-round"),
+            title = key.site,
+            detail = first?.let {
+                vaultCallerName(it) + if (key.callers.size > 1)
+                    stringResource(R.string.orbit_vault_usage_more_callers, key.callers.size - 1) else ""
+            },
+            meta = stringResource(R.string.orbit_vault_usage_meta, key.total, relativeTime(key.last)),
+            onClick = { open = !open },
+        )
+        if (open) {
+            key.callers.forEach { c ->
+                Text(
+                    stringResource(R.string.orbit_vault_usage_caller, vaultCallerName(c), c.count, relativeTime(c.last)),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 60.dp, end = 8.dp, bottom = 6.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun vaultCallerName(c: com.ai.assistance.operit.features.orbit.OrbitVaultUsage.Caller): String = when {
+    c.key == com.ai.assistance.operit.features.orbit.OrbitVaultUsage.ORBIT -> stringResource(R.string.orbit_vault_usage_orbit)
+    c.key == com.ai.assistance.operit.features.orbit.OrbitVaultUsage.BROWSER -> stringResource(R.string.orbit_vault_usage_browser)
+    c.key.startsWith("hook:") -> stringResource(R.string.orbit_vault_usage_hook,
+        c.label.ifBlank { stringResource(R.string.orbit_vault_usage_hook_unnamed) })
+    c.key.startsWith("package:") -> stringResource(R.string.orbit_vault_usage_package, c.key.removePrefix("package:"))
+    else -> c.key
 }
 
 internal fun relativeTime(time: Long): String =

@@ -19,7 +19,7 @@
 
 ### 当前工具链
 
-使用 JDK 21、Gradle 9.3.1、AGP 9.1.1、Kotlin 2.2.20 和 Android SDK
+使用 JDK 21、Gradle 9.7.1、AGP 9.4.0、Kotlin 2.2.20 和 Android SDK
 37.1（`platforms;android-37.1`）。根构建通过 `finalizeDsl` 为所有 Android
 模块统一编译 SDK，并固定 NDK 27.0.12077973；CMake 仍为 3.31.6。
 `minSdk` 与 `targetSdk` 不因编译 SDK 升级而改变。
@@ -28,6 +28,30 @@ AGP 9 迁移期间保留外置 Kotlin 插件与旧 DSL：
 `android.builtInKotlin=false`、`android.newDsl=false`。这是为了兼容当前
 KAPT、ObjectBox 和 terminal 子模块，并非永久方案；升级到 AGP 10 前需要完成迁移。
 本地与 CI 均须安装 Build Tools 37.0.0。
+
+### 带浏览器版（`-PoperitBrowser=true`）
+
+命令行加 `-PoperitBrowser=true` 会打出内置 Cefrium 浏览器引擎的版本（见
+`docs/TODO/browser_engine_roadmap/index.md`）：最低 Android 10（`minSdk 29`），APK
+约大 100 MB，`BuildConfig.BROWSER_ENGINE_BUILT_IN = true`。Cefrium 要求 Gradle 运行在
+JDK 25 上，用其它 JDK 会直接报错提示。不加开关就是普通版，和以前一样。
+
+```powershell
+$env:JAVA_HOME = "<JDK 25 目录>"
+.\gradlew.bat :app:assembleDebug -PoperitBrowser=true
+```
+
+开关只认命令行的 `-P`，写进 `gradle.properties` 不生效。带浏览器版的浏览器标签页都跑在
+Cefrium 上，引擎建页失败时该标签页回退 WebView；启动时 Cefrium 会通过它自带的
+`CefriumInitProvider` 初始化。
+
+在 x86_64 安卓模拟器上测试时再加 `-PoperitAbi=x86_64`，打出只含 x86_64 原生库的包
+（arm64 的 Cefrium 在模拟器的 ARM 翻译层里会崩）。这个开关只用于模拟器，正式包仍是 arm64。
+终端子模块不认这个开关，这种包里终端用不了。
+
+```powershell
+.\gradlew.bat :app:assembleDebug -PoperitBrowser=true -PoperitAbi=x86_64
+```
 
 ### 1. 初始化子模块
 

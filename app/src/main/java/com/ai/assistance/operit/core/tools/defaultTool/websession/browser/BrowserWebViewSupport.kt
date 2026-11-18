@@ -48,7 +48,16 @@ internal fun StandardBrowserSessionTools.createSessionOnMain(
     customUserAgent: String?,
     profileName: String = BrowserProfiles.currentScope() ?: BrowserProfiles.MAIN,
     browserTaskId: String? = BrowserTaskScope.current(),
+    enginePopup: EngineBrowserPage? = null,
+    /** False for a WebView page's window, which must be a WebView too. */
+    useEngine: Boolean = true,
 ): BrowserToolSession {
+    // The browser build opens its tabs on the built-in engine; the WebView stays the fallback.
+    if (useEngine || enginePopup != null) {
+        createEngineSessionOnMain(sessionId, sessionName, customUserAgent, profileName, browserTaskId, enginePopup)
+            ?.let { return it }
+    }
+    check(enginePopup == null) { "The engine's window could not get a tab" }
     BrowserCdp.enableDebuggingOnMain()
     val webView = WebView(resolveWebViewContext(appContext))
     try {
@@ -60,7 +69,7 @@ internal fun StandardBrowserSessionTools.createSessionOnMain(
     val session =
         BrowserToolSession(
             id = sessionId,
-            webView = webView,
+            page = WebViewBrowserPage(webView),
             sessionName = sessionName,
             customUserAgent = customUserAgent,
             profileName = profileName,
@@ -70,8 +79,8 @@ internal fun StandardBrowserSessionTools.createSessionOnMain(
         session.viewportWidthPx = StandardBrowserSessionTools.DEFAULT_DESKTOP_VIEWPORT_WIDTH
         session.viewportHeightPx = StandardBrowserSessionTools.DEFAULT_DESKTOP_VIEWPORT_HEIGHT
     }
-    configureWebView(session, resolveUserAgent(customUserAgent))
-    userscriptManager.attachSession(session.id, session.webView)
+    configureWebView(session, webView, resolveUserAgent(customUserAgent))
+    userscriptManager.attachSession(session.id, session.page)
     return session
 }
 
@@ -87,9 +96,10 @@ internal fun StandardBrowserSessionTools.resolveWebViewContext(fallbackContext: 
 @SuppressLint("ClickableViewAccessibility")
 internal fun StandardBrowserSessionTools.configureWebView(
     session: BrowserToolSession,
+    webView: WebView,
     userAgent: String
 ) {
-    with(session.webView.settings) {
+    with(webView.settings) {
         javaScriptEnabled = true
         domStorageEnabled = true
         databaseEnabled = true
@@ -112,11 +122,22 @@ internal fun StandardBrowserSessionTools.configureWebView(
                 AppLogger.w(WEBVIEW_SUPPORT_TAG, "Failed to enable safe browsing: ${e.message}")
             }
         }
+        // Passkeys for the page's own site. Credential Manager takes an origin only on Android 14+,
+        // and each password manager still decides whether it trusts Operit as a browser.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
+            WebViewFeature.isFeatureSupported(WebViewFeature.WEB_AUTHENTICATION)
+        ) {
+            try {
+                WebSettingsCompat.setWebAuthenticationSupport(this, WebSettingsCompat.WEB_AUTHENTICATION_SUPPORT_FOR_BROWSER)
+            } catch (e: Throwable) {
+                AppLogger.w(WEBVIEW_SUPPORT_TAG, "Failed to enable passkeys: ${e.message}")
+            }
+        }
     }
     applySessionUserAgent(session, userAgent)
-    configureCookiePolicy(session.webView, session.profileName)
+    configureCookiePolicy(webView, session.profileName)
 
-    session.webView.apply {
+    webView.apply {
         importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
         isFocusable = true
         isFocusableInTouchMode = true
@@ -156,7 +177,7 @@ internal fun StandardBrowserSessionTools.configureWebView(
         }
     }
 
-    session.webView.webChromeClient =
+    webView.webChromeClient =
         object : WebChromeClient() {
             override fun onCreateWindow(
                 view: WebView?,
@@ -183,11 +204,7 @@ internal fun StandardBrowserSessionTools.configureWebView(
 
             override fun onReceivedTitle(view: WebView?, title: String?) {
                 super.onReceivedTitle(view, title)
-                session.pageTitle = title.orEmpty()
-                refreshSessionUiOnMain(session.id)
-                ioScope.launch {
-                    historyStore.updateTitle(session.currentUrl, session.pageTitle)
-                }
+                sessionTitleChanged(session, title)
             }
 
             override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
@@ -213,25 +230,12 @@ internal fun StandardBrowserSessionTools.configureWebView(
                 if (filePathCallback == null) {
                     return false
                 }
-
-                session.pendingFileChooserCallback?.onReceiveValue(null)
-                session.pendingFileChooserCallback = filePathCallback
-                session.pendingFileChooserAccept =
-                    fileChooserParams?.acceptTypes.orEmpty()
-                        .flatMap { it.split(',') }
-                        .map { it.trim() }
-                        .filter { it.isNotEmpty() }
-                        .distinct()
-                session.pendingFileChooserMultiple =
-                    fileChooserParams?.mode == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE
-                session.pendingFileChooserCapture = fileChooserParams?.isCaptureEnabled == true
-                session.lastFileChooserRequestAt = System.currentTimeMillis()
-                notifySessionStateChanged(session)
-
-                AppLogger.d(
-                    WEBVIEW_SUPPORT_TAG,
-                    "Captured file chooser request for session=${session.id}, " +
-                        "mode=${fileChooserParams?.mode}, multiple=${fileChooserParams?.mode == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE}"
+                sessionFileChooser(
+                    session,
+                    filePathCallback,
+                    fileChooserParams?.acceptTypes.orEmpty().toList(),
+                    multiple = fileChooserParams?.mode == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE,
+                    capture = fileChooserParams?.isCaptureEnabled == true
                 )
                 return true
             }
@@ -260,16 +264,15 @@ internal fun StandardBrowserSessionTools.configureWebView(
                 message: String?,
                 result: android.webkit.JsResult?
             ): Boolean {
-                session.pendingDialog =
+                sessionJsDialog(
+                    session,
                     PendingDialog(
                         type = "alert",
                         message = message.orEmpty(),
                         url = url,
                         jsResult = result
                     )
-                notifySessionStateChanged(session)
-                refreshSessionUiOnMain(session.id)
-                AppLogger.d(WEBVIEW_SUPPORT_TAG, "web_session js alert pending: ${message.orEmpty()}")
+                )
                 return true
             }
 
@@ -279,16 +282,15 @@ internal fun StandardBrowserSessionTools.configureWebView(
                 message: String?,
                 result: android.webkit.JsResult?
             ): Boolean {
-                session.pendingDialog =
+                sessionJsDialog(
+                    session,
                     PendingDialog(
                         type = "confirm",
                         message = message.orEmpty(),
                         url = url,
                         jsResult = result
                     )
-                notifySessionStateChanged(session)
-                refreshSessionUiOnMain(session.id)
-                AppLogger.d(WEBVIEW_SUPPORT_TAG, "web_session js confirm pending: ${message.orEmpty()}")
+                )
                 return true
             }
 
@@ -299,7 +301,8 @@ internal fun StandardBrowserSessionTools.configureWebView(
                 defaultValue: String?,
                 result: android.webkit.JsPromptResult?
             ): Boolean {
-                session.pendingDialog =
+                sessionJsDialog(
+                    session,
                     PendingDialog(
                         type = "prompt",
                         message = message.orEmpty(),
@@ -307,81 +310,30 @@ internal fun StandardBrowserSessionTools.configureWebView(
                         url = url,
                         jsPromptResult = result
                     )
-                notifySessionStateChanged(session)
-                refreshSessionUiOnMain(session.id)
-                AppLogger.d(WEBVIEW_SUPPORT_TAG, "web_session js prompt pending: ${message.orEmpty()}")
+                )
                 return true
             }
         }
 
-    session.webView.webViewClient =
+    webView.webViewClient =
         object : WebViewClient() {
             override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
                 super.onPageStarted(view, url, favicon)
-                session.currentUrl = url
-                session.pageLoaded = false
-                session.isLoading = true
-                // The error page shown after a refused certificate starts with the same URL; keep its reason.
-                if (url != session.sslErrorUrl) {
-                    session.hasSslError = false
-                    session.sslErrorDetail = null
-                    session.sslErrorUrl = null
-                }
-                session.lastPermissionNote = null
-                session.lastSnapshot = null
-                clearEventLogs(session)
-                session.pendingDialog = null
-                notifySessionStateChanged(session)
-                userscriptManager.onPageChanged(session.id, url, forceReset = true)
-                syncNavigationStateUi(session)
+                sessionPageStarted(session, url)
             }
 
             override fun onPageCommitVisible(view: WebView, url: String) {
                 super.onPageCommitVisible(view, url)
-                session.currentUrl = url
-                session.lastSnapshot = null
-                notifySessionStateChanged(session)
-                userscriptManager.onPageChanged(session.id, url)
-                refreshNavigationStateFromWebView(view, session)
+                sessionPageCommitted(session, url)
             }
 
             override fun onPageFinished(view: WebView, url: String) {
                 super.onPageFinished(view, url)
-                session.currentUrl = url
-                userscriptManager.onPageChanged(session.id, url)
-                session.pageTitle = view.title ?: ""
-                session.pageLoaded = true
-                session.isLoading = false
-                notifySessionStateChanged(session)
-                applyViewportOverride(session)
-                refreshNavigationStateFromWebView(view, session)
-                injectDownloadHelper(view)
-                injectTextSelectionHelper(view)
-                ioScope.launch {
-                    historyStore.updateTitle(url, session.pageTitle)
-                }
+                sessionPageFinished(session, url)
             }
 
-            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                val uri = request.url
-                val scheme = uri.scheme?.lowercase()
-                if (scheme == "blob") {
-                    injectBlobDownloaderScript(session, uri.toString())
-                    return true
-                }
-                if (scheme == "data") {
-                    handleInlineDownload(
-                        session = session,
-                        base64Data = uri.toString(),
-                        fileName = "download_${System.currentTimeMillis()}",
-                        mimeType = guessMimeTypeFromDataUrl(uri.toString()),
-                        type = "data",
-                        sourceUrl = uri.toString()
-                    )
-                    return true
-                }
-                return handleNavigationOverrideOnMain(session, uri)
-            }
+            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
+                sessionShouldOverrideNavigation(session, request.url)
 
             override fun shouldInterceptRequest(
                 view: WebView,
@@ -394,13 +346,7 @@ internal fun StandardBrowserSessionTools.configureWebView(
 
             override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
                 super.doUpdateVisitedHistory(view, url, isReload)
-                session.currentUrl = url
-                val pageTitle = view.title.orEmpty()
-                notifySessionStateChanged(session)
-                refreshNavigationStateFromWebView(view, session)
-                ioScope.launch {
-                    historyStore.recordVisit(url, pageTitle, isReload)
-                }
+                sessionHistoryUpdated(session, url, isReload)
             }
 
             override fun onReceivedSslError(
@@ -408,11 +354,6 @@ internal fun StandardBrowserSessionTools.configureWebView(
                 handler: SslErrorHandler,
                 error: android.net.http.SslError
             ) {
-                AppLogger.w(
-                    WEBVIEW_SUPPORT_TAG,
-                    "web_session SSL error, refusing the connection. " +
-                        "session=${session.id}, url=${error.url}, primaryError=${error.primaryError}"
-                )
                 val reason =
                     when (error.primaryError) {
                         android.net.http.SslError.SSL_EXPIRED -> "the certificate has expired"
@@ -422,12 +363,7 @@ internal fun StandardBrowserSessionTools.configureWebView(
                         android.net.http.SslError.SSL_DATE_INVALID -> "the certificate date is invalid"
                         else -> "the certificate is invalid"
                     }
-                session.hasSslError = true
-                session.sslErrorDetail = "$reason (${error.url})"
-                session.sslErrorUrl = error.url
-                notifySessionStateChanged(session)
-                updateNavigationState(session)
-                refreshSessionUiOnMain(session.id)
+                sessionSslError(session, error.url, reason)
                 // Proceeding would let anyone on the network read or change the page, logins included.
                 handler.cancel()
             }
@@ -436,43 +372,8 @@ internal fun StandardBrowserSessionTools.configureWebView(
                 view: WebView,
                 detail: android.webkit.RenderProcessGoneDetail
             ): Boolean {
-                AppLogger.e(
-                    WEBVIEW_SUPPORT_TAG,
-                    "web_session render process gone: session=${session.id}, " +
-                        "didCrash=${detail.didCrash()}, priority=${detail.rendererPriorityAtExit()}"
-                )
-                session.pageLoaded = false
-                session.isLoading = false
-                session.lastSnapshot = null
-                session.pendingDialog?.jsPromptResult?.cancel()
-                session.pendingDialog?.jsResult?.cancel()
-                session.pendingDialog = null
-                session.pendingFileChooserCallback?.onReceiveValue(null)
-                session.pendingFileChooserCallback = null
-                notifySessionStateChanged(session)
-                session.currentUrl.takeIf { it.isNotBlank() && it != "about:blank" }?.let { url ->
-                    StandardBrowserSessionTools.crashedTabs.add(
-                        StandardBrowserSessionTools.CrashedTab(
-                            url = url,
-                            title = session.pageTitle,
-                            profileName = session.profileName,
-                            at = System.currentTimeMillis(),
-                            crashed = detail.didCrash(),
-                            browserTaskId = session.browserTaskId,
-                        )
-                    )
-                    while (StandardBrowserSessionTools.crashedTabs.size > 10) {
-                        StandardBrowserSessionTools.crashedTabs.removeAt(0)
-                    }
-                }
-                closeSession(session.id)
-                showToast(
-                    if (detail.didCrash()) {
-                        context.getString(R.string.web_session_render_process_crashed)
-                    } else {
-                        context.getString(R.string.web_session_render_process_gone)
-                    }
-                )
+                AppLogger.e(WEBVIEW_SUPPORT_TAG, "WebView renderer priority at exit: ${detail.rendererPriorityAtExit()}")
+                sessionRenderProcessGone(session, detail.didCrash())
                 return true
             }
         }
@@ -515,8 +416,8 @@ internal fun StandardBrowserSessionTools.createBrowserHostCallbacks(
             runOnMainSync<Unit> {
                 val session = getActiveSessionOnMain() ?: return@runOnMainSync
                 ensureSessionAttachedOnMain(session.id)
-                if (session.webView.canGoBack()) {
-                    session.webView.goBack()
+                if (session.page.canGoBack()) {
+                    session.page.goBack()
                 }
                 refreshNavigationStateAsync(session)
             }
@@ -526,8 +427,8 @@ internal fun StandardBrowserSessionTools.createBrowserHostCallbacks(
             runOnMainSync<Unit> {
                 val session = getActiveSessionOnMain() ?: return@runOnMainSync
                 ensureSessionAttachedOnMain(session.id)
-                if (session.webView.canGoForward()) {
-                    session.webView.goForward()
+                if (session.page.canGoForward()) {
+                    session.page.goForward()
                 }
                 refreshNavigationStateAsync(session)
             }
@@ -538,12 +439,12 @@ internal fun StandardBrowserSessionTools.createBrowserHostCallbacks(
                 val session = getActiveSessionOnMain() ?: return@runOnMainSync
                 ensureSessionAttachedOnMain(session.id)
                 if (session.isLoading) {
-                    session.webView.stopLoading()
+                    session.page.stopLoading()
                     session.isLoading = false
                 } else {
                     session.pageLoaded = false
                     session.isLoading = true
-                    session.webView.reload()
+                    session.page.reload()
                 }
                 refreshNavigationStateAsync(session)
             }
@@ -581,6 +482,12 @@ internal fun StandardBrowserSessionTools.createBrowserHostCallbacks(
             }
         }
 
+        override fun onSetExpanded(expanded: Boolean) {
+            runOnMainSync<Unit> {
+                setExpandedOnMain(expanded)
+            }
+        }
+
         override fun onCloseCurrentTab() {
             resolvePreferredSessionId()?.let { closeSession(it) }
         }
@@ -607,10 +514,10 @@ internal fun StandardBrowserSessionTools.createBrowserHostCallbacks(
             runOnMainSync<Unit> {
                 val session = getActiveSessionOnMain() ?: return@runOnMainSync
                 ensureSessionAttachedOnMain(session.id)
-                val historyList = session.webView.copyBackForwardList()
+                val historyList = session.page.backForwardList()
                 val delta = index - historyList.currentIndex
-                if (delta != 0 && session.webView.canGoBackOrForward(delta)) {
-                    session.webView.goBackOrForward(delta)
+                if (delta != 0 && session.page.canGoBackOrForward(delta)) {
+                    session.page.goBackOrForward(delta)
                     refreshNavigationStateAsync(session)
                 }
             }
@@ -750,16 +657,16 @@ internal fun StandardBrowserSessionTools.openUserscriptSheetOnMain() {
 internal fun StandardBrowserSessionTools.keepActiveWebViewRunningOnMain(expanded: Boolean) {
     val session = getActiveSessionOnMain() ?: return
     try {
-        session.webView.onResume()
-        session.webView.resumeTimers()
-        session.webView.visibility = View.VISIBLE
-        session.webView.alpha = 1f
+        session.page.onResume()
+        session.webView?.resumeTimers()
+        session.page.view.visibility = View.VISIBLE
+        session.page.view.alpha = 1f
         if (expanded) {
-            if (!session.webView.hasFocus()) {
-                session.webView.requestFocus()
+            if (!session.page.view.hasFocus()) {
+                session.page.view.requestFocus()
             }
         } else {
-            session.webView.clearFocus()
+            session.page.view.clearFocus()
         }
     } catch (e: Exception) {
         AppLogger.w(WEBVIEW_SUPPORT_TAG, "Failed to keep active WebView running: ${e.message}")
@@ -810,9 +717,9 @@ internal fun StandardBrowserSessionTools.navigateSessionOnMain(
     updateNavigationState(session)
     refreshSessionUiOnMain(session.id)
     if (headers.isNotEmpty()) {
-        session.webView.loadUrl(targetUrl, headers)
+        session.page.loadUrl(targetUrl, headers)
     } else {
-        session.webView.loadUrl(targetUrl)
+        session.page.loadUrl(targetUrl)
     }
     refreshNavigationStateAsync(session)
 }
@@ -839,7 +746,7 @@ internal fun StandardBrowserSessionTools.handleUserscriptDownloadOnMain(
     handleRegularDownload(
         session = session,
         url = url,
-        userAgent = session.webView.settings.userAgentString.orEmpty(),
+        userAgent = session.page.userAgent,
         contentDisposition =
             fileName?.takeIf { it.isNotBlank() }?.let { "attachment; filename=\"$it\"" },
         mimeType = null
@@ -859,10 +766,10 @@ internal fun StandardBrowserSessionTools.ensureSessionAttachedOnMain(sessionId: 
     ensureOverlayOnMain(context.applicationContext)
     selectSessionForCallerOnMain(session)
     runCatching {
-        session.webView.onResume()
-        session.webView.resumeTimers()
-        session.webView.visibility = View.VISIBLE
-        session.webView.alpha = 1f
+        session.page.onResume()
+        session.webView?.resumeTimers()
+        session.page.view.visibility = View.VISIBLE
+        session.page.view.alpha = 1f
     }
     updateNavigationState(session)
     syncProjectedBrowserStateOnMain()
@@ -880,7 +787,7 @@ private fun StandardBrowserSessionTools.selectSessionForCallerOnMain(session: Br
         StandardBrowserSessionTools.activeSessionId = session.id
     }
     if (session.browserTaskId != null) StandardBrowserSessionTools.browserHost?.attachBackgroundWebView(
-        session.webView, session.viewportWidthPx, session.viewportHeightPx)
+        session.page, session.viewportWidthPx, session.viewportHeightPx)
 }
 
 internal fun StandardBrowserSessionTools.refreshSessionUiOnMain(sessionId: String? = null) {
@@ -901,7 +808,7 @@ private fun StandardBrowserSessionTools.syncProjectedBrowserStateUnscoped() {
     val activeSession = resolvedActiveId?.let(::sessionById)
     StandardBrowserSessionTools.activeSessionId = resolvedActiveId
     StandardBrowserSessionTools.browserHost?.attachActiveWebView(
-        activeSession?.webView,
+        activeSession?.page,
         activeSession?.viewportWidthPx,
         activeSession?.viewportHeightPx
     )
@@ -969,24 +876,23 @@ internal fun StandardBrowserSessionTools.buildBrowserState(
                 }
             },
         sessionHistory =
-            activeSession?.let { buildSessionHistory(it.webView) } ?: emptyList(),
+            activeSession?.let { buildSessionHistory(it.page) } ?: emptyList(),
         userscriptMenuCommands = userscriptManager.getMenuCommands(activeId)
     )
 }
 
 internal fun StandardBrowserSessionTools.buildSessionHistory(
-    webView: WebView
+    page: BrowserPage
 ): List<WebSessionSessionHistoryItem> {
-    val historyList = webView.copyBackForwardList()
-    if (historyList.size == 0) {
+    val historyList = page.backForwardList()
+    if (historyList.entries.isEmpty()) {
         return emptyList()
     }
 
-    return buildList(historyList.size) {
-        for (index in 0 until historyList.size) {
-            val item = historyList.getItemAtIndex(index)
-            val url = item?.url.orEmpty().ifBlank { "about:blank" }
-            val title = item?.title.orEmpty().ifBlank { url }
+    return buildList(historyList.entries.size) {
+        historyList.entries.forEachIndexed { index, item ->
+            val url = item.url.ifBlank { "about:blank" }
+            val title = item.title.ifBlank { url }
             add(
                 WebSessionSessionHistoryItem(
                     index = index,
@@ -1017,8 +923,8 @@ internal fun StandardBrowserSessionTools.getActiveSessionOnMain(): BrowserToolSe
     buildPageRegistry().activeSessionId?.let(::sessionById)
 
 internal fun StandardBrowserSessionTools.updateNavigationState(session: BrowserToolSession) {
-    session.canGoBack = runCatching { session.webView.canGoBack() }.getOrDefault(false)
-    session.canGoForward = runCatching { session.webView.canGoForward() }.getOrDefault(false)
+    session.canGoBack = runCatching { session.page.canGoBack() }.getOrDefault(false)
+    session.canGoForward = runCatching { session.page.canGoForward() }.getOrDefault(false)
     notifySessionStateChanged(session)
 }
 
@@ -1027,20 +933,8 @@ internal fun StandardBrowserSessionTools.syncNavigationStateUi(session: BrowserT
     refreshSessionUiOnMain(session.id)
 }
 
-internal fun StandardBrowserSessionTools.refreshNavigationStateFromWebView(
-    view: WebView,
-    session: BrowserToolSession
-) {
-    syncNavigationStateUi(session)
-    view.post {
-        if (session.webView === view) {
-            syncNavigationStateUi(session)
-        }
-    }
-}
-
 internal fun StandardBrowserSessionTools.refreshNavigationStateAsync(session: BrowserToolSession) {
-    session.webView.post {
+    session.page.view.post {
         syncNavigationStateUi(session)
     }
 }
@@ -1075,7 +969,12 @@ internal fun StandardBrowserSessionTools.applySessionUserAgent(
     userAgent: String
 ) {
     val isDesktopMode = StandardBrowserSessionTools.desktopModeEnabled
-    with(session.webView.settings) {
+    val webView = session.webView ?: run {
+        session.page.userAgent = userAgent
+        if (session.customUserAgent == null) session.page.applyChromeClientHints(isDesktopMode)
+        return
+    }
+    with(webView.settings) {
         userAgentString = userAgent
         useWideViewPort = isDesktopMode && session.viewportWidthPx == null
         loadWithOverviewMode = isDesktopMode && session.viewportWidthPx == null
@@ -1127,7 +1026,9 @@ internal fun StandardBrowserSessionTools.applySessionUserAgent(
 
 internal fun StandardBrowserSessionTools.applyViewportOverride(session: BrowserToolSession) {
     val hasViewportOverride = session.viewportWidthPx != null && session.viewportHeightPx != null
-    with(session.webView.settings) {
+    // The engine's tabs lay out at their view's size already.
+    val settings = session.webView?.settings ?: return
+    with(settings) {
         // Page zoom does not change Chromium's layout viewport. With an explicit viewport,
         // size the WebView itself and let its control width define the CSS layout width.
         useWideViewPort = StandardBrowserSessionTools.desktopModeEnabled && !hasViewportOverride
@@ -1144,16 +1045,20 @@ internal fun StandardBrowserSessionTools.configureCookiePolicy(webView: WebView,
 }
 
 internal fun StandardBrowserSessionTools.createPopupSessionOnMain(
-    parentSession: BrowserToolSession
+    parentSession: BrowserToolSession,
+    enginePopup: EngineBrowserPage? = null,
 ): BrowserToolSession {
     val popupSession =
         createSessionOnMain(
-            appContext = parentSession.webView.context ?: context.applicationContext,
+            appContext = parentSession.page.view.context ?: context.applicationContext,
             sessionId = UUID.randomUUID().toString(),
             sessionName = parentSession.sessionName,
             customUserAgent = parentSession.customUserAgent,
             profileName = parentSession.profileName,
             browserTaskId = parentSession.browserTaskId,
+            enginePopup = enginePopup,
+            // A window takes its opener's browser: a WebView hands its window a WebView.
+            useEngine = parentSession.page is EngineBrowserPage,
         )
     StandardBrowserSessionTools.sessions[popupSession.id] = popupSession
     addSessionOrder(popupSession.id)
@@ -1443,7 +1348,7 @@ internal fun StandardBrowserSessionTools.setDesktopModeEnabled(enabled: Boolean)
         if (activeSession != null && activeSession.customUserAgent == null) {
             activeSession.pageLoaded = false
             activeSession.isLoading = true
-            activeSession.webView.reload()
+            activeSession.page.reload()
             refreshNavigationStateAsync(activeSession)
         } else {
             refreshSessionUiOnMain(activeSession?.id)
@@ -1469,6 +1374,8 @@ internal fun StandardBrowserSessionTools.resolvePendingDialogOnMain(
         } else {
             pending.jsResult.cancel()
         }
+    } else if (pending.answer != null) {
+        pending.answer.invoke(accept, if (pending.type == "prompt") promptText ?: pending.defaultValue.orEmpty() else null)
     }
     session.pendingDialog = null
     notifySessionStateChanged(session)
@@ -1503,11 +1410,13 @@ internal fun StandardBrowserSessionTools.closeSession(sessionId: String): Boolea
     BrowserCdp.forget(sessionId)
     session.browserTaskId?.let { com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.tabClosed(it, sessionId) }
 
-    val watched = com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.watching.value
-    if (watched != null && session.browserTaskId == watched &&
-        StandardBrowserSessionTools.sessions.values.none { it.browserTaskId == watched }) {
-        com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.handBack(watched)
-        setExpandedOnMain(false)
+    // A task's last page is gone: whoever held it has nothing left to hand back, also when the user
+    // is looking at another task meanwhile. The watch screen closes if it showed this task.
+    val task = session.browserTaskId
+    if (task != null && StandardBrowserSessionTools.sessions.values.none { it.browserTaskId == task }) {
+        val watched = com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.watching.value == task
+        com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.handBack(task)
+        if (watched) setExpandedOnMain(false)
     }
     userscriptManager.detachSession(sessionId)
     if (wasActive) {
@@ -1515,17 +1424,16 @@ internal fun StandardBrowserSessionTools.closeSession(sessionId: String): Boolea
         StandardBrowserSessionTools.browserHost?.attachActiveWebView(null)
     }
 
-    val parent = session.webView.parent
+    val parent = session.page.view.parent
     if (parent is ViewGroup) {
-        parent.removeView(session.webView)
+        parent.removeView(session.page.view)
     }
     session.pendingFileChooserCallback?.onReceiveValue(null)
     session.pendingFileChooserCallback = null
-    session.pendingDialog?.jsPromptResult?.cancel()
-    session.pendingDialog?.jsResult?.cancel()
+    session.pendingDialog?.cancel()
     session.pendingDialog = null
     notifySessionStateChanged(session)
-    cleanupWebViewOnMain(session.webView)
+    session.webView?.let { cleanupWebViewOnMain(it) } ?: session.page.destroy()
 
     BrowserProfiles.withScope(null) { BrowserTaskScope.withScope(null) {
         val allRemaining = orderedSessionIds().filter { sessionById(it) != null }

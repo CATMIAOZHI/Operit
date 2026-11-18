@@ -129,6 +129,13 @@ class CollaborationCoordinator private constructor(context: Context) {
         state.agents.firstOrNull { it.chatId == chatId && !it.archived && it.path != AgentPath.ROOT }?.workSince
     }
 
+    /** The chats of [rootChatId]'s agents whose latest work was asked for within [range]. */
+    fun chatsWorkingSince(rootChatId: String, range: LongRange): List<String> = synchronized(lock) {
+        state.agents.filter {
+            it.rootChatId == rootChatId && !it.archived && it.path != AgentPath.ROOT && it.workSince?.let(range::contains) == true
+        }.map { it.chatId }
+    }
+
     /** The request time work from [sender] carries: its own when it is the main agent. */
     private fun workSinceFrom(sender: CollaborationAgent, at: Long): Long =
         if (sender.path == AgentPath.ROOT) at else sender.workSince ?: at

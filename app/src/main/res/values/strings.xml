@@ -561,7 +561,7 @@
     <string name="about_description">Operit Ry是一个智能助手应用，能够帮助用户更高效地使用设备，提供界面分析、聊天对话等功能。</string>
     <string name="about_developer">维护者: &lt;a href="https://github.com/CATMIAOZHI"&gt;Rainy&lt;/a&gt;</string>
     <string name="about_contact">上游项目: AAswordman / Operit</string>
-    <string name="about_website">&lt;a href="https://github.com/CATMIAOZHI/Operit"&gt;GitHub: https://github.com/CATMIAOZHI/Operit&lt;/a&gt;</string>
+    <string name="about_website">&lt;a href="https://github.com/CATMIAOZHI/orbit"&gt;GitHub: https://github.com/CATMIAOZHI/orbit&lt;/a&gt;</string>
     <string name="about_copyright">© 2025 - 2026 Operit. 保留所有权利。</string>
     <string name="star_on_github">在 GitHub 点个 Star</string>
     <string name="update_log">更新日志</string>
@@ -7280,6 +7280,9 @@
     <string name="attachment_added">已添加附件: %1$s</string>
     <string name="attachment_media_process_failed">无法处理媒体文件，请尝试其他方式</string>
     <string name="attachment_cannot_attach">无法附加文件: %1$s</string>
+    <string name="paste_as_attachment">粘贴为附件</string>
+    <string name="attachment_paste">粘贴</string>
+    <string name="paste_attachment_failed">读不到粘贴的内容</string>
     <string name="attachment_file_not_exist">文件不存在</string>
     <string name="attachment_add_failed">添加附件失败: %1$s</string>
     <string name="attachment_screen_content_failed">获取屏幕内容失败: %1$s</string>
@@ -8314,6 +8317,7 @@
     <string name="web_session_accessibility_minimized_indicator">已最小化网页会话面板，双击展开</string>
     <string name="web_session_render_process_crashed">当前网页渲染进程已崩溃，已关闭该标签页。</string>
     <string name="web_session_render_process_gone">当前网页渲染进程已被系统回收，已关闭该标签页。</string>
+    <string name="web_session_before_unload_message">这个网页可能有没保存的内容，确定要离开吗？（确定：离开，取消：留下）</string>
     <string name="web_session_back">后退</string>
     <string name="web_session_forward">前进</string>
     <string name="web_session_refresh">刷新</string>
@@ -9578,9 +9582,15 @@
     <string name="orbit_system_empty">这个文件夹是空的。</string>
     <string name="orbit_system_folder">文件夹</string>
     <string name="orbit_system_copy_path">复制路径</string>
-    <string name="orbit_builds_book_text">书的原文 · %1$d 章</string>
-    <string name="orbit_builds_book_text_show">展开章节</string>
-    <string name="orbit_builds_book_text_hide">收起章节</string>
+    <plurals name="orbit_builds_folder_files">
+        <item quantity="other">%1$d 个文件</item>
+    </plurals>
+    <string name="orbit_builds_sort_current">排序方式：%1$s</string>
+    <string name="orbit_builds_sort_time">最近修改</string>
+    <string name="orbit_builds_sort_added">最近添加</string>
+    <string name="orbit_builds_sort_name">名称</string>
+    <string name="orbit_builds_sort_size">大小</string>
+    <string name="orbit_builds_sort_type">类型</string>
     <string name="orbit_builds_made_empty">%1$s 给你做的东西和存下的文件会出现在这里。</string>
     <string name="orbit_uploads_used">已用 %1$s / %2$s</string>
     <string name="orbit_uploads_hint">你发给 %1$s 的图片和文件都存在这里。满了以后会先删最早的，但最近的 100 个一直保留。</string>
@@ -9880,6 +9890,22 @@
     <string name="orbit_approval_approve">同意</string>
     <string name="orbit_approval_allow_once">允许一次</string>
     <string name="orbit_approval_allow_always">始终允许</string>
+    <string name="orbit_hook_vault_title">让 hook「%1$s」用密钥</string>
+    <string name="orbit_hook_vault_detail">后台检查「%1$s」每次运行时会拿到这些密钥的真实值：%2$s。\n脚本里出现的网址：%3$s\n脚本文件：%4$s\n只允许这次：只放行这个脚本，脚本改了还会再问。始终允许：以后任何 hook 用这些密钥都不再问。</string>
+    <string name="orbit_hook_vault_separator">、</string>
+    <string name="orbit_vault_usage_title">密钥使用记录</string>
+    <string name="orbit_vault_usage_meta">用了 %1$d 次 · 最近 %2$s</string>
+    <string name="orbit_vault_usage_more_callers">等 %1$d 处</string>
+    <string name="orbit_vault_usage_caller">%1$s · %2$d 次 · %3$s</string>
+    <string name="orbit_vault_usage_orbit">Orbit 自己（聊天、终端、网络请求）</string>
+    <string name="orbit_vault_usage_browser">浏览器里填写</string>
+    <string name="orbit_vault_usage_hook">hook「%1$s」</string>
+    <string name="orbit_vault_usage_hook_unnamed">后台检查</string>
+    <string name="orbit_vault_usage_package">工具包 %1$s</string>
+    <string name="orbit_profile_approval_more">显示更早的记录（还有 %1$d 条）</string>
+    <string name="orbit_vault_hook_always">hook 始终可用</string>
+    <string name="orbit_vault_hook_always_desc">开着时，后台检查（hook）要用这把密钥的真实值不用再问你。关掉后，新建或改过的 hook 会重新问。</string>
+    <string name="orbit_vault_hook_always_failed">没保存上，再试一次</string>
     <string name="orbit_send_card_title">用 %1$s 对外发送</string>
     <string name="orbit_send_card_tool">工具：%1$s</string>
     <string name="orbit_send_card_param">%1$s：%2$s</string>
@@ -10048,10 +10074,14 @@
     <string name="orbit_emoji_group_flags">旗帜</string>
     <string name="orbit_vault_row">密码凭据保险箱</string>
     <string name="orbit_vault_row_desc">查看、修改和删除保存的密码和密钥</string>
-    <string name="orbit_browser_share_login">浏览器和主应用共用登录</string>
-    <string name="orbit_browser_share_login_off">现在 Orbit 用自己的一套登录，和主应用互不相通。</string>
-    <string name="orbit_browser_share_login_on">现在 Orbit 用主应用的登录。它自己那套登录还留着，关掉就换回来。</string>
-    <string name="orbit_browser_share_login_unsupported">这台手机的系统 WebView 不支持分开登录，Orbit 只能和主应用共用。</string>
+    <string name="orbit_browser_login">浏览器登录</string>
+    <string name="orbit_browser_login_separate">和主应用分开</string>
+    <string name="orbit_browser_login_shared">和主应用共用</string>
+    <string name="orbit_browser_login_separate_desc">Orbit 用自己的一套登录，和主应用互不相通。</string>
+    <string name="orbit_browser_login_shared_desc">这台手机的系统 WebView 不支持分开登录，Orbit 只能和主应用共用。</string>
+    <string name="orbit_browser_login_split_notice">浏览器登录现在固定和主应用分开。主应用里的登录都还在；Orbit 以前用的是主应用的登录，所以网站可能要在 Orbit 这边重新登录一次。</string>
+    <string name="orbit_browser_login_split_notice_ok">知道了</string>
+    <string name="chat_model_switched">模型从 %1$s 切换到了 %2$s</string>
     <string name="web_session_tab_owner">%1$s 的登录</string>
     <string name="orbit_import_row">从别的 AI 导入记忆</string>
     <string name="orbit_import_row_desc">把 ChatGPT、Claude 对你的了解带过来</string>

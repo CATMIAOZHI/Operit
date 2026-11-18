@@ -3,6 +3,7 @@ package com.ai.assistance.operit.features.search
 import android.content.Context
 import com.ai.assistance.operit.data.api.AccountProvider
 import com.ai.assistance.operit.data.api.ProviderAccountManager
+import com.ai.assistance.operit.data.api.grokAccessToken
 import java.io.IOException
 import java.io.InterruptedIOException
 import java.time.LocalDate
@@ -67,18 +68,7 @@ object GrokSearchBridge {
         require(manager.account.value != null) {
             "还没登录 Grok 账号。请先在模型设置里登录 Grok（Orbit 里可用 orbit_vault request_account_login provider=grok）"
         }
-        val token = try {
-            manager.validAccount().accessToken
-        } catch (error: com.ai.assistance.operit.data.api.AccountHttpException) {
-            // The token server only answers 400/401 when the saved login itself was refused.
-            throw IOException(
-                if (error.status in setOf(400, 401)) "Grok 登录已失效，请重新登录 Grok 账号"
-                else "刷新 Grok 登录时服务器出错（HTTP ${error.status}），请稍后再试，不用重新登录",
-                error,
-            )
-        } catch (error: IOException) {
-            throw IOException("连不上 Grok 登录服务器，请检查网络后稍后再试，不用重新登录", error)
-        }
+        val token = manager.grokAccessToken()
         val searches = coroutineScope {
             queries.map { query ->
                 async {

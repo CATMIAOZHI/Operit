@@ -15,18 +15,24 @@ import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
-import android.webkit.WebView
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
@@ -49,6 +55,31 @@ import com.ai.assistance.operit.ui.features.websession.browser.WebSessionMinimiz
 import com.ai.assistance.operit.util.AppLogger
 import kotlin.math.roundToInt
 import org.json.JSONTokener
+
+/** How long the browser window may take to open before the browser shows as an overlay instead. */
+private const val ACTIVITY_OPEN_TIMEOUT_MS = 2_000L
+
+/**
+ * Shows the browser in the app's own language, like the main window, also when the phone's
+ * differs. The browser outlives any one window, so the language comes from the host (read again
+ * when the browser opens) and the rest of the configuration from the window it shows in.
+ */
+@Composable
+private fun BrowserUiLocale(language: String, content: @Composable () -> Unit) {
+    val base = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val localized = remember(base, configuration, language) {
+        val locale = com.ai.assistance.operit.util.LocaleUtils.getLocaleForLanguageCode(language, base)
+        base.createConfigurationContext(
+            android.content.res.Configuration(configuration).apply { setLocales(android.os.LocaleList(locale)) }
+        )
+    }
+    CompositionLocalProvider(
+        LocalContext provides localized,
+        LocalResources provides localized.resources,
+        content = content,
+    )
+}
 
 @Composable
 private fun BrowserAppearanceTheme(orbitId: String?, content: @Composable () -> Unit) {
@@ -113,6 +144,8 @@ internal class WebSessionBrowserHost(
         fun onConfirmExternalOpen(requestId: String)
         fun onCancelExternalOpen(requestId: String)
         fun onHandlePendingDialog(accept: Boolean, promptText: String?)
+        /** Opens or puts away the browser through the tool that made it, as the browser window comes and goes. */
+        fun onSetExpanded(expanded: Boolean)
     }
 
     private val windowManager = appContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
@@ -132,11 +165,17 @@ internal class WebSessionBrowserHost(
 
     private var isExpanded: Boolean = false
     private var hostState by mutableStateOf(WebSessionBrowserHostState())
+    /** The app's own language, read again each time the browser opens so a change in settings shows. */
+    private var uiLanguage by mutableStateOf(com.ai.assistance.operit.util.LocaleUtils.getCurrentLanguage(appContext))
+    /** True while the browser shows in its activity, which leaves room for the keyboard itself. */
+    private var hostedInActivity by mutableStateOf(false)
+    /** The browser's background, which the activity's window and system bars follow. */
+    private var browserBackground: Int? = null
     /** True while Orbit's watch screen shows and the user has not taken control: the page takes no input. */
     private var watchLocked = false
     /** The Orbit chat whose watch screen showed last; when its work ends the browser closes instead of unlocking. */
     private var lastWatchTalk: String? = null
-    private var a11yHiddenWebView: java.lang.ref.WeakReference<WebView>? = null
+    private var a11yHiddenWebView: java.lang.ref.WeakReference<View>? = null
     fun ensureCreated(initialExpanded: Boolean = false) {
         if (rootView != null) {
             if (isExpanded != initialExpanded) {
@@ -175,9 +214,11 @@ internal class WebSessionBrowserHost(
             ComposeView(appContext).apply {
                 setBackgroundColor(AndroidColor.TRANSPARENT)
                 alpha = 1f
-                setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
+                // The screen moves between the overlay and the browser window; it lives as long as the host.
+                setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnLifecycleDestroyed(lifecycleOwner))
                 installViewTreeOwners(this, lifecycleOwner)
                 setContent {
+                  BrowserUiLocale(uiLanguage) {
                     val bookmarks by store.bookmarksFlow.collectAsState(initial = emptyList())
                     val history by store.historyFlow.collectAsState(initial = emptyList())
                     val userscriptUiState by userscriptStore.state.collectAsState()
@@ -188,23 +229,30 @@ internal class WebSessionBrowserHost(
                     val locked = watch != null && !watch.controlling
                     androidx.compose.runtime.SideEffect {
                         setWatchLocked(locked)
-                        // The phone's back key closes the watch screen like the X, also while the user
-                        // drives the page: going back in the page is the back button in its controls.
-                        // A dialog the page put up is dismissed first, like any popup.
-                        root.onBackKey = watch?.let { w ->
+                        // The phone's back key puts the watch screen away, also while the user drives
+                        // the page; control stays with the user until they hand it back with the
+                        // button. Going back in the page is the back button in the bottom bar. A
+                        // dialog the page put up is dismissed first, like any popup; the same in
+                        // the plain browser. Watching Orbit work, the user has nothing to close.
+                        backDismiss = if (watch != null && !watch.controlling) null else {
                             when {
-                                w.controlling && hostState.browserState.pendingDialog != null ->
+                                hostState.browserState.pendingDialog != null ->
                                     ({ callbacks.onHandlePendingDialog(false, null) })
-                                // The download sheet and the "open in another app" prompt close first, too.
-                                w.controlling && hostState.externalOpenPrompt != null -> {
+                                // The "open in another app" prompt and the sheets close first, too.
+                                hostState.externalOpenPrompt != null -> {
                                     val id = hostState.externalOpenPrompt!!.requestId
                                     ({ callbacks.onCancelExternalOpen(id) })
                                 }
-                                w.controlling && hostState.sheetRoute == WebSessionBrowserSheetRoute.DOWNLOADS ->
+                                hostState.sheetRoute != WebSessionBrowserSheetRoute.NONE ->
                                     ({ updateHostState { it.copy(sheetRoute = WebSessionBrowserSheetRoute.NONE) } })
-                                else -> w.onClose
+                                else -> null
                             }
                         }
+                        watchPutAway = watchWork?.executorChatId?.let { talk ->
+                            { com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.close(talk) }
+                        }
+                        root.onBackKey = watch?.let { backDismiss ?: watchPutAway }
+                        syncBrowserBack()
                         val ended = lastWatchTalk?.takeIf { watchWork == null && it !in orbitWorks }
                         lastWatchTalk = watchWork?.executorChatId
                         if (ended != null && isExpanded) {
@@ -214,6 +262,13 @@ internal class WebSessionBrowserHost(
                     }
 
                     BrowserAppearanceTheme(watchWork?.orbitId) {
+                        val background = androidx.compose.material3.MaterialTheme.colorScheme.background.toArgb()
+                        androidx.compose.runtime.SideEffect { reportBrowserBackground(background) }
+                        // In its activity the window draws behind the keyboard: the page ends at the
+                        // keyboard's top and the bottom bar stays behind it.
+                        CompositionLocalProvider(
+                            com.ai.assistance.operit.ui.features.websession.browser.LocalBrowserFollowsKeyboard provides hostedInActivity,
+                        ) {
                         WebSessionBrowserScreen(
                             hostState = if (watchWork == null) hostState else hostState.copy(browserState =
                                 hostState.browserState.copy(tabs = hostState.browserState.tabs.filter { tab ->
@@ -263,7 +318,9 @@ internal class WebSessionBrowserHost(
                             onCancelExternalOpen = callbacks::onCancelExternalOpen,
                             onHandlePendingDialog = callbacks::onHandlePendingDialog
                         )
+                        }
                     }
+                  }
                 }
             }
 
@@ -278,12 +335,25 @@ internal class WebSessionBrowserHost(
         overlayLifecycleOwner = lifecycleOwner
         rootView = root
         composeView = compose
-        overlayParams = createOverlayLayoutParams(initialExpanded)
+        // The overlay only keeps the pages running; the open browser shows in its own activity.
+        overlayParams = createOverlayLayoutParams(false)
         windowManager.addView(root, overlayParams)
+        BrowserPageMenus.onChanged = ::syncBrowserBack
         setExpanded(initialExpanded)
     }
 
     fun destroy() {
+        launchToken++
+        BrowserPageMenus.onChanged = null
+        backDismiss = null
+        watchPutAway = null
+        val activity = createdActivity?.get()
+        createdActivity = null
+        browserActivity = null
+        closingActivity = null
+        overlayFallback = false
+        composeView?.let { compose -> (compose.parent as? ViewGroup)?.takeIf { it !== rootView }?.removeView(compose) }
+        activity?.takeIf { !it.isFinishing }?.finishAndRemoveTask()
         hideTextSelectionActionsOverlay()
         hideIndicator()
         overlayLifecycleOwner?.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
@@ -343,10 +413,10 @@ internal class WebSessionBrowserHost(
         if (wantsIndicator()) showIndicator() else hideIndicator()
     }
 
-    fun attachActiveWebView(webView: WebView?, viewportWidth: Int? = null, viewportHeight: Int? = null) {
-        webViewHost.currentWebView()?.takeIf { it !== webView }?.let { previous ->
+    fun attachActiveWebView(page: BrowserPage?, viewportWidth: Int? = null, viewportHeight: Int? = null) {
+        webViewHost.currentPage()?.takeIf { it !== page }?.let { previous ->
             com.ai.assistance.operit.core.tools.defaultTool.standard.StandardBrowserSessionTools.sessions.values
-                .firstOrNull { it.webView === previous && it.browserTaskId != null }?.let {
+                .firstOrNull { it.page === previous && it.browserTaskId != null }?.let {
                     parkWebView(previous, it.viewportWidthPx, it.viewportHeightPx)
                 }
         }
@@ -357,15 +427,16 @@ internal class WebSessionBrowserHost(
                 it.copy(viewportWidthPx = viewportWidth, viewportHeightPx = viewportHeight)
             }
         }
-        webViewHost.setActiveWebView(webView, viewportWidth, viewportHeight)
-        applyWatchAccessibility(webView)
+        webViewHost.setActivePage(page, viewportWidth, viewportHeight)
+        applyWatchAccessibility(page?.view)
     }
 
-    fun attachBackgroundWebView(webView: WebView, width: Int?, height: Int?) {
-        if (webViewHost.currentWebView() !== webView) parkWebView(webView, width, height)
+    fun attachBackgroundWebView(page: BrowserPage, width: Int?, height: Int?) {
+        if (webViewHost.currentPage() !== page) parkWebView(page, width, height)
     }
 
-    private fun parkWebView(webView: WebView, width: Int?, height: Int?) {
+    private fun parkWebView(page: BrowserPage, width: Int?, height: Int?) {
+        val webView = page.view
         val target = backgroundViews ?: return
         if (webView.parent !== target) {
             (webView.parent as? ViewGroup)?.removeView(webView)
@@ -385,9 +456,9 @@ internal class WebSessionBrowserHost(
         webView.translationY = 0f
         // A page Orbit stopped using stays at rest when it goes back to the background.
         val task = com.ai.assistance.operit.core.tools.defaultTool.standard.StandardBrowserSessionTools.sessions.values
-            .firstOrNull { it.webView === webView }?.browserTaskId
+            .firstOrNull { it.page === page }?.browserTaskId
         val watch = com.ai.assistance.operit.features.orbit.OrbitBrowserWatch
-        if (watch.resting(task)) watch.rest(webView) else webView.onResume()
+        if (watch.resting(task)) watch.rest(page) else page.onResume()
         webView.measure(View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY),
             View.MeasureSpec.makeMeasureSpec(h, View.MeasureSpec.EXACTLY))
         webView.layout(0, 0, w, h)
@@ -419,7 +490,7 @@ internal class WebSessionBrowserHost(
     }
 
     fun performTextSelectionHaptic() {
-        rootView?.performHapticFeedback(
+        (composeView ?: rootView)?.performHapticFeedback(
             HapticFeedbackConstants.LONG_PRESS,
             HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING
         )
@@ -464,9 +535,8 @@ internal class WebSessionBrowserHost(
         hostState.browserAreaWidthPx.coerceAtLeast(0) to hostState.browserAreaHeightPx.coerceAtLeast(0)
 
     fun setExpanded(expanded: Boolean) {
-        val params = overlayParams ?: return
-        val root = rootView ?: return
-        val compose = composeView ?: return
+        rootView ?: return
+        composeView ?: return
 
         if (!expanded) {
             hideTextSelectionActionsOverlay()
@@ -489,27 +559,218 @@ internal class WebSessionBrowserHost(
             }
 
         if (expanded) {
-            root.descendantFocusability =
-                if (watchLocked) ViewGroup.FOCUS_BLOCK_DESCENDANTS else ViewGroup.FOCUS_AFTER_DESCENDANTS
-            root.setMinimizedMeasure(false)
-            root.setBackgroundColor(AndroidColor.TRANSPARENT)
-            compose.alpha = 1f
-
-            applyExpandedLayoutParams(params)
             hideIndicator()
+            uiLanguage = com.ai.assistance.operit.util.LocaleUtils.getCurrentLanguage(appContext)
+            if (browserActivity == null) launchBrowserActivity()
         } else {
             if (wantsIndicator()) showIndicator() else hideIndicator()
+            launchToken++
+            overlayFallback = false
+            // Put away by the browser itself: its window goes too. Left for another app, the
+            // window stays in the recent apps to come back to.
+            if (!leavingActivity) {
+                createdActivity?.get()?.takeIf { !it.isFinishing }?.let { closing ->
+                    closingActivity = closing
+                    closing.finishAndRemoveTask()
+                }
+                // A closing window shows nothing more: opening again right away starts a new one.
+                browserActivity = null
+            }
+        }
 
-            root.descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
+        placeBrowserScreen()
+        updateIndicatorLayoutForCurrentState()
+    }
+
+    /** The activity the open browser shows in, while it is on screen; null otherwise. */
+    private var browserActivity: WebSessionBrowserActivity? = null
+    /**
+     * The window the user just closed, while it leaves the screen: the browser stays in it so the
+     * closing animation shows the page, not an empty window. Its screen goes back to the overlay
+     * once the window is gone.
+     */
+    private var closingActivity: WebSessionBrowserActivity? = null
+    /** The browser's activity while it exists, also when it waits in the recent apps. */
+    private var createdActivity: java.lang.ref.WeakReference<WebSessionBrowserActivity>? = null
+    /** The activity could not open (the system blocked it); the browser shows over everything as before. */
+    private var overlayFallback = false
+    private var launchToken = 0
+    /** Set while the browser is put away because the user left its window for another app. */
+    private var leavingActivity = false
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    private fun launchBrowserActivity() {
+        val token = ++launchToken
+        val started = runCatching {
+            appContext.startActivity(
+                android.content.Intent(appContext, WebSessionBrowserActivity::class.java)
+                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        }.onFailure { AppLogger.w("WebSessionBrowserHost", "Could not open the browser window: ${it.message}") }.isSuccess
+        if (!started) {
+            overlayFallback = true
+            return
+        }
+        // Some systems quietly refuse to open a window from the background; show it the old way then.
+        mainHandler.postDelayed({
+            if (token == launchToken && isExpanded && browserActivity == null) {
+                AppLogger.w("WebSessionBrowserHost", "The browser window did not open; showing it as an overlay")
+                overlayFallback = true
+                placeBrowserScreen()
+            }
+        }, ACTIVITY_OPEN_TIMEOUT_MS)
+    }
+
+    internal fun onActivityCreated(activity: WebSessionBrowserActivity) {
+        val previous = createdActivity?.get()
+        createdActivity = java.lang.ref.WeakReference(activity)
+        if (previous != null && previous !== activity && !previous.isFinishing) previous.finishAndRemoveTask()
+    }
+
+    /**
+     * [firstStart] tells a window just opened from one coming back from the recent apps. A new
+     * window finding the browser already put away was asked for and then cancelled: it closes.
+     */
+    internal fun onActivityStarted(activity: WebSessionBrowserActivity, firstStart: Boolean) {
+        if (activity.isFinishing) return
+        if (createdActivity?.get() !== activity) onActivityCreated(activity)
+        if (!isExpanded && firstStart) {
+            activity.finishAndRemoveTask()
+            return
+        }
+        browserActivity = activity
+        overlayFallback = false
+        browserBackground?.let(activity::applyBrowserBackground)
+        syncBrowserBack()
+        if (isExpanded) {
+            placeBrowserScreen()
+        } else {
+            // Back from the recent apps: the browser opens again.
+            callbacks.onSetExpanded(true)
+        }
+    }
+
+    internal fun onActivityStopped(activity: WebSessionBrowserActivity) {
+        if (activity === closingActivity) {
+            closingActivity = null
+            placeBrowserScreen()
+            return
+        }
+        if (browserActivity !== activity) return
+        browserActivity = null
+        if (!isExpanded || activity.isFinishing) {
+            placeBrowserScreen()
+            return
+        }
+        // The user went to another app (or locked the phone). The page goes back to the overlay,
+        // where it keeps running for the AI; a user holding control keeps it.
+        leavingActivity = true
+        try {
+            callbacks.onSetExpanded(false)
+        } finally {
+            leavingActivity = false
+        }
+    }
+
+    /** The browser's background changed (another Orbit's appearance, say): its window follows. */
+    private fun reportBrowserBackground(color: Int) {
+        if (browserBackground == color) return
+        browserBackground = color
+        browserActivity?.applyBrowserBackground(color)
+    }
+
+    internal fun onActivityDestroyed(activity: WebSessionBrowserActivity) {
+        if (activity === closingActivity) {
+            closingActivity = null
+            placeBrowserScreen()
+        }
+        if (browserActivity === activity) {
+            browserActivity = null
+            placeBrowserScreen()
+        }
+        if (createdActivity?.get() === activity) createdActivity = null
+    }
+
+    /**
+     * Back in the browser window while it has something of its own to close: the page's long-press
+     * menu, or a popup on Orbit's watch screen. Going back in the page is the button in the bottom
+     * bar; anything else closes the window ([onActivityFinishing]).
+     */
+    internal fun handleBack() {
+        if (BrowserPageMenus.dismissOpen()) return
+        backDismiss?.let { return it() }
+        // Only when the window's back state is stale: put away as the system's back would.
+        callbacks.onMinimize()
+        watchPutAway?.invoke()
+    }
+
+    /** What back closes on the watch screen (a page dialog, a prompt, the downloads sheet). */
+    private var backDismiss: (() -> Unit)? = null
+    /** Leaves the watch screen without handing control back: only its button does that. */
+    private var watchPutAway: (() -> Unit)? = null
+
+    /**
+     * Whether back is the browser's own right now (see [WebSessionBrowserActivity]); otherwise the
+     * system takes it, shrinks the window with the finger and closes it.
+     */
+    private fun syncBrowserBack() {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post(::syncBrowserBack)
+            return
+        }
+        browserActivity?.setBrowserTakesBack(BrowserPageMenus.open != null || backDismiss != null)
+    }
+
+    /**
+     * The window is closing on its own: the system's back closed it. The browser is put away now
+     * and keeps showing in the window until it is off the screen, as when it closes itself. A user
+     * holding control keeps it.
+     */
+    internal fun onActivityFinishing(activity: WebSessionBrowserActivity) {
+        if (activity !== browserActivity || createdActivity?.get() !== activity || !isExpanded) return
+        closingActivity = activity
+        browserActivity = null
+        val putAway = watchPutAway
+        callbacks.onMinimize()
+        putAway?.invoke()
+    }
+
+    /**
+     * Puts the browser screen where it belongs: in the browser activity while it shows, full screen
+     * in the overlay when the activity could not open, and otherwise laid out unseen in the 1×1
+     * overlay, so the page in front keeps rendering for the AI.
+     */
+    private fun placeBrowserScreen() {
+        val root = rootView ?: return
+        val compose = composeView ?: return
+        val params = overlayParams ?: return
+        val activity = browserActivity?.takeIf { isExpanded }
+        // A window being closed keeps showing the page until it is off the screen, also when the
+        // browser is opened again meanwhile, until the new window (or the overlay) takes over.
+        val leaving = closingActivity?.takeIf { activity == null && !(isExpanded && overlayFallback) && !it.isDestroyed }
+        hostedInActivity = activity != null || leaving != null
+        val target: ViewGroup = activity?.container ?: leaving?.container ?: root
+        if (compose.parent !== target) {
+            (compose.parent as? ViewGroup)?.removeView(compose)
+            target.addView(
+                compose,
+                FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+            )
+        }
+        val overlayFull = isExpanded && activity == null && overlayFallback
+        val shown = activity != null || overlayFull
+        compose.alpha = if (shown || leaving != null) 1f else 0.01f
+        applyBrowserFocusability()
+        if (overlayFull) {
+            root.setMinimizedMeasure(false)
+            applyExpandedLayoutParams(params)
+        } else {
             val displayMetrics = appContext.resources.displayMetrics
             root.setMinimizedMeasure(
                 enabled = true,
                 fakeWidth = displayMetrics.widthPixels,
                 fakeHeight = displayMetrics.heightPixels
             )
-            root.setBackgroundColor(AndroidColor.TRANSPARENT)
-            compose.alpha = 0.01f
-
             params.width = 1
             params.height = 1
             params.gravity = Gravity.TOP or Gravity.START
@@ -517,18 +778,27 @@ internal class WebSessionBrowserHost(
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-
             indicatorParams?.let {
                 params.x = it.x
                 params.y = it.y
             }
         }
-
+        root.setBackgroundColor(AndroidColor.TRANSPARENT)
         overlayParams = params
         if (root.windowToken != null) {
             windowManager.updateViewLayout(root, params)
         }
-        updateIndicatorLayoutForCurrentState()
+    }
+
+    /** Only a browser on screen takes input, and Orbit's locked watch screen none. */
+    private fun applyBrowserFocusability() {
+        val root = rootView ?: return
+        val compose = composeView ?: return
+        val shown = isExpanded && (browserActivity != null || overlayFallback)
+        val focus = if (shown && !watchLocked) ViewGroup.FOCUS_AFTER_DESCENDANTS else ViewGroup.FOCUS_BLOCK_DESCENDANTS
+        compose.descendantFocusability = focus
+        root.descendantFocusability =
+            if (shown && browserActivity == null) focus else ViewGroup.FOCUS_BLOCK_DESCENDANTS
     }
 
     private fun applyExpandedLayoutParams(params: WindowManager.LayoutParams) {
@@ -587,23 +857,20 @@ internal class WebSessionBrowserHost(
     private fun setWatchLocked(locked: Boolean) {
         if (watchLocked == locked) return
         watchLocked = locked
-        val root = rootView ?: return
+        rootView ?: return
         if (locked) {
-            webViewHost.currentWebView()?.let { webView ->
+            webViewHost.currentPage()?.view?.let { webView ->
                 webView.clearFocus()
                 (appContext.getSystemService(Context.INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager)
                     ?.hideSoftInputFromWindow(webView.windowToken, 0)
             }
         }
-        if (isExpanded) {
-            root.descendantFocusability =
-                if (locked) ViewGroup.FOCUS_BLOCK_DESCENDANTS else ViewGroup.FOCUS_AFTER_DESCENDANTS
-        }
-        applyWatchAccessibility(webViewHost.currentWebView())
+        applyBrowserFocusability()
+        applyWatchAccessibility(webViewHost.currentPage()?.view)
     }
 
     /** While locked, screen readers skip the page too, so it cannot be clicked through TalkBack. */
-    private fun applyWatchAccessibility(webView: WebView?) {
+    private fun applyWatchAccessibility(webView: View?) {
         val hidden = a11yHiddenWebView?.get()
         if (hidden != null && (hidden !== webView || !watchLocked)) {
             hidden.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
@@ -636,8 +903,8 @@ internal class WebSessionBrowserHost(
     }
 
     private fun evaluateActiveWebViewSelectedText(onResult: (String) -> Unit) {
-        val webView = webViewHost.currentWebView() ?: return
-        webView.evaluateJavascript(activeWebViewSelectionTextScript()) { rawValue ->
+        val page = webViewHost.currentPage() ?: return
+        page.evaluateJavascript(activeWebViewSelectionTextScript()) { rawValue ->
             try {
                 val selectedText = JSONTokener(rawValue).nextValue() as String
                 onResult(selectedText)
@@ -655,8 +922,8 @@ internal class WebSessionBrowserHost(
         """.trimIndent()
 
     private fun selectAllActiveWebViewText() {
-        val webView = webViewHost.currentWebView() ?: return
-        webView.evaluateJavascript(
+        val page = webViewHost.currentPage() ?: return
+        page.evaluateJavascript(
             """
             (function() {
                 window.__operitTextSelection.selectAll();
@@ -671,8 +938,8 @@ internal class WebSessionBrowserHost(
     }
 
     private fun clearActiveWebViewSelection() {
-        val webView = webViewHost.currentWebView() ?: return
-        webView.evaluateJavascript(
+        val page = webViewHost.currentPage() ?: return
+        page.evaluateJavascript(
             """
             (function() {
                 window.__operitTextSelection.clear();
@@ -757,7 +1024,8 @@ internal class WebSessionBrowserHost(
         anchorY: Double
     ) {
         val params = selectionActionsParams ?: return
-        val webView = webViewHost.currentWebView() ?: return
+        val page = webViewHost.currentPage() ?: return
+        val webView = page.view
         if (actionsView.measuredWidth == 0 || actionsView.measuredHeight == 0) {
             actionsView.measure(
                 View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
@@ -767,7 +1035,7 @@ internal class WebSessionBrowserHost(
 
         val location = IntArray(2)
         webView.getLocationOnScreen(location)
-        val scale = webView.scale * webView.scaleX
+        val scale = page.scale * webView.scaleX
         val width = actionsView.measuredWidth
         val height = actionsView.measuredHeight
         val metrics = appContext.resources.displayMetrics
@@ -1069,6 +1337,10 @@ private class DeceptiveMinimizedLayout(context: Context) : FrameLayout(context) 
                     }
                     override fun onBackInvoked() {
                         if (backCommitting) return
+                        if (BrowserPageMenus.dismissOpen()) {
+                            onBackCancelled()
+                            return
+                        }
                         backCommitting = true
                         animate().scaleX(0.94f).scaleY(0.94f).alpha(0.8f).setDuration(140)
                             .withEndAction {
@@ -1078,7 +1350,7 @@ private class DeceptiveMinimizedLayout(context: Context) : FrameLayout(context) 
                     }
                 }
             } else {
-                android.window.OnBackInvokedCallback { onBackKey?.invoke() }
+                android.window.OnBackInvokedCallback { if (!BrowserPageMenus.dismissOpen()) onBackKey?.invoke() }
             }
             dispatcher.registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, callback)
             backCallback = callback
@@ -1122,7 +1394,7 @@ private class DeceptiveMinimizedLayout(context: Context) : FrameLayout(context) 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         val back = onBackKey
         if (back != null && event.keyCode == KeyEvent.KEYCODE_BACK) {
-            if (event.action == KeyEvent.ACTION_UP && !event.isCanceled) back()
+            if (event.action == KeyEvent.ACTION_UP && !event.isCanceled && !BrowserPageMenus.dismissOpen()) back()
             return true
         }
         return super.dispatchKeyEvent(event)

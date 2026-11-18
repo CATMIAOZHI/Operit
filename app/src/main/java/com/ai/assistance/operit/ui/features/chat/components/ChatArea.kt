@@ -135,7 +135,11 @@ import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.flow.collectLatest
 import com.ai.assistance.operit.util.stream.asFlow
 import kotlinx.coroutines.flow.firstOrNull
@@ -310,7 +314,103 @@ fun ChatArea(
         if (orbitLook) chatHistory.indices.filterNot { OrbitSpeech.hidden(chatHistory[it]) } else emptyList()
     }
     val orbitShownAt = remember(orbitShown) { orbitShown.withIndex().associate { it.value to it.index } }
+    // The first reply after the chat changed model says so above itself; hidden Orbit steps do not count.
+    // With older pages not loaded, the page's first reply of each role compares with the stored
+    // reply before it, so a switch right at the page edge still shows.
+    val pageStartAt = if (hasOlderDisplayHistory) chatHistory.firstOrNull()?.timestamp else null
+    val pageRoles = remember(chatHistory) {
+        chatHistory.mapNotNullTo(LinkedHashSet()) { m -> m.roleName.trim().takeIf { m.sender == "ai" && m.modelName.isNotBlank() } }
+    }
+    // Whether the page starts a turn: summaries and subagent cards do not take a turn's cards.
+    val pageOpensTurn = remember(chatHistory) {
+        chatHistory.firstOrNull { it.sender == "user" || (it.sender == "ai" && !it.displayMode.isCollaborationEvent) }?.sender == "user"
+    }
+    val subagentRoleName = LocalSubagentTranscriptRole.current
+    val seedRequest = remember(currentChatId, orbitLook, pageStartAt, pageRoles, pageOpensTurn, subagentRoleName) {
+        pageStartAt?.let { ModelSeedRequest(currentChatId, orbitLook, it, pageRoles, pageOpensTurn, subagentRoleName) }
+    }
+    val modelSeed by androidx.compose.runtime.produceState<ModelSeed?>(null, seedRequest) {
+        val request = seedRequest ?: run { value = null; return@produceState }
+        if (request.chatId.isBlank()) { value = ModelSeed(request, emptyMap(), emptySet()); return@produceState }
+        val appContext = context.applicationContext
+        // A saved reading place waits for this, so it gets a short time; past it, the lines
+        // already worked out for the chat stand and the page is not changed later. The read runs
+        // on its own, so a step that does not stop at once cannot hold the page past the time;
+        // reads take turns, so pages flipped quickly do not pile them up.
+        val read = kotlinx.coroutines.CoroutineScope(Dispatchers.IO).async { try { SettledModelSwitches.reads.withPermit {
+            readReplyModelsBefore(com.ai.assistance.operit.data.db.AppDatabase.getDatabase(appContext).chatContentDao(), request)
+        } } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        } }
+        // Only the wait is timed: the read is not a child of it, so the time ends it at once.
+        val result = try {
+            kotlinx.coroutines.withTimeoutOrNull(500) { read.await() }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // The read itself was stopped; unless this page is going, settle without it.
+            currentCoroutineContext().ensureActive()
+            null
+        } finally {
+            // A late or failed read is settled without a seed, so nothing waits on it or changes
+            // later; leaving the page stops it too.
+            read.cancel()
+        }
+        value = ModelSeed(request, result?.first ?: emptyMap(), result?.second ?: request.roles)
+    }
+    val currentSeed = modelSeed?.takeIf { it.request == seedRequest }
+    // Ready to draw the page's first replies for good (also when the seed gave up).
+    val seedReady = seedRequest == null || currentSeed != null
+    val seedByRole = currentSeed?.byRole ?: emptyMap()
+    // Roles whose first reply on the page cannot be settled yet (or at all this time).
+    val unsettledRoles = when {
+        seedRequest == null -> emptySet()
+        currentSeed == null -> seedRequest.roles
+        else -> currentSeed.unsettled
+    }
+    // The lines worked out for the chat, by reply time. A role's first reply on the page keeps the
+    // line it had while that role is unsettled, so a reply on screen neither loses nor gains one
+    // late; every other reply's line is settled by the page and remembered as it is now.
+    val settledSwitches = remember(currentChatId, orbitLook) { SettledModelSwitches.of("$orbitLook|$currentChatId") }
+    val modelSwitches = remember(chatHistory, orbitLook, seedRequest, seedByRole, unsettledRoles, settledSwitches) {
+        val found = modelSwitchesIn(chatHistory, if (orbitLook) OrbitSpeech::hidden else null, seedByRole)
+        val shown = HashMap(found)
+        val firstOfRole = HashSet<String>()
+        chatHistory.forEachIndexed { index, message ->
+            if (message.sender != "ai" || message.modelName.isBlank()) return@forEachIndexed
+            if (orbitLook && OrbitSpeech.hidden(message)) return@forEachIndexed
+            if (message.displayMode.isCollaborationEvent || message.displayMode == ChatMessageDisplayMode.HIDDEN_PLACEHOLDER) return@forEachIndexed
+            val role = message.roleName.trim()
+            if (firstOfRole.add(role) && role in unsettledRoles) {
+                val kept = settledSwitches[message.timestamp]?.takeIf { it.reply == settledReplyKey(message) }
+                if (kept != null) shown[index] = kept.switch else shown.remove(index)
+            } else {
+                val switch = found[index]
+                if (switch == null) settledSwitches.remove(message.timestamp)
+                else settledSwitches[message.timestamp] = SettledSwitch(settledReplyKey(message), switch)
+            }
+        }
+        if (settledSwitches.size > SettledModelSwitches.PER_CHAT_LIMIT) {
+            val onPage = chatHistory.mapTo(HashSet()) { it.timestamp }
+            settledSwitches.keys.retainAll(onPage)
+        }
+        shown
+    }
     val orbitShownTimes = remember(orbitShown, chatHistory) { orbitShown.mapTo(HashSet()) { chatHistory[it].timestamp } }
+    // A folded reply process shows a header row (drawn as one of its messages) and, unless opened,
+    // only its final message; its first switch goes above the header so it shows either way.
+    val foldSwitches = remember(modelSwitches, responseProcessState) {
+        val byHeader = HashMap<Int, Pair<Int, ModelSwitch>>()
+        if (responseProcessState.showSummary) {
+            responseProcessState.groups.values.distinctBy { it.key }.forEach { group ->
+                (group.firstIndex..group.finalIndex)
+                    .firstOrNull { responseProcessState.groups[it]?.key == group.key && modelSwitches[it] != null }
+                    ?.let { byHeader[group.headerIndex] = it to modelSwitches.getValue(it) }
+            }
+        }
+        byHeader
+    }
+    val foldClaimed = remember(foldSwitches) { foldSwitches.values.mapTo(HashSet()) { it.first } }
     // The loaded page's edges; a card placed beyond them waits for its page.
     val orbitLoadedFrom = if (hasOlderDisplayHistory) chatHistory.firstOrNull()?.timestamp ?: Long.MIN_VALUE else Long.MIN_VALUE
     val orbitLoadedUntil = if (hasNewerDisplayHistory) chatHistory.lastOrNull()?.timestamp ?: Long.MAX_VALUE else Long.MAX_VALUE
@@ -419,6 +519,7 @@ fun ChatArea(
         splitMarkdown = !orbitLook && (chatStyle == ChatStyle.CURSOR ||
             (bubbleAiImageStyle == null && !bubbleAiBubbleLiquidGlass && !bubbleAiBubbleWaterGlass)),
         skipMessage = if (orbitLook) OrbitSpeech::hidden else null,
+        holdRestore = !seedReady,
         onLatest = onShowLatestDisplayWindow,
         loadLocator = loadMessageLocatorEntries,
         reveal = onRevealMessageForLocator,
@@ -430,6 +531,17 @@ fun ChatArea(
         modifier = modifier,
         renderMessage = { renderIndex ->
             val renderedMessage = chatHistory[renderIndex]
+            // Once per reply: above its first slice, and above the header when the process fold
+            // splits it into a header row and body rows.
+            // A fold's header draws the first switch inside the fold, and its body skips that one.
+            if (com.ai.assistance.operit.ui.common.markdown.LocalTranscriptMarkdownSlice.current?.first != false) {
+                val shownSwitch = when (LocalResponseMessageSection.current) {
+                    ResponseMessageSection.HEADER -> foldSwitches[renderIndex]?.second
+                    ResponseMessageSection.BODY -> modelSwitches[renderIndex]?.takeIf { renderIndex !in foldClaimed }
+                    else -> modelSwitches[renderIndex]
+                }
+                shownSwitch?.let { ModelSwitchNotice(it) }
+            }
             // Cards from before the first message sit above it, where they showed.
             if (orbitLook && !hasOlderDisplayHistory && orbitShownAt[renderIndex] == 0 &&
                 com.ai.assistance.operit.ui.common.markdown.LocalTranscriptMarkdownSlice.current?.first != false) {
@@ -850,6 +962,9 @@ private fun MessageItem(
     // written as several messages (waifu mode) carries the same totals on every one of them. The
     // version switcher belongs to its message, so it still shows where the statistics do not.
     val closesCard = LocalTranscriptCardEnds.current.last
+    // A reply sent as several messages keeps its totals on the first part; the card's last part
+    // shows them.
+    val statsMessage = LocalTranscriptCardEnds.current.statsSource ?: message
     val footer: @Composable () -> Unit = {
         if (message.sender == "ai" &&
             com.ai.assistance.operit.ui.common.markdown.LocalTranscriptMarkdownSlice.current?.last != false &&
@@ -857,12 +972,13 @@ private fun MessageItem(
             // A chat with Orbit reads like messages between people: no version switcher under them.
             ((message.variantCount > 1 && !orbitLook) ||
                 (closesCard &&
-                    ((showMessageTokenStats && hasDisplayableTokenStats(message)) ||
-                        (showMessageTimingStats && hasDisplayableTimingStats(message)) ||
+                    ((showMessageTokenStats && hasDisplayableTokenStats(statsMessage)) ||
+                        (showMessageTimingStats && hasDisplayableTimingStats(statsMessage)) ||
                         (showMessageTimestamp && hasDisplayableMessageTimestamp(message)))))
         ) {
             MessageFooterBar(
                 message = message,
+                statsMessage = statsMessage,
                 showMessageTokenStats = showMessageTokenStats && closesCard,
                 showMessageTimingStats = showMessageTimingStats && closesCard,
                 showMessageTimestamp = showMessageTimestamp && closesCard,
@@ -1883,30 +1999,32 @@ internal fun MessageFooterBar(
     showMessageTimestamp: Boolean,
     allowVariantSelection: Boolean,
     onSelectVariant: (Int) -> Unit,
+    /** Where the token and timing totals are read from; the version switcher stays [message]'s. */
+    statsMessage: ChatMessage = message,
 ) {
     if (LocalResponseMessageSection.current == ResponseMessageSection.HEADER) return
     val hasPrevious = message.selectedVariantIndex > 0
     val hasNext = message.selectedVariantIndex < message.variantCount - 1
     val context = LocalContext.current
     val tokenSummary =
-        remember(message.inputTokens, message.cachedInputTokens, message.outputTokens) {
-            val totalTokens = message.inputTokens + message.outputTokens
+        remember(statsMessage.inputTokens, statsMessage.cachedInputTokens, statsMessage.outputTokens) {
+            val totalTokens = statsMessage.inputTokens + statsMessage.outputTokens
             context.getString(
                 R.string.chat_message_token_stats_compact,
                 totalTokens,
-                message.cachedInputTokens,
-                message.inputTokens,
-                message.outputTokens,
+                statsMessage.cachedInputTokens,
+                statsMessage.inputTokens,
+                statsMessage.outputTokens,
             )
         }
     val timeSummary =
-        remember(message.waitDurationMs, message.outputDurationMs) {
-            val totalDuration = (message.waitDurationMs + message.outputDurationMs).coerceAtLeast(0L)
+        remember(statsMessage.waitDurationMs, statsMessage.outputDurationMs) {
+            val totalDuration = (statsMessage.waitDurationMs + statsMessage.outputDurationMs).coerceAtLeast(0L)
             context.getString(
                 R.string.chat_message_timing_stats_compact,
                 formatCompactDuration(context, totalDuration),
-                formatCompactDuration(context, message.waitDurationMs),
-                formatCompactDuration(context, message.outputDurationMs),
+                formatCompactDuration(context, statsMessage.waitDurationMs),
+                formatCompactDuration(context, statsMessage.outputDurationMs),
             )
         }
     val messageTimeSummary =
@@ -1918,8 +2036,8 @@ internal fun MessageFooterBar(
     // The version switcher can be left alone on a row that does not close its card. Only the closing
     // row is spaced away from the next message, so the ones before it have to hold themselves off it.
     val hasStatistics =
-        (showMessageTokenStats && hasDisplayableTokenStats(message)) ||
-            (showMessageTimingStats && hasDisplayableTimingStats(message)) ||
+        (showMessageTokenStats && hasDisplayableTokenStats(statsMessage)) ||
+            (showMessageTimingStats && hasDisplayableTimingStats(statsMessage)) ||
             (showMessageTimestamp && hasDisplayableMessageTimestamp(message))
     val switcherAlone = !hasStatistics && message.variantCount > 1
 
@@ -1982,7 +2100,7 @@ internal fun MessageFooterBar(
             }
         }
 
-        if (showMessageTokenStats && hasDisplayableTokenStats(message)) {
+        if (showMessageTokenStats && hasDisplayableTokenStats(statsMessage)) {
             Text(
                 text = tokenSummary,
                 style = MaterialTheme.typography.labelSmall,
@@ -1990,7 +2108,7 @@ internal fun MessageFooterBar(
             )
         }
 
-        if (showMessageTimingStats && hasDisplayableTimingStats(message)) {
+        if (showMessageTimingStats && hasDisplayableTimingStats(statsMessage)) {
             Text(
                 text = timeSummary,
                 style = MaterialTheme.typography.labelSmall,

@@ -149,6 +149,7 @@ import com.ai.assistance.operit.ui.features.settings.components.SettingsInfoBann
 import com.ai.assistance.operit.ui.features.settings.components.SettingsNavRow
 import com.ai.assistance.operit.ui.features.settings.components.SettingsRowDivider
 import com.ai.assistance.operit.ui.features.settings.components.SettingsSectionTitle
+import com.ai.assistance.operit.ui.features.settings.components.SettingsStatusRow
 import com.ai.assistance.operit.ui.features.settings.components.SettingsSwitchRow
 import com.ai.assistance.operit.ui.features.settings.components.settingsCardColor
 import com.ai.assistance.operit.util.AppLogger
@@ -739,6 +740,14 @@ private fun OrbitChatPage(
         lifecycleState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
     LaunchedEffect(currentChatId, unreadChats, chatOnScreen) {
         if (chatOnScreen && currentChatId in unreadChats) com.ai.assistance.operit.features.orbit.OrbitDelivery.markSeen(currentChatId)
+    }
+    // Like a messenger: once the chat is in front of the user, its notifications are cleared.
+    // The developer view may show one of its subagents instead; the chat itself is not read then.
+    val chatReadable = chatOnScreen && !(devView && devSubChatId != null)
+    LaunchedEffect(currentChatId, chatReadable) {
+        if (chatReadable) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching { com.ai.assistance.operit.features.orbit.OrbitDelivery.clearNotifications(context, currentChatId) }
+        }
     }
     // Orbit's tapback on one of the user's messages lands with a tap, while that chat is in view.
     // The developer view can show one of the chat's subagents instead; its own chat is not in view then.
@@ -2172,50 +2181,39 @@ private fun OrbitSettingsPage(
                     val separateLoginsSupported = remember {
                         com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserProfiles.isSupported()
                     }
-                    // Switching logins either way asks first: it changes which accounts Orbit acts as.
-                    var pendingShare by remember { mutableStateOf<Boolean?>(null) }
-                    SettingsSwitchRow(
+                    // Orbit always keeps its own logins; the row only says so. Only a WebView that
+                    // cannot keep logins apart makes it share the app's.
+                    SettingsStatusRow(
                         modifier = anchor(SWITCH_SHARED_LOGIN),
-                        title = stringResource(R.string.orbit_browser_share_login),
-                        subtitle =
-                            when {
-                                !separateLoginsSupported -> stringResource(R.string.orbit_browser_share_login_unsupported)
-                                orbit.browserSharesMainLogin -> stringResource(R.string.orbit_browser_share_login_on)
-                                else -> stringResource(R.string.orbit_browser_share_login_off)
-                            },
-                        checked = orbit.browserSharesMainLogin || !separateLoginsSupported,
-                        enabled = separateLoginsSupported,
-                        searchable = false,
-                        onCheckedChange = { shared ->
-                            pendingShare = shared
-                        },
+                        title = stringResource(R.string.orbit_browser_login),
+                        subtitle = stringResource(
+                            if (separateLoginsSupported) R.string.orbit_browser_login_separate_desc
+                            else R.string.orbit_browser_login_shared_desc,
+                        ),
+                        status = stringResource(
+                            if (separateLoginsSupported) R.string.orbit_browser_login_separate
+                            else R.string.orbit_browser_login_shared,
+                        ),
+                        icon = lucide("link"),
                     )
-                    pendingShare?.let { shared ->
-                        TaskConfirmSheet(
-                            icon = if (shared) "link" else "link-2-off",
-                            title = stringResource(
-                                if (shared) R.string.orbit_browser_share_confirm_on_title
-                                else R.string.orbit_browser_share_confirm_off_title,
-                                orbitName(orbit),
-                            ),
-                            message = stringResource(
-                                if (shared) R.string.orbit_browser_share_confirm_on
-                                else R.string.orbit_browser_share_confirm_off,
-                                orbit.name,
-                            ),
-                            confirmText = stringResource(R.string.orbit_browser_share_confirm_ok),
-                            dismissText = stringResource(R.string.cancel),
-                            destructive = false,
-                            onDismiss = { pendingShare = null },
-                            onConfirm = {
-                                pendingShare = null
-                                scope.launch { preferences.setBrowserSharesMainLogin(orbit.id, shared) }
-                            },
-                        )
+                    // Said once to an Orbit that used the app's logins before they were kept apart.
+                    if (orbit.browserLoginSplitNotice && separateLoginsSupported) {
+                        Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+                            SettingsInfoBanner(
+                                text = stringResource(R.string.orbit_browser_login_split_notice),
+                                backgroundColor = cardColor,
+                            )
+                            TextButton(
+                                modifier = Modifier.align(Alignment.End),
+                                onClick = { scope.launch { preferences.dismissBrowserLoginSplitNotice(orbit.id) } },
+                            ) {
+                                Text(stringResource(R.string.orbit_browser_login_split_notice_ok))
+                            }
+                        }
                     }
                     SettingsRowDivider(inset = false)
-                    // Signing out of sites is asked first; with shared logins it signs the app out too.
-                    val clearsMainLogins = orbit.browserSharesMainLogin || !separateLoginsSupported
+                    // Signing out of sites is asked first; on a WebView that shares logins it signs the app out too.
+                    val clearsMainLogins = !separateLoginsSupported
                     var askClearLogins by remember { mutableStateOf(false) }
                     SettingsNavRow(
                         modifier = anchor(ROW_CLEAR_LOGINS),
@@ -2242,7 +2240,7 @@ private fun OrbitSettingsPage(
                             onConfirm = {
                                 askClearLogins = false
                                 com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserProfiles
-                                    .clearOrbitLogins(orbit.id, orbit.browserSharesMainLogin) { ok ->
+                                    .clearOrbitLogins(orbit.id) { ok ->
                                         android.os.Handler(android.os.Looper.getMainLooper()).post {
                                             toast(context, if (ok) R.string.orbit_clear_logins_done else R.string.orbit_clear_logins_failed)
                                         }
@@ -2281,6 +2279,8 @@ private fun OrbitSettingsPage(
                     Box(anchor(SWITCH_LAUNCH_MODE)) {
                         com.ai.assistance.operit.ui.features.settings.components.LaunchModeSettingsRow(searchable = false)
                     }
+                    SettingsRowDivider(inset = false)
+                    com.ai.assistance.operit.ui.features.settings.components.AppIconSettingsRow(searchable = false)
                     SettingsRowDivider(inset = false)
                     SettingsNavRow(
                         title = stringResource(R.string.orbit_appearance_title),
@@ -2632,7 +2632,13 @@ private fun orbitSettingsEntries(
         add(entry(R.string.orbit_log_export_app, R.string.orbit_log_export_app_desc, "scroll-text", troubleshoot) { onShowSwitch(ROW_LOGS) })
         add(entry(R.string.orbit_log_export_tool_errors, R.string.orbit_log_export_tool_errors_desc, "file-warning", troubleshoot) { onShowSwitch(ROW_LOGS) })
         add(entry(R.string.orbit_app_lock, R.string.orbit_app_lock_desc, "fingerprint", privacy) { onShowSwitch(SWITCH_APP_LOCK) })
-        add(entry(R.string.orbit_browser_share_login, R.string.orbit_browser_share_login_off, "link", privacy) { onShowSwitch(SWITCH_SHARED_LOGIN) })
+        val loginDesc =
+            if (com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserProfiles.isSupported()) {
+                R.string.orbit_browser_login_separate_desc
+            } else {
+                R.string.orbit_browser_login_shared_desc
+            }
+        add(entry(R.string.orbit_browser_login, loginDesc, "link", privacy) { onShowSwitch(SWITCH_SHARED_LOGIN) })
         add(entry(R.string.orbit_developer_switch, R.string.orbit_developer_switch_desc, "code-xml", developer) { onShowSwitch(SWITCH_DEVELOPER) })
         if (developerMode) {
             add(entry(R.string.orbit_tools_row, R.string.orbit_tools_row_desc, "shield-check", developer, onOpenToolPermissions))

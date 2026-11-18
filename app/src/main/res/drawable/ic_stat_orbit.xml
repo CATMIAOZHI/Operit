@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Orbit's mark as a status-bar icon: the shape of OrbitLogoAvatar in its 24-unit box, white only,
+     since the system tints notification icons itself. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:pathData="M20.34,6.48 A10,10 0 0,1 10.26,21.85 M3.66,17.52 A10,10 0 0,1 13.74,2.15 M17,5 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0 M3,19 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0 M9,12 a3,3 0 1,0 6,0 a3,3 0 1,0 -6,0"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round" />
+</vector>

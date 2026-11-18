@@ -46,6 +46,7 @@ import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.ScreenshotMonitor
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.Description as OutlinedDescription
@@ -54,6 +55,7 @@ import androidx.compose.material.icons.outlined.Image as OutlinedImage
 import androidx.compose.material.icons.outlined.LocationOn as OutlinedLocationOn
 import androidx.compose.material.icons.outlined.Notifications as OutlinedNotifications
 import androidx.compose.material.icons.outlined.PhotoCamera as OutlinedPhotoCamera
+import androidx.compose.material.icons.outlined.ContentPaste as OutlinedContentPaste
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -122,6 +124,21 @@ fun AttachmentSelectorPanel(
 
     var showPackageDialog by remember { mutableStateOf(false) }
 
+    // A picture or file copied in another app is offered first, read again each time the panel opens.
+    val clipboardHasFiles = remember(visible) {
+        visible && com.ai.assistance.operit.ui.features.chat.components.style.input.common.clipboardHoldsFiles(context)
+    }
+    fun pasteItem(icon: androidx.compose.ui.graphics.vector.ImageVector) =
+        AttachmentPanelItem(
+            icon = icon,
+            label = context.getString(R.string.attachment_paste),
+            onClick = {
+                com.ai.assistance.operit.ui.features.chat.components.style.input.common
+                    .pasteClipboardFiles(context, onAttachFile)
+                onDismiss()
+            }
+        ).takeIf { clipboardHasFiles }
+
     // 文件/图片选择器启动器
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetMultipleContents()
@@ -169,7 +186,7 @@ fun AttachmentSelectorPanel(
     ) {
         if (orbit) {
             OrbitAttachmentRow(
-                items = listOf(
+                items = listOfNotNull(pasteItem(Icons.Outlined.OutlinedContentPaste)) + listOf(
                     AttachmentPanelItem(
                         icon = Icons.Outlined.OutlinedImage,
                         label = context.getString(R.string.orbit_attach_photo),
@@ -238,7 +255,7 @@ fun AttachmentSelectorPanel(
                 Spacer(modifier = Modifier.height(16.dp))
 
                 val panelItems =
-                        listOf(
+                        listOfNotNull(pasteItem(Icons.Default.ContentPaste)) + listOf(
                                 AttachmentPanelItem(
                                         icon = Icons.Default.Image,
                                         label = context.getString(R.string.attachment_photo),
@@ -447,8 +464,22 @@ fun AttachmentSelectorPopupPanel(
         }
     }
 
+    // A picture or file copied in another app is offered first; the panel is rebuilt each time it opens.
+    val clipboardHasFiles = remember {
+        com.ai.assistance.operit.ui.features.chat.components.style.input.common.clipboardHoldsFiles(context)
+    }
     val panelItems =
-            listOf(
+            listOfNotNull(
+                    AttachmentPanelItem(
+                            icon = Icons.Default.ContentPaste,
+                            label = context.getString(R.string.attachment_paste),
+                            onClick = {
+                                com.ai.assistance.operit.ui.features.chat.components.style.input.common
+                                    .pasteClipboardFiles(context, onAttachFile)
+                                onDismiss()
+                            }
+                    ).takeIf { clipboardHasFiles }
+            ) + listOf(
                     AttachmentPanelItem(
                             icon = Icons.Default.Image,
                             label = context.getString(R.string.attachment_photo),

@@ -136,9 +136,11 @@ private fun ProcessRecordPage(
             false
         }
         var running = if (returned > 0 || value != null) selfRunning() else when (process) {
-            is OrbitProcess.TaskRun -> process.running
-            is OrbitProcess.Learning -> process.running
-            is OrbitProcess.Subagent -> process.running
+            // The opener's state can be old (a subagent opened from a tool card is passed as not
+            // running), so a record that looks finished is asked once more.
+            is OrbitProcess.TaskRun -> process.running || selfRunning()
+            is OrbitProcess.Learning -> process.running || selfRunning()
+            is OrbitProcess.Subagent -> process.running || selfRunning()
             is OrbitProcess.ChatTurn -> false
             is OrbitProcess.LiveTurn -> true
         }
@@ -148,10 +150,12 @@ private fun ProcessRecordPage(
             value = try {
                 val messages = if (readMessages || value == null) OrbitWork.messages(context, process, raw = developer)
                     else value!!.messages
-                val subagents = value?.subagents?.takeIf { it.isNotEmpty() && !readMessages }
+                // A turn's agents are read whole each time: which agents work for it can change.
+                val turn = process is OrbitProcess.ChatTurn || process is OrbitProcess.LiveTurn
+                val subagents = value?.subagents?.takeIf { it.isNotEmpty() && !readMessages && !turn }
                     ?.let { OrbitSubagents.refresh(context, it, subagentCache) }
                     ?: OrbitSubagents.of(context, process, messages, subagentCache)
-                ProcessRecord(messages, failed = false, running = running || subagents.any { it.running }, subagents)
+                ProcessRecord(messages, failed = false, running = running || subagents.any { it.busyHere }, subagents)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -232,7 +236,8 @@ private fun ProcessRecordPage(
                     }
                     CompositionLocalProvider(LocalSubagentChatHost provides host) {
                         ProcessMessages(current.messages, developer, subagents,
-                            assigned = process is OrbitProcess.Subagent, onOpenSubagent = onOpenSubagent)
+                            assigned = process is OrbitProcess.Subagent, chatId = processChatId(process),
+                            onOpenSubagent = onOpenSubagent)
                     }
                 }
             }
@@ -256,6 +261,8 @@ private fun ProcessMessages(
     subagents: List<OrbitSubagentRecord>,
     /** A subagent's record: its first message is the task it was handed, not the user speaking. */
     assigned: Boolean,
+    /** The chat these messages are in: a card here keeps the values chosen in the chat. */
+    chatId: String?,
     onOpenSubagent: (OrbitProcess.Subagent) -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
@@ -290,6 +297,15 @@ private fun ProcessMessages(
                                 // Lined up with the message text, which is inset 16dp.
                                 OrbitHiddenBadge(message.displayMode, Modifier.padding(start = 16.dp, bottom = 4.dp))
                             }
+                            CompositionLocalProvider(
+                                com.ai.assistance.operit.ui.common.dynamicui.LocalDynamicUiOwner provides
+                                    chatId?.takeIf { message.sender == "ai" && !message.isVariantPreview }?.let {
+                                        com.ai.assistance.operit.ui.common.dynamicui.DynamicUiOwner(
+                                            it, message.timestamp, message.selectedVariantIndex, message.content,
+                                        )
+                                    },
+                                com.ai.assistance.operit.ui.common.dynamicui.LocalDynamicUiOrbitNumbering provides true,
+                            ) {
                             CursorStyleChatMessage(
                                 message = message,
                                 userMessageColor = colors.surfaceContainerHigh,
@@ -305,6 +321,7 @@ private fun ProcessMessages(
                                 enableDialogs = true,
                                 showAssistantHeader = false,
                             )
+                            }
                         }
                     }
                 }
@@ -342,8 +359,16 @@ private fun SubagentCard(sub: OrbitSubagentRecord, onOpen: () -> Unit) {
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(sub.name, style = MaterialTheme.typography.titleMedium, maxLines = 1,
-                    overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                Column(Modifier.weight(1f)) {
+                    Text(sub.name, style = MaterialTheme.typography.titleMedium, maxLines = 1,
+                        overflow = TextOverflow.Ellipsis)
+                    // A nested agent says whose it is; the start of a long path gives way first.
+                    if (sub.startedBy.isNotBlank()) {
+                        Text(stringResource(R.string.orbit_process_subagent_started_by, sub.startedBy),
+                            style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant,
+                            maxLines = 1, overflow = TextOverflow.StartEllipsis)
+                    }
+                }
                 Spacer(Modifier.width(8.dp))
                 SubagentStatus(sub)
             }

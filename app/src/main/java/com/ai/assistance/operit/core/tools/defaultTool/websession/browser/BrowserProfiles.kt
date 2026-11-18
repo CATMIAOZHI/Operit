@@ -15,9 +15,9 @@ import com.ai.assistance.operit.data.preferences.OrbitPreferences
 import com.ai.assistance.operit.util.AppLogger
 
 /**
- * Which saved logins a browser tab uses. The main app has one set; each Orbit has its own unless
- * the user lets it share the main app's. Switching to sharing keeps the Orbit's own set on disk so
- * switching back finds it again; only deleting the Orbit removes it.
+ * Which saved logins a browser tab uses. The main app has one set and each Orbit always has its
+ * own; only a WebView that cannot keep them apart puts every tab on the main app's set. Deleting
+ * the Orbit removes its set.
  */
 internal object BrowserProfiles {
     private const val TAG = "BrowserProfiles"
@@ -29,8 +29,13 @@ internal object BrowserProfiles {
     fun orbitProfileName(orbitId: String): String =
         "orbit-" + orbitId.filter { it.isLetterOrDigit() || it == '-' || it == '_' }
 
-    /** Whether this phone's WebView can keep logins apart. Without it every tab uses [MAIN]. */
-    fun isSupported(): Boolean =
+    /**
+     * Whether tabs can keep logins apart: always with the built-in engine, otherwise when this
+     * phone's WebView can. Without it every tab uses [MAIN].
+     */
+    fun isSupported(): Boolean = BrowserEngines.current != null || webViewSupportsProfiles()
+
+    private fun webViewSupportsProfiles(): Boolean =
         runCatching { WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE) }.getOrDefault(false)
 
     /**
@@ -48,7 +53,7 @@ internal object BrowserProfiles {
                 it.ownerForChat(chatId) ?: it.ownerForChat(root)
             } }
                 .getOrNull() ?: return MAIN
-        return if (orbit.browserSharesMainLogin) MAIN else orbitProfileName(orbit.id)
+        return orbitProfileName(orbit.id)
     }
 
     /** The chat an AI browser call comes from: the tool runtime's, or the one a package call carries. */
@@ -60,7 +65,7 @@ internal object BrowserProfiles {
     fun forOrbit(context: Context, orbitId: String): String {
         if (!isSupported()) return MAIN
         val orbit = OrbitPreferences.getInstance(context).loadedSettingsBlocking().orbits.firstOrNull { it.id == orbitId }
-        return if (orbit == null || orbit.browserSharesMainLogin) MAIN else orbitProfileName(orbitId)
+        return if (orbit == null) MAIN else orbitProfileName(orbitId)
     }
 
     fun currentScope(): String? = callScope.get()
@@ -76,7 +81,11 @@ internal object BrowserProfiles {
      * Fails instead of quietly falling back, so an Orbit tab never runs on the main app's logins.
      */
     fun applyTo(webView: WebView, profile: String) {
-        if (profile == MAIN || !isSupported()) return
+        if (profile == MAIN || !webViewSupportsProfiles()) {
+            // A tab that fell back from the engine must not take the main app's logins for an Orbit.
+            check(profile == MAIN || BrowserEngines.current == null) { "This WebView cannot keep the Orbit's logins apart" }
+            return
+        }
         try {
             ProfileStore.getInstance().getOrCreateProfile(profile)
             WebViewCompat.setProfile(webView, profile)
@@ -88,13 +97,17 @@ internal object BrowserProfiles {
 
     /** Cookies of [profile]; main-thread only, like the WebView profile API itself. Throws rather than hand back the main app's. */
     fun cookieManager(profile: String): CookieManager {
-        if (profile == MAIN || !isSupported()) return CookieManager.getInstance()
+        if (profile == MAIN || !webViewSupportsProfiles()) return CookieManager.getInstance()
         return ProfileStore.getInstance().getOrCreateProfile(profile).cookieManager
     }
 
-    /** Cookie header for [url] in [profile], usable from any thread. */
-    fun cookieFor(profile: String, url: String): String? {
-        if (profile == MAIN || !isSupported()) return CookieManager.getInstance().getCookie(url)
+    /**
+     * Cookie header for [url] in [profile], usable from any thread. [onEngine] says which browser
+     * the tab runs on: a tab the engine could not open runs on the WebView, with its cookies.
+     */
+    fun cookieFor(profile: String, url: String, onEngine: Boolean = BrowserEngines.current != null): String? {
+        if (onEngine) BrowserEngines.current?.let { return it.cookieFor(profile, url) }
+        if (profile == MAIN || !webViewSupportsProfiles()) return CookieManager.getInstance().getCookie(url)
         return onMain { cookieManager(profile).getCookie(url) }
     }
 
@@ -102,18 +115,39 @@ internal object BrowserProfiles {
     private const val PENDING_KEY = "pending_delete"
 
     /**
-     * Signs the browser an Orbit uses out of every site: its cookies and site storage. With
-     * [shared] logins (or a WebView without profiles) that is the main app's browser. Main thread
-     * only; [onDone] gets whether it worked.
+     * Signs the browser an Orbit uses out of every site: its cookies and site storage. On a WebView
+     * without profiles that is the main app's browser. Main thread only; [onDone] gets whether it
+     * worked. With the engine, the WebView's logins go too: a tab the engine could not open ran there.
      */
-    fun clearOrbitLogins(orbitId: String, shared: Boolean, onDone: (Boolean) -> Unit) {
-        val profile = if (shared || !isSupported()) MAIN else orbitProfileName(orbitId)
+    fun clearOrbitLogins(orbitId: String, onDone: (Boolean) -> Unit) {
+        val profile = if (!isSupported()) MAIN else orbitProfileName(orbitId)
+        val engine = BrowserEngines.current
+        if (engine == null) {
+            clearWebViewLogins(profile, onDone = onDone)
+            return
+        }
+        val clearWebView = profile == MAIN || webViewSupportsProfiles()
         try {
+            engine.clearLogins(profile) { engineOk ->
+                if (clearWebView) clearWebViewLogins(profile, existingOnly = true) { onDone(engineOk && it) } else onDone(engineOk)
+            }
+        } catch (e: Throwable) {
+            AppLogger.w(TAG, "Could not clear the browser logins: ${e.message}")
+            onDone(false)
+        }
+    }
+
+    /** [existingOnly] leaves alone an Orbit profile the WebView never had, instead of making one to clear. */
+    private fun clearWebViewLogins(profile: String, existingOnly: Boolean = false, onDone: (Boolean) -> Unit) {
+        try {
+            val orbitProfile =
+                if (profile == MAIN) null
+                else if (existingOnly) ProfileStore.getInstance().getProfile(profile) ?: return onDone(true)
+                else ProfileStore.getInstance().getOrCreateProfile(profile)
             val storage =
-                if (profile == MAIN) android.webkit.WebStorage.getInstance()
-                else ProfileStore.getInstance().getOrCreateProfile(profile).webStorage
+                orbitProfile?.webStorage ?: android.webkit.WebStorage.getInstance()
             storage.deleteAllData()
-            val cookies = cookieManager(profile)
+            val cookies = orbitProfile?.cookieManager ?: CookieManager.getInstance()
             cookies.removeAllCookies {
                 // Writing cookies to disk can take a moment; keep it off the main thread.
                 val main = Handler(Looper.getMainLooper())
@@ -139,8 +173,13 @@ internal object BrowserProfiles {
         val prefs = context.applicationContext.getSharedPreferences(PENDING_PREFS, Context.MODE_PRIVATE)
         // Written down even when this WebView cannot handle profiles: a later one may have the data.
         prefs.edit().putStringSet(PENDING_KEY, pendingNames(prefs) + name).apply()
-        if (!isSupported()) return
-        Handler(Looper.getMainLooper()).post { deletePending(prefs, setOf(name)) }
+        Handler(Looper.getMainLooper()).post {
+            BrowserEngines.current?.let { engine ->
+                runCatching { engine.deleteProfile(name) }
+                    .onFailure { AppLogger.w(TAG, "The Orbit's browser data could not be removed: ${it.message}") }
+            }
+            if (webViewSupportsProfiles()) deletePending(prefs, setOf(name))
+        }
     }
 
     /** Call once on the main thread at app start, before any browser tab exists. */
@@ -148,7 +187,7 @@ internal object BrowserProfiles {
         val prefs = context.applicationContext.getSharedPreferences(PENDING_PREFS, Context.MODE_PRIVATE)
         val pending = pendingNames(prefs)
         // Kept until a WebView that supports profiles can actually remove them.
-        if (pending.isEmpty() || !isSupported()) return
+        if (pending.isEmpty() || !webViewSupportsProfiles()) return
         deletePending(prefs, pending)
     }
 

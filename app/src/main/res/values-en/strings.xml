@@ -562,7 +562,7 @@
     <string name="about_description">Operit Ry is an intelligent assistant application that helps users use their devices more efficiently, providing interface analysis, chat conversations, and more.</string>
     <string name="about_developer">Maintainer: &lt;a href="https://github.com/CATMIAOZHI"&gt;Rainy&lt;/a&gt;</string>
     <string name="about_contact">Upstream: AAswordman / Operit</string>
-    <string name="about_website">&lt;a href="https://github.com/CATMIAOZHI/Operit"&gt;GitHub: https://github.com/CATMIAOZHI/Operit&lt;/a&gt;</string>
+    <string name="about_website">&lt;a href="https://github.com/CATMIAOZHI/orbit"&gt;GitHub: https://github.com/CATMIAOZHI/orbit&lt;/a&gt;</string>
     <string name="about_copyright">© 2025 - 2026 Operit. All Rights Reserved.</string>
     <string name="star_on_github">Star on GitHub</string>
     <string name="update_log">Update Log</string>
@@ -6813,6 +6813,9 @@
     <string name="attachment_added">Attachment added: %1$s</string>
     <string name="attachment_media_process_failed">Cannot process media file, please try another method</string>
     <string name="attachment_cannot_attach">Cannot attach file: %1$s</string>
+    <string name="paste_as_attachment">Paste as attachment</string>
+    <string name="attachment_paste">Paste</string>
+    <string name="paste_attachment_failed">Couldn\'t read what was pasted</string>
     <string name="attachment_file_not_exist">File does not exist</string>
     <string name="attachment_add_failed">Failed to add attachment: %1$s</string>
     <string name="attachment_screen_content_failed">Failed to get screen content: %1$s</string>
@@ -7793,6 +7796,7 @@
     <string name="web_session_accessibility_minimized_indicator">Web sessions panel minimized, double tap to expand</string>
     <string name="web_session_render_process_crashed">The current web page render process crashed. This tab has been closed.</string>
     <string name="web_session_render_process_gone">The current web page render process was reclaimed by the system. This tab has been closed.</string>
+    <string name="web_session_before_unload_message">This page may have unsaved changes. Leave it? (OK: leave, Cancel: stay)</string>
     <string name="web_session_back">Back</string>
     <string name="web_session_forward">Forward</string>
     <string name="web_session_refresh">Refresh</string>
@@ -9601,9 +9605,16 @@
     <string name="orbit_system_empty">This folder is empty.</string>
     <string name="orbit_system_folder">Folder</string>
     <string name="orbit_system_copy_path">Copy path</string>
-    <string name="orbit_builds_book_text">Book text · %1$d chapters</string>
-    <string name="orbit_builds_book_text_show">Show chapters</string>
-    <string name="orbit_builds_book_text_hide">Hide chapters</string>
+    <plurals name="orbit_builds_folder_files">
+        <item quantity="one">%1$d file</item>
+        <item quantity="other">%1$d files</item>
+    </plurals>
+    <string name="orbit_builds_sort_current">Sort by: %1$s</string>
+    <string name="orbit_builds_sort_time">Last modified</string>
+    <string name="orbit_builds_sort_added">Recently added</string>
+    <string name="orbit_builds_sort_name">Name</string>
+    <string name="orbit_builds_sort_size">Size</string>
+    <string name="orbit_builds_sort_type">Type</string>
     <string name="orbit_builds_made_empty">Things %1$s makes for you and files it saves show up here.</string>
     <string name="orbit_uploads_used">%1$s of %2$s used</string>
     <string name="orbit_uploads_hint">Images and files you send to %1$s are kept here. When it is full the oldest go first, but the newest 100 always stay.</string>
@@ -9903,6 +9914,22 @@
     <string name="orbit_approval_approve">Approve</string>
     <string name="orbit_approval_allow_once">Allow once</string>
     <string name="orbit_approval_allow_always">Always allow</string>
+    <string name="orbit_hook_vault_title">Let hook \"%1$s\" use keys</string>
+    <string name="orbit_hook_vault_detail">Each time the background check \"%1$s\" runs, it gets the real values of these keys: %2$s.\nAddresses in the script: %3$s\nScript file: %4$s\nAllow once: only this script; you are asked again if it changes. Always allow: any hook may use these keys without asking.</string>
+    <string name="orbit_hook_vault_separator">", "</string>
+    <string name="orbit_vault_usage_title">Key use</string>
+    <string name="orbit_vault_usage_meta">Used %1$d× · last %2$s</string>
+    <string name="orbit_vault_usage_more_callers">" and %1$d more"</string>
+    <string name="orbit_vault_usage_caller">%1$s · %2$d× · %3$s</string>
+    <string name="orbit_vault_usage_orbit">Orbit itself (chat, terminal, requests)</string>
+    <string name="orbit_vault_usage_browser">Filled in the browser</string>
+    <string name="orbit_vault_usage_hook">Hook \"%1$s\"</string>
+    <string name="orbit_vault_usage_hook_unnamed">background check</string>
+    <string name="orbit_vault_usage_package">Package %1$s</string>
+    <string name="orbit_profile_approval_more">Show older records (%1$d more)</string>
+    <string name="orbit_vault_hook_always">Always allow for hooks</string>
+    <string name="orbit_vault_hook_always_desc">While on, background checks (hooks) can use this key\'s real value without asking you. Turned off, new or changed hooks ask again.</string>
+    <string name="orbit_vault_hook_always_failed">Could not save; try again</string>
     <string name="orbit_send_card_title">Send with %1$s</string>
     <string name="orbit_send_card_tool">Tool: %1$s</string>
     <string name="orbit_send_card_param">%1$s: %2$s</string>
@@ -10071,10 +10098,14 @@
     <string name="orbit_emoji_group_flags">Flags</string>
     <string name="orbit_vault_row">Password &amp; credential vault</string>
     <string name="orbit_vault_row_desc">See, change and delete saved passwords and keys</string>
-    <string name="orbit_browser_share_login">Share browser logins with the app</string>
-    <string name="orbit_browser_share_login_off">Orbit uses its own logins, kept apart from the app\'s.</string>
-    <string name="orbit_browser_share_login_on">Orbit uses the app\'s logins. Its own logins are kept; turn this off to switch back.</string>
-    <string name="orbit_browser_share_login_unsupported">This phone\'s WebView can\'t keep logins apart, so Orbit shares the app\'s.</string>
+    <string name="orbit_browser_login">Browser logins</string>
+    <string name="orbit_browser_login_separate">Kept apart</string>
+    <string name="orbit_browser_login_shared">Shared</string>
+    <string name="orbit_browser_login_separate_desc">Orbit uses its own logins, kept apart from the app\'s.</string>
+    <string name="orbit_browser_login_shared_desc">This phone\'s WebView can\'t keep logins apart, so Orbit shares the app\'s.</string>
+    <string name="orbit_browser_login_split_notice">Browser logins are now always kept apart from the app\'s. The app\'s logins are all still there; Orbit used them before, so some sites may ask Orbit to sign in again.</string>
+    <string name="orbit_browser_login_split_notice_ok">Got it</string>
+    <string name="chat_model_switched">Model changed from %1$s to %2$s</string>
     <string name="web_session_tab_owner">%1$s\'s logins</string>
     <string name="orbit_import_row">Import memory from another AI</string>
     <string name="orbit_import_row_desc">Bring over what ChatGPT, Claude and others know about you</string>

@@ -4,6 +4,8 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -490,6 +492,11 @@ object OrbitSpeech {
     private val blank = Regex("\n{3,}")
     private val cardFence = Regex("```(?:a2ui(?:-ref)?|${ORBIT_CARD_FENCE}|${ORBIT_OPTIONS_FENCE})[^\\n]*\\n[\\s\\S]*?(?:```|$)")
     private val shownCard = Regex("```(?:a2ui(?:[ \\t]+card-\\d{1,2})?|${ORBIT_CARD_FENCE})[ \\t]*\\n")
+    private val optionsFence = Regex("```${ORBIT_OPTIONS_FENCE}\\n([a-z0-9]+)\\n```")
+
+    /** The reply option sets [shown] (cleaned text) draws, by id; each still has to exist to show. */
+    fun optionIds(shown: String): List<String> =
+        if (!shown.contains(ORBIT_OPTIONS_FENCE)) emptyList() else optionsFence.findAll(shown).map { it.groupValues[1] }.toList()
     // Orbit's own words can never draw an Orbit card; only a tool's result can (see [cards]).
     // The renderer reads the tag after trimming, so "``` orbit-card" counts as the same fence.
     private val writtenOrbitCard = Regex("```[ \\t]*${ORBIT_CARD_FENCE}[^\\n]*(?:\\n[\\s\\S]*?```|[\\s\\S]*$)")
@@ -497,7 +504,7 @@ object OrbitSpeech {
     val CARD_TOOLS = listOf(
         "orbit_vault", "orbit_file", "orbit_request_approval", "orbit_permission_card", "orbit_packages",
         "orbit_models", "orbit_components", "orbit_settings", "orbit_skills", "orbit_voice",
-        "orbit_channel", "orbit_soul", "orbit_mcp",
+        "orbit_channel", "orbit_soul", "orbit_mcp", "orbit_task",
     )
     private val cardToolResult = Regex(
         "^<tool_result[A-Za-z0-9_]*\\s[^>]*\\bname=\"(?:${CARD_TOOLS.joinToString("|")})\"[^>]*\\bstatus=\"success\"",
@@ -1034,6 +1041,9 @@ fun OrbitSwipeToReply(
             offset.floatValue = 0f
         }
     }
+    // Set when something inside the bubble (a card slider, a wide code block) already took the
+    // finger; the swipe then stays put. Read before the swipe below sees the same move.
+    val innerOwns = androidx.compose.runtime.remember { booleanArrayOf(false) }
     Box(
         Modifier.fillMaxWidth().then(if (!enabled) Modifier else Modifier.pointerInput(Unit) {
             var passed = false
@@ -1045,7 +1055,7 @@ fun OrbitSwipeToReply(
                     dragged = offset.floatValue
                 },
                 onDragEnd = {
-                    if (dragged >= trigger) currentReply.value()
+                    if (dragged >= trigger && !innerOwns[0]) currentReply.value()
                     dragged = 0f
                     springBack()
                 },
@@ -1054,6 +1064,7 @@ fun OrbitSwipeToReply(
                     springBack()
                 },
             ) { change, dragAmount ->
+                if (innerOwns[0]) return@detectHorizontalDragGestures
                 val next = (dragged + dragAmount).coerceIn(0f, limit)
                 if (next == dragged) return@detectHorizontalDragGestures
                 change.consume()
@@ -1065,6 +1076,15 @@ fun OrbitSwipeToReply(
                     passed = false
                 }
                 offset.floatValue = next
+            }
+        }.pointerInput(Unit) {
+            awaitEachGesture {
+                awaitFirstDown(requireUnconsumed = false)
+                innerOwns[0] = false
+                do {
+                    val event = awaitPointerEvent()
+                    if (event.changes.any { it.isConsumed }) innerOwns[0] = true
+                } while (event.changes.any { it.pressed })
             }
         }),
     ) {

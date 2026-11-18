@@ -464,16 +464,19 @@ interface OrbitTaskDao {
     @Query("SELECT EXISTS(SELECT 1 FROM messages WHERE chatId = :chatId AND sender = 'user' AND timestamp = :timestamp)")
     suspend fun hasUserMessageAt(chatId: String, timestamp: Long): Boolean
 
-    /** Orbit's messages in [chatId] written after [after], oldest first; one reply can be several. */
-    @Query("SELECT excerpt FROM (SELECT SUBSTR(content,-16000) AS excerpt, timestamp FROM messages " +
+    /**
+     * When Orbit's messages in [chatId] after [after] were written, oldest first; one reply can be
+     * several. Their whole text is read through ChatContentDao, which reads long ones in pieces.
+     */
+    @Query("SELECT timestamp FROM (SELECT timestamp FROM messages " +
         "WHERE chatId = :chatId AND sender = 'ai' AND timestamp > :after ORDER BY timestamp DESC LIMIT 32) ORDER BY timestamp ASC")
-    suspend fun aiSaidAfter(chatId: String, after: Long): List<String>
+    suspend fun aiMessagesAfter(chatId: String, after: Long): List<Long>
 
-    /** Bound a registered turn by its terminal assistant timestamp, excluding later chat turns. */
-    @Query("SELECT excerpt FROM (SELECT SUBSTR(content,-16000) AS excerpt, timestamp FROM messages " +
+    /** As [aiMessagesAfter], bound by a registered turn's terminal assistant timestamp, excluding later turns. */
+    @Query("SELECT timestamp FROM (SELECT timestamp FROM messages " +
         "WHERE chatId = :chatId AND sender = 'ai' AND timestamp > :after AND timestamp <= :through " +
         "ORDER BY timestamp DESC LIMIT 32) ORDER BY timestamp ASC")
-    suspend fun aiSaidThrough(chatId: String, after: Long, through: Long): List<String>
+    suspend fun aiMessagesThrough(chatId: String, after: Long, through: Long): List<Long>
 
     @Query("SELECT * FROM orbit_runs WHERE taskId = :taskId AND state IN ('COMPLETED','FAILED') ORDER BY finishedAt DESC LIMIT 1")
     suspend fun lastFinishedRun(taskId: String): OrbitRunEntity?

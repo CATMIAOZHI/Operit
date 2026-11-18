@@ -268,15 +268,13 @@ private class OperitCardComponent(override val name: String) : A2uiComponent {
                 val max = properties.bind(maximum)?.toFloat() ?: 100f
                 val current = properties.bind(number)?.toFloat() ?: min
                 val update = properties.bindUpdater(number)
-                Column(modifier) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text(title, Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
-                        Text(cardNumberLabel(current), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                    }
-                    if (current.isFinite() && min.isFinite() && max.isFinite() && max > min) {
-                        Slider(current.coerceIn(min, max), { next -> if (interactive && update != null) change(current, next, -1) { update(next) } }, enabled = update != null && interactive, valueRange = min..max,
-                            steps = (properties.bind(stepCount)?.toInt() ?: 0).coerceIn(0, 999))
-                    } else Text(stringResource(R.string.dynamic_ui_bad_number), color = MaterialTheme.colorScheme.error)
+                if (current.isFinite() && min.isFinite() && max.isFinite() && max > min) {
+                    CardSlider(title, current, min, max, (properties.bind(stepCount)?.toInt() ?: 0).coerceIn(0, 999),
+                        enabled = update != null && interactive, modifier = modifier,
+                        onChange = { next -> if (interactive && update != null) change(current, next, -1) { update(next) } })
+                } else Column(modifier) {
+                    Text(title, style = MaterialTheme.typography.labelLarge)
+                    Text(stringResource(R.string.dynamic_ui_bad_number), color = MaterialTheme.colorScheme.error)
                 }
             }
             "DatePicker" -> {

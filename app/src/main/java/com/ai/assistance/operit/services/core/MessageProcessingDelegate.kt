@@ -1654,12 +1654,25 @@ class MessageProcessingDelegate(
                 
                 // 启动一个独立的协程来收集流内容并持续更新数据库
                 val streamCollectionResult = CompletableDeferred<Throwable?>()
+                // A failed trailing save, reported once the collector has finished its own ending.
+                val trailingSaveFailure = java.util.concurrent.atomic.AtomicReference<Throwable?>(null)
                 chatRuntime.streamCollectionJob =
                     coroutineScope.launch(Dispatchers.IO + CoroutineName("ChatStreamPersistence")) {
                         try {
                             var hasLoggedFirstChunk = false
-                            var lastStreamingPersistAt = 0L
+                            val lastStreamingPersistAt = java.util.concurrent.atomic.AtomicLong(0L)
                             val revisionTracker = TextStreamRevisionTracker()
+                            // The trailing save below reads the reply from another coroutine.
+                            val revisionLock = Any()
+                            // Guarded by revisionLock: how often the reply changed, which change the
+                            // record holds, and whether the trailing save is running.
+                            var appendedVersion = 0L
+                            var savedVersion = 0L
+                            var trailingRunning = false
+                            // Set once the reply is ending; no saver starts after it, and none clears it.
+                            var trailingClosed = false
+                            var trailingPersistJob: Job? = null
+                            val collectorJob = coroutineContext[Job]
                             var processedRevisionEventCount = 0
                             var processedReplayCharCount = 0
                             val autoReadBuffer = StringBuilder()
@@ -1712,12 +1725,18 @@ class MessageProcessingDelegate(
 
                             fun claimStreamingSnapshot(): Boolean {
                                 if (!effectivePersistTurn || isWaifuModeEnabled || chatId == null) return false
-                                val now = messageTimingNow()
-                                if (now - lastStreamingPersistAt < STREAM_PERSIST_INTERVAL_MS) {
-                                    return false
+                                while (true) {
+                                    val last = lastStreamingPersistAt.get()
+                                    val now = messageTimingNow()
+                                    if (now - last < STREAM_PERSIST_INTERVAL_MS) return false
+                                    if (lastStreamingPersistAt.compareAndSet(last, now)) return true
                                 }
-                                lastStreamingPersistAt = now
-                                return true
+                            }
+
+                            /** The reply as it is now, marked as the version the record will hold. */
+                            fun readForSave(): String = synchronized(revisionLock) {
+                                savedVersion = appendedVersion
+                                revisionTracker.currentContent().toString()
                             }
 
                             suspend fun persistStreamingSnapshotLocked(contentSnapshot: String) {
@@ -1730,9 +1749,49 @@ class MessageProcessingDelegate(
                                     .forEach { addMessageToChat(targetChatId, it) }
                             }
 
-                            suspend fun persistStreamingSnapshot(contentSnapshot: String) {
+                            /** Saves the reply as it is now; read under the lock, so a save never puts back older text. */
+                            suspend fun persistStreamingSnapshot() {
                                 chatRuntime.transcriptMutex.withLock {
-                                    persistStreamingSnapshotLocked(contentSnapshot)
+                                    persistStreamingSnapshotLocked(readForSave())
+                                }
+                            }
+
+                            /**
+                             * A change that came too soon after the last save is saved a moment later, and
+                             * again until the record holds the newest text. Without this, a tool's result
+                             * (several quick chunks) reached the record only when the model wrote again, so
+                             * pages reading the record missed it until then. One saver runs at a time.
+                             */
+                            fun scheduleTrailingSnapshot() {
+                                if (!effectivePersistTurn || isWaifuModeEnabled || chatId == null) return
+                                synchronized(revisionLock) {
+                                    if (trailingClosed || trailingRunning) return
+                                    trailingRunning = true
+                                }
+                                trailingPersistJob = launch {
+                                    try {
+                                        while (true) {
+                                            // Stops only when nothing is left unsaved, decided with the
+                                            // lock held so a change made meanwhile starts a new saver.
+                                            val pending = synchronized(revisionLock) {
+                                                (savedVersion < appendedVersion).also { if (!it) trailingRunning = false }
+                                            }
+                                            if (!pending) break
+                                            val wait = lastStreamingPersistAt.get() + STREAM_PERSIST_INTERVAL_MS - messageTimingNow()
+                                            if (wait > 0) {
+                                                kotlinx.coroutines.delay(wait)
+                                                continue
+                                            }
+                                            if (claimStreamingSnapshot()) persistStreamingSnapshot()
+                                        }
+                                    } catch (e: kotlinx.coroutines.CancellationException) {
+                                        throw e
+                                    } catch (e: Exception) {
+                                        // Fails the reply the way a save in the collector does, after the
+                                        // collector has wrapped up (see its catch below).
+                                        trailingSaveFailure.compareAndSet(null, e)
+                                        collectorJob?.cancel()
+                                    }
                                 }
                             }
 
@@ -1746,13 +1805,15 @@ class MessageProcessingDelegate(
                                     processedRevisionEventCount++
                                     when (event.eventType) {
                                         TextStreamEventType.SAVEPOINT ->
-                                            revisionTracker.savepoint(event.id)
+                                            synchronized(revisionLock) { revisionTracker.savepoint(event.id) }
 
                                         TextStreamEventType.ROLLBACK -> {
                                             // Provider rollback applies to the new response, not
                                             // the already persisted pre-steer assistant prefix.
                                             val snapshot =
-                                                revisionTracker.rollback(event.id)?.toString()
+                                                synchronized(revisionLock) {
+                                                    revisionTracker.rollback(event.id)?.toString()?.also { appendedVersion++ }
+                                                }
                                                     ?: continue
                                             chatRuntime.transcriptMutex.withLock {
                                                 // The producer may already have published a boundary
@@ -1766,7 +1827,10 @@ class MessageProcessingDelegate(
                                                 chatRuntime.toolBoundarySnapshot = sealedBoundary
                                                 aiMessage.content = snapshot
                                                 if (claimStreamingSnapshot()) {
-                                                    persistStreamingSnapshotLocked(snapshot)
+                                                    // Only this coroutine changes the reply, so this is the snapshot.
+                                                    persistStreamingSnapshotLocked(readForSave())
+                                                } else {
+                                                    scheduleTrailingSnapshot()
                                                 }
                                             }
                                             if (!isWaifuModeEnabled) {
@@ -1833,18 +1897,28 @@ class MessageProcessingDelegate(
                                             details = "chatId=$activeChatId, firstChunkLength=${chunk.length}"
                                         )
                                     }
-                                    val liveContent = revisionTracker.append(chunk)
+                                    synchronized(revisionLock) {
+                                        revisionTracker.append(chunk)
+                                        appendedVersion++
+                                    }
                                     processedReplayCharCount += chunk.length
-                                    val contentSnapshot =
-                                        if (claimStreamingSnapshot()) liveContent.toString() else null
-                                    if (contentSnapshot != null) {
-                                        persistStreamingSnapshot(contentSnapshot)
+                                    if (claimStreamingSnapshot()) {
+                                        persistStreamingSnapshot()
+                                    } else {
+                                        scheduleTrailingSnapshot()
                                     }
                                     if (!isWaifuModeEnabled) {
                                         tryEmitScrollToBottomThrottled(chatId)
                                     }
                                 }
                             } finally {
+                                // The reply is saved whole when it ends; a pending partial save is not
+                                // needed, and none may start now (it could land after the final one).
+                                synchronized(revisionLock) { trailingClosed = true }
+                                trailingPersistJob?.cancel()
+                                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                                    trailingPersistJob?.join()
+                                }
                                 drainRevisionEvents()
                                 // The finalizer uses aiMessage.content when revision events exist,
                                 // so publish one immutable snapshot on every collection exit.
@@ -1879,15 +1953,18 @@ class MessageProcessingDelegate(
                                 flushAutoReadSegment(remaining, interrupt = isFirstAutoReadSegment)
                             }
                         } catch (t: Throwable) {
+                            // A failed trailing save cancels the collector; report that failure itself.
+                            val failure = trailingSaveFailure.get() ?: t
                             if (!streamCollectionResult.isCompleted) {
-                                streamCollectionResult.complete(t)
+                                streamCollectionResult.complete(failure)
                             }
                             // The sending coroutine awaits this result and owns failure reporting
                             // and partial-message persistence. Do not also crash this launch.
-                            if (t is kotlinx.coroutines.CancellationException) throw t
+                            if (t is kotlinx.coroutines.CancellationException && failure === t) throw t
                         } finally {
                             if (!streamCollectionResult.isCompleted) {
-                                streamCollectionResult.complete(null)
+                                // Ended without noticing the cancel: a failed trailing save still counts.
+                                streamCollectionResult.complete(trailingSaveFailure.get())
                             }
                         }
                     }

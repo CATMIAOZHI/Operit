@@ -32,6 +32,22 @@ class OrbitWatchSourcesTest {
     }
 
     @Test fun scriptsArePinnedToTheirHash() {
+        val hash0 = OrbitWatchSources.hash("print(1)")
+        // Python hooks and vault keys ride in the pinned source and come back out unchanged.
+        val source = OrbitWatchSources.scriptSource("files/hooks/p-1.py", hash0, listOf("ab12cd34"), listOf("ef56", "0a1b"))
+        assertEquals("script:files/hooks/p-1.py@$hash0?proxy=ab12cd34&env=ef56,0a1b", source)
+        assertTrue(ok(source))
+        val hook = OrbitWatchSources.hook(source)!!
+        assertTrue(hook.python)
+        assertEquals(listOf("ab12cd34"), hook.proxy)
+        assertEquals(listOf("ef56", "0a1b"), hook.env)
+        val envOnly = OrbitWatchSources.scriptSource("files/hooks/p-1.py", hash0, emptyList(), listOf("ef56"))
+        assertEquals(listOf("ef56"), OrbitWatchSources.hook(envOnly)!!.env)
+        assertEquals(emptyList<String>(), OrbitWatchSources.hook(envOnly)!!.proxy)
+        assertFalse(OrbitWatchSources.hook("script:files/hooks/a.sh@$hash0")!!.python)
+        assertFalse(ok("script:files/hooks/a.js@$hash0"))
+        assertFalse(ok("script:files/hooks/a.py@$hash0?env=a b"))
+        assertEquals("ORBIT_VAULT_AB12CD34", OrbitHookVault.surrogateVariable("ab12cd34"))
         val hash = OrbitWatchSources.hash("echo hi")
         assertEquals(16, hash.length)
         assertTrue(ok("script:files/hooks/check-1234abcd.sh@$hash"))

@@ -17,7 +17,14 @@ internal object OrbitTaskTools {
             ToolParameterSchema("kind", description = "ASSIST（默认；填了 watch 或 script 时默认 WATCH）：使用现有工具推进事情；URL_CHANGE：网页变化预检查；WATCH：盯通知、短信、日历、阅读或脚本；GEOFENCE：进入/离开地点时唤醒，需 location", required = false),
             ToolParameterSchema("location", description = "GEOFENCE 地点 JSON：{\"name\":\"家\",\"latitude\":31.2,\"longitude\":121.4,\"radius\":200,\"transition\":\"ENTER\"}。坐标用 WGS84，不直接用地图 GCJ02/BD09。或用 {\"name\":\"家\",\"current\":true,\"radius\":200,\"transition\":\"EXIT\"} 取当前位置。radius 100-10000米，默认200；ENTER进入/EXIT离开。ONCE一次（默认）/INTERVAL每次，不填 run_at；update 传完整 location。后台监测需要精准位置和始终允许定位", required = false),
             ToolParameterSchema("watch", description = "WATCH 必填：notifications（通知栏里还在的通知）或 notifications:包名,包名；sms 或 sms:发件人；calendar 或 calendar:天数（1-30，默认7）；reading 或 reading:章数（阅读 App 伴读，默认提前准备 20 章段评，少于一半时叫醒你补满，2-50，见 docs/reading.md）；script（同时填 script）", required = false),
-            ToolParameterSchema("script", description = "watch=script 时 shell 脚本全文，最多8000字符。沿用 Operit 当前 shell 权限（含 root/Shizuku），没有系统沙箱：必须只读，不改文件、不上传数据、不放密码，可 GET 公开接口。每轮以 silent \"理由\" '{\"数据\":1}' 或 wake \"理由\" '{}' 结束；函数已注入，无需 source，调用后立即退出。silent 不叫醒 Orbit；wake 将理由和 JSON 对象交给 Orbit。25秒超时，输出最多20000字符，JSON最多8000字符。新建/换脚本后暂停，先 dry_run 看输出，核对通过再 resume；试跑 HATCH_HOOK_DRY_RUN=1，不叫醒 Orbit", required = false),
+            ToolParameterSchema("script", description = "watch=script 时脚本全文，最多8000字符，语言看 language。没有系统沙箱：只读，不改文件、不下单、不上传私人数据，密码和密钥不写进脚本（用 vault_proxy/vault_env）。" +
+                "sh：在手机 shell 跑，沿用 Operit 当前 shell 权限（含 root/Shizuku），25秒超时；每轮以 silent \"理由\" '{\"数据\":1}' 或 wake \"理由\" '{}' 结束。" +
+                "python：在本机 Ubuntu 终端用 python3 跑（要先装终端），60秒超时；每轮调用 silent(\"理由\", {\"数据\": 1}) 或 wake(\"理由\", {})，第二个参数是 dict 或 JSON 字符串。" +
+                "函数已注入，调用后立即结束。silent 不叫醒 Orbit；wake 把理由和 JSON 对象交给 Orbit。输出最多20000字符，JSON最多8000字符。" +
+                "新建/换脚本后暂停，先 dry_run 看输出，核对通过再 resume；试跑时环境变量 HATCH_HOOK_DRY_RUN=1，不叫醒 Orbit", required = false),
+            ToolParameterSchema("language", description = "script 的语言：sh（默认）或 python", required = false),
+            ToolParameterSchema("vault_proxy", description = "可选，脚本要调用的保险箱 API 密钥 credential_id，逗号分隔，最多8个。脚本拿到替身值 \$ORBIT_VAULT_<大写编号>，以及代理地址 \$ORBIT_VAULT_PROXY（后面接 域名/路径，如 \$ORBIT_VAULT_PROXY+api.example.com/v1/x）；把替身值放在密钥原本的位置，代理换成真值转发，只能发往这把密钥允许的网站。不用用户批准。更新时要连同 script 一起传", required = false),
+            ToolParameterSchema("vault_env", description = "可选，只有 language=python 能用：要直接拿到真值的保险箱 credential_id（比如签名要用密钥本身），逗号分隔，最多8个；条目必须已允许在终端使用。真值在环境变量里（变量名同 orbit_vault env 的 env_name），输出里会被打码。需要用户在批准卡上同意（这把密钥设了始终允许就不用），没同意前 dry_run 会失败。能用 vault_proxy 就别用这个。更新时要连同 script 一起传", required = false),
             ToolParameterSchema("schedule_mode", description = "ONCE 一次执行（ASSIST默认，配 run_at 即日程提醒）；DAILY 每天；WEEKLY 每周；MONTHLY 每月；YEARLY 每年（这四种在 daily_time 执行）；INTERVAL 每隔 interval_minutes 执行（网页监控默认）；EVENT 指定任务成功后执行。update 时也能改，但只能在 INTERVAL/DAILY/WEEKLY/MONTHLY/YEARLY 之间改", required = false),
             ToolParameterSchema("run_at", description = "ONCE 的执行时间，本地时间 yyyy-MM-dd HH:mm；不填则立即执行。到点时你会被唤醒处理并提醒用户", required = false),
             ToolParameterSchema("daily_time", description = "DAILY/WEEKLY/MONTHLY/YEARLY 必填：执行的本地时间 HH:mm", required = false),
@@ -55,7 +62,8 @@ internal object OrbitTaskTools {
             "子代理的工具过程保存在执行记录，它的结果先交给你，由你在安排它的聊天（主聊天或侧聊）里告诉用户。" +
             "用户说“有某某消息/短信/日程变化就告诉我”时用 WATCH+INTERVAL+notify_policy=CHANGES，间隔按急不急定（最少15分钟）。" +
             "通知、短信、日历需要用户在系统设置里给 Operit 对应权限，没给时任务会记下原因并提醒用户一次。" +
-            "现成来源不够时写一个只读的小脚本（比如 GET 公开接口、看文件），每轮用 silent 或 wake 给出理由和 JSON 对象。" +
+            "现成来源不够时写一个只读的小脚本（比如 GET 公开接口、看文件），sh 或 python 都行，每轮用 silent 或 wake 给出理由和 JSON 对象。" +
+            "要用保险箱里的密钥时，调接口用 vault_proxy（替身值+代理，不用用户批准）；只有签名这类必须拿真值的才用 vault_env（仅 python，要用户批准）。" +
             "脚本新建后默认暂停；先 dry_run，核对返回的 outcome、reason、payload 和 output，再明确 resume 启用。修改脚本后也要重走这两步。通知/短信/日历不用试跑。" +
             "读短信、通知必须是用户明确要求的；汇报时只说和任务有关的内容，不要照抄无关的私密消息。" +
             "用户问“还有什么在等我”时用 pending。",
@@ -115,6 +123,7 @@ internal object OrbitTaskTools {
                     }
                     if (kind == OrbitWatchSources.KIND && OrbitWatchSources.isScript(source)) {
                         put("next", "Created paused. Call dry_run with task_id, inspect the output, then call resume only if the read-only check is correct.")
+                        repository.dao.task(getString("task_id"))?.let { askVault(context, orbit, it, this) }
                     }
                 }
             }
@@ -141,7 +150,7 @@ internal object OrbitTaskTools {
                     ?: error("No task with task_id \"$id\"; call orbit_task with action=list to find it")
                 // Every change answers with the task as it is now and what really moved; applied=false
                 // means the change could not be saved (the task changed meanwhile).
-                suspend fun after(applied: Boolean, force: Boolean = false, extra: JSONObject.() -> Unit = {}): JSONObject {
+                suspend fun after(applied: Boolean, force: Boolean = false, extra: suspend JSONObject.() -> Unit = {}): JSONObject {
                     val now = repository.dao.task(id) ?: task
                     val fields = changedFields(task, now)
                     return json(now, context).put("instruction", OrbitRoutines.runningInstruction(context, now)).put("applied", applied).put("changed", force || fields.isNotEmpty())
@@ -157,17 +166,27 @@ internal object OrbitTaskTools {
                                     else "The script is paused. Call dry_run, inspect the output, then resume if correct.")
                             }
                         }
-                        .apply(extra)
+                        .also { it.extra() }
                 }
                 when (action) {
                     "dry_run" -> {
-                        val result = repository.dryRun(task)
-                        after(true) {
-                            put("dry_run_passed", true).put("orbit_woken", false)
-                            put("outcome", result.outcome).put("reason", result.reason)
-                            put("payload", JSONObject(result.payload)).put("output", result.output)
-                            put("note", "The script ran once with HATCH_HOOK_DRY_RUN=1 using the configured shell identity. It is still paused.")
-                            put("next", "Review the output and confirm the script only reads. If correct, call resume; otherwise update the script and dry_run again.")
+                        // Real values the user has not allowed yet: the card (again) instead of a run that would fail.
+                        val card = JSONObject()
+                        if (OrbitHookChecks.needed(task)) askVault(context, orbit, task, card)
+                        if (card.has(OrbitChatCards.KEY)) after(true) {
+                            put("dry_run_passed", false)
+                            card.keys().forEach { put(it, card.get(it)) }
+                        } else {
+                            val result = repository.dryRun(task)
+                            after(true) {
+                                put("dry_run_passed", true).put("orbit_woken", false)
+                                put("outcome", result.outcome).put("reason", result.reason)
+                                put("payload", JSONObject(result.payload)).put("output", result.output)
+                                put("note", "The script ran once with HATCH_HOOK_DRY_RUN=1" +
+                                    (if (OrbitWatchSources.hook(task.source)?.python == true) " in the Ubuntu terminal"
+                                    else " using the configured shell identity") + ". It is still paused.")
+                                put("next", "Review the output and confirm the script only reads. If correct, call resume; otherwise update the script and dry_run again.")
+                            }
                         }
                     }
                     "update" -> {
@@ -195,7 +214,10 @@ internal object OrbitTaskTools {
                         parseTimeout(arguments["timeout_minutes"]) ?: task.timeoutMinutes,
                         parseFlag(arguments["use_subagent"]) ?: task.useSubagent,
                         scheduleMode = mode,
-                        modelRole = arguments["model"]?.let(OrbitModels::checkedRole) ?: task.modelRole))
+                        modelRole = arguments["model"]?.let(OrbitModels::checkedRole) ?: task.modelRole)) {
+                            val now = repository.dao.task(id)
+                            if (now != null && now.source != task.source) askVault(context, orbit, now, this)
+                        }
                     }
                     "detail" -> json(task, context).put("instruction", OrbitRoutines.runningInstruction(context, task))
                         .put("timezone", zone()).put("execution_record", repository.executionRecord(id))
@@ -330,15 +352,59 @@ internal object OrbitTaskTools {
         require(!watch.startsWith("script:")) { "Give the script text in script and set watch=script" }
         if (watch != "script") {
             require(args["script"].isNullOrBlank()) { "script only goes with watch=script" }
+            require(args["language"].isNullOrBlank() && args["vault_proxy"].isNullOrBlank() && args["vault_env"].isNullOrBlank()) {
+                "language, vault_proxy and vault_env only go with watch=script"
+            }
             OrbitWatchSources.validate(watch)
             return watch
         }
         val script = args["script"]?.takeIf { it.isNotBlank() } ?: error("watch=script needs the script text in script")
         require(script.length <= 8000) { "script is longer than 8000 characters" }
+        val python = when (args["language"]?.trim()?.lowercase().orEmpty()) {
+            "", "sh", "shell" -> false
+            "python", "py", "python3" -> true
+            else -> error("language must be sh or python")
+        }
+        require(!python || com.ai.assistance.operit.util.OnDemandResources.terminalInstalled(context)) {
+            "Python hooks run in the Ubuntu terminal, which is not installed; ask with orbit_components first or write a sh hook"
+        }
+        val entries = OrbitVault.entries(context, orbitId)
+        fun ids(name: String): List<String> {
+            val list = args[name].orEmpty().split(',').map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+            require(list.size <= 8) { "$name takes at most 8 credential_ids" }
+            return list
+        }
+        fun entry(name: String, id: String) = entries.firstOrNull { it.id == id }
+            ?: error("$name: no vault entry with credential_id \"$id\"; use orbit_vault list")
+        val proxy = ids("vault_proxy").onEach { id ->
+            val e = entry("vault_proxy", id)
+            require(e.kind == OrbitVault.API_KEY && e.apiHosts.isNotEmpty()) {
+                "vault_proxy: ${e.site} is not an API key with allowed sites, so the proxy cannot use it"
+            }
+        }
+        val env = ids("vault_env").onEach { id ->
+            val e = entry("vault_env", id)
+            require(python) { "vault_env only works with language=python; sh hooks can use vault_proxy" }
+            require((e.kind == OrbitVault.API_KEY || e.kind == OrbitVault.LOGIN) && e.envName.isNotEmpty() &&
+                e.secret.length >= OrbitVault.MIN_ENV_SECRET) {
+                "vault_env: the user has not allowed ${e.site} in the terminal; use vault_proxy, " +
+                    "or ask with orbit_vault request_update first"
+            }
+        }
         val slug = title.replace(Regex("[^\\p{L}\\p{N}_-]+"), "-").trim('-').take(40).ifEmpty { "watch" }
-        val path = "files/hooks/$slug-${OrbitWatchSources.hash(requestId).take(8)}.sh"
+        val path = "files/hooks/$slug-${OrbitWatchSources.hash(requestId).take(8)}." + if (python) "py" else "sh"
         OrbitFiles.of(context, orbitId).write(path, script)
-        return "script:$path@${OrbitWatchSources.hash(script)}"
+        return OrbitWatchSources.scriptSource(path, OrbitWatchSources.hash(script), proxy, env)
+    }
+
+    /** Puts the approval card in the chat when the hook loads real values the user has not allowed yet. */
+    private suspend fun askVault(context: Context, orbit: com.ai.assistance.operit.data.preferences.OrbitProfile,
+        task: OrbitTaskEntity, out: JSONObject) {
+        val approval = OrbitHookVault.ask(context, orbit, task.chatId.ifBlank { orbit.chatId }, task) ?: return
+        out.put("vault_env_approval_id", approval.id)
+            .put("next", "An approval card for vault_env is now in the chat and the script stays paused. End this " +
+                "turn with one short line. Once the user approves you get a hidden note; then dry_run and resume.")
+            .put(OrbitChatCards.KEY, OrbitChatCards.approval(orbit.id, approval))
     }
 
     private fun parseDailyTime(value: String): Int {

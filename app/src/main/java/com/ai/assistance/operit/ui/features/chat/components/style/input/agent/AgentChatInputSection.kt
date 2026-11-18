@@ -113,6 +113,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.ComposerPredictionTextField
+import com.ai.assistance.operit.ui.features.chat.components.style.input.common.AcceptPastedAttachments
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.rememberComposerPredictionTransformation
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.EnhancedAIService
@@ -154,7 +155,6 @@ import com.ai.assistance.operit.ui.features.chat.components.AttachmentChip
 import com.ai.assistance.operit.ui.features.chat.components.AttachmentSelectorPopupPanel
 import com.ai.assistance.operit.ui.features.chat.components.FullscreenInputDialog
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.CharacterCardMemoryBindingSwitchConfirmDialog
-import com.ai.assistance.operit.ui.features.chat.components.style.input.common.CharacterCardModelBindingSwitchConfirmDialog
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.InputMenuToggleHookParams
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.InputMenuToggleDefinition
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.InputMenuTogglePluginRegistry
@@ -260,8 +260,6 @@ fun AgentChatInputSection(
     val showFullscreenInput = remember { mutableStateOf(false) }
     val showModelSelectorPopup = remember { mutableStateOf(false) }
     val showExtraSettingsPopup = remember { mutableStateOf(false) }
-    var showCharacterCardBindingSwitchConfirm by remember { mutableStateOf(false) }
-    var pendingCharacterCardModelSelection by remember { mutableStateOf<Pair<String, Int>?>(null) }
     var showCharacterCardMemoryBindingSwitchConfirm by remember { mutableStateOf(false) }
     var pendingCharacterCardMemorySelection by remember { mutableStateOf<String?>(null) }
     val context = LocalContext.current
@@ -314,40 +312,6 @@ fun AgentChatInputSection(
             },
         )
     }
-
-    CharacterCardModelBindingSwitchConfirmDialog(
-        visible = showCharacterCardBindingSwitchConfirm,
-        onConfirm = {
-            val selection = pendingCharacterCardModelSelection
-            if (selection == null) {
-                showCharacterCardBindingSwitchConfirm = false
-                return@CharacterCardModelBindingSwitchConfirmDialog
-            }
-            scope.launch {
-                val activePrompt = activePromptManager.getActivePrompt()
-                val activeCard = when (activePrompt) {
-                    is ActivePrompt.CharacterCard -> characterCardManager.getCharacterCard(activePrompt.id)
-                    is ActivePrompt.CharacterGroup -> null
-                }
-                if (activeCard != null) {
-                    characterCardManager.updateCharacterCard(
-                        activeCard.copy(
-                            chatModelBindingMode = CharacterCardChatModelBindingMode.FIXED_CONFIG,
-                            chatModelConfigId = selection.first,
-                            chatModelIndex = selection.second.coerceAtLeast(0),
-                        ),
-                    )
-                }
-                showModelSelectorPopup.value = false
-                showCharacterCardBindingSwitchConfirm = false
-                pendingCharacterCardModelSelection = null
-            }
-        },
-        onDismiss = {
-            showCharacterCardBindingSwitchConfirm = false
-            pendingCharacterCardModelSelection = null
-        },
-    )
 
     CharacterCardMemoryBindingSwitchConfirmDialog(
         visible = showCharacterCardMemoryBindingSwitchConfirm,
@@ -409,10 +373,14 @@ fun AgentChatInputSection(
     val activeProfileId by userPreferencesManager.activeMemorySpaceIdFlow.collectAsState(initial = "default")
     var preferenceProfiles by remember { mutableStateOf<List<MemorySpace>>(emptyList()) }
     val orbitChatModel = com.ai.assistance.operit.ui.features.orbit.rememberOrbitChatModel(currentChatId, configSummaries)
+    // This chat's own quick-switch choice; without one it shows the configured main model.
+    val chatModelChoice = com.ai.assistance.operit.ui.features.orbit.rememberChatModelChoice(currentChatId, configSummaries)
     val currentConfigMapping =
-        orbitChatModel?.mapping ?: configMappingWithIndex[FunctionType.CHAT]
+        orbitChatModel?.mapping ?: chatModelChoice ?: configMappingWithIndex[FunctionType.CHAT]
             ?: FunctionConfigMapping(FunctionalConfigManager.DEFAULT_CONFIG_ID, 0)
-    val isModelSelectionLockedByCharacterCard = orbitChatModel == null && !characterCardBoundChatModelConfigId.isNullOrBlank()
+    // A role card's model shows until this chat picks its own; the quick switch never edits the card.
+    val isModelSelectionLockedByCharacterCard =
+        orbitChatModel == null && chatModelChoice == null && !characterCardBoundChatModelConfigId.isNullOrBlank()
     val isMemorySelectionLockedByCharacterCard = !characterCardBoundMemoryProfileId.isNullOrBlank()
     val effectiveConfigMapping =
         if (isModelSelectionLockedByCharacterCard) {
@@ -630,38 +598,14 @@ fun AgentChatInputSection(
         }
 
     val onSelectModel: (String, Int) -> Unit = { selectedId, modelIndex ->
-        if (orbitChatModel != null) {
-            val name = configSummaries.firstOrNull { it.id == selectedId }?.let {
-                com.ai.assistance.operit.data.preferences.OrbitModelRef.fromSelection(it, modelIndex)?.modelName
-            }
-            if (name != null) scope.launch {
-                com.ai.assistance.operit.ui.features.orbit.selectOrbitChatModel(context, orbitChatModel.orbitId, selectedId, name)
-                showModelSelectorPopup.value = false
-            }
-        } else if (isModelSelectionLockedByCharacterCard) {
-            val currentModelIndex = configSummaries.find { it.id == effectiveConfigMapping.configId }?.let { config ->
-                getValidModelIndex(config.modelName, effectiveConfigMapping.modelIndex)
-            } ?: effectiveConfigMapping.modelIndex.coerceAtLeast(0)
-            val isSameSelection =
-                selectedId == effectiveConfigMapping.configId && modelIndex == currentModelIndex
-            if (isSameSelection) {
-                showModelSelectorPopup.value = false
-            } else {
-                pendingCharacterCardModelSelection = selectedId to modelIndex
-                showModelSelectorPopup.value = false
-                showCharacterCardBindingSwitchConfirm = true
-            }
-        } else {
-            scope.launch {
-                functionalConfigManager.setConfigForFunction(
-                    FunctionType.CHAT,
-                    selectedId,
-                    modelIndex,
-                )
-                EnhancedAIService.refreshServiceForFunction(context, FunctionType.CHAT)
-                showModelSelectorPopup.value = false
-            }
+        // Only this chat switches; the configured main model and any role card stay as they are.
+        val name = configSummaries.firstOrNull { it.id == selectedId }?.let {
+            com.ai.assistance.operit.data.preferences.OrbitModelRef.fromSelection(it, modelIndex)?.modelName
         }
+        if (name != null) {
+            com.ai.assistance.operit.ui.features.orbit.selectChatModel(context, currentChatId, selectedId, name)
+        }
+        showModelSelectorPopup.value = false
     }
 
     val onModelSelectorClick = {
@@ -923,6 +867,11 @@ fun AgentChatInputSection(
                             .fillMaxWidth()
                             .padding(horizontal = 12.dp, vertical = 8.dp),
                 ) {
+                    AcceptPastedAttachments(
+                        enabled = !isProcessing || allowTextInputWhileProcessing,
+                        chatId = { actualViewModel.currentChatId.value },
+                        onAttach = onAttachmentRequest,
+                    ) { pasteModifier ->
                     ComposerPredictionTextField(
                         value = userMessage,
                         prediction = composerPrediction,
@@ -940,6 +889,7 @@ fun AgentChatInputSection(
                             )
                         },
                         modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp)
+                            .then(pasteModifier)
                             .onPreviewKeyEvent(onEnterToSendKeyEvent),
                         textStyle = inputTextStyle,
                         maxLines = 6,
@@ -981,6 +931,7 @@ fun AgentChatInputSection(
                         },
                         enabled = !isProcessing || allowTextInputWhileProcessing,
                     )
+                    }
 
                     Spacer(modifier = Modifier.height(8.dp))
 
@@ -1231,6 +1182,11 @@ fun AgentChatInputSection(
                                 .fillMaxWidth()
                                 .padding(horizontal = 12.dp, vertical = 8.dp),
                     ) {
+                        AcceptPastedAttachments(
+                            enabled = !isProcessing || allowTextInputWhileProcessing,
+                            chatId = { actualViewModel.currentChatId.value },
+                            onAttach = onAttachmentRequest,
+                        ) { pasteModifier ->
                         ComposerPredictionTextField(
                             value = userMessage,
                             prediction = composerPrediction,
@@ -1248,6 +1204,7 @@ fun AgentChatInputSection(
                                 )
                             },
                             modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp)
+                                .then(pasteModifier)
                                 .onPreviewKeyEvent(onEnterToSendKeyEvent),
                             textStyle = inputTextStyle,
                             maxLines = 6,
@@ -1289,6 +1246,7 @@ fun AgentChatInputSection(
                             },
                             enabled = !isProcessing || allowTextInputWhileProcessing,
                         )
+                        }
 
                         Spacer(modifier = Modifier.height(8.dp))
 
@@ -1594,6 +1552,8 @@ fun AgentChatInputSection(
                     onValueChange = onUserMessageChange,
                     onDismiss = { showFullscreenInput.value = false },
                     onConfirm = { showFullscreenInput.value = false },
+                    onAttach = onAttachmentRequest,
+                    chatId = { actualViewModel.currentChatId.value },
                 )
             }
         }

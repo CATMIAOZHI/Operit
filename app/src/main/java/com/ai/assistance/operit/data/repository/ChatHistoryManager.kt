@@ -3297,6 +3297,9 @@ class ChatHistoryManager private constructor(private val context: Context) {
      * are dropped here. Keeping them would only make the memory coordinator retry them later.
      */
     private suspend fun forgetDeletedChats(chatIds: Collection<String>) {
+        runCatching {
+            com.ai.assistance.operit.data.preferences.ChatModelSelections.getInstance(context).forget(chatIds)
+        }.onFailure { AppLogger.w(TAG, "Failed to drop model choices of deleted chats", it) }
         chatIds.forEach { id ->
             runCatching {
                 com.ai.assistance.operit.ui.common.dynamicui.DynamicUiStateStore.deleteChat(context, id)

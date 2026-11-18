@@ -95,6 +95,14 @@ interface MessageDao {
     """)
     suspend fun getWorkReplyTimestamps(chatId: String): List<Long>
 
+    /** When the user next wrote in [chatId] after [afterTimestamp] (not a hidden notice); null if not yet. */
+    @Query("""
+        SELECT timestamp FROM messages
+        WHERE chatId = :chatId AND sender = 'user' AND displayMode = 'NORMAL' AND timestamp > :afterTimestamp
+        ORDER BY timestamp ASC LIMIT 1
+    """)
+    suspend fun getNextTypedUserTimestamp(chatId: String, afterTimestamp: Long): Long?
+
     /**
      * Of [timestamps], the assistant rows (final or intermediate) whose shown version may hold a
      * tool call: the selected variant when there is one, the row itself otherwise. Only the given

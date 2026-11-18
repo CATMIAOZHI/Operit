@@ -60,15 +60,15 @@ data class OrbitProfile(
     /** Separate topic chats next to the main chat, like Muse's side chats. Their ids are also owned chats. */
     val sideChats: List<OrbitSideChat> = emptyList(),
     /**
-     * When true the Orbit's browser uses the main app's logins. Its own saved logins stay on disk
-     * while sharing, so turning this off brings them back.
-     */
-    val browserSharesMainLogin: Boolean = false,
-    /**
      * When true, what Orbit says while the app is closed also shows as its own phone notification.
      * Separate from the system notification permission, which the app needs either way.
      */
     val messageNotifications: Boolean = true,
+    /**
+     * True for an Orbit that used the main app's browser logins before they were always kept
+     * apart: its settings explain once why sites may ask it to sign in again.
+     */
+    val browserLoginSplitNotice: Boolean = false,
     /** Live pet avatar; avatarUri remains its still fallback if the pet is removed. */
     val avatarPetId: String? = null,
     val appearance: OrbitAppearance = OrbitAppearance(),
@@ -374,12 +374,12 @@ class OrbitPreferences private constructor(context: Context) {
         updateOrbits { orbits -> orbits.map { if (it.id == orbitId) it.copy(name = name) else it } }
     }
 
-    suspend fun setBrowserSharesMainLogin(orbitId: String, shared: Boolean) {
-        updateOrbits { orbits -> orbits.map { if (it.id == orbitId) it.copy(browserSharesMainLogin = shared) else it } }
-    }
-
     suspend fun setMessageNotifications(orbitId: String, enabled: Boolean) {
         updateOrbits { orbits -> orbits.map { if (it.id == orbitId) it.copy(messageNotifications = enabled) else it } }
+    }
+
+    suspend fun dismissBrowserLoginSplitNotice(orbitId: String) {
+        updateOrbits { orbits -> orbits.map { if (it.id == orbitId) it.copy(browserLoginSplitNotice = false) else it } }
     }
 
     suspend fun bindMemory(orbitId: String, memorySpaceId: String) {
@@ -642,8 +642,12 @@ class OrbitPreferences private constructor(context: Context) {
                                 }
                             }
                         }.orEmpty(),
-                        browserSharesMainLogin = item.optBoolean("browserSharesMainLogin", false),
                         messageNotifications = item.optBoolean("messageNotifications", true),
+                        // The old sharing switch, on, becomes a one-time explanation.
+                        browserLoginSplitNotice = item.optBoolean(
+                            "browserLoginSplitNotice",
+                            item.optBoolean("browserSharesMainLogin", false),
+                        ),
                     )
                 }
             }.getOrDefault(emptyList())
@@ -672,8 +676,8 @@ class OrbitPreferences private constructor(context: Context) {
                                         put("forkOrigin", JSONObject().put("chatId", origin.chatId).put("messageId", origin.messageId))
                                     } }
                             }))
-                            put("browserSharesMainLogin", orbit.browserSharesMainLogin)
                             put("messageNotifications", orbit.messageNotifications)
+                            put("browserLoginSplitNotice", orbit.browserLoginSplitNotice)
                         }
                     )
                 }

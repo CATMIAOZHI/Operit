@@ -32,6 +32,19 @@ plugins {
     alias(libs.plugins.kotlin.parcelize)
 }
 
+// -PoperitBrowser=true builds the version with the Cefrium browser engine built in (Android 10+,
+// about 100 MB larger, compiled with JDK 25). Without it the app uses the system WebView.
+// Read from the command line like the root build script, which puts the plugin on the classpath.
+val browserBuild = gradle.startParameter.projectProperties["operitBrowser"] == "true"
+if (browserBuild && !JavaVersion.current().isCompatibleWith(JavaVersion.toVersion(25))) {
+    throw GradleException(
+        "-PoperitBrowser=true builds with the Cefrium engine, which needs Gradle to run on JDK 25 " +
+            "(this run uses JDK ${JavaVersion.current()}). Point JAVA_HOME at a JDK 25 and build again; " +
+            "leave out -PoperitBrowser=true for the usual version.",
+    )
+}
+if (browserBuild) apply(plugin = "com.cefrium")
+
 val verifyScriptExecutionReceiverManifests =
     tasks.register("verifyScriptExecutionReceiverManifests") {
         group = "verification"
@@ -182,10 +195,11 @@ android {
 
     defaultConfig {
         applicationId = "com.rainy.operitry"
-        minSdk = 26
+        // The engine needs Android 10; older phones install the version without it.
+        minSdk = if (browserBuild) 29 else 26
         targetSdk = 34
         versionCode = 100205
-        versionName = "1.12.2-ry.19"
+        versionName = "1.12.2-ry.20"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -196,7 +210,9 @@ android {
             // Explicitly specify the ABIs we package for the app process.
             // terminal now also ships x86_64 runtime binaries for the Android Studio emulator,
             // while the rest of the app remains primarily ARM-focused.
-            abiFilters.addAll(listOf("arm64-v8a"))
+            // -PoperitAbi=x86_64 is only for testing on the x86_64 emulator: the arm64 Cefrium
+            // engine crashes under the emulator's arm translation.
+            abiFilters.addAll(listOf(gradle.startParameter.projectProperties["operitAbi"] ?: "arm64-v8a"))
         }
 
         externalNativeBuild {
@@ -206,6 +222,9 @@ android {
         }
 
         buildConfigField("boolean", "PERSONAL_DEV_UPDATE_CHANNEL", "false")
+        buildConfigField("boolean", "BROWSER_ENGINE_BUILT_IN", browserBuild.toString())
+        // Name under Orbit's home-screen icon; Operit Ry's entry uses app_name.
+        resValue("string", "orbit_launcher_name", "Orbit")
     }
 
     buildTypes {
@@ -235,6 +254,7 @@ android {
             }
             matchingFallbacks += listOf("debug")
             resValue("string", "app_name", "Operit Ry Clone")
+            resValue("string", "orbit_launcher_name", "Orbit Clone")
         }
         create("nightly") {
             isMinifyEnabled = false
@@ -268,6 +288,8 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
         isCoreLibraryDesugaringEnabled = true
     }
+    // The Cefrium tab code compiles only into the browser build; the usual build gets a stub.
+    sourceSets["main"].java.srcDir(if (browserBuild) "src/browser/java" else "src/webview/java")
     buildFeatures {
         compose = true
         aidl = true
@@ -370,6 +392,7 @@ if (readmeShots == null) {
 }
 
 dependencies {
+    if (browserBuild) implementation("com.cefrium:cefrium-sdk:0.21.0")
     // Keep this alpha set in sync with compose-bom-alpha 2026.09.00.
     implementation("androidx.a2ui.compose:compose-runtime:1.0.0-alpha01")
     implementation("androidx.a2ui.compose:compose-ui:1.0.0-alpha01")

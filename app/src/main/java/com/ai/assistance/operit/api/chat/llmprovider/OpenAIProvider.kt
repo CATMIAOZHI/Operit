@@ -54,6 +54,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
+import okio.buffer
 import org.json.JSONArray
 import org.json.JSONObject
 import com.ai.assistance.operit.api.chat.llmprovider.MediaLinkParser
@@ -69,6 +70,9 @@ private const val STREAM_STALL_TIMEOUT_MS = 120_000L
 
 /** 连续停滞允许的重试次数：停滞每次都要等满超时，不能像普通网络错误那样重试 5 次。 */
 private const val MAX_STREAM_STALL_RETRIES = 2
+
+/** Headers that carry who a request is for. */
+private val CREDENTIAL_HEADERS = listOf("Authorization", "x-api-key", "api-key", "x-goog-api-key", "Cookie")
 
 /** 首包单独放宽：网关排队或超长上下文的首字延迟可能明显超过常规块间隔。 */
 private const val STREAM_FIRST_CHUNK_TIMEOUT_MS = 300_000L
@@ -104,19 +108,249 @@ private val streamStallWatchdogExecutor: ScheduledExecutorService by lazy {
     }
 }
 
+/**
+ * Streamed Chat Completions only report token usage when asked for it. Every chat completions
+ * stream asks, so a generic endpoint (Ollama Cloud, OpenRouter, a local server...) has its turns
+ * counted too; an endpoint and model that refuse the field are remembered in
+ * [StreamUsageOptionRejections] and their streams go without it.
+ */
 internal fun JSONObject.applyChatCompletionsStreamUsageOption(
     stream: Boolean,
-    providerType: ApiProviderType,
     useResponsesApi: Boolean,
+    suppressed: Boolean = false,
 ) {
-    val supportsIncludeUsage =
-        providerType == ApiProviderType.OPENAI ||
-            providerType == ApiProviderType.GROK_ACCOUNT ||
-            providerType == ApiProviderType.DEEPSEEK ||
-            providerType == ApiProviderType.MOONSHOT
-    if (stream && !useResponsesApi && supportsIncludeUsage) {
+    if (stream && !useResponsesApi && !suppressed) {
         put("stream_options", JSONObject().put("include_usage", true))
     }
+}
+
+/**
+ * True when a 400/422 names the usage option. The body may only echo the request, so this is a
+ * reason to try once without the field, and the endpoint is remembered only when that try works.
+ */
+internal fun isStreamUsageOptionRejection(statusCode: Int, errorBody: String): Boolean {
+    if (statusCode != 400 && statusCode != 422) return false
+    // A validation error may echo the whole request under `input`; only the diagnosis counts. The
+    // echo is skipped while reading, so a request carrying images is not built up again here, and
+    // reading stops as soon as the diagnosis names the field.
+    // Only a body Gson reads as one object or array through to its end is read as JSON; text such
+    // as "[400] unknown argument stream_options" is read as text.
+    // The body is read as it is; trimming it would first copy an echo of a large request.
+    val first = errorBody.firstOrNull { !it.isWhitespace() }
+    if (first == '{' || first == '[') {
+        try {
+            com.google.gson.stream.JsonReader(java.io.StringReader(errorBody)).use { reader ->
+                return errorDiagnosisNamesUsageOption(reader)
+            }
+        } catch (e: Exception) {
+            // Malformed JSON, a bad escape or text after the value: read the body as text.
+        }
+    }
+    return namesUsageOption(errorBody)
+}
+
+/** The field names as whole identifiers: `stream_options_extra` is another field. */
+private fun namesUsageOption(text: String): Boolean =
+    namesIdentifier(text, "stream_options") || namesIdentifier(text, "include_usage")
+
+private fun namesIdentifier(text: String, name: String): Boolean {
+    var at = text.indexOf(name, ignoreCase = true)
+    while (at >= 0) {
+        val end = at + name.length
+        if ((at == 0 || !isIdentifierChar(text[at - 1])) && (end == text.length || !isIdentifierChar(text[end]))) {
+            return true
+        }
+        at = text.indexOf(name, at + 1, ignoreCase = true)
+    }
+    return false
+}
+
+private fun isIdentifierChar(c: Char): Boolean =
+    c in 'a'..'z' || c in 'A'..'Z' || c in '0'..'9' || c == '_'
+
+/**
+ * Whether a key or value outside the request echo names the option. The document is walked token
+ * by token, with no recursion, so nesting of any depth is read; text after the value makes the
+ * reader throw.
+ *
+ * `input` and `request` carry the request back and are skipped unread. An object under `body` is
+ * an echo only when it carries `messages`; otherwise it groups the diagnosis, as in
+ * `{"errors":{"body":{"stream_options":["Unknown field"]}}}`, and what it names counts once it
+ * closes. A string or array under `body` is an echo and is skipped.
+ */
+private fun errorDiagnosisNamesUsageOption(reader: com.google.gson.stream.JsonReader): Boolean {
+    // Open `body` objects: their depth, whether they carry `messages`, and whether something in
+    // them named the option.
+    class Candidate(val depth: Int) { var echo = false; var named = false }
+    val candidates = ArrayDeque<Candidate>()
+    var depth = 0
+    // Returns true when a name outside any echo is found.
+    fun found(): Boolean {
+        val top = candidates.lastOrNull() ?: return true
+        top.named = true
+        return false
+    }
+    while (true) {
+        when (reader.peek()) {
+            com.google.gson.stream.JsonToken.BEGIN_OBJECT -> { reader.beginObject(); depth++ }
+            com.google.gson.stream.JsonToken.END_OBJECT -> {
+                reader.endObject()
+                val top = candidates.lastOrNull()
+                if (top != null && top.depth == depth) {
+                    candidates.removeLast()
+                    if (!top.echo && top.named && found()) return true
+                }
+                depth--
+            }
+            com.google.gson.stream.JsonToken.BEGIN_ARRAY -> { reader.beginArray(); depth++ }
+            com.google.gson.stream.JsonToken.END_ARRAY -> { reader.endArray(); depth-- }
+            com.google.gson.stream.JsonToken.NAME -> {
+                val key = reader.nextName()
+                val top = candidates.lastOrNull()
+                if (top != null && top.depth == depth && key == "messages") {
+                    // The request itself: nothing in it is the diagnosis.
+                    top.echo = true
+                    reader.skipValue()
+                    while (reader.hasNext()) {
+                        reader.nextName()
+                        reader.skipValue()
+                    }
+                } else if (key == "input" || key == "request") {
+                    reader.skipValue()
+                } else if (key == "body") {
+                    if (reader.peek() == com.google.gson.stream.JsonToken.BEGIN_OBJECT) {
+                        reader.beginObject()
+                        depth++
+                        candidates.addLast(Candidate(depth))
+                    } else {
+                        reader.skipValue()
+                    }
+                } else if (namesUsageOption(key) && found()) {
+                    return true
+                }
+            }
+            com.google.gson.stream.JsonToken.NULL -> reader.nextNull()
+            com.google.gson.stream.JsonToken.BOOLEAN -> reader.nextBoolean()
+            com.google.gson.stream.JsonToken.END_DOCUMENT -> return false
+            else -> if (namesUsageOption(reader.nextString()) && found()) return true
+        }
+    }
+}
+
+/**
+ * The built body with only its top-level `stream_options` member taken out, or null when it has
+ * none. The bytes around the member are sent as they are, so a body carrying large images is not
+ * decoded or copied again, and nothing upstream runs again.
+ */
+internal fun requestBodyWithoutStreamUsageOption(body: RequestBody): RequestBody? {
+    // The body built here holds its bytes; reading them back would copy a large body again.
+    val bytes =
+        (body as? JsonBytesRequestBody)?.bytes
+            ?: try {
+                okio.Buffer().also(body::writeTo).readByteArray()
+            } catch (e: java.io.IOException) {
+                return null
+            }
+    val range = topLevelMemberRange(bytes, "stream_options") ?: return null
+    val contentType = body.contentType() ?: "application/json".toMediaType()
+    return object : RequestBody() {
+        override fun contentType() = contentType
+        override fun contentLength() = (bytes.size - (range.last + 1 - range.first)).toLong()
+        override fun writeTo(sink: okio.BufferedSink) {
+            sink.write(bytes, 0, range.first)
+            sink.write(bytes, range.last + 1, bytes.size - range.last - 1)
+        }
+    }
+}
+
+/** A JSON request body that keeps its bytes, so they can be read without being copied. */
+internal class JsonBytesRequestBody(
+    val bytes: ByteArray,
+    private val contentType: okhttp3.MediaType?,
+) : RequestBody() {
+    override fun contentType() = contentType
+    override fun contentLength() = bytes.size.toLong()
+    override fun writeTo(sink: okio.BufferedSink) {
+        sink.write(bytes)
+    }
+}
+
+/**
+ * The byte range of the top-level member [name] of a JSON object, together with one comma that
+ * joins it to a neighbour, so what is left is still valid JSON. Null when there is no such member.
+ */
+internal fun topLevelMemberRange(bytes: ByteArray, name: String): IntRange? {
+    val target = "\"$name\"".toByteArray(Charsets.UTF_8)
+    var depth = 0
+    var inString = false
+    var escaped = false
+    var stringStart = -1
+    // The comma before the current top-level member, or -1 when it is the first member.
+    var commaBefore = -1
+    var memberStart = -1
+    var memberIsTarget = false
+    for (i in bytes.indices) {
+        val c = bytes[i].toInt().toChar()
+        if (inString) {
+            when {
+                escaped -> escaped = false
+                c == '\\' -> escaped = true
+                c == '"' -> {
+                    inString = false
+                    if (depth == 1 && memberStart == -1) {
+                        memberStart = stringStart
+                        memberIsTarget = i + 1 - stringStart == target.size &&
+                            target.indices.all { bytes[stringStart + it] == target[it] }
+                    }
+                }
+            }
+            continue
+        }
+        when (c) {
+            '"' -> { inString = true; stringStart = i }
+            '{', '[' -> depth++
+            '}', ']' -> {
+                if (depth == 1 && memberIsTarget) {
+                    // The last member: the comma before it goes with it, or it was the only one.
+                    return if (commaBefore >= 0) commaBefore until i else memberStart until i
+                }
+                depth--
+            }
+            ',' -> if (depth == 1) {
+                if (memberIsTarget) return memberStart..i
+                commaBefore = i
+                memberStart = -1
+            }
+        }
+    }
+    return null
+}
+
+/**
+ * Endpoint and model pairs whose stream worked only without `stream_options`, for this process.
+ * Bounded: past [MAX_ENTRIES] the pair used least recently is dropped, which costs it at most one
+ * more refused request.
+ */
+internal object StreamUsageOptionRejections {
+    private const val MAX_ENTRIES = 64
+    private val entries =
+        object : LinkedHashMap<String, Unit>(16, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Unit>?) =
+                size > MAX_ENTRIES
+        }
+
+    private fun key(endpoint: String, model: String) = "${endpoint.trim()}\n${model.trim()}"
+
+    @Synchronized
+    fun isRejected(endpoint: String, model: String): Boolean = entries[key(endpoint, model)] != null
+
+    @Synchronized
+    fun markRejected(endpoint: String, model: String) {
+        entries[key(endpoint, model)] = Unit
+    }
+
+    @Synchronized
+    internal fun clearForTest() = entries.clear()
 }
 
 internal fun supportsAutomaticOpenAiChatReasoning(providerType: ApiProviderType): Boolean =
@@ -225,7 +459,35 @@ open class OpenAIProvider(
     // Token缓存管理器
     val tokenCacheManager = TokenCacheManager()
 
+    /**
+     * Changes whenever the shared output count is cleared or overwritten as a whole. A request
+     * only takes back its own estimate while the count still holds it: after a newer request
+     * cleared or replaced the count, that estimate is already gone and another one may be there.
+     */
+    private var outputCountEpoch = 0
+
+    /** Guards the output count with its epoch, so a check and the change after it are one step. */
+    private val outputCountLock = Any()
+
+    /** Guards setting [activeCall]/[activeResponse] and clearing them only if still this attempt's. */
+    private val activeRefLock = Any()
+
     protected open val useResponsesApi: Boolean = false
+
+    /**
+     * Where encrypted Responses reasoning is written and read back; null outside the Responses API.
+     * [request] is the HTTP request the reasoning answers, for providers whose login rides on it.
+     */
+    protected open fun responsesReasoningScope(request: Request? = null): String? = null
+
+    /** The scope a body is being built for, set around the build on its own thread. */
+    private val bodyReasoningScope = ThreadLocal<String?>()
+
+    /** Whether the body being built asked for streamed usage, read right after the build. */
+    private val bodyStreamUsageSent = ThreadLocal<Boolean>()
+
+    /** Set while a body is built for a request whose remembered refusals do not apply. */
+    private val bodyUsageRefusalsIgnored = ThreadLocal<Boolean>()
 
     // 公开token计数
     override val inputTokenCount: Int
@@ -243,7 +505,8 @@ open class OpenAIProvider(
         usage: JSONObject?,
         onTokensUpdated: suspend (input: Int, cachedInput: Int, output: Int) -> Unit,
         onUsageReported: (suspend (com.ai.assistance.operit.data.stats.ProviderUsageSnapshot, attempt: Int) -> Unit)? = null,
-        attemptNumber: Int = 1
+        attemptNumber: Int = 1,
+        emitter: StreamEmitter? = null,
     ) {
         val parsed = OpenAIResponsesPayloadAdapter.parseUsageCounts(usage) ?: return
         // What the provider did not report keeps the local estimate: no input count keeps the
@@ -252,7 +515,13 @@ open class OpenAIProvider(
         val cached = if (parsed.cacheKnown) parsed.cachedInputTokens
             else tokenCacheManager.cachedInputTokenCount.coerceAtMost(total)
         tokenCacheManager.updateActualTokens((total - cached).coerceAtLeast(0), cached)
-        tokenCacheManager.setOutputTokens(parsed.outputTokens)
+        if (parsed.outputKnown) {
+            synchronized(outputCountLock) {
+                tokenCacheManager.setOutputTokens(parsed.outputTokens)
+                outputCountEpoch++
+                emitter?.outputReportedAs(parsed.outputTokens)
+            }
+        }
         onTokensUpdated(
             tokenCacheManager.totalInputTokenCount,
             tokenCacheManager.cachedInputTokenCount,
@@ -312,7 +581,10 @@ open class OpenAIProvider(
 
     // 重置token计数
     override fun resetTokenCounts() {
-        tokenCacheManager.resetTokenCounts()
+        synchronized(outputCountLock) {
+            tokenCacheManager.resetTokenCounts()
+            outputCountEpoch++
+        }
     }
 
     protected open fun customizeFinalRequestObject(
@@ -331,7 +603,24 @@ open class OpenAIProvider(
 
     protected open fun checkAuthenticationContinuity(previous: Request?, current: Request) {}
 
+    /** The endpoint and credential headers of a request: equal ones answer for the same account. */
+    private fun credentialsOf(request: Request): Pair<okhttp3.HttpUrl, List<List<String>>> =
+        request.url to CREDENTIAL_HEADERS.map { request.headers.values(it) }
+
     private class AuthenticationRecoveredException : IOException()
+
+    /** The server could not verify replayed encrypted reasoning; the next attempt goes without it. */
+    private class ReplayedReasoningRejectedException : IOException()
+
+    /** The endpoint refused `stream_options`; the next attempt goes without it. */
+    private class StreamUsageOptionRejectedException : IOException()
+
+    /** OpenAI's "invalid_encrypted_content": "The encrypted content ... could not be verified". */
+    private fun isReplayedReasoningRejection(errorBody: String): Boolean {
+        val body = errorBody.lowercase()
+        return "invalid_encrypted_content" in body ||
+            ("encrypted content" in body && "could not be verified" in body)
+    }
 
     protected open suspend fun authenticateRequest(builder: Request.Builder) {
         applyAuthenticationHeaders(builder, apiKeyProvider.getApiKey().trim())
@@ -783,17 +1072,25 @@ open class OpenAIProvider(
         LlmBodyStages.lap("转文字")
         val bytes = jsonString.toByteArray(Charsets.UTF_8)
         LlmBodyStages.lap("转字节")
-        return bytes.toRequestBody(JSON)
+        return JsonBytesRequestBody(bytes, JSON)
     }
 
     /**
      * 流式 Chat Completions 请求体附加 usage 返回选项：OpenAI 只在显式请求时于
      * 末块返回 usage；Responses API 始终自带 usage（response.completed），不需要
-     * 也不接受 stream_options。仅对明确支持 include_usage 的服务发送，避免通用或
-     * 本地兼容端点因未知字段拒绝请求。DeepSeek/Kimi 自建请求体复用本方法。
+     * 也不接受 stream_options。通用端点同样发送，否则它们的对话轮次不会计入统计；
+     * 拒绝该字段的端点由发送循环记下，之后不再发送。DeepSeek/Kimi 自建请求体复用本方法。
      */
     protected fun JSONObject.putStreamUsageOption(stream: Boolean) {
-        applyChatCompletionsStreamUsageOption(stream, providerType, useResponsesApi)
+        applyChatCompletionsStreamUsageOption(
+            stream = stream,
+            useResponsesApi = useResponsesApi,
+            // Command Code rewrites the body into its own protocol, which reports usage itself.
+            suppressed = providerType == ApiProviderType.COMMAND_CODE ||
+                (bodyUsageRefusalsIgnored.get() != true &&
+                    StreamUsageOptionRejections.isRejected(apiEndpoint, modelName)),
+        )
+        if (has("stream_options")) bodyStreamUsageSent.set(true)
     }
 
     /**
@@ -887,7 +1184,7 @@ open class OpenAIProvider(
 
         val finalRequestObject =
             if (useResponsesApi) {
-                OpenAIResponsesPayloadAdapter.toResponsesRequest(jsonObject).also {
+                OpenAIResponsesPayloadAdapter.toResponsesRequest(jsonObject, bodyReasoningScope.get() ?: responsesReasoningScope()).also {
                     LlmBodyStages.lap("Responses转换")
                 }
             } else {
@@ -1727,11 +2024,55 @@ open class OpenAIProvider(
     ) {
         private val savepointLengths = mutableMapOf<String, Int>()
 
+        /**
+         * The provider reported this attempt's output count. Output still flushed after it (tool
+         * calls held until the stream ends) is already in that count and is not estimated again.
+         * Kept per request, so a request running beside it on the same provider is not affected.
+         */
+        private var outputReported = false
+
+        /** What this attempt added to the output count, taken back when the attempt is retried. */
+        private var attemptOutput = 0
+        private var attemptEpoch = synchronized(outputCountLock) { outputCountEpoch }
+
+        /** Forgets this attempt's share once the count was cleared or overwritten since (lock held). */
+        private fun syncEpoch() {
+            val current = outputCountEpoch
+            if (current != attemptEpoch) {
+                attemptOutput = 0
+                attemptEpoch = current
+            }
+        }
+
+        /** A new attempt: only this request's own output from the rolled-back attempt is removed. */
+        fun startAttempt() = synchronized(outputCountLock) {
+            syncEpoch()
+            if (attemptOutput != 0) tokenCacheManager.addOutputTokens(-attemptOutput)
+            attemptOutput = 0
+            outputReported = false
+        }
+
+        /** Called, with the lock held, right after this request overwrote the count. */
+        fun outputReportedAs(tokens: Int) {
+            outputReported = true
+            attemptOutput = tokens.coerceAtLeast(0)
+            attemptEpoch = outputCountEpoch
+        }
+
+        private fun addEstimatedOutput(tokens: Int) = synchronized(outputCountLock) {
+            if (outputReported) return@synchronized
+            syncEpoch()
+            // What the count actually took: it saturates, and only that much is taken back later.
+            val before = tokenCacheManager.outputTokenCount
+            tokenCacheManager.addOutputTokens(tokens)
+            attemptOutput += tokenCacheManager.outputTokenCount - before
+        }
+
         suspend fun emitContent(content: String) {
             if (content.isNotNullOrEmpty()) {
                 emit(content)
                 receivedContent.append(content)
-                tokenCacheManager.addOutputTokens(ChatUtils.estimateTokenCount(content))
+                addEstimatedOutput(ChatUtils.estimateTokenCount(content))
                 onTokensUpdated(
                     tokenCacheManager.totalInputTokenCount,
                     tokenCacheManager.cachedInputTokenCount,
@@ -1759,7 +2100,7 @@ open class OpenAIProvider(
                 val wrapped = "$openingTag$protectedContent</$tag>"
                 emit(wrapped)
                 receivedContent.append(wrapped)
-                tokenCacheManager.addOutputTokens(ChatUtils.estimateTokenCount(thinkContent))
+                addEstimatedOutput(ChatUtils.estimateTokenCount(thinkContent))
                 onTokensUpdated(
                     tokenCacheManager.totalInputTokenCount,
                     tokenCacheManager.cachedInputTokenCount,
@@ -1773,7 +2114,7 @@ open class OpenAIProvider(
                 val protectedContent = ChatUtils.escapeProviderReasoningMarkup(thinkContent)
                 emit(protectedContent)
                 receivedContent.append(protectedContent)
-                tokenCacheManager.addOutputTokens(ChatUtils.estimateTokenCount(thinkContent))
+                addEstimatedOutput(ChatUtils.estimateTokenCount(thinkContent))
                 onTokensUpdated(
                     tokenCacheManager.totalInputTokenCount,
                     tokenCacheManager.cachedInputTokenCount,
@@ -2115,6 +2456,8 @@ open class OpenAIProvider(
         val queuedToolIndices: MutableSet<Int> = mutableSetOf(),
         val completedToolIndices: MutableSet<Int> = mutableSetOf(),
         val emittedResponsesToolIndices: MutableSet<Int> = mutableSetOf(),
+        /** Fixed per attempt from the request that was sent, not re-read while the reply streams. */
+        var reasoningScope: String? = null,
     )
 
     private suspend fun closeReasoningBlockIfOpen(
@@ -2506,7 +2849,7 @@ open class OpenAIProvider(
                     if (eventType == "response.output_item.done") {
                         closeReasoningBlockIfOpen(state, emitter)
                         if (!hasOpenToolCalls(state)) {
-                            OpenAIResponsesPayloadAdapter.createReasoningMetadataTag(item)?.let { metadataTag ->
+                            OpenAIResponsesPayloadAdapter.createReasoningMetadataTag(item, state.reasoningScope)?.let { metadataTag ->
                                 emitter.emitTag(metadataTag)
                             }
                             kotlin.coroutines.coroutineContext[com.ai.assistance.operit.core.chat.SamplingInterrupt]?.checkpoint()
@@ -2631,7 +2974,7 @@ open class OpenAIProvider(
                     }
                 }
                 closeReasoningBlockIfOpen(state, emitter)
-                applyUsageToCounters(usage, onTokensUpdated, onUsageReported, attemptNumber)
+                applyUsageToCounters(usage, onTokensUpdated, onUsageReported, attemptNumber, emitter)
             }
 
             "response.failed", "response.error" -> {
@@ -2785,7 +3128,7 @@ open class OpenAIProvider(
         val usage = jsonResponse.optJSONObject("usage")
         val choices = jsonResponse.optJSONArray("choices")
         if (choices == null || choices.length() == 0) {
-            applyUsageToCounters(usage, onTokensUpdated, onUsageReported, attemptNumber)
+            applyUsageToCounters(usage, onTokensUpdated, onUsageReported, attemptNumber, emitter)
             return
         }
 
@@ -2832,7 +3175,7 @@ open class OpenAIProvider(
             }
         }
 
-        applyUsageToCounters(usage, onTokensUpdated, onUsageReported, attemptNumber)
+        applyUsageToCounters(usage, onTokensUpdated, onUsageReported, attemptNumber, emitter)
     }
 
     /**
@@ -2893,8 +3236,9 @@ open class OpenAIProvider(
         attemptNumber: Int = 1,
         requestTraceId: String = "unknown",
         requestStartedAtMs: Long = streamNowMs(),
+        reasoningScope: String? = null,
     ) {
-        val state = StreamingState()
+        val state = StreamingState(reasoningScope = reasoningScope)
         val responseStartedAtMs = streamNowMs()
         var lastProgressLogAtMs = responseStartedAtMs
         var maxChunkGapSinceLogMs = 0L
@@ -3059,7 +3403,10 @@ open class OpenAIProvider(
             val logicalRequestId = UUID.randomUUID().toString()
             isManuallyCancelled = false
             // 重置输出token计数（输入token由TokenCacheManager管理）
-            tokenCacheManager.addOutputTokens(-tokenCacheManager.outputTokenCount)
+            synchronized(outputCountLock) {
+                tokenCacheManager.addOutputTokens(-tokenCacheManager.outputTokenCount)
+                outputCountEpoch++
+            }
             onTokensUpdated(
                 tokenCacheManager.totalInputTokenCount,
                 tokenCacheManager.cachedInputTokenCount,
@@ -3089,10 +3436,39 @@ open class OpenAIProvider(
             // 打好的请求体。重试时内容不变（登录信息只在请求头里），直接复用这份字节，
             // 不再重新整理历史、重新打包；只在打包成功后才记下，打包出错时下次重试照常重打。
             var preparedRequestBody: RequestBody? = null
+            // Encrypted reasoning from before a scope was kept, or from another key of a rotating
+            // pool, can still be refused as unverifiable; the request then goes once without it.
+            var replayedReasoningDropped = false
+            // The history without encrypted reasoning, worked out once when it has to go.
+            var strippedHistory: List<PromptTurn>? = null
+            // The endpoint refused `stream_options`; this request goes on without it.
+            var streamUsageOptionDropped = false
+            // Whether the body kept in [preparedRequestBody] asked for streamed usage on its own.
+            // A `stream_options` the user set as a custom parameter is theirs and is never taken out,
+            // and Command Code rewrites the body into its own protocol without the field.
+            var preparedBodySentUsageOption = false
+            val usageOptionRemovable =
+                providerType != ApiProviderType.COMMAND_CODE &&
+                    modelParameters.none { it.isEnabled && it.apiName == "stream_options" }
+            // A custom `model` parameter sends another model than the configured one, so refusals
+            // remembered under the configured name are neither read nor written for it.
+            val usageRefusalRememberable = modelParameters.none { it.isEnabled && it.apiName == "model" }
+            // The refused request with only its body changed: the retry keeps its key and headers,
+            // so a key pool does not move on and the retry answers for the same account.
+            var usageOptionRetryRequest: Request? = null
+            // The refused request and the body sent without the field. An ordinary retry after it
+            // (a 503, a dropped stream) that sends that same body with the same credentials also
+            // shows the endpoint works without the field.
+            var usageOptionRefusedCredentials: Pair<okhttp3.HttpUrl, List<List<String>>>? = null
+            var usageOptionDroppedBody: RequestBody? = null
+            // Whose encrypted reasoning the kept body was filtered for (the account at the time).
+            var preparedBodyScope: String? = null
 
             while (retryCount <= maxRetries) {
                 // 在循环开始时检查是否已被取消
                 checkCancellation(context)
+                // Each attempt counts its own output: what an earlier attempt streamed was rolled back.
+                emitter.startAttempt()
 
                 try {
                     if (retryCount > 0) {
@@ -3102,7 +3478,7 @@ open class OpenAIProvider(
                         )
                     }
 
-                    val currentHistory = chatHistory
+                    val currentHistory = strippedHistory ?: chatHistory
 
                 AppLogger.d(
                     "AIService",
@@ -3113,7 +3489,11 @@ open class OpenAIProvider(
                 // 有些服务商无论设置都走流式，以实际发出的方式记首字。
                 perf?.actualStreaming(effectiveStream)
                 val firstBuild = preparedRequestBody == null
-                val requestBody = preparedRequestBody ?: perf.timeBody({ it.contentLength() }) { withContext(Dispatchers.IO) { LlmBodyStages.collect(perf) { createRequestBody(
+                // The account's scope is read once here and the history filtered with that same
+                // value (handed to the build on its thread), so the check below compares like with like.
+                if (firstBuild && useResponsesApi) preparedBodyScope = responsesReasoningScope()
+                val bodyScope = preparedBodyScope
+                val requestBody = preparedRequestBody ?: perf.timeBody({ it.contentLength() }) { withContext(Dispatchers.IO) { LlmBodyStages.collect(perf) { bodyReasoningScope.set(bodyScope); bodyStreamUsageSent.set(false); bodyUsageRefusalsIgnored.set(!usageRefusalRememberable); try { createRequestBody(
                     context,
                     currentHistory,
                     modelParameters,
@@ -3121,9 +3501,10 @@ open class OpenAIProvider(
                     effectiveStream,
                     availableTools,
                     preserveThinkInHistory
-                ) } } }
+                ).also { preparedBodySentUsageOption = bodyStreamUsageSent.get() == true } } finally { bodyReasoningScope.remove(); bodyStreamUsageSent.remove(); bodyUsageRefusalsIgnored.remove() } } } }
                 preparedRequestBody = requestBody
                 // Every send counts; the body is kept once, a retry sends the same one again.
+                // The retry without `stream_options` shows up as a retry event, not a second copy.
                 perf?.captured(providerModel, requestBody, keepBody = firstBuild)
                 onTokensUpdated(
                     tokenCacheManager.totalInputTokenCount,
@@ -3132,7 +3513,29 @@ open class OpenAIProvider(
                 )
                 val attemptNumber = retryCount + 1
                 val requestTraceId = "llm_${attemptNumber}_${UUID.randomUUID().toString().substring(0, 8)}"
-                val request = createRequest(requestBody, requestTraceId, effectiveStream, attemptNumber, logicalRequestId)
+                val request = usageOptionRetryRequest?.let { retry ->
+                    usageOptionRetryRequest = null
+                    val trace = retry.tag(LlmRequestTraceContext::class.java)
+                    if (trace == null) retry
+                    else retry.newBuilder()
+                        .tag(LlmRequestTraceContext::class.java, trace.copy(requestId = requestTraceId, attempt = attemptNumber))
+                        .build()
+                } ?: createRequest(requestBody, requestTraceId, effectiveStream, attemptNumber, logicalRequestId)
+                // Fixed per attempt from the request itself: a login change mid-stream must not
+                // stamp this reply's reasoning with the next account.
+                val attemptReasoningScope = responsesReasoningScope(request)
+                // The login changed between filtering the history and signing the request: the
+                // reasoning kept may be the other account's, so it goes without it instead.
+                if (useResponsesApi && strippedHistory == null && preparedBodyScope != attemptReasoningScope) {
+                    val stripped = ChatUtils.stripOpenAiResponsesReasoningMetaTurns(chatHistory)
+                    // Kept even when nothing was taken out, so a retry does not look again.
+                    strippedHistory = stripped
+                    if (stripped != chatHistory) {
+                        replayedReasoningDropped = true
+                        preparedRequestBody = null
+                        continue
+                    }
+                }
                 AppLogger.d(
                     "AIService",
                     "[req=$requestTraceId] 【发送消息】请求体构建完成，目标模型: $modelName，API端点: $apiEndpoint"
@@ -3144,9 +3547,15 @@ open class OpenAIProvider(
                 if (firstAuthenticatedRequest == null) firstAuthenticatedRequest = request
                 // 创建Call对象并保存到activeCall中，以便可以取消
                 val call = client.newCall(request.withPerf(perf))
-                activeCall = call
+                synchronized(activeRefLock) { activeCall = call }
+                var attemptResponse: Response? = null
+                // This attempt's references go however it ends, so a cached provider does not keep
+                // an unsent or closed call holding the request body (images included).
+                try {
                 kotlin.coroutines.coroutineContext[com.ai.assistance.operit.core.chat.SamplingInterrupt]
                     ?.bindAbort { call.cancel() }
+                // A stop pressed while the attempt was being prepared reached only the previous call.
+                checkCancellation(context)
 
                 AppLogger.d("AIService", "[req=$requestTraceId] 【发送消息】正在建立连接到服务器...")
 
@@ -3160,7 +3569,8 @@ open class OpenAIProvider(
                     AppLogger.d("AIService", "[req=$requestTraceId] 【发送消息】call.execute() 返回，耗时=${executeElapsedMs}ms")
 
                     // 保存response引用，以便取消时能强制关闭
-                    activeResponse = response
+                    synchronized(activeRefLock) { activeResponse = response }
+                    attemptResponse = response
 
                     try {
                         if (!response.isSuccessful) {
@@ -3174,10 +3584,48 @@ open class OpenAIProvider(
                                     throw AuthenticationRecoveredException()
                                 }
                             }
+                            // An endpoint that names `stream_options` in its refusal gets the same
+                            // request once more without the field. Only the field is taken out of the
+                            // body already built, so the history is not rebuilt or counted again.
+                            if (preparedBodySentUsageOption && usageOptionRemovable &&
+                                !streamUsageOptionDropped &&
+                                // A 301/302/303 turns the POST into a GET without the body: that
+                                // refusal is not about a field it never received.
+                                response.request.body != null &&
+                                isStreamUsageOptionRejection(response.code, errorBody)
+                            ) {
+                                val withoutOption = requestBodyWithoutStreamUsageOption(requestBody)
+                                if (withoutOption != null) {
+                                    AppLogger.w("AIService", "The endpoint refused stream_options (${response.code}); sending once more without it")
+                                    perf?.devEvent(
+                                        com.ai.assistance.operit.core.chat.OrbitDevRecorder.EVENT_RETRY,
+                                        context.getString(R.string.orbit_dev_event_usage_option_retry, response.code),
+                                    )
+                                    response.close()
+                                    streamUsageOptionDropped = true
+                                    preparedRequestBody = withoutOption
+                                    // Where the refusal really came from, after any redirect.
+                                    usageOptionRefusedCredentials = credentialsOf(response.request)
+                                    usageOptionDroppedBody = withoutOption
+                                    usageOptionRetryRequest = request.newBuilder().method(request.method, withoutOption).build()
+                                    throw StreamUsageOptionRejectedException()
+                                }
+                            }
                             AppLogger.e(
                                 "AIService",
                                 "【发送消息】API请求失败，状态码: ${response.code}，错误信息: $errorBody"
                             )
+                            if (response.code == 400 && useResponsesApi && !replayedReasoningDropped &&
+                                isReplayedReasoningRejection(errorBody)) {
+                                val stripped = strippedHistory ?: ChatUtils.stripOpenAiResponsesReasoningMetaTurns(chatHistory)
+                                if (stripped != chatHistory) {
+                                    response.close()
+                                    strippedHistory = stripped
+                                    replayedReasoningDropped = true
+                                    preparedRequestBody = null
+                                    throw ReplayedReasoningRejectedException()
+                                }
+                            }
                             // 4xx错误仍保留单独的异常类型，具体是否重试由统一策略决定
                             if (response.code in 400..499) {
                                 val errorMessage =
@@ -3216,6 +3664,7 @@ open class OpenAIProvider(
                                 attemptNumber,
                                 requestTraceId,
                                 executeStartNs / 1_000_000L,
+                                attemptReasoningScope,
                             )
                         } else {
                             AppLogger.d("AIService", "[req=$requestTraceId] 【发送消息】开始读取非流式响应")
@@ -3230,7 +3679,7 @@ open class OpenAIProvider(
                                 val handledImages = tryHandleOpenAiImageResponse(jsonResponse, emitter, null)
 
                                 if (useResponsesApi) {
-                                    val parsed = OpenAIResponsesPayloadAdapter.parseNonStreamingResponse(jsonResponse)
+                                    val parsed = OpenAIResponsesPayloadAdapter.parseNonStreamingResponse(jsonResponse, attemptReasoningScope)
 
                                     parsed.reasoningChunks.forEach { reasoningChunk ->
                                         if (reasoningChunk.isNotEmpty()) {
@@ -3300,7 +3749,7 @@ open class OpenAIProvider(
                                     }
                                 }
 
-                                applyUsageToCounters(jsonResponse.optJSONObject("usage"), onTokensUpdated, onUsageReported, attemptNumber)
+                                applyUsageToCounters(jsonResponse.optJSONObject("usage"), onTokensUpdated, onUsageReported, attemptNumber, emitter)
 
                                 AppLogger.d("AIService", "[req=$requestTraceId] 【发送消息】非流式响应处理完成")
                             } catch (e: IOException) {
@@ -3315,10 +3764,13 @@ open class OpenAIProvider(
                         AppLogger.d("AIService", "[req=$requestTraceId] 【发送消息】关闭响应连接")
                     }
                 }
+                } finally {
+                    synchronized(activeRefLock) {
+                        if (activeCall === call) activeCall = null
+                        if (attemptResponse != null && activeResponse === attemptResponse) activeResponse = null
+                    }
+                }
 
-                // 清理活跃引用
-                activeCall = null
-                activeResponse = null
                 AppLogger.d("AIService", "【发送消息】响应处理完成，已清理活跃引用")
                 logFinalOutput("AIService", receivedContent, "Final output summary: ")
 
@@ -3327,14 +3779,35 @@ open class OpenAIProvider(
                     "AIService",
                     "【发送消息】请求成功完成，输入token: ${tokenCacheManager.totalInputTokenCount}(缓存:${tokenCacheManager.cachedInputTokenCount})，输出token: ${tokenCacheManager.outputTokenCount}"
                 )
+                // The stream worked only once the field was gone, so later streams leave it out.
+                // Only a stream that brought something back counts: an empty 200 proves nothing.
+                // The body without the field got through at the place and for the account that
+                // refused it (after redirects), whether on the silent retry or a later ordinary one.
+                val answeredWithoutOption = usageOptionDroppedBody != null &&
+                    requestBody === usageOptionDroppedBody &&
+                    attemptResponse?.request?.body != null &&
+                    usageOptionRefusedCredentials == attemptResponse?.request?.let(::credentialsOf)
+                if (answeredWithoutOption && usageRefusalRememberable &&
+                    receivedContent.isNotEmpty() && !isManuallyCancelled
+                ) {
+                    StreamUsageOptionRejections.markRejected(apiEndpoint, modelName)
+                }
                 return@stream
             } catch (e: Exception) {
                 lastException = e
                 kotlin.coroutines.coroutineContext[com.ai.assistance.operit.core.chat.SamplingInterrupt]?.throwIfInterrupted()
+                if (e is StreamUsageOptionRejectedException) {
+                    // Refused before any of the stream was read, so there is nothing to roll back.
+                    continue
+                }
                 emitter.emitRollback(requestSavepointId)
                 if (e is AuthenticationRecoveredException) {
                     // Authentication recovery does not consume the ordinary network retry budget.
                     // The operation-wide flag prevents a later network retry refreshing again.
+                    continue
+                }
+                if (e is ReplayedReasoningRejectedException) {
+                    AppLogger.w("AIService", "Replayed reasoning could not be verified; sending once more without it")
                     continue
                 }
                 if (e is RepetitionTruncationException) {

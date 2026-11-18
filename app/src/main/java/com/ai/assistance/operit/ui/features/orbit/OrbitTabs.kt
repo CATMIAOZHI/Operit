@@ -55,6 +55,8 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
@@ -2112,25 +2114,33 @@ private fun GoalEditor(goal: OrbitGoalEntity?, onDismiss: () -> Unit, onSave: (S
 
 // ---------------------------------------------------------------- Builds
 
-/** One row of the Builds tab's first part: a work Orbit saved, or a file it made. */
+/** One row of the Builds tab's first part: a work Orbit saved, a file it made, or a folder of them. */
 private sealed interface BuildEntry {
     val key: String
     val time: Long
+    val name: String
+    val size: Long
 
     data class Work(val latest: OrbitArtifactVersionEntity, val count: Int) : BuildEntry {
         override val key get() = "work:" + latest.artifactId
         override val time get() = latest.createdAt
+        override val name get() = latest.name
+        override val size get() = latest.byteCount
     }
 
     data class Made(val file: com.ai.assistance.operit.features.orbit.OrbitFiles.Entry) : BuildEntry {
         override val key get() = "file:" + file.path
         override val time get() = file.modifiedAt
+        override val name get() = file.path.substringAfterLast('/')
+        override val size get() = file.size.coerceAtLeast(0)
     }
 
-    /** A book's chapters copied by the reading tools (files/reading/<book>/text/), shown as one row. */
-    data class BookText(val book: String, val chapters: List<com.ai.assistance.operit.features.orbit.OrbitFiles.Entry>) : BuildEntry {
-        override val key get() = "book:" + book
-        override val time get() = chapters.maxOf { it.modifiedAt }
+    /** A folder inside files/, such as the chapters the reading tools copied (files/reading/<book>/text/). */
+    data class Folder(val folder: MadeFolder) : BuildEntry {
+        override val key get() = "folder:" + folder.path
+        override val time get() = folder.modifiedAt
+        override val name get() = folder.name
+        override val size get() = folder.size
     }
 }
 
@@ -2156,6 +2166,14 @@ private fun OrbitBuildsPage(
     var openArtifact by rememberSaveable(orbit.id) { mutableStateOf<String?>(null) }
     // 0: what Orbit made; 1: the Library of what the user sent; 2: all of Orbit's own folder, to look through.
     var section by rememberSaveable(orbit.id) { mutableIntStateOf(0) }
+    // The folder shown in section 0, relative to files/; "" is the top, with the works and pins.
+    var madeFolder by rememberSaveable(orbit.id) { mutableStateOf("") }
+    // Each part keeps the order it was last set to; all three are read together, so a part never
+    // shows with another part's order.
+    val sortPreferences = remember(context) { BuildSortPreferences.getInstance(context) }
+    val sorts by remember(sortPreferences) { sortPreferences.observeAll() }
+        .collectAsState(BuildSortPreferences.defaults)
+    val sort = sorts[section]
     // The folder shown in section 2, relative to Orbit's folder; "" is the top.
     var folder by rememberSaveable(orbit.id) { mutableStateOf("") }
     var folderReload by remember { mutableIntStateOf(0) }
@@ -2178,7 +2196,11 @@ private fun OrbitBuildsPage(
         saver = listSaver<MutableMap<String, Pair<Int, Int>>, Any>(
             // Only the shown folder and those above it are saved: those are the ones going back reaches.
             save = { places ->
-                places.filterKeys { it.isEmpty() || it == folder || folder.startsWith("$it/") }
+                val made = MADE_PLACE + madeFolder
+                places.filterKeys {
+                    it.isEmpty() || it == folder || folder.startsWith("$it/") ||
+                        it == MADE_PLACE || it == made || made.startsWith("$it/")
+                }
                     .flatMap { (path, at) -> listOf(path, at.first, at.second) }
             },
             restore = { saved ->
@@ -2194,19 +2216,12 @@ private fun OrbitBuildsPage(
         if (next.length > folder.length || next !in folderPlaces) folderPlaces[next] = 0 to 0
         folder = next
     }
-    // Only a folder read successfully takes part; an error page keeps the old place for after a retry.
-    val folderReady = section == 2 && folderRows?.first == folder && folderRows?.second?.isSuccess == true
-    // Shown, a folder goes to its place and keeps it up to date, also for switching to another section and back.
-    // With no place kept (the app was closed by the system meanwhile), the list stays where it was saved.
-    LaunchedEffect(folder, folderReady) {
-        if (!folderReady) return@LaunchedEffect
-        folderPlaces[folder]?.let { (index, offset) -> tabList.scrollToItem(index, offset) }
-        val shown = folder
-        androidx.compose.runtime.snapshotFlow { tabList.firstVisibleItemIndex to tabList.firstVisibleItemScrollOffset }
-            .collect { folderPlaces[shown] = it }
-    }
-    OrbitBackHandler(folderBack, enabled = section == 2 && folder.isNotEmpty()) {
-        openFolder(folder.substringBeforeLast('/', ""))
+    // The made files' folders keep their places beside the system ones, under their own names.
+    fun openMadeFolder(next: String) {
+        if (next == madeFolder) return
+        val place = MADE_PLACE + next
+        if (next.length > madeFolder.length || place !in folderPlaces) folderPlaces[place] = 0 to 0
+        madeFolder = next
     }
     val folderMotion = Modifier.graphicsLayer {
         val p = folderBack.progress
@@ -2222,6 +2237,31 @@ private fun OrbitBuildsPage(
             Result.success(orbitFiles.list().filter { it.path.startsWith("files/") })
         } catch (e: CancellationException) { throw e } catch (e: Exception) { Result.failure(e) }
             .also { data.madeFiles = it }
+    }
+    // Only a folder read successfully takes part; an error page keeps the old place for after a retry.
+    val folderReady = section == 2 && folderRows?.first == folder && folderRows?.second?.isSuccess == true
+    // Works come from the database apart from the files; the place waits for both, so it is not
+    // applied to a list still loading.
+    val madeReady = section == 0 && madeFiles?.isSuccess == true && versions != null
+    val placeKey = when (section) {
+        0 -> MADE_PLACE + madeFolder
+        2 -> folder
+        else -> null
+    }
+    // Shown, a folder goes to its place and keeps it up to date, also for switching to another section and back.
+    // With no place kept (the app was closed by the system meanwhile), the list stays where it was saved.
+    LaunchedEffect(placeKey, folderReady || madeReady) {
+        if (placeKey == null || !(folderReady || madeReady)) return@LaunchedEffect
+        folderPlaces[placeKey]?.let { (index, offset) -> tabList.scrollToItem(index, offset) }
+        androidx.compose.runtime.snapshotFlow { tabList.firstVisibleItemIndex to tabList.firstVisibleItemScrollOffset }
+            .collect { folderPlaces[placeKey] = it }
+    }
+    OrbitBackHandler(
+        folderBack,
+        enabled = (section == 2 && folder.isNotEmpty()) || (section == 0 && madeFolder.isNotEmpty()),
+    ) {
+        if (section == 0) openMadeFolder(madeFolder.substringBeforeLast('/', ""))
+        else openFolder(folder.substringBeforeLast('/', ""))
     }
     val pins by produceState(data.pins, orbit.id, filesReload, filesVersion) {
         value = try { orbitFiles.pins() } catch (e: CancellationException) { throw e } catch (e: Exception) { emptyList() }
@@ -2252,28 +2292,42 @@ private fun OrbitBuildsPage(
         val file = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { fileOf() }
         onQuoteFiles(listOf(file))
     }
-    // Books whose copied chapters are shown under their row.
-    // Saved, so a book stays open after switching to another tab and back.
-    val openBooks = rememberSaveable(orbit.id, saver = listSaver(save = { it.toList() }, restore = { it.toMutableStateList() })) {
-        mutableStateListOf<String>()
+    // Pinned files first, in pin order (at the top every pinned file, inside a folder its own);
+    // then folders; then works and files in the chosen order.
+    val made = madeFiles?.getOrNull()
+    val madeSort = sorts[0]
+    val entries = remember(versions, made, pins, madeFolder, madeSort) {
+        val fileList = made.orEmpty()
+        val (folders, own) = madeFolderView(fileList, madeFolder)
+        val order = buildOrder<BuildEntry>(madeSort, { it.name }, { it.time }, { it.size }, { it is BuildEntry.Folder })
+        val (pinnedOwn, rest) = own.partition { it.path in pins }
+        if (madeFolder.isEmpty()) {
+            val workRows = versions.orEmpty().groupBy { it.artifactId }.values
+                .map { group -> BuildEntry.Work(group.maxBy { it.createdAt }, group.size) }
+            val pinned = fileList.filter { it.path in pins }.sortedBy { pins.indexOf(it.path) }.map { BuildEntry.Made(it) }
+            pinned + (rest.map { BuildEntry.Made(it) } +
+                folders.map { BuildEntry.Folder(it) } + workRows).sortedWith(order)
+        } else {
+            pinnedOwn.sortedBy { pins.indexOf(it.path) }.map { BuildEntry.Made(it) } +
+                (rest.map { BuildEntry.Made(it) } + folders.map { BuildEntry.Folder(it) }).sortedWith(order)
+        }
     }
-    // Pinned files first, in pin order; then works and files together, newest first.
-    val entries = remember(versions, madeFiles, pins, openBooks.toList()) {
-        val works = versions.orEmpty()
-        val fileList = madeFiles?.getOrNull().orEmpty()
-        val workRows = works.groupBy { it.artifactId }.values
-            .map { group -> BuildEntry.Work(group.maxBy { it.createdAt }, group.size) }
-        val (pinned, rest) = fileList.map { BuildEntry.Made(it) }.partition { it.file.path in pins }
-        // A whole copied book would flood the list, so its chapters fold into one row per book.
-        fun bookOf(path: String) = path.split('/').takeIf { it.size == 5 && it[1] == "reading" && it[3] == "text" }?.get(2)
-        val (texts, others) = rest.partition { bookOf(it.file.path) != null }
-        val books = texts.groupBy { bookOf(it.file.path)!! }.map { (book, list) -> BuildEntry.BookText(book, list.map { it.file }) }
-        pinned.sortedBy { pins.indexOf(it.file.path) } + (workRows + others + books).sortedByDescending { it.time }
-            .flatMap { row ->
-                if (row is BuildEntry.BookText && row.book in openBooks)
-                    listOf(row) + row.chapters.sortedBy { it.path }.map { BuildEntry.Made(it) }
-                else listOf(row)
+    // A folder emptied meanwhile (its last file deleted) is left at once for the nearest one still there.
+    val madeGone = madeFolder.isNotEmpty() && made != null && entries.isEmpty()
+    LaunchedEffect(madeGone) {
+        if (madeGone && made != null) openMadeFolder(nearestMadeFolder(made, madeFolder))
+    }
+    val uploadsSort = sorts[1]
+    val uploadsShown = remember(uploads, uploadsSort) {
+        uploads?.map { list -> list.sortedWith(buildOrder(uploadsSort, { it.name }, { it.addedAt }, { it.size })) }
+    }
+    val systemSort = sorts[2]
+    val systemShown = remember(folderRows, systemSort) {
+        folderRows?.let { (path, rows) ->
+            path to rows.map { list ->
+                list.sortedWith(buildOrder(systemSort, { it.name }, { it.modifiedAt }, { it.size }, { it.folder }))
             }
+        }
     }
 
     val history = openArtifact?.let { id -> versions.orEmpty().filter { it.artifactId == id }.sortedByDescending { it.createdAt } }
@@ -2284,12 +2338,21 @@ private fun OrbitBuildsPage(
     Box(Modifier.fillMaxSize().then(if (!history.isNullOrEmpty()) Modifier.clearAndSetSemantics { } else Modifier)) {
     TabList(title = null, state = tabList) {
         item(key = "sections") { BuildSections(section) { section = it } }
+        item(key = "sort") {
+            BuildSortBar(sort, recentLabel = if (section == 1) R.string.orbit_builds_sort_added else R.string.orbit_builds_sort_time) { chosen ->
+                val part = section
+                action { sortPreferences.set(part, chosen) }
+            }
+        }
         if (section == 0) {
             val works = versions
             val files = madeFiles
             if (works == null || files == null) {
                 item(key = "loading") { LinearProgressIndicator(Modifier.fillMaxWidth()) }
             } else {
+                if (madeFolder.isNotEmpty()) item(key = "made-path") {
+                    Box(folderMotion) { SystemPath(stringResource(R.string.orbit_builds_made), madeFolder) { openMadeFolder(it) } }
+                }
                 if (files.isFailure) item(key = "files-failed") {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(stringResource(R.string.orbit_file_load_failed), color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2297,24 +2360,23 @@ private fun OrbitBuildsPage(
                         TextButton(onClick = { filesReload++ }) { Text(stringResource(R.string.orbit_memory_retry)) }
                     }
                 }
-                if (entries.isEmpty() && files.isSuccess) item(key = "empty") { Hint(stringResource(R.string.orbit_builds_made_empty, who)) }
+                // An emptied folder is left at once (above), so the hint is only for the top.
+                if (entries.isEmpty() && files.isSuccess && madeFolder.isEmpty()) item(key = "empty") {
+                    Hint(stringResource(R.string.orbit_builds_made_empty, who))
+                }
                 items(entries, key = { it.key }) { entry ->
+                    Box(folderMotion) {
                     when (entry) {
-                        is BuildEntry.BookText -> {
-                            val open = entry.book in openBooks
-                            val toggle = { if (open) openBooks.remove(entry.book) else openBooks.add(entry.book) }
-                            BuildRow(
-                                tile = { FileTile(entry.book + ".md") },
-                                title = entry.book,
-                                subtitle = stringResource(R.string.orbit_builds_book_text, entry.chapters.size) +
-                                    " · " + shortDate(entry.time),
-                                onClick = { toggle() },
-                            ) { close ->
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(if (open) R.string.orbit_builds_book_text_hide else R.string.orbit_builds_book_text_show)) },
-                                    onClick = { close(); toggle() },
-                                )
-                            }
+                        is BuildEntry.Folder -> BuildRow(
+                            tile = { FolderTile() },
+                            title = entry.folder.name,
+                            subtitle = androidx.compose.ui.res.pluralStringResource(
+                                R.plurals.orbit_builds_folder_files, entry.folder.count, entry.folder.count) +
+                                " · " + shortDate(entry.folder.modifiedAt),
+                            onClick = { openMadeFolder(entry.folder.path) },
+                        ) { close ->
+                            DropdownMenuItem(text = { Text(stringResource(R.string.orbit_file_open)) },
+                                onClick = { close(); openMadeFolder(entry.folder.path) })
                         }
                         is BuildEntry.Work -> BuildRow(
                             tile = { FileTile(entry.latest.name, work = true, seed = entry.latest.artifactId) },
@@ -2385,10 +2447,11 @@ private fun OrbitBuildsPage(
                             }
                         }
                     }
+                    }
                 }
             }
         } else if (section == 1) {
-            val result = uploads
+            val result = uploadsShown
             val list = result?.getOrNull()
             when {
                 result == null -> item(key = "uploads-loading") { LinearProgressIndicator(Modifier.fillMaxWidth()) }
@@ -2436,7 +2499,7 @@ private fun OrbitBuildsPage(
                     SystemPath(who, folder) { openFolder(it) }
                 }
             }
-            val rows = folderRows?.takeIf { it.first == folder }?.second
+            val rows = systemShown?.takeIf { it.first == folder }?.second
             val list = rows?.getOrNull()
             when {
                 rows == null -> item(key = "system-loading") { LinearProgressIndicator(folderMotion.fillMaxWidth()) }
@@ -2568,8 +2631,59 @@ private fun BuildSections(selected: Int, onSelect: (Int) -> Unit) {
     }
 }
 
+/** Where the made files' folders keep their list places, apart from the system folders' paths. */
+private const val MADE_PLACE = "\u0000made:"
+
+/**
+ * The order of the shown part, at the right under the switch; tapping it picks another.
+ * [recentLabel] names the newest-first order: the Library orders by when a file was added.
+ */
+@Composable
+private fun BuildSortBar(selected: BuildSort, recentLabel: Int, onSelect: (BuildSort) -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    var open by remember { mutableStateOf(false) }
+    @Composable
+    fun label(sort: BuildSort) = stringResource(
+        when (sort) {
+            BuildSort.TIME -> recentLabel
+            BuildSort.NAME -> R.string.orbit_builds_sort_name
+            BuildSort.SIZE -> R.string.orbit_builds_sort_size
+            BuildSort.TYPE -> R.string.orbit_builds_sort_type
+        }
+    )
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+        Box {
+            val description = stringResource(R.string.orbit_builds_sort_current, label(selected))
+            TextButton(
+                onClick = { open = true },
+                modifier = Modifier.clearAndSetSemantics {
+                    contentDescription = description
+                    role = Role.Button
+                    onClick { open = true; true }
+                },
+            ) {
+                Icon(orbitIcon("arrow-up-down"), null, Modifier.size(16.dp), tint = colors.onSurfaceVariant)
+                Spacer(Modifier.width(6.dp))
+                Text(label(selected), style = MaterialTheme.typography.labelLarge, color = colors.onSurfaceVariant)
+            }
+            OrbitDropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                BuildSort.entries.forEach { sort ->
+                    DropdownMenuItem(
+                        text = { Text(label(sort)) },
+                        trailingIcon = {
+                            if (sort == selected) Icon(orbitIcon("check"), null, Modifier.size(18.dp), tint = colors.primary)
+                        },
+                        onClick = { open = false; if (sort != selected) onSelect(sort) },
+                        modifier = Modifier.semantics { this.selected = sort == selected },
+                    )
+                }
+            }
+        }
+    }
+}
+
 /** One file or folder in Orbit's own folder. [path] is relative to it. */
-internal class SystemEntry(
+internal data class SystemEntry(
     val name: String,
     val path: String,
     val file: java.io.File,
@@ -2578,7 +2692,7 @@ internal class SystemEntry(
     val modifiedAt: Long,
 )
 
-/** Lists [relative] inside Orbit's folder [root]: folders first, then files, each by name. Never reads outside [root]. */
+/** Lists [relative] inside Orbit's folder [root], unordered: the page orders it. Never reads outside [root]. */
 internal suspend fun listOrbitFolder(root: java.io.File, relative: String): List<SystemEntry> =
     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
         val base = root.canonicalFile
@@ -2603,7 +2717,7 @@ internal suspend fun listOrbitFolder(root: java.io.File, relative: String): List
             )
         }
         context.ensureActive()
-        rows.sortedWith(compareByDescending<SystemEntry> { it.folder }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.name })
+        rows
     }
 
 /** Where the system files list is: Orbit's name, then each folder; tapping one goes back up to it. */

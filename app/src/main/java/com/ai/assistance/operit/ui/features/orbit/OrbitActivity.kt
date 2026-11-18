@@ -13,6 +13,7 @@ import com.ai.assistance.operit.api.chat.ChatRuntimeSlot
 import com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator
 import com.ai.assistance.operit.data.model.InputProcessingState
 import com.ai.assistance.operit.data.preferences.OrbitProfile
+import com.ai.assistance.operit.features.orbit.OrbitBrowserControl
 import com.ai.assistance.operit.features.orbit.OrbitTaskRunner
 import com.ai.assistance.operit.pet.PetActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -42,12 +43,23 @@ internal fun rememberOrbitActivity(orbit: OrbitProfile, currentChatId: String?):
     val talkIds = orbit.talkChatIds
     val orbitId = orbit.id
     return remember(talkIds, orbitId, currentChatId) {
+        orbitActivityFlow(context, orbitId, talkIds, currentChatId)
+    }.collectAsStateWithLifecycle(initialValue = OrbitLiveActivity())
+}
+
+/** What this Orbit is doing now; also drives the ongoing notification while Orbit runs. */
+internal fun orbitActivityFlow(
+    context: android.content.Context,
+    orbitId: String,
+    talkIds: List<String>,
+    currentChatId: String?,
+): kotlinx.coroutines.flow.Flow<OrbitLiveActivity> {
         val holder = ChatRuntimeHolder.getInstance(context)
         val main = holder.getCore(ChatRuntimeSlot.MAIN)
         val floating = holder.getCore(ChatRuntimeSlot.FLOATING)
         // Taken on the flow's own thread below: the first use reads the subagent store from disk.
         val coordinator by lazy { CollaborationCoordinator.getInstance(context) }
-        combine(
+        return combine(
             main.activeStreamingChatIds, main.inputProcessingStateByChatId,
             floating.activeStreamingChatIds, floating.inputProcessingStateByChatId,
             OrbitTaskRunner.runningChats,
@@ -64,13 +76,32 @@ internal fun rememberOrbitActivity(orbit: OrbitProfile, currentChatId: String?):
             val mine = (mainStreaming + floatingStreaming + summarizing.keys).distinct()
                 .filter { it in roots || coordinator.rootChatOf(it) in roots }
             val ordered = listOfNotNull(currentChatId?.takeIf { it in mine }) + mine
-            orbitLiveActivity(ordered.map { states[it] }, tasks.isNotEmpty())
+            OrbitRuns(ordered, states, tasks)
+        }.combine(OrbitBrowserControl.waitingForUser) { runs, waiting ->
+            // A run held until the user hands the browser back is not browsing; it waits for them.
+            // So does a parent that only waits on its agents while nothing else runs.
+            val held = runs.ordered.filter { it in waiting }.toSet()
+            val rest = runs.ordered - held
+            val blocked = if (held.isNotEmpty() && rest.all { waitsOnAgents(runs.states[it]) }) runs.ordered.toSet() else held
+            val active = runs.ordered - blocked
+            val background = (runs.tasks - blocked).isNotEmpty()
+            orbitLiveActivity(active.map { runs.states[it] }, background, waitingForUser = blocked.isNotEmpty())
         }.distinctUntilChanged().flowOn(Dispatchers.Default)
-    }.collectAsStateWithLifecycle(initialValue = OrbitLiveActivity())
 }
 
-internal fun orbitLiveActivity(states: List<InputProcessingState?>, hasBackgroundTask: Boolean): OrbitLiveActivity {
-    if (states.isEmpty() && !hasBackgroundTask) return OrbitLiveActivity()
+private class OrbitRuns(val ordered: List<String>, val states: Map<String, InputProcessingState>, val tasks: Set<String>)
+
+private fun waitsOnAgents(state: InputProcessingState?): Boolean =
+    (state as? InputProcessingState.ExecutingTool)?.toolName?.substringAfterLast(':')?.lowercase() == "wait_agent"
+
+internal fun orbitLiveActivity(
+    states: List<InputProcessingState?>,
+    hasBackgroundTask: Boolean,
+    waitingForUser: Boolean = false,
+): OrbitLiveActivity {
+    if (states.isEmpty() && !hasBackgroundTask) {
+        return if (waitingForUser) OrbitLiveActivity(R.string.orbit_activity_waiting_for_you, PetActivity.IDLE) else OrbitLiveActivity()
+    }
     val tool = states.firstNotNullOfOrNull(::toolLabel)
     return when {
         tool != null -> OrbitLiveActivity(tool, PetActivity.TOOL)

@@ -24,6 +24,7 @@
     <string name="orbit_dev_event_kind_compact">Compaction</string>
     <string name="orbit_dev_event_retry">Retry %1$d of %2$d in %3$d ms: %4$s</string>
     <string name="orbit_dev_event_retry_gave_up">Gave up after %1$d retries: %2$s</string>
+    <string name="orbit_dev_event_usage_option_retry">The provider refused stream_options (%1$d); sending once more without it</string>
     <string name="orbit_dev_event_truncated_tool">Tool call cut off: %1$s did not run; the app closed it with %2$s</string>
     <string name="orbit_dev_event_repair">Tool call fixed locally: the model wrote %1$s (parameters: %2$s); ran %3$s (parameters: %4$s). Rules: %5$s</string>
     <string name="orbit_dev_event_compact_before_turn">Compacted in the turn: %1$d rows before this turn became a summary (%2$d characters)</string>
@@ -44,9 +45,9 @@
 
     <string name="orbit_dev_info_request">Request records</string>
     <string name="orbit_dev_info_request_none">Nothing kept for this turn. Requests sent while developer mode was off are not kept.</string>
-    <string name="orbit_dev_info_request_count">This turn actually sent %1$d requests (retries included); these are the parameters of the last</string>
+    <string name="orbit_dev_info_request_count">This turn actually sent %1$d requests (retries included); these are the parameters last kept</string>
     <string name="orbit_dev_info_open_request">View this request</string>
-    <string name="orbit_dev_info_request_count_only">This turn sent %1$d requests. The last one\'s body was not kept: newer ones may have replaced it (only the last 6 per chat are kept), or too many requests went out at once.</string>
+    <string name="orbit_dev_info_request_count_only">This turn sent %1$d requests; their parameters were not kept: newer ones may have replaced them (only the last 6 per chat are kept), or too many requests went out at once.</string>
     <string name="orbit_dev_request_failed">Could not read this request</string>
     <string name="orbit_dev_request_retry">Try again</string>
     <string name="orbit_dev_info_request_unsent">This turn\'s request was built but never sent (for example it failed or was stopped before connecting).</string>

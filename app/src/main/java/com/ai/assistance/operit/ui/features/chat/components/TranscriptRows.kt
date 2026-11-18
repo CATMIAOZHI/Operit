@@ -2,10 +2,18 @@ package com.ai.assistance.operit.ui.features.chat.components
 
 import androidx.compose.runtime.compositionLocalOf
 import com.ai.assistance.operit.data.model.ChatMessage
+import com.ai.assistance.operit.services.core.OrbitMessageBreaks
 import com.ai.assistance.operit.ui.common.markdown.TranscriptMarkdownSlice
 
-/** Whether the row being composed opens or closes its turn's card. */
-internal data class TranscriptCardEnds(val first: Boolean, val last: Boolean)
+/**
+ * Whether the row being composed opens or closes its turn's card. [statsSource] is the message the
+ * closing row reads its token and timing totals from, when that is not its own.
+ */
+internal data class TranscriptCardEnds(
+    val first: Boolean,
+    val last: Boolean,
+    val statsSource: ChatMessage? = null,
+)
 
 internal val LocalTranscriptCardEnds = compositionLocalOf { TranscriptCardEnds(true, true) }
 
@@ -43,6 +51,36 @@ internal fun withCardEnds(rows: List<TranscriptRow>): List<TranscriptRow> =
             cardLast = next == null || (next.cardKey ?: next.group?.key?.toString() ?: "index:${next.messageIndex}") != block,
         )
     }
+
+/**
+ * For a card closed by a later part of a reply sent as several messages (`<message_break/>`), the
+ * index of the first part, which holds the reply's totals; the later parts carry none. Only a first
+ * part drawn in the same card counts, so the totals are never shown twice.
+ */
+internal fun splitReplyStatsSources(rows: List<TranscriptRow>, messages: List<ChatMessage>): Map<Int, Int> {
+    var cardOf: HashMap<Int, String?>? = null
+    // Each message's first part, worked out once in one pass when the first split reply turns up.
+    var heads: IntArray? = null
+    val sources = HashMap<Int, Int>()
+    rows.forEach { row ->
+        val index = row.messageIndex
+        if (!row.cardLast || index <= 0 || index >= messages.size || index in sources) return@forEach
+        if (!OrbitMessageBreaks.isPartOf(messages[index], messages[index - 1])) return@forEach
+        val firstParts = heads ?: IntArray(messages.size).also { found ->
+            for (i in found.indices) {
+                found[i] = if (i > 0 && OrbitMessageBreaks.isPartOf(messages[i], messages[i - 1])) found[i - 1] else i
+            }
+            heads = found
+        }
+        val head = firstParts[index]
+        val cards = cardOf ?: HashMap<Int, String?>().also { map ->
+            rows.forEach { if (it.messageIndex >= 0 && it.messageIndex !in map) map[it.messageIndex] = it.cardKey }
+            cardOf = map
+        }
+        if (head in cards && cards[head] == row.cardKey) sources[index] = head
+    }
+    return sources
+}
 
 /** Drawing continuity also applies while the turn is streaming, before a collapse group exists. */
 private fun transcriptCardKey(messages: List<ChatMessage>, index: Int): String? {

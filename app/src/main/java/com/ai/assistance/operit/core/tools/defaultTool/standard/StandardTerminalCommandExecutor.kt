@@ -62,11 +62,16 @@ class StandardTerminalCommandExecutor(private val context: Context) {
             val status = if (result.status == "running" && session != null &&
                 synchronized(session.commandLifecycle) { session.commandQueue.any { it.id == result.runId } }
             ) "queued" else result.status
+            // A finished command's output already holds what the screen showed; repeating it doubles the result.
+            // Not when the screen shows a full-screen program: that picture never reaches the output.
+            val finished = status in setOf("completed", "failed", "cancelled", "timed_out") &&
+                result.output.isNotBlank() && !result.screenFullscreen
             ToolResult(tool.name, true, TerminalTaskResultData(
                 result.runId, result.sessionId, status, result.output,
                 result.outputTruncated, result.terminationReason,
                 outputMode = "tail_snapshot", timedOut = result.status == "timed_out",
-                exitCode = result.exitCode, sessionExitCode = result.sessionExitCode, screen = result.screen
+                exitCode = result.exitCode, sessionExitCode = result.sessionExitCode,
+                screen = result.screen.takeUnless { finished }
             ))
         } catch (e: CancellationException) {
             startedId?.let { withContext(NonCancellable) { taskRegistry.cancel(it) } }

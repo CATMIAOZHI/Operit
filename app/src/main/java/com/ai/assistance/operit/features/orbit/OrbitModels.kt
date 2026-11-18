@@ -29,7 +29,9 @@ object OrbitModels {
      * [backgroundReasoningLevel] is set only for a CHAT turn on the assistant model: that turn is
      * background work, so it follows the assistant level instead of the chat's own slider.
      */
-    class Route(val mapping: FunctionConfigMapping, val backgroundReasoningLevel: Int?)
+    /** [fromChatChoice]: the chat's quick switch picked it, so a later turn looks it up again. */
+    class Route(val mapping: FunctionConfigMapping, val backgroundReasoningLevel: Int?,
+        val fromChatChoice: Boolean = false)
 
     fun taskRole(task: OrbitTaskEntity): String = when (task.modelRole) {
         MAIN, ASSISTANT -> task.modelRole
@@ -73,10 +75,15 @@ object OrbitModels {
             val dao = AppDatabase.getDatabase(context).orbitTaskDao()
             chatRole = dao.binding(chatId)?.let { dao.run(it.runId) }?.let { dao.task(it.taskId) }?.let(::taskRole)
         }
-        val mapping = mappingForOrbit(context, orbitId, function, chatRole)
+        // The chat's own quick switch counts for turns the user starts there. A task turn that
+        // names its model role keeps the model the Orbit's settings give that role.
+        val chatChoice = if (function == FunctionType.CHAT && role == null) {
+            com.ai.assistance.operit.data.preferences.ChatModelSelections.getInstance(context).mapping(chatId)
+        } else null
+        val mapping = chatChoice ?: mappingForOrbit(context, orbitId, function, chatRole)
         return Route(mapping, mapping.thinkingQualityLevel.takeIf {
-            function == FunctionType.CHAT && chatRole == ASSISTANT
-        })
+            function == FunctionType.CHAT && chatRole == ASSISTANT && chatChoice == null
+        }, fromChatChoice = chatChoice != null)
     }
 
     suspend fun mappingForOrbit(context: Context, orbitId: String, function: FunctionType,

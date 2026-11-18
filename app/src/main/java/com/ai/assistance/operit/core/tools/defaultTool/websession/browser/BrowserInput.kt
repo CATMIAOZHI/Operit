@@ -274,7 +274,7 @@ internal data class ElementGeometry(
 
 /** [scroll] is "center", "nearest" or null for no scrolling. Null result: the ref is gone. */
 internal fun StandardBrowserSessionTools.elementGeometry(
-    webView: WebView,
+    page: BrowserPage,
     ref: String,
     scroll: String?
 ): ElementGeometry? {
@@ -337,7 +337,7 @@ internal fun StandardBrowserSessionTools.elementGeometry(
             });
         })();
         """.trimIndent()
-    val json = runJsonScript(webView, script, "element_geometry_error") ?: return null
+    val json = runJsonScript(page, script, "element_geometry_error") ?: return null
     if (!json.optBoolean("ok", false)) {
         if (json.optString("error") == "ref_not_found") return null
         throw BrowserInputException("Could not locate the element: ${json.optString("error")}")
@@ -367,7 +367,7 @@ internal fun StandardBrowserSessionTools.elementGeometry(
  */
 internal fun StandardBrowserSessionTools.cdpHoverElement(
     connection: CdpConnection,
-    webView: WebView,
+    page: BrowserPage,
     ref: String,
     geometry: ElementGeometry
 ): Boolean? {
@@ -375,13 +375,13 @@ internal fun StandardBrowserSessionTools.cdpHoverElement(
     for (scaled in options) {
         cdpMouse(connection, "mouseMoved", geometry.cdpX(geometry.centerX, scaled), geometry.cdpY(geometry.centerY, scaled))
         Thread.sleep(60L)
-        if (isElementHovered(webView, ref)) return scaled
+        if (isElementHovered(page, ref)) return scaled
     }
     return null
 }
 
 /** Whether the element really is under the mouse, as the page's own :hover styles see it. */
-internal fun StandardBrowserSessionTools.isElementHovered(webView: WebView, ref: String): Boolean {
+internal fun StandardBrowserSessionTools.isElementHovered(page: BrowserPage, ref: String): Boolean {
     val script =
         """
         (function() {
@@ -393,7 +393,7 @@ internal fun StandardBrowserSessionTools.isElementHovered(webView: WebView, ref:
             return JSON.stringify({ ok: true, hovered: hovered });
         })();
         """.trimIndent()
-    return runJsonScript(webView, script, "hover_check_error")?.optBoolean("hovered", false) == true
+    return runJsonScript(page, script, "hover_check_error")?.optBoolean("hovered", false) == true
 }
 
 /**
@@ -401,7 +401,7 @@ internal fun StandardBrowserSessionTools.isElementHovered(webView: WebView, ref:
  * and lifts, with real time between moves so pages that track speed see a human-like drag.
  */
 internal fun StandardBrowserSessionTools.dispatchTouchPath(
-    webView: WebView,
+    page: BrowserPage,
     points: List<Pair<Float, Float>>,
     stepDelayMs: Long = 16L,
     holdBeforeMoveMs: Long = 0L
@@ -411,11 +411,11 @@ internal fun StandardBrowserSessionTools.dispatchTouchPath(
     var eventTime = downTime
     fun send(action: Int, point: Pair<Float, Float>, at: Long) {
         runOnMainSync {
-            if (action == MotionEvent.ACTION_DOWN) webView.requestFocus()
+            if (action == MotionEvent.ACTION_DOWN) page.view.requestFocus()
             val event = MotionEvent.obtain(downTime, at, action, point.first, point.second, 0)
             event.source = InputDevice.SOURCE_TOUCHSCREEN
             try {
-                webView.dispatchTouchEvent(event)
+                page.view.dispatchTouchEvent(event)
             } finally {
                 event.recycle()
             }
@@ -445,11 +445,11 @@ internal fun StandardBrowserSessionTools.dispatchTouchPath(
             // press fires afterwards. Posted directly, since the stopped call can no longer wait.
             val at = SystemClock.uptimeMillis().coerceAtLeast(eventTime)
             val point = last
-            webView.post {
+            page.view.post {
                 val event = MotionEvent.obtain(downTime, at, MotionEvent.ACTION_CANCEL, point.first, point.second, 0)
                 event.source = InputDevice.SOURCE_TOUCHSCREEN
                 try {
-                    webView.dispatchTouchEvent(event)
+                    page.view.dispatchTouchEvent(event)
                 } finally {
                     event.recycle()
                 }
@@ -467,7 +467,7 @@ internal fun easedPath(startX: Double, startY: Double, endX: Double, endY: Doubl
     }
 
 /** The text selected in the page or in the focused text box, for the clipboard bridge. */
-internal fun StandardBrowserSessionTools.readPageSelection(webView: WebView): Pair<String, Boolean> {
+internal fun StandardBrowserSessionTools.readPageSelection(page: BrowserPage): Pair<String, Boolean> {
     val script =
         """
         (function() {
@@ -503,7 +503,7 @@ internal fun StandardBrowserSessionTools.readPageSelection(webView: WebView): Pa
             return JSON.stringify({ ok: true, text: text, editable: editable });
         })();
         """.trimIndent()
-    val json = runJsonScript(webView, script, "selection_read_error")
+    val json = runJsonScript(page, script, "selection_read_error")
     return Pair(json?.optString("text").orEmpty(), json?.optBoolean("editable", false) == true)
 }
 
@@ -527,7 +527,7 @@ internal fun StandardBrowserSessionTools.readAndroidClipboard(): String? =
  * Offers [text] to the page as a paste first, so pages with their own paste handling (code boxes
  * split into cells, rich editors) can take it. True means the page handled it itself.
  */
-internal fun StandardBrowserSessionTools.offerPasteEvent(webView: WebView, text: String): Boolean {
+internal fun StandardBrowserSessionTools.offerPasteEvent(page: BrowserPage, text: String): Boolean {
     val script =
         """
         (function() {
@@ -560,5 +560,5 @@ internal fun StandardBrowserSessionTools.offerPasteEvent(webView: WebView, text:
             }
         })();
         """.trimIndent()
-    return runJsonScript(webView, script, "paste_event_error")?.optBoolean("handled", false) == true
+    return runJsonScript(page, script, "paste_event_error")?.optBoolean("handled", false) == true
 }

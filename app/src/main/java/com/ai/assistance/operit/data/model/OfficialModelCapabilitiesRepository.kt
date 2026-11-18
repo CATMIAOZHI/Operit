@@ -116,10 +116,10 @@ class OfficialModelCapabilitiesRepository(
     companion object {
         const val LIVE_URL = "https://models.dev/models.json"
         const val MAIN_REMOTE_URL =
-            "https://raw.githubusercontent.com/CATMIAOZHI/Operit/personal/main/" +
+            "https://raw.githubusercontent.com/CATMIAOZHI/orbit/main/" +
                 "app/src/main/assets/model_catalog/model_capabilities_v1.json"
         const val DEV_REMOTE_URL =
-            "https://raw.githubusercontent.com/CATMIAOZHI/Operit/personal/dev/" +
+            "https://raw.githubusercontent.com/CATMIAOZHI/orbit/dev/" +
                 "app/src/main/assets/model_catalog/model_capabilities_v1.json"
         const val MAX_RESPONSE_BYTES = 1024 * 1024
         private const val CACHE_DIR = "operit/model_catalog"

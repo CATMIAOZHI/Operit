@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -56,7 +57,6 @@ internal object OrbitApprovals {
     fun clipResult(result: String): String =
         if (result.length <= MAX_RESULT) result
         else result.take(MAX_RESULT - 60).trimEnd() + " … [${result.length - (MAX_RESULT - 60)} more characters cut]"
-    private const val MAX_KEPT = 300
     /** At most this many open requests at once, so a looping Orbit cannot flood the list. */
     const val MAX_PENDING = 20
 
@@ -121,6 +121,10 @@ internal object OrbitApprovals {
     /** The approval as last read, without touching the disk; null before it was ever read. */
     fun cached(orbitId: String, id: String): Approval? = cache[orbitId + "/" + id]
 
+    /** Approvals that offer "always allow" next to "allow once": a sending tool, or a hook loading keys. */
+    fun offersAlways(action: String): Boolean =
+        OrbitConnectorSend.toolOf(action) != null || OrbitApprovalActions.type(action) == OrbitHookVault.ACTION
+
     fun observe(context: Context, orbitId: String): Flow<List<Approval>> =
         version.map { list(context, orbitId) }.flowOn(Dispatchers.IO)
 
@@ -149,7 +153,7 @@ internal object OrbitApprovals {
                 }
                 val approval = Approval(UUID.randomUUID().toString().take(8), REQUEST, SOURCE_ORBIT, t, d, chatId,
                     PENDING, "", System.currentTimeMillis(), 0L, false, action = action)
-                write(context, orbitId, trim(current + approval))
+                write(context, orbitId, current + approval)
                 approval
             }
         }
@@ -161,7 +165,7 @@ internal object OrbitApprovals {
                 val now = System.currentTimeMillis()
                 val entry = Approval(UUID.randomUUID().toString().take(8), VAULT_SAVED, SOURCE_ORBIT, site.take(MAX_TITLE),
                     if (login) OrbitVault.LOGIN else OrbitVault.API_KEY, chatId, SAVED, "", now, now, true)
-                write(context, orbitId, trim(read(context, orbitId) + entry))
+                write(context, orbitId, read(context, orbitId) + entry)
             }
         }
     }
@@ -179,7 +183,7 @@ internal object OrbitApprovals {
                 val id = "p-" + UUID.nameUUIDFromBytes(key.toByteArray()).toString().take(8)
                 val entry = Approval(id, PERMISSION, SOURCE_ORBIT, title.take(MAX_TITLE),
                     detail.take(MAX_DETAIL), chatId, if (granted) APPROVED else DENIED, "", now, now, true)
-                write(context, orbitId, trim(read(context, orbitId).filterNot { it.id == id } + entry))
+                write(context, orbitId, read(context, orbitId).filterNot { it.id == id } + entry)
             }
         }
     }
@@ -232,8 +236,8 @@ internal object OrbitApprovals {
                     if (approved && open.action.isNotEmpty()) {
                         doneActions[key] ?: run {
                             // "Always allow" for a sending tool: stored first, so the next call runs without a card.
-                            val keep = always && approve && OrbitConnectorSend.toolOf(open.action) != null
-                            if (keep) OrbitConnectorSend.allowAlways(context, open.action)
+                            val keep = always && approve && offersAlways(open.action)
+                            if (keep && OrbitConnectorSend.toolOf(open.action) != null) OrbitConnectorSend.allowAlways(context, open.action)
                             OrbitApprovalActions.run(context, orbit, open, secret, models, keep)
                         }.also { doneActions[key] = it }
                     } else ""
@@ -368,15 +372,16 @@ internal object OrbitApprovals {
         }
     }
 
-    /** Open requests and answers Orbit has not heard yet always stay; the oldest others go first. */
-    private fun trim(all: List<Approval>): List<Approval> {
-        if (all.size <= MAX_KEPT) return all
-        val drop = all.filter { !it.pending && it.notified }.sortedBy { it.createdAt }
-            .take(all.size - MAX_KEPT).map { it.id }.toSet()
-        return all.filterNot { it.id in drop }
+    private fun read(context: Context, orbitId: String): List<Approval> {
+        // Every change goes through [write] under this Orbit's lock, which keeps this copy current,
+        // so the whole history is not read again for each card on screen.
+        loaded[orbitId]?.let { return it }
+        return readFile(context, orbitId).also { loaded[orbitId] = it }
     }
 
-    private fun read(context: Context, orbitId: String): List<Approval> {
+    private val loaded = ConcurrentHashMap<String, List<Approval>>()
+
+    private fun readFile(context: Context, orbitId: String): List<Approval> {
         val f = file(context, orbitId)
         if (!f.isFile) return emptyList()
         val array = runCatching { JSONObject(f.readText()).optJSONArray("items") }.getOrNull() ?: return emptyList()
@@ -406,6 +411,7 @@ internal object OrbitApprovals {
             temporary.writeText(text)
             Files.move(temporary.toPath(), f.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
         } finally { temporary.delete() }
-        changes.value++
+        loaded[orbitId] = items
+        changes.update { it + 1 }
     }
 }

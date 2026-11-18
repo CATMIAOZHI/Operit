@@ -136,6 +136,9 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
 
     override fun onCreate() {
         super.onCreate()
+        // The browser engine's page and GPU processes run this class too; the app has nothing to
+        // do there, and the page ones are sandboxed and crash on most of it (registerReceiver).
+        if (isEngineChildProcess()) return
         val startTime = System.currentTimeMillis()
         appStartupTimeMs = startTime
         instance = this
@@ -175,13 +178,24 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
     }
 
     private fun isMainAppProcess(): Boolean {
-        val name =
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-                getProcessName()
-            } else {
-                runCatching { java.io.File("/proc/self/cmdline").readText().trim('\u0000', ' ', '\n') }.getOrNull()
-            }
+        val name = currentProcessName()
         return name == null || name == packageName
+    }
+
+    private fun currentProcessName(): String? =
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+            getProcessName()
+        } else {
+            runCatching { java.io.File("/proc/self/cmdline").readText().trim('\u0000', ' ', '\n') }.getOrNull()
+        }
+
+    /** The Cefrium engine's child processes (pages, GPU, network), declared by its library. */
+    private fun isEngineChildProcess(): Boolean {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P && android.os.Process.isIsolated()) {
+            return true
+        }
+        val suffix = currentProcessName()?.substringAfter(':', "") ?: return false
+        return suffix.startsWith("sandboxed_process") || suffix.startsWith("privileged_process")
     }
 
     /**
@@ -559,6 +573,9 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
                 com.ai.assistance.operit.features.orbit.OrbitWeixin.restore(applicationContext)
             }.onFailure { AppLogger.e(TAG, "Failed to restore the Orbit WeChat link", it) }
             runCatching {
+                com.ai.assistance.operit.features.orbit.OrbitAppUpdate.onAppStart(applicationContext)
+            }.onFailure { AppLogger.e(TAG, "Failed to tell Orbit about the app update", it) }
+            runCatching {
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                     com.ai.assistance.operit.features.orbit.OrbitFiles.dropOldTrash(applicationContext)
                 }
@@ -748,36 +765,20 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
 
             AppLogger.d(TAG, "获取语言设置: $languageCode")
 
-            // 立即应用语言设置
-            val locale = LocaleUtils.getLocaleForLanguageCode(languageCode, this)
-            // 设置默认语言
-            Locale.setDefault(locale)
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                // Android 13+ 使用AppCompatDelegate API
-                val localeList = LocaleListCompat.create(locale)
-                AppCompatDelegate.setApplicationLocales(localeList)
-                AppLogger.d(TAG, "使用AppCompatDelegate设置语言: $languageCode")
-            } else {
-                // 较旧版本Android - 此处使用的部分更新将在attachBaseContext中完成更完整更新
-                val config = Configuration()
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    val localeList = LocaleList(locale)
-                    LocaleList.setDefault(localeList)
-                    config.setLocales(localeList)
-                } else {
-                    config.locale = locale
-                }
-
-                resources.updateConfiguration(config, resources.displayMetrics)
-                AppLogger.d(TAG, "使用Configuration设置语言: $languageCode")
-            }
+            // The same path as picking a language in settings. The application context then speaks
+            // the saved language from start-up (text made outside an activity, such as Orbit's
+            // approval cards and notifications), and keeps it after a system configuration change.
+            LocaleUtils.applyAppLanguage(this, languageCode)
         } catch (e: Exception) {
             AppLogger.e(TAG, "初始化语言设置失败", e)
         }
     }
 
     override fun attachBaseContext(base: Context) {
+        if (isEngineChildProcess()) {
+            super.attachBaseContext(base)
+            return
+        }
         configureOpenMpEnvironment()
         // 在基础上下文附加前应用语言设置
         try {

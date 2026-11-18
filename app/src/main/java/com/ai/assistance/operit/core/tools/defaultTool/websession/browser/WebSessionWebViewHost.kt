@@ -4,7 +4,6 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
-import android.webkit.WebView
 import kotlin.math.min
 import kotlin.math.roundToInt
 
@@ -13,7 +12,7 @@ private const val MAX_USER_ZOOM = 4f
 
 internal class WebSessionWebViewHost {
     private var container: FrameLayout? = null
-    private var activeWebView: WebView? = null
+    private var activePage: BrowserPage? = null
     private var viewportWidthCssPx: Int? = null
     private var viewportHeightCssPx: Int? = null
     /**
@@ -51,15 +50,15 @@ internal class WebSessionWebViewHost {
         }
     }
 
-    fun setActiveWebView(webView: WebView?, viewportWidth: Int?, viewportHeight: Int?) {
+    fun setActivePage(page: BrowserPage?, viewportWidth: Int?, viewportHeight: Int?) {
         if (
-            webView !== activeWebView ||
+            page !== activePage ||
                 viewportWidth != viewportWidthCssPx ||
                 viewportHeight != viewportHeightCssPx
         ) {
             resetUserZoom()
         }
-        activeWebView = webView
+        activePage = page
         viewportWidthCssPx = viewportWidth
         viewportHeightCssPx = viewportHeight
         reattach()
@@ -74,7 +73,7 @@ internal class WebSessionWebViewHost {
         reattach()
     }
 
-    fun currentWebView(): WebView? = activeWebView
+    fun currentPage(): BrowserPage? = activePage
 
     /**
      * Zooms the page picture by [zoomChange] around ([centroidX], [centroidY]) and moves it by
@@ -82,7 +81,7 @@ internal class WebSessionWebViewHost {
      */
     fun transformUserView(centroidX: Float, centroidY: Float, zoomChange: Float, panX: Float, panY: Float) {
         val target = container ?: return
-        val webView = activeWebView ?: return
+        val webView = activePage?.view ?: return
         if (webView.parent !== target || viewportWidthCssPx == null || viewportHeightCssPx == null) return
         if (!zoomChange.isFinite() || zoomChange <= 0f || !panX.isFinite() || !panY.isFinite()) return
         val fitScale = fitScale(target) ?: return
@@ -105,7 +104,7 @@ internal class WebSessionWebViewHost {
         container?.removeAllViews()
         container?.removeOnLayoutChangeListener(containerLayoutChangeListener)
         container = null
-        activeWebView = null
+        activePage = null
         viewportWidthCssPx = null
         viewportHeightCssPx = null
         resetUserZoom()
@@ -113,7 +112,7 @@ internal class WebSessionWebViewHost {
 
     private fun reattach() {
         val target = container ?: return
-        val webView = activeWebView
+        val webView = activePage?.view
 
         if (webView == null) {
             target.removeAllViews()
@@ -140,7 +139,7 @@ internal class WebSessionWebViewHost {
     }
 
     private fun applyWebViewLayout(target: FrameLayout) {
-        val webView = activeWebView ?: return
+        val webView = activePage?.view ?: return
         if (webView.parent !== target) {
             return
         }
@@ -206,7 +205,7 @@ internal class WebSessionWebViewHost {
      * viewport in physical pixels makes window.innerWidth/innerHeight match the tool arguments;
      * the view transform only fits that logical viewport on the phone.
      */
-    private fun layoutSize(webView: WebView, cssWidth: Int, cssHeight: Int): Pair<Int, Int> {
+    private fun layoutSize(webView: View, cssWidth: Int, cssHeight: Int): Pair<Int, Int> {
         val density =
             webView.resources.displayMetrics.density
                 .takeIf { it.isFinite() && it > 0f }
@@ -217,7 +216,7 @@ internal class WebSessionWebViewHost {
 
     /** The scale that fits the whole page picture in [target], or null before it has a size. */
     private fun fitScale(target: FrameLayout): Float? {
-        val webView = activeWebView ?: return null
+        val webView = activePage?.view ?: return null
         val cssWidth = viewportWidthCssPx ?: return null
         val cssHeight = viewportHeightCssPx ?: return null
         if (target.width <= 0 || target.height <= 0) return null
@@ -228,7 +227,7 @@ internal class WebSessionWebViewHost {
         )
     }
 
-    private fun updateLayoutParams(webView: WebView, width: Int, height: Int) {
+    private fun updateLayoutParams(webView: View, width: Int, height: Int) {
         val current = webView.layoutParams as? FrameLayout.LayoutParams
         if (current?.width == width && current.height == height && current.gravity == Gravity.TOP) {
             return
