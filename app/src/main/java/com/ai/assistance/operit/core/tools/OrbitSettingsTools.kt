@@ -3,8 +3,8 @@ package com.ai.assistance.operit.core.tools
 import android.content.Context
 import android.content.res.Configuration
 import com.ai.assistance.operit.R
-import com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
 import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserProfiles
+import com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
 import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.model.ToolParameterSchema
 import com.ai.assistance.operit.data.model.ToolPrompt
@@ -52,7 +52,6 @@ internal object OrbitSettingsTools {
         EXTRA("extra_limit", R.string.orbit_settings_extra, true),
         EXTRA_WEEKLY("extra_weekly_reset", R.string.orbit_settings_extra_weekly, true),
         REFILL("refill_extra", R.string.orbit_settings_refill, true),
-        LOGIN("browser_shares_main_login", R.string.orbit_settings_login),
         DELAY("learning_delay_minutes", R.string.orbit_settings_delay),
         DEVELOPER("developer_mode", R.string.orbit_settings_developer, true),
         LAUNCH("launch_mode", R.string.orbit_settings_launch, true, listOf("orbit", "standard")),
@@ -65,7 +64,7 @@ internal object OrbitSettingsTools {
     val prompt = ToolPrompt(
         name = NAME,
         description = "Read Orbit and app settings, ask to change several with one approval card, or put a data export card in the chat. " +
-            "查看设置，申请修改外观、额度、共用登录、记忆整理等待时间、开发者模式、启动模式、消息通知、上下文预算或暂停 Orbit，用户批准后由 App 执行；也能放一张数据导出卡片。",
+            "查看设置，申请修改外观、额度、记忆整理等待时间、开发者模式、启动模式、消息通知、上下文预算或暂停 Orbit，用户批准后由 App 执行；也能放一张数据导出卡片。",
         parametersStructured = listOf(
             ToolParameterSchema("action", description = "get / request_change / request_export / open_page", required = true),
             ToolParameterSchema("changes", "string",
@@ -75,12 +74,12 @@ internal object OrbitSettingsTools {
             ToolParameterSchema("reason", description = "request_change: explain why these changes help, in the user's language", required = false),
         ),
         details = """
-  - get returns current values, allowed values/ranges, units and shared_by_all_orbits. Quotas, developer mode, launch mode and pausing are shared; appearance, browser login choice, the memory review wait, message notifications and the context budget belong to this Orbit.
+  - get returns current values, allowed values/ranges, units and shared_by_all_orbits. Quotas, developer mode, launch mode and pausing are shared; appearance, the memory review wait, message notifications and the context budget belong to this Orbit.
   - context_window_k is the context budget for the main chat and every side chat together, in K tokens measured against your main model. Automatic compaction is always on and the app picks where it starts (get returns it); neither can be changed. For DeepSeek Flash models 400K is recommended.
   - message_notifications=true lets your messages also appear as their own phone notification while the app is closed; false keeps them in the chat only. It is separate from the system notification permission, which orbit_permission_card notify asks for.
   - request_change validates every item, including unknown keys, invalid values and unchanged values; correct all reported errors and ask again. Token limits use raw tokens, never millions or currency. Only get's allowlisted settings can be changed.
   - The approval card lists old → new values. End this turn with one short line after the card appears. Only after approval does the app recheck and apply each item, then send you a hidden result. Read each result; an outdated or failed item may be skipped.
-  - browser_shares_main_login=true uses the main app's browser account environment; false returns to this Orbit's separate environment. This tool never reads or returns cookies. Unsupported WebViews cannot switch.
+  - Your browser keeps its own logins, apart from the main app's; neither you nor the user can change this. Only on a phone whose WebView cannot keep logins apart does it share the main app's. get returns browser_login (read-only): separate or shared_with_app.
   - pause accepts only true. Approval stops the current Orbit and its background work; only the user can resume it manually. An old approval cannot pause another Orbit.
   - refill_extra accepts only true and clears extra allowance usage, without changing usage history or the weekly allowance. There is no weekly-usage reset.
   - request_export puts a data export card in the chat. The user taps it, confirms, and the app packs this Orbit's files, memory, tasks, goals and chats into one zip and opens the share sheet. You never get the zip or its path. End this turn with one short line after the card appears.
@@ -107,7 +106,6 @@ internal object OrbitSettingsTools {
             Setting.EXTRA -> quota.extraLimit
             Setting.EXTRA_WEEKLY -> quota.extraWeekly
             Setting.REFILL -> quota.extraUsed
-            Setting.LOGIN -> orbit.browserSharesMainLogin || !BrowserProfiles.isSupported()
             Setting.DELAY -> memory.learningDelayMinutes().toLong()
             Setting.DEVELOPER -> settings.developerMode
             Setting.LAUNCH -> launchMode.name.lowercase(Locale.ROOT)
@@ -257,14 +255,9 @@ internal object OrbitSettingsTools {
                             put("unit", "K tokens")
                         }
                         Setting.REFILL, Setting.PAUSE -> put("options", JSONArray(listOf(true)))
-                        Setting.EXTRA_WEEKLY, Setting.LOGIN, Setting.DEVELOPER, Setting.NOTIFY ->
+                        Setting.EXTRA_WEEKLY, Setting.DEVELOPER, Setting.NOTIFY ->
                             put("options", JSONArray(listOf(false, true)))
                         else -> put("options", JSONArray(setting.choices))
-                    }
-                    if (setting == Setting.LOGIN) {
-                        put("can_change", BrowserProfiles.isSupported())
-                        put("note", text.getString(if (BrowserProfiles.isSupported())
-                            R.string.orbit_settings_login_note else R.string.orbit_settings_login_unsupported))
                     }
                     if (setting == Setting.PAUSE) {
                         put("can_change", state.settings.activeOrbitId == state.orbit.id)
@@ -288,6 +281,7 @@ internal object OrbitSettingsTools {
                 }
         }
         return JSONObject().put("settings", JSONArray(settings))
+            .put("browser_login", if (BrowserProfiles.isSupported()) "separate" else "shared_with_app")
             .put("note", text.getString(R.string.orbit_settings_get_note))
     }
 
@@ -339,9 +333,6 @@ internal object OrbitSettingsTools {
                             text.getString(R.string.orbit_settings_not_active)
                         }
                     }
-                    Setting.LOGIN -> require(BrowserProfiles.isSupported()) {
-                        text.getString(R.string.orbit_settings_login_unsupported)
-                    }
                     else -> Unit
                 }
                 raw
@@ -383,7 +374,6 @@ internal object OrbitSettingsTools {
                 else -> R.string.orbit_mode_system
             }
             Setting.LAUNCH -> if (value == "orbit") R.string.nav_orbit else R.string.launch_mode_standard
-            Setting.LOGIN -> if (value == true) R.string.orbit_settings_main_login else R.string.orbit_settings_own_login
             Setting.PAUSE -> if (value == true) R.string.orbit_settings_paused else R.string.orbit_settings_running
             else -> null
         }
@@ -406,7 +396,6 @@ internal object OrbitSettingsTools {
                     text.getString(setting.label), display(text, setting, state.value(setting)),
                     display(text, setting, changes.get(setting.key)),
                     if (setting.shared) text.getString(R.string.orbit_settings_shared) else "")).append('\n')
-                if (setting == Setting.LOGIN) append(text.getString(R.string.orbit_settings_login_note)).append('\n')
                 if (setting == Setting.REFILL) append(text.getString(R.string.orbit_settings_refill_note)).append('\n')
                 if (setting == Setting.PAUSE) append(text.getString(R.string.orbit_settings_pause_note)).append('\n')
             }
@@ -474,7 +463,6 @@ internal object OrbitSettingsTools {
             Setting.EXTRA -> OrbitQuota.setLimits(context, extra = value as Long)
             Setting.EXTRA_WEEKLY -> OrbitQuota.setLimits(context, extraWeekly = value as Boolean)
             Setting.REFILL -> OrbitQuota.refillExtra(context)
-            Setting.LOGIN -> preferences.setBrowserSharesMainLogin(state.orbit.id, value as Boolean)
             Setting.DELAY -> state.memory.setLearningDelayMinutes((value as Long).toInt())
             Setting.DEVELOPER -> preferences.setDeveloperMode(value as Boolean)
             Setting.LAUNCH -> LaunchModePreferences.getInstance(context).setMode(
