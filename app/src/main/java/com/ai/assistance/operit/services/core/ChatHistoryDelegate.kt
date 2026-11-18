@@ -964,15 +964,21 @@ class ChatHistoryDelegate(
             val shouldSyncCurrentChatToGlobal =
                 selectionMode == ChatSelectionMode.FOLLOW_GLOBAL && setAsCurrentChat
 
-            // 创建新对话，如果有当前对话则继承其分组，并绑定角色卡
+            // 创建新对话，如果有当前对话则继承其分组，并绑定角色卡。
+            // It is made current only below, after it has taken the model picked while no chat was open.
             val newChat = chatHistoryManager.createNewChat(
                 folderId = folderId,
                 inheritGroupFromChatId = inheritGroupFromChatId,
                 characterCardName = target.characterCardName,
                 characterGroupId = target.characterGroupId,
-                setAsCurrentChat = shouldSyncCurrentChatToGlobal,
+                setAsCurrentChat = false,
                 chatId = chatId,
             )
+            if (setAsCurrentChat) {
+                com.ai.assistance.operit.data.preferences.ChatModelSelections.getInstance(context)
+                    .adoptPending(newChat.id)
+            }
+            if (shouldSyncCurrentChatToGlobal) chatHistoryManager.setCurrentChatId(newChat.id)
 
             if (withOpeningMessage) target.openingMessage?.let { chatHistoryManager.addMessage(newChat.id, it) }
             
@@ -1030,6 +1036,9 @@ class ChatHistoryDelegate(
             // 创建已提交成功后，后续的选中/切换失败（如 DataStore 写入失败）不应把
             // 整个创建报告为失败，否则对话框保持打开并邀请重试，导致重复创建。
             creationResult.onSuccess { newChatId ->
+                // As for a plain new chat: the model picked with none open goes to the chat opened now.
+                com.ai.assistance.operit.data.preferences.ChatModelSelections.getInstance(context)
+                    .adoptPending(newChatId)
                 runCatching {
                     withTimeoutOrNull(500) {
                         _chatHistories.first { histories ->
@@ -1068,6 +1077,7 @@ class ChatHistoryDelegate(
             AppLogger.d(TAG, "切换对话到 $chatId (syncToGlobal=$syncToGlobal)，已禁止添加消息")
 
             try {
+                com.ai.assistance.operit.data.preferences.ChatModelSelections.getInstance(context).dropPending()
                 val (inputTokens, outputTokens, windowSize) = getChatStatistics()
                 saveCurrentChat(inputTokens, outputTokens, windowSize) // 切换前使用正确的窗口大小保存
 
