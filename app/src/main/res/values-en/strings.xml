@@ -9389,6 +9389,7 @@
     <string name="orbit_tracking_notes">Updates</string>
     <string name="orbit_goal_steps">Steps</string>
     <string name="orbit_builds_versions">%1$d versions</string>
+    <string name="orbit_builds_has_versions">Has version history</string>
     <string name="orbit_notifications_row">Notifications</string>
     <string name="orbit_notifications_row_desc">Quiet hours and how often results arrive</string>
     <string name="orbit_profile_open">Open %1$s\'s profile</string>
@@ -9606,7 +9607,6 @@
     <string name="orbit_builds_files_empty">Files %1$s saves show up here.</string>
     <string name="orbit_builds_made">Builds</string>
     <string name="orbit_builds_uploads">Library</string>
-    <string name="orbit_builds_work">Build</string>
     <string name="orbit_builds_system">System files</string>
     <string name="orbit_system_hint">All of %1$s\'s own files are here. You can look through them; to change something, ask %1$s.</string>
     <string name="orbit_system_empty">This folder is empty.</string>

@@ -1152,8 +1152,8 @@ private fun OrbitChatPage(
                 // avatar is not loaded again and does not flash each time a tab is opened.
                 if (!devView) {
                     val onTab = tab != OrbitTab.CHAT
-                    val tabHeader: @Composable () -> Unit = remember(orbit) {
-                        {
+                    val tabHeader: @Composable ((@Composable () -> Unit)?) -> Unit = remember(orbit) {
+                        { trailing ->
                             OrbitHeader(
                                 orbit = orbit, sideTitle = null, hasUnread = hasUnreadState.value,
                                 activity = orbitActivity(),
@@ -1161,6 +1161,7 @@ private fun OrbitChatPage(
                                     stackNames.isEmpty() && editingFile == null && !showImport,
                                 onOpenProfile = { showProfile = true }, onOpenMenu = { openMenu() },
                                 onTabLayer = true,
+                                trailing = trailing,
                             )
                         }
                     }
@@ -1524,6 +1525,8 @@ internal fun OrbitHeader(
     avatarAnimated: Boolean = true,
     /** The copy the other bottom tabs show, in the same place as the chat's. */
     onTabLayer: Boolean = false,
+    /** A page's own button at the top right, where the chat has its search; the Builds tab's order. */
+    trailing: (@Composable () -> Unit)? = null,
 ) {
     val pageColor = MaterialTheme.colorScheme.background
     val avatarSize = orbit.appearance.avatarSize.dp
@@ -1580,6 +1583,8 @@ internal fun OrbitHeader(
                 onClick = onOpenSearch,
                 modifier = Modifier.align(Alignment.TopEnd),
             )
+        } else if (trailing != null) {
+            Box(Modifier.align(Alignment.TopEnd)) { trailing() }
         }
         Box(
             modifier = Modifier.align(Alignment.TopCenter)

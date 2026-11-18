@@ -1,4 +1,5 @@
 - `.META`: 元数据，目前用来当垃圾箱
+- [`CHANGELOG.md`](CHANGELOG.md): Orbit 每个正式版的更新日志
 - `assets`: 文档使用的图片等资源文件
 - `doc-src`: 长期维护的文档单一事实源
 - `TODO`: 这是留给开发者协作用的，[好的计划是协作成功的80%](TODO/README.md)
