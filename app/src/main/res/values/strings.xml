@@ -10075,6 +10075,7 @@
     <string name="orbit_browser_login_shared_desc">这台手机的系统 WebView 不支持分开登录，Orbit 只能和主应用共用。</string>
     <string name="orbit_browser_login_split_notice">浏览器登录现在固定和主应用分开。主应用里的登录都还在；Orbit 以前用的是主应用的登录，所以网站可能要在 Orbit 这边重新登录一次。</string>
     <string name="orbit_browser_login_split_notice_ok">知道了</string>
+    <string name="chat_model_switched">模型从 %1$s 切换到了 %2$s</string>
     <string name="web_session_tab_owner">%1$s 的登录</string>
     <string name="orbit_import_row">从别的 AI 导入记忆</string>
     <string name="orbit_import_row_desc">把 ChatGPT、Claude 对你的了解带过来</string>

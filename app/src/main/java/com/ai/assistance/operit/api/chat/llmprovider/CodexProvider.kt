@@ -54,6 +54,10 @@ class CodexProvider(
 ) {
     override val requiresStreamingResponse: Boolean = true
 
+    override fun reasoningScopeAccount(request: Request?): String =
+        request?.tag(CodexAuthLease::class.java)?.state?.accountId
+            ?: authManager.currentAccountId().orEmpty()
+
     override suspend fun recoverUnauthorizedAuthentication(
         request: Request, status: Int, body: String, recoveryAllowed: Boolean,
     ): Boolean {

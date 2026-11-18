@@ -94,6 +94,9 @@ data class ChatRecallSession(val chatId: String, val title: String, val updatedA
 data class ChatRecallPart(val messageId: Long, val chatId: String, val sender: String,
     val timestamp: Long, val content: String, val totalChars: Int, val containsNull: Boolean = false)
 
+/** Who wrote a reply, without its text. */
+data class ReplyModelRow(val provider: String, val modelName: String)
+
 /** Reads message text in bounded rows so a single large message cannot overflow CursorWindow. */
 @Dao
 abstract class ChatContentDao {
@@ -123,6 +126,36 @@ abstract class ChatContentDao {
     /** When the newest summary of [chatId] was saved; the model reads the chat from it on. */
     @Query("SELECT MAX(timestamp) FROM messages WHERE chatId=:chatId AND sender='summary'")
     abstract suspend fun latestSummaryAt(chatId: String): Long?
+
+    /**
+     * The models of the newest replies before [before] by any of [roleNames] (the names a role is
+     * stored under), newest first, without their text, read as the chat shows them (the selected
+     * variant's role, provider and model); the loaded page's first reply of that role compares
+     * with these.
+     */
+    @Query("""
+        SELECT COALESCE(v.provider,m.provider) AS provider, COALESCE(v.modelName,m.modelName) AS modelName
+        FROM messages m LEFT JOIN message_variants v ON v.chatId=m.chatId
+            AND v.messageTimestamp=m.timestamp AND v.variantIndex=m.selectedVariantIndex
+        WHERE m.chatId=:chatId AND m.sender='ai' AND m.timestamp<:before
+        AND (TRIM(COALESCE(NULLIF(TRIM(v.roleName),''),m.roleName))=:roleName OR (:orDefault AND (
+            TRIM(COALESCE(NULLIF(TRIM(v.roleName),''),m.roleName))='' OR
+            TRIM(COALESCE(NULLIF(TRIM(v.roleName),''),m.roleName))='operit' COLLATE NOCASE)))
+        AND m.displayMode NOT IN ('HIDDEN_PLACEHOLDER','COLLABORATION_EVENT','COLLABORATION_TASK')
+        AND TRIM(COALESCE(v.modelName,m.modelName))!=''
+        ORDER BY m.timestamp DESC LIMIT :limit
+    """)
+    abstract suspend fun replyModelsBefore(chatId: String, roleName: String, orDefault: Boolean, before: Long, limit: Int): List<ReplyModelRow>
+
+    /** How many bytes of text reading the [limit] rows before [before] loads: each row and its shown variant. */
+    @Query("""
+        SELECT COALESCE(SUM(COALESCE(LENGTH(CAST(m.content AS BLOB)), 0) + COALESCE(
+            (SELECT LENGTH(CAST(v.content AS BLOB)) FROM message_variants v WHERE v.chatId=m.chatId
+                AND v.messageTimestamp=m.timestamp AND v.variantIndex=m.selectedVariantIndex), 0)), 0)
+        FROM (SELECT chatId, timestamp, selectedVariantIndex, content FROM messages
+            WHERE chatId=:chatId AND timestamp<:before ORDER BY timestamp DESC LIMIT :limit) m
+    """)
+    abstract suspend fun contentBytesBefore(chatId: String, before: Long, limit: Int): Long
 
     /** Which of [chatIds] have any message at all (a task run that never reached the model has none). */
     @Query("SELECT DISTINCT chatId FROM messages WHERE chatId IN (:chatIds)")
@@ -434,6 +467,27 @@ abstract class ChatContentDao {
         chatId: String,
         messageTimestamp: Long,
     ): List<MessageVariantContentRow>
+
+    @Query(
+        MESSAGE_VARIANT_CONTENT_ROW_QUERY +
+            " WHERE chatId = :chatId AND messageTimestamp IN (:messageTimestamps)" +
+            " AND variantIndex = (SELECT m.selectedVariantIndex FROM messages m" +
+            " WHERE m.chatId = message_variants.chatId AND m.timestamp = message_variants.messageTimestamp LIMIT 1)"
+    )
+    protected abstract suspend fun querySelectedVariantsForMessages(
+        chatId: String,
+        messageTimestamps: List<Long>,
+    ): List<MessageVariantContentRow>
+
+    /** Only the variant each of these messages shows, not every saved variant. */
+    @Transaction
+    open suspend fun getSelectedVariantsForMessages(
+        chatId: String,
+        messageTimestamps: List<Long>,
+    ): List<MessageVariantEntity> =
+        messageTimestamps.distinct().chunked(900).flatMap { timestamps ->
+            materializeVariants(querySelectedVariantsForMessages(chatId, timestamps))
+        }
 
     @Query(
         MESSAGE_VARIANT_CONTENT_ROW_QUERY +

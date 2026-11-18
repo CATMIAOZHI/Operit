@@ -227,6 +227,15 @@ open class OpenAIProvider(
 
     protected open val useResponsesApi: Boolean = false
 
+    /**
+     * Where encrypted Responses reasoning is written and read back; null outside the Responses API.
+     * [request] is the HTTP request the reasoning answers, for providers whose login rides on it.
+     */
+    protected open fun responsesReasoningScope(request: Request? = null): String? = null
+
+    /** The scope a body is being built for, set around the build on its own thread. */
+    private val bodyReasoningScope = ThreadLocal<String?>()
+
     // 公开token计数
     override val inputTokenCount: Int
         get() = tokenCacheManager.totalInputTokenCount
@@ -332,6 +341,16 @@ open class OpenAIProvider(
     protected open fun checkAuthenticationContinuity(previous: Request?, current: Request) {}
 
     private class AuthenticationRecoveredException : IOException()
+
+    /** The server could not verify replayed encrypted reasoning; the next attempt goes without it. */
+    private class ReplayedReasoningRejectedException : IOException()
+
+    /** OpenAI's "invalid_encrypted_content": "The encrypted content ... could not be verified". */
+    private fun isReplayedReasoningRejection(errorBody: String): Boolean {
+        val body = errorBody.lowercase()
+        return "invalid_encrypted_content" in body ||
+            ("encrypted content" in body && "could not be verified" in body)
+    }
 
     protected open suspend fun authenticateRequest(builder: Request.Builder) {
         applyAuthenticationHeaders(builder, apiKeyProvider.getApiKey().trim())
@@ -887,7 +906,7 @@ open class OpenAIProvider(
 
         val finalRequestObject =
             if (useResponsesApi) {
-                OpenAIResponsesPayloadAdapter.toResponsesRequest(jsonObject).also {
+                OpenAIResponsesPayloadAdapter.toResponsesRequest(jsonObject, bodyReasoningScope.get() ?: responsesReasoningScope()).also {
                     LlmBodyStages.lap("Responses转换")
                 }
             } else {
@@ -2115,6 +2134,8 @@ open class OpenAIProvider(
         val queuedToolIndices: MutableSet<Int> = mutableSetOf(),
         val completedToolIndices: MutableSet<Int> = mutableSetOf(),
         val emittedResponsesToolIndices: MutableSet<Int> = mutableSetOf(),
+        /** Fixed per attempt from the request that was sent, not re-read while the reply streams. */
+        var reasoningScope: String? = null,
     )
 
     private suspend fun closeReasoningBlockIfOpen(
@@ -2506,7 +2527,7 @@ open class OpenAIProvider(
                     if (eventType == "response.output_item.done") {
                         closeReasoningBlockIfOpen(state, emitter)
                         if (!hasOpenToolCalls(state)) {
-                            OpenAIResponsesPayloadAdapter.createReasoningMetadataTag(item)?.let { metadataTag ->
+                            OpenAIResponsesPayloadAdapter.createReasoningMetadataTag(item, state.reasoningScope)?.let { metadataTag ->
                                 emitter.emitTag(metadataTag)
                             }
                             kotlin.coroutines.coroutineContext[com.ai.assistance.operit.core.chat.SamplingInterrupt]?.checkpoint()
@@ -2893,8 +2914,9 @@ open class OpenAIProvider(
         attemptNumber: Int = 1,
         requestTraceId: String = "unknown",
         requestStartedAtMs: Long = streamNowMs(),
+        reasoningScope: String? = null,
     ) {
-        val state = StreamingState()
+        val state = StreamingState(reasoningScope = reasoningScope)
         val responseStartedAtMs = streamNowMs()
         var lastProgressLogAtMs = responseStartedAtMs
         var maxChunkGapSinceLogMs = 0L
@@ -3089,6 +3111,13 @@ open class OpenAIProvider(
             // 打好的请求体。重试时内容不变（登录信息只在请求头里），直接复用这份字节，
             // 不再重新整理历史、重新打包；只在打包成功后才记下，打包出错时下次重试照常重打。
             var preparedRequestBody: RequestBody? = null
+            // Encrypted reasoning from before a scope was kept, or from another key of a rotating
+            // pool, can still be refused as unverifiable; the request then goes once without it.
+            var replayedReasoningDropped = false
+            // The history without encrypted reasoning, worked out once when it has to go.
+            var strippedHistory: List<PromptTurn>? = null
+            // Whose encrypted reasoning the kept body was filtered for (the account at the time).
+            var preparedBodyScope: String? = null
 
             while (retryCount <= maxRetries) {
                 // 在循环开始时检查是否已被取消
@@ -3102,7 +3131,7 @@ open class OpenAIProvider(
                         )
                     }
 
-                    val currentHistory = chatHistory
+                    val currentHistory = strippedHistory ?: chatHistory
 
                 AppLogger.d(
                     "AIService",
@@ -3113,7 +3142,11 @@ open class OpenAIProvider(
                 // 有些服务商无论设置都走流式，以实际发出的方式记首字。
                 perf?.actualStreaming(effectiveStream)
                 val firstBuild = preparedRequestBody == null
-                val requestBody = preparedRequestBody ?: perf.timeBody({ it.contentLength() }) { withContext(Dispatchers.IO) { LlmBodyStages.collect(perf) { createRequestBody(
+                // The account's scope is read once here and the history filtered with that same
+                // value (handed to the build on its thread), so the check below compares like with like.
+                if (firstBuild && useResponsesApi) preparedBodyScope = responsesReasoningScope()
+                val bodyScope = preparedBodyScope
+                val requestBody = preparedRequestBody ?: perf.timeBody({ it.contentLength() }) { withContext(Dispatchers.IO) { LlmBodyStages.collect(perf) { bodyReasoningScope.set(bodyScope); try { createRequestBody(
                     context,
                     currentHistory,
                     modelParameters,
@@ -3121,7 +3154,7 @@ open class OpenAIProvider(
                     effectiveStream,
                     availableTools,
                     preserveThinkInHistory
-                ) } } }
+                ) } finally { bodyReasoningScope.remove() } } } }
                 preparedRequestBody = requestBody
                 // Every send counts; the body is kept once, a retry sends the same one again.
                 perf?.captured(providerModel, requestBody, keepBody = firstBuild)
@@ -3133,6 +3166,21 @@ open class OpenAIProvider(
                 val attemptNumber = retryCount + 1
                 val requestTraceId = "llm_${attemptNumber}_${UUID.randomUUID().toString().substring(0, 8)}"
                 val request = createRequest(requestBody, requestTraceId, effectiveStream, attemptNumber, logicalRequestId)
+                // Fixed per attempt from the request itself: a login change mid-stream must not
+                // stamp this reply's reasoning with the next account.
+                val attemptReasoningScope = responsesReasoningScope(request)
+                // The login changed between filtering the history and signing the request: the
+                // reasoning kept may be the other account's, so it goes without it instead.
+                if (useResponsesApi && strippedHistory == null && preparedBodyScope != attemptReasoningScope) {
+                    val stripped = ChatUtils.stripOpenAiResponsesReasoningMetaTurns(chatHistory)
+                    // Kept even when nothing was taken out, so a retry does not look again.
+                    strippedHistory = stripped
+                    if (stripped != chatHistory) {
+                        replayedReasoningDropped = true
+                        preparedRequestBody = null
+                        continue
+                    }
+                }
                 AppLogger.d(
                     "AIService",
                     "[req=$requestTraceId] 【发送消息】请求体构建完成，目标模型: $modelName，API端点: $apiEndpoint"
@@ -3178,6 +3226,17 @@ open class OpenAIProvider(
                                 "AIService",
                                 "【发送消息】API请求失败，状态码: ${response.code}，错误信息: $errorBody"
                             )
+                            if (response.code == 400 && useResponsesApi && !replayedReasoningDropped &&
+                                isReplayedReasoningRejection(errorBody)) {
+                                val stripped = strippedHistory ?: ChatUtils.stripOpenAiResponsesReasoningMetaTurns(chatHistory)
+                                if (stripped != chatHistory) {
+                                    response.close()
+                                    strippedHistory = stripped
+                                    replayedReasoningDropped = true
+                                    preparedRequestBody = null
+                                    throw ReplayedReasoningRejectedException()
+                                }
+                            }
                             // 4xx错误仍保留单独的异常类型，具体是否重试由统一策略决定
                             if (response.code in 400..499) {
                                 val errorMessage =
@@ -3216,6 +3275,7 @@ open class OpenAIProvider(
                                 attemptNumber,
                                 requestTraceId,
                                 executeStartNs / 1_000_000L,
+                                attemptReasoningScope,
                             )
                         } else {
                             AppLogger.d("AIService", "[req=$requestTraceId] 【发送消息】开始读取非流式响应")
@@ -3230,7 +3290,7 @@ open class OpenAIProvider(
                                 val handledImages = tryHandleOpenAiImageResponse(jsonResponse, emitter, null)
 
                                 if (useResponsesApi) {
-                                    val parsed = OpenAIResponsesPayloadAdapter.parseNonStreamingResponse(jsonResponse)
+                                    val parsed = OpenAIResponsesPayloadAdapter.parseNonStreamingResponse(jsonResponse, attemptReasoningScope)
 
                                     parsed.reasoningChunks.forEach { reasoningChunk ->
                                         if (reasoningChunk.isNotEmpty()) {
@@ -3335,6 +3395,10 @@ open class OpenAIProvider(
                 if (e is AuthenticationRecoveredException) {
                     // Authentication recovery does not consume the ordinary network retry budget.
                     // The operation-wide flag prevents a later network retry refreshing again.
+                    continue
+                }
+                if (e is ReplayedReasoningRejectedException) {
+                    AppLogger.w("AIService", "Replayed reasoning could not be verified; sending once more without it")
                     continue
                 }
                 if (e is RepetitionTruncationException) {
