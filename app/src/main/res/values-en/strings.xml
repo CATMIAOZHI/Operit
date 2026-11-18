@@ -9605,9 +9605,16 @@
     <string name="orbit_system_empty">This folder is empty.</string>
     <string name="orbit_system_folder">Folder</string>
     <string name="orbit_system_copy_path">Copy path</string>
-    <string name="orbit_builds_book_text">Book text · %1$d chapters</string>
-    <string name="orbit_builds_book_text_show">Show chapters</string>
-    <string name="orbit_builds_book_text_hide">Hide chapters</string>
+    <plurals name="orbit_builds_folder_files">
+        <item quantity="one">%1$d file</item>
+        <item quantity="other">%1$d files</item>
+    </plurals>
+    <string name="orbit_builds_sort_current">Sort by: %1$s</string>
+    <string name="orbit_builds_sort_time">Last modified</string>
+    <string name="orbit_builds_sort_added">Recently added</string>
+    <string name="orbit_builds_sort_name">Name</string>
+    <string name="orbit_builds_sort_size">Size</string>
+    <string name="orbit_builds_sort_type">Type</string>
     <string name="orbit_builds_made_empty">Things %1$s makes for you and files it saves show up here.</string>
     <string name="orbit_uploads_used">%1$s of %2$s used</string>
     <string name="orbit_uploads_hint">Images and files you send to %1$s are kept here. When it is full the oldest go first, but the newest 100 always stay.</string>
