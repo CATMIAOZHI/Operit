@@ -59,11 +59,6 @@
     <string name="orbit_load_failed">Could not load. Try again</string>
     <string name="orbit_retry">Retry</string>
     <string name="tool_package_off_in_chat">Package “%1$s” is switched off for this chat and cannot be used.</string>
-    <string name="orbit_browser_share_confirm_on_title">Use the app\'s logins?</string>
-    <string name="orbit_browser_share_confirm_on">%1$s will browse as the accounts you signed in to in the app. Its own logins are kept; switch this off to go back.</string>
-    <string name="orbit_browser_share_confirm_off_title">Back to %1$s\'s own logins?</string>
-    <string name="orbit_browser_share_confirm_off">%1$s will use its own logins and can\'t use the sites you signed in to in the app.</string>
-    <string name="orbit_browser_share_confirm_ok">Switch</string>
     <string name="orbit_process_main">MAIN</string>
     <string name="orbit_process_subagent">SUBAGENT %1$02d</string>
     <string name="orbit_process_subagent_task">Its task</string>

@@ -11,7 +11,7 @@ last_reviewed: 2026-11-16
 
 ## 目标
 
-让主应用和 Orbit 的 AI 与用户共用同一个真实浏览器页面，具备开发者工具级别的调试能力（截图、点击、DOM、Console、Network、JavaScript）。登录状态分两套：主应用一套，Orbit 一套（App 只有一个 Orbit）；Orbit 可以选择和主应用共用。
+让主应用和 Orbit 的 AI 与用户共用同一个真实浏览器页面，具备开发者工具级别的调试能力（截图、点击、DOM、Console、Network、JavaScript）。登录状态分两套：主应用一套，Orbit 一套（App 只有一个 Orbit），始终分开。
 
 ## 三个版本
 
@@ -30,7 +30,7 @@ last_reviewed: 2026-11-16
 - shell/Shizuku 身份连接其他应用（`org.chromium.chrome`）的 `@chrome_devtools_remote` 被 SELinux 拒绝：`avc: denied { connectto } scontext=u:r:shell:s0 tcontext=u:r:untrusted_app ... tclass=unix_stream_socket`。所以控制外部浏览器只能经 adbd 转发，不作为默认方案。
 - 调试开关开启后，已授权 ADB 的电脑也能检查和修改应用内 WebView；手机上的其他应用不能连接。
 
-登录状态：主应用一套、Orbit 一套（androidx.webkit 多 Profile，需要 `MULTI_PROFILE`）。Orbit 可切换为“和主应用共用”，切换不删除 Orbit 自己的数据；共用时以主应用的数据为准。
+登录状态：主应用一套、Orbit 一套（androidx.webkit 多 Profile，需要 `MULTI_PROFILE`）。Orbit 始终用自己那套，不能改成和主应用共用（2026-11-18 决定，原来的开关改成只显示状态）。
 
 ### 第一版已实现
 
@@ -38,7 +38,7 @@ last_reviewed: 2026-11-16
 - 网络日志：DevTools 连上后，`browser:network_requests` 每条请求带状态码、类型或失败原因；连不上时保持原来的 WebView 记录。
 - 页面截图优先走 DevTools（能拍到视频、画布），缩放到与 WebView 截图同样大小；失败回退 `webView.draw`，并在一分钟内不再尝试。
 - 新工具 `browser:click_xy`（按截图坐标点按，原生触摸事件）和 `browser:devtools`（单条 CDP 命令，只开放页面范围内的域，不开放 Target、Browser、Storage、Fetch）。
-- `BrowserProfiles`：AI 调用按调用者选登录空间，只能看到和使用自己那套登录的标签页；用户界面看到全部标签页，Orbit 的标签页标出名字。Orbit 设置里有“浏览器和主应用共用登录”开关；删除 Orbit 时关闭它的标签页并删除它的 Profile。系统 WebView 不支持多 Profile 时共用主应用一套。
+- `BrowserProfiles`：AI 调用按调用者选登录空间，只能看到和使用自己那套登录的标签页；用户界面看到全部标签页，Orbit 的标签页标出名字。Orbit 设置里的“浏览器登录”一行只显示状态（和主应用分开 / 手机不支持时只能共用）；删除 Orbit 时关闭它的标签页并删除它的 Profile。系统 WebView 不支持多 Profile 时共用主应用一套。
 - 用户代理改为 Chrome 精简格式，版本号取自手机 WebView，Client Hints 品牌写 Chromium/Google Chrome；去掉 `X-Requested-With` 包名请求头。
 
 ### 第一版做不到的事
@@ -114,8 +114,19 @@ Cefrium 维护者在 [issue #75](https://github.com/CATMIAOZHI/Operit/issues/75)
    - 引擎的查询通道只能回答发起查询的那个框架，也不支持一次查询多次回答；页面里的子框架靠一个一直挂着的 listen 查询批量收回复（用户脚本在 iframe 里要靠它拿到启动数据）。
    - 引擎默认直接离开有未保存内容的页面，现在 `beforeunload` 会弹 App 自己的确认框。
    - 模拟器是 x86_64，arm64 的 `libcef.so` 在模拟器的 ARM 翻译层里会崩；模拟器测试用 `-PoperitAbi=x86_64` 打包（见 `docs/agent/build-guide.md`）。
-3. 发版（待做）：CI 同时打两种 APK，每个版本两种补丁，nightly 检查、回退完整包和发版手册都要认两种 APK。
+3. 发版（暂缓，2026-11-18）：CI 同时打两种 APK，每个版本两种补丁，nightly 检查、回退完整包和发版手册都要认两种 APK。还要处理下面「两种版本来回切换」里的几件事。
 4. 通行密钥（权限已有，白名单待申请）：见下面「通行密钥（第二版）」。
+
+## 两种版本来回切换（发版前要做）
+
+场景：用户先装普通版，再覆盖装带浏览器版，再覆盖装回普通版。两种 APK 包名、签名、versionCode 都一样，所以每次都是覆盖安装，聊天、记忆、设置都保留。会出问题的是浏览器的数据和更新：
+
+- 网站登录不会跟着走。普通版的登录存在系统 WebView 里，带浏览器版的存在 Cefrium 里，两边互相看不到。换过去要重新登录网站；换回来时，以前在普通版登录的网站还在，在带浏览器版里登录的看不到。要做：第一次用另一种浏览器打开网页时，提示一句“浏览器换了，网站要重新登录”。
+- 旧数据留在手机里。换回普通版后，Cefrium 的登录和缓存还在磁盘上，普通版没有内核代码删不掉它。保留它，再换回带浏览器版时登录还在；要做：在存储空间页显示它占多大，给一个“删除内置浏览器数据”按钮。
+- 在普通版里删除 Orbit 时，只能删掉 WebView 里它那套登录，Cefrium 里的删不掉（`BrowserProfiles.deleteOrbitData` 只在引擎存在时删引擎 Profile，待删名单也只给 WebView 用）。要做：把这类名字另记一份，带浏览器版下次启动时先删。
+- 更新不能把用户悄悄换回另一种版本。补丁已按已装 APK 的哈希挑，但补丁失败时回退的完整 APK、nightly 检查都只认一种 APK；带浏览器版的用户一旦拿到普通版完整包，就被换回普通版了。要做：App 知道自己是哪种版本（`BuildConfig.BROWSER_ENGINE_BUILT_IN`），检查更新、补丁和完整包都只拿同一种。
+- 带浏览器版要 Android 10 及以上；Android 9 及以下只能用普通版，下载页和更新都不要给它们带浏览器版。
+- 系统只拒绝 versionCode 更低的包。现在 versionCode 固定为 100205（`app/build.gradle.kts`），ry 号和 nightly 后缀只改 versionName，所以手动装更旧的 ry 版本系统也不拦，但旧代码可能读不懂新数据。两种 APK 要同时发、版本一样；换版本时装同一个版本，不要装更旧的。
 
 ## 通行密钥（第二版）
 
@@ -132,5 +143,5 @@ Cefrium 维护者在 [issue #75](https://github.com/CATMIAOZHI/Operit/issues/75)
 
 ## 两套登录空间（第二版）
 
-- 主应用一套、Orbit 一套，用 Cefrium 的持久 Profile（0.21.0 复测通过）；Orbit 设置里“和主应用共用登录”的开关保持和第一版一样。
+- 主应用一套、Orbit 一套，用 Cefrium 的持久 Profile（0.21.0 复测通过）；和第一版一样始终分开。
 - 不采用：给 Orbit 安装一个独立浏览器 App。约 220 MB，安装和升级都要确认；CDP socket 只接受浏览器自身 UID，要另做转发通道；打开浏览器会跳出 Operit。

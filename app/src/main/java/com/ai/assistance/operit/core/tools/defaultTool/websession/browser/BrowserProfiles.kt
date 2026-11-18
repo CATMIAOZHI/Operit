@@ -15,9 +15,9 @@ import com.ai.assistance.operit.data.preferences.OrbitPreferences
 import com.ai.assistance.operit.util.AppLogger
 
 /**
- * Which saved logins a browser tab uses. The main app has one set; each Orbit has its own unless
- * the user lets it share the main app's. Switching to sharing keeps the Orbit's own set on disk so
- * switching back finds it again; only deleting the Orbit removes it.
+ * Which saved logins a browser tab uses. The main app has one set and each Orbit always has its
+ * own; only a WebView that cannot keep them apart puts every tab on the main app's set. Deleting
+ * the Orbit removes its set.
  */
 internal object BrowserProfiles {
     private const val TAG = "BrowserProfiles"
@@ -53,7 +53,7 @@ internal object BrowserProfiles {
                 it.ownerForChat(chatId) ?: it.ownerForChat(root)
             } }
                 .getOrNull() ?: return MAIN
-        return if (orbit.browserSharesMainLogin) MAIN else orbitProfileName(orbit.id)
+        return orbitProfileName(orbit.id)
     }
 
     /** The chat an AI browser call comes from: the tool runtime's, or the one a package call carries. */
@@ -65,7 +65,7 @@ internal object BrowserProfiles {
     fun forOrbit(context: Context, orbitId: String): String {
         if (!isSupported()) return MAIN
         val orbit = OrbitPreferences.getInstance(context).loadedSettingsBlocking().orbits.firstOrNull { it.id == orbitId }
-        return if (orbit == null || orbit.browserSharesMainLogin) MAIN else orbitProfileName(orbitId)
+        return if (orbit == null) MAIN else orbitProfileName(orbitId)
     }
 
     fun currentScope(): String? = callScope.get()
@@ -115,13 +115,12 @@ internal object BrowserProfiles {
     private const val PENDING_KEY = "pending_delete"
 
     /**
-     * Signs the browser an Orbit uses out of every site: its cookies and site storage. With
-     * [shared] logins (or a WebView without profiles) that is the main app's browser. Main thread
-     * only; [onDone] gets whether it worked. With the engine, the WebView's logins go too: a tab
-     * the engine could not open ran there.
+     * Signs the browser an Orbit uses out of every site: its cookies and site storage. On a WebView
+     * without profiles that is the main app's browser. Main thread only; [onDone] gets whether it
+     * worked. With the engine, the WebView's logins go too: a tab the engine could not open ran there.
      */
-    fun clearOrbitLogins(orbitId: String, shared: Boolean, onDone: (Boolean) -> Unit) {
-        val profile = if (shared || !isSupported()) MAIN else orbitProfileName(orbitId)
+    fun clearOrbitLogins(orbitId: String, onDone: (Boolean) -> Unit) {
+        val profile = if (!isSupported()) MAIN else orbitProfileName(orbitId)
         val engine = BrowserEngines.current
         if (engine == null) {
             clearWebViewLogins(profile, onDone = onDone)
