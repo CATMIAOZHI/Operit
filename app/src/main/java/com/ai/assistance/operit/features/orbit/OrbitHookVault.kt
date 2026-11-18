@@ -40,7 +40,10 @@ internal object OrbitHookVault {
         val entries = OrbitVault.entries(context, orbit.id).filter { it.id in hook.env }
         val missing = unapproved(context, task.id, task.source, entries)
         if (missing.isEmpty()) return null
-        val script = runCatching { OrbitFiles.of(context, orbit.id).read(hook.path) }.getOrDefault("")
+        // The sites shown come from the pinned script itself: a script changed since (or unreadable)
+        // gets no card, and the run refuses it before loading anything.
+        val script = runCatching { OrbitFiles.of(context, orbit.id).read(hook.path) }.getOrNull()
+            ?.takeIf { OrbitWatchSources.hash(it) == hook.hash } ?: return null
         val sites = Regex("https?://([A-Za-z0-9.-]+)").findAll(script).map { it.groupValues[1].lowercase() }
             .distinct().take(8).toList()
         val name = task.title.take(40)
@@ -64,6 +67,21 @@ internal object OrbitHookVault {
         // A card that no longer fits allows nothing; its answer tells Orbit to ask again with dry_run.
         fun stale(en: String, zh: String) = if (english) "Nothing was allowed: $en Call orbit_task dry_run to put up a new card."
             else "没有生效：$zh 用 orbit_task dry_run 重新出一张卡片。"
+        // The script file edited since the card: a yes would cover text the user never saw, and the
+        // run refuses it anyway. Read before the shared gate; the run checks it again.
+        val pinned = OrbitWatchSources.hook(source)
+        val fileIntact = pinned != null && try {
+            OrbitWatchSources.hash(OrbitFiles.of(context, orbit.id).read(pinned.path)) == pinned.hash
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            false
+        }
+        if (!fileIntact) {
+            return if (english) "Nothing was allowed: the hook's script file was changed after it was set up. " +
+                "Update the task with the full script to pin the new text, then dry_run for a new card."
+            else "没有生效：这个 hook 的脚本文件在设好之后被改过。先用完整脚本更新任务，再 dry_run 出新卡片。"
+        }
         // Checked and remembered together, so the task cannot change in between.
         val outcome: Pair<com.ai.assistance.operit.data.model.OrbitTaskEntity?, String> = OrbitExecutionGate.serialized {
             val found = AppDatabase.getDatabase(context).orbitTaskDao().task(taskId)

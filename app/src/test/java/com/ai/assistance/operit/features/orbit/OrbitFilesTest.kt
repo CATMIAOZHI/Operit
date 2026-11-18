@@ -20,6 +20,19 @@ class OrbitFilesTest {
         assertFalse(OrbitFiles.allowed("files/a/b/c/d/report.pdf"))
     }
 
+    @Test fun hookScriptsInBothLanguagesCanBeWrittenAndEdited() = runBlocking {
+        // orbit_task writes a WATCH hook as files/hooks/<name>.sh or .py, in a folder that may not exist yet.
+        val files = store()
+        files.write("files/hooks/watch-1234abcd.py", "silent(\"probe\", {})")
+        files.write("files/hooks/watch-1234abcd.sh", "silent probe '{}'")
+        assertEquals("silent(\"probe\", {})", files.read("files/hooks/watch-1234abcd.py"))
+        assertEquals("silent probe '{}'", files.read("files/hooks/watch-1234abcd.sh"))
+        // Editing a hook goes through the same check.
+        files.writeIfUnchanged("files/hooks/watch-1234abcd.py", "silent(\"probe\", {})", "wake(\"probe\", {})")
+        assertEquals("wake(\"probe\", {})", files.read("files/hooks/watch-1234abcd.py"))
+        assertTrue(runCatching { files.write("files/hooks/run.exe", "x") }.isFailure)
+    }
+
     @Test fun personNotesKeepAnIndexThatCannotBeWritten() = runBlocking {
         val files = store()
         files.write("memory/people/Alex.md", "# Alex\n\nLikes tea")

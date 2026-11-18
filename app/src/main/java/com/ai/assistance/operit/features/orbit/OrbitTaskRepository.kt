@@ -151,6 +151,12 @@ class OrbitTaskRepository(private val context: Context) {
         if (task.state == state) return true
         val now = System.currentTimeMillis()
         val targetState = if (task.kind == "DAILY" && state == "CANCELLED") "PAUSED" else state
+        // Read before the shared gate (a file being imported can hold its lock); edited by hand since
+        // it was pinned, the script would be refused at its first run, so the task is not resumed.
+        if (state == "ACTIVE") check(OrbitHookChecks.intact(context, task)) {
+            context.getString(com.ai.assistance.operit.R.string.orbit_watch_script_changed,
+                OrbitWatchSources.hook(task.source)?.path?.substringAfterLast('/').orEmpty())
+        }
         val changed = OrbitExecutionGate.serialized {
             if (state == "ACTIVE") check(OrbitHookChecks.passed(context, task)) {
                 context.getString(com.ai.assistance.operit.R.string.orbit_hook_needs_dry_run)

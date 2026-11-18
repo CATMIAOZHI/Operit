@@ -98,7 +98,10 @@ internal object OrbitForget {
         dao.goals(orbit.id).filter { matcher.hit(it.title) || matcher.hit(it.plan) }.forEach {
             hits += Hit("goals", "goal:${it.id}", if (matcher.hit(it.title)) "stop" else "edit")
         }
-        dao.tasks(orbit.id).filter { matcher.hit(it.title) || matcher.hit(it.instruction) || matcher.hit(it.lastObservation) }
+        // A WATCH task whose script is cleaned or deleted here could not run it any more: it stops too.
+        val touchedFiles = hits.filter { it.category == "files" }.map { it.locator.substringBefore("#L") }.toSet()
+        dao.tasks(orbit.id).filter { matcher.hit(it.title) || matcher.hit(it.instruction) || matcher.hit(it.lastObservation) ||
+            OrbitWatchSources.hook(it.source)?.path in touchedFiles }
             .forEach { hits += Hit("scheduled", "task:${it.id}", "stop") }
         OrbitBoardRepository.Board.values().forEach { board ->
             val repository = OrbitBoardRepository(context, orbit.id, board)
@@ -153,15 +156,22 @@ internal object OrbitForget {
             // Future work first, so nothing writes the information back while it is being removed.
             step("scheduled") {
                 val tasks = OrbitTaskRepository(context)
-                current.filter { it.category == "scheduled" }.sumOf { hit ->
+                var missed = false
+                val count = current.filter { it.category == "scheduled" }.sumOf { hit ->
                     val id = hit.locator.removePrefix("task:")
-                    tasks.changeState(orbit.id, id, "CANCELLED")
+                    // Changed meanwhile: it stays as it is, and is not counted as cleaned.
+                    if (!tasks.changeState(orbit.id, id, "CANCELLED")) {
+                        missed = true
+                        return@sumOf 0L
+                    }
                     dao.task(id)?.let { t ->
                         dao.updateTask(t.copy(title = matcher.clean(t.title).ifBlank { "-" }, instruction = matcher.clean(t.instruction),
                             lastObservation = matcher.clean(t.lastObservation), version = t.version + 1, updatedAt = System.currentTimeMillis()))
                     }
                     1L
                 }.toInt()
+                if (missed) failed += "scheduled"
+                count
             }
             step("memory") {
                 val notes = MemoryNotesRepository(context, spaceId)
@@ -177,11 +187,21 @@ internal object OrbitForget {
             }
             step("files") {
                 val files = OrbitFiles.of(context, orbit.id)
-                current.filter { it.category == "files" }.groupBy { it.locator.substringBefore("#L") }.entries.sumOf { (path, hits) ->
+                // A script still run by a task that could not be stopped above stays as it is.
+                val running = dao.tasks(orbit.id).filter { it.state != "CANCELLED" }
+                    .mapNotNull { OrbitWatchSources.hook(it.source)?.path }.toSet()
+                var kept = false
+                val count = current.filter { it.category == "files" }.groupBy { it.locator.substringBefore("#L") }.entries.sumOf { (path, hits) ->
+                    if (path in running) {
+                        kept = true
+                        return@sumOf 0L
+                    }
                     if (hits.any { it.action == "delete" }) files.delete(path)
                     else files.write(path, matcher.clean(files.read(path)))
                     1L
                 }.toInt()
+                if (kept) failed += "files"
+                count
             }
             step("skills") {
                 val skills = LearnedSkillRepository(context, spaceId)
