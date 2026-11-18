@@ -173,6 +173,9 @@ internal fun VirtualTranscript(
             toggleExpansion,
             { it in expandedProcesses })
     }
+    // With every row a card of its own, each part closes its own card and nothing is borrowed.
+    val splitStatsSources =
+        if (skipMessage != null) emptyMap() else remember(rows, messages) { splitReplyStatsSources(rows, messages) }
     val bookmark = remember(chatId) { TranscriptBookmarks.get(chatId) }
     var restoring by remember(chatId) { mutableStateOf(bookmark != null) }
     var restoreUnavailable by remember(chatId) { mutableStateOf(false) }
@@ -771,7 +774,8 @@ internal fun VirtualTranscript(
                         LocalTranscriptMarkdownSlice provides row.markdownSlice,
                         LocalTranscriptRuns provides runSnapshot,
                         LocalTranscriptCardEnds provides
-                            TranscriptCardEnds(row.cardFirst, row.cardLast),
+                            TranscriptCardEnds(row.cardFirst, row.cardLast,
+                                splitStatsSources[row.messageIndex]?.let(messages::getOrNull)),
                         LocalBubbleAiRenderSettings provides bubbleSettings,
                         LocalTranscriptTextMeasurer provides toolLabelTextMeasurer,
                     ) {

@@ -962,6 +962,9 @@ private fun MessageItem(
     // written as several messages (waifu mode) carries the same totals on every one of them. The
     // version switcher belongs to its message, so it still shows where the statistics do not.
     val closesCard = LocalTranscriptCardEnds.current.last
+    // A reply sent as several messages keeps its totals on the first part; the card's last part
+    // shows them.
+    val statsMessage = LocalTranscriptCardEnds.current.statsSource ?: message
     val footer: @Composable () -> Unit = {
         if (message.sender == "ai" &&
             com.ai.assistance.operit.ui.common.markdown.LocalTranscriptMarkdownSlice.current?.last != false &&
@@ -969,12 +972,13 @@ private fun MessageItem(
             // A chat with Orbit reads like messages between people: no version switcher under them.
             ((message.variantCount > 1 && !orbitLook) ||
                 (closesCard &&
-                    ((showMessageTokenStats && hasDisplayableTokenStats(message)) ||
-                        (showMessageTimingStats && hasDisplayableTimingStats(message)) ||
+                    ((showMessageTokenStats && hasDisplayableTokenStats(statsMessage)) ||
+                        (showMessageTimingStats && hasDisplayableTimingStats(statsMessage)) ||
                         (showMessageTimestamp && hasDisplayableMessageTimestamp(message)))))
         ) {
             MessageFooterBar(
                 message = message,
+                statsMessage = statsMessage,
                 showMessageTokenStats = showMessageTokenStats && closesCard,
                 showMessageTimingStats = showMessageTimingStats && closesCard,
                 showMessageTimestamp = showMessageTimestamp && closesCard,
@@ -1995,30 +1999,32 @@ internal fun MessageFooterBar(
     showMessageTimestamp: Boolean,
     allowVariantSelection: Boolean,
     onSelectVariant: (Int) -> Unit,
+    /** Where the token and timing totals are read from; the version switcher stays [message]'s. */
+    statsMessage: ChatMessage = message,
 ) {
     if (LocalResponseMessageSection.current == ResponseMessageSection.HEADER) return
     val hasPrevious = message.selectedVariantIndex > 0
     val hasNext = message.selectedVariantIndex < message.variantCount - 1
     val context = LocalContext.current
     val tokenSummary =
-        remember(message.inputTokens, message.cachedInputTokens, message.outputTokens) {
-            val totalTokens = message.inputTokens + message.outputTokens
+        remember(statsMessage.inputTokens, statsMessage.cachedInputTokens, statsMessage.outputTokens) {
+            val totalTokens = statsMessage.inputTokens + statsMessage.outputTokens
             context.getString(
                 R.string.chat_message_token_stats_compact,
                 totalTokens,
-                message.cachedInputTokens,
-                message.inputTokens,
-                message.outputTokens,
+                statsMessage.cachedInputTokens,
+                statsMessage.inputTokens,
+                statsMessage.outputTokens,
             )
         }
     val timeSummary =
-        remember(message.waitDurationMs, message.outputDurationMs) {
-            val totalDuration = (message.waitDurationMs + message.outputDurationMs).coerceAtLeast(0L)
+        remember(statsMessage.waitDurationMs, statsMessage.outputDurationMs) {
+            val totalDuration = (statsMessage.waitDurationMs + statsMessage.outputDurationMs).coerceAtLeast(0L)
             context.getString(
                 R.string.chat_message_timing_stats_compact,
                 formatCompactDuration(context, totalDuration),
-                formatCompactDuration(context, message.waitDurationMs),
-                formatCompactDuration(context, message.outputDurationMs),
+                formatCompactDuration(context, statsMessage.waitDurationMs),
+                formatCompactDuration(context, statsMessage.outputDurationMs),
             )
         }
     val messageTimeSummary =
@@ -2030,8 +2036,8 @@ internal fun MessageFooterBar(
     // The version switcher can be left alone on a row that does not close its card. Only the closing
     // row is spaced away from the next message, so the ones before it have to hold themselves off it.
     val hasStatistics =
-        (showMessageTokenStats && hasDisplayableTokenStats(message)) ||
-            (showMessageTimingStats && hasDisplayableTimingStats(message)) ||
+        (showMessageTokenStats && hasDisplayableTokenStats(statsMessage)) ||
+            (showMessageTimingStats && hasDisplayableTimingStats(statsMessage)) ||
             (showMessageTimestamp && hasDisplayableMessageTimestamp(message))
     val switcherAlone = !hasStatistics && message.variantCount > 1
 
@@ -2094,7 +2100,7 @@ internal fun MessageFooterBar(
             }
         }
 
-        if (showMessageTokenStats && hasDisplayableTokenStats(message)) {
+        if (showMessageTokenStats && hasDisplayableTokenStats(statsMessage)) {
             Text(
                 text = tokenSummary,
                 style = MaterialTheme.typography.labelSmall,
@@ -2102,7 +2108,7 @@ internal fun MessageFooterBar(
             )
         }
 
-        if (showMessageTimingStats && hasDisplayableTimingStats(message)) {
+        if (showMessageTimingStats && hasDisplayableTimingStats(statsMessage)) {
             Text(
                 text = timeSummary,
                 style = MaterialTheme.typography.labelSmall,

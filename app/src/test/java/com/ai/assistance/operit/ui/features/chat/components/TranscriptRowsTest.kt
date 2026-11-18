@@ -48,6 +48,21 @@ class TranscriptRowsTest {
         assertEquals(listOf(false, false, true), reply.map { it.cardLast })
     }
 
+    @Test fun aReplySplitByMessageBreaksShowsTheFirstPartsTotalsOnTheCardsLastPart() {
+        fun part(timestamp: Long, input: Int, output: Int) = ChatMessage(
+            timestamp = timestamp, sender = "ai", content = "part", sentAt = 100, completedAt = 200,
+            inputTokens = input, outputTokens = output,
+        )
+        val split = listOf(message(1, "user"), part(2, 50, 7), part(3, 0, 0), part(4, 0, 0))
+        val rows = withCardEnds(transcriptRows(split, ResponseProcessState(emptyMap(), { true }, {}, {})))
+        assertEquals(mapOf(3 to 1), splitReplyStatsSources(rows, split))
+
+        // Parts that each carry the totals (waifu mode) need no borrowing.
+        val repeated = listOf(message(1, "user"), part(2, 50, 7), part(3, 50, 7))
+        val repeatedRows = withCardEnds(transcriptRows(repeated, ResponseProcessState(emptyMap(), { true }, {}, {})))
+        assertTrue(splitReplyStatsSources(repeatedRows, repeated).isEmpty())
+    }
+
     @Test fun selectionKeepsIdentityWhenProcessRowsAreInserted() {
         val selected = TranscriptSelection()
         fun message(timestamp: Long) = ChatMessage(timestamp = timestamp, sender = "ai", content = "")
