@@ -150,6 +150,18 @@ jobs:
           flags=(--lane build --task "$DISPATCH_GRADLE_TASK" --continue)
           [[ "$RUN_UNIT_TESTS" == "true" ]] && flags+=(--unit-tests)
           [[ "$RUN_ANDROID_LINT" == "true" ]] && flags+=(--lint)
+          # A build with cold caches runs the Kotlin compiler and the native C++ build at once. With
+          # Gradle and a separate Kotlin daemon each given an 8 GiB heap, the 16 GB runner ran out of
+          # memory and GitHub lost contact with it. With Kotlin compiled inside Gradle and a 6 GiB
+          # heap, the whole runner peaked at about 9 GiB in a cold release build. Settings in the
+          # Gradle user home win over the project's, so local builds keep their own.
+          gradle_home="${GRADLE_USER_HOME:-$HOME/.gradle}"
+          mkdir -p "$gradle_home"
+          {
+            echo "org.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
+            echo "kotlin.compiler.execution.strategy=in-process"
+          } >> "$gradle_home/gradle.properties"
+          echo "Gradle heap: 6 GiB, Kotlin compiler: in-process"
           bash ci/script/run_android_checks.sh "${flags[@]}"
 
       - name: Verify Android artifact signatures
