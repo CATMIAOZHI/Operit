@@ -30,6 +30,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.filterNotNull
@@ -197,6 +198,17 @@ class ApiConfigDelegate(
     val activeChatModelConfig: StateFlow<ModelConfigData?> =
             _activeChatModelConfig.asStateFlow()
 
+    /** The open chat's quick-switch choice, unresolved; resolved once against the summaries below. */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private val chatModelChoiceRef: kotlinx.coroutines.flow.Flow<com.ai.assistance.operit.data.preferences.OrbitModelRef?> =
+            contextChatId.flatMapLatest { chatId ->
+                com.ai.assistance.operit.data.preferences.ChatModelSelections.getInstance(context).observe(chatId)
+            }
+
+    /** The model summaries, read once for both the Orbit main model and the quick switch below. */
+    private val configSummaries = modelConfigManager.configSummariesFlow
+        .shareIn(configScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(), replay = 1)
+
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val effectiveChatConfigTarget: StateFlow<EffectiveChatConfigTarget> =
             activePromptManager.activePromptFlow
@@ -223,7 +235,7 @@ class ApiConfigDelegate(
                         flow {
                             emit(orbitModels.current(orbitId))
                             emitAll(orbitModels.observe(orbitId).filterNotNull())
-                        }.combine(modelConfigManager.configSummariesFlow) { settings, configs ->
+                        }.combine(configSummaries) { settings, configs ->
                             val ref = settings.main
                             val config = configs.firstOrNull { it.id == ref?.configId }
                             val index = if (ref != null && config != null)
@@ -231,6 +243,12 @@ class ApiConfigDelegate(
                             EffectiveChatConfigTarget(ref?.configId.orEmpty(), index >= 0, index)
                         }
                     }
+                }
+                // The chat's own quick switch wins over the role card and the configured main model.
+                .combine(chatModelChoiceRef.combine(configSummaries) { ref, configs ->
+                    com.ai.assistance.operit.data.preferences.ChatModelSelections.resolve(ref, configs)
+                }) { target, chosen ->
+                    chosen?.let { EffectiveChatConfigTarget(it.configId, true, it.modelIndex) } ?: target
                 }
                 .stateIn(
                     configScope,

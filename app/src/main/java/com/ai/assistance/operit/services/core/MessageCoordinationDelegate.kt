@@ -165,6 +165,8 @@ class MessageCoordinationDelegate(
         val modelConfigId: String? = null,
         val modelIndex: Int? = null,
         val memorySpaceId: String? = null,
+        /** The model is the chat's quick-switch choice, looked up again when the turn continues. */
+        val modelFromChatChoice: Boolean = false,
     )
     private val lastSendRoutes = ConcurrentHashMap<String, LastSendRoute>()
 
@@ -349,10 +351,13 @@ class MessageCoordinationDelegate(
         val effectiveRoleCardId = resolveWindowEstimateRoleCardId(targetChatId, roleCardId)
         val lastRoute = lastSendRoutes[targetChatId]
         val effectivePromptFunctionType = promptFunctionType ?: lastRoute?.promptFunctionType ?: PromptFunctionType.CHAT
+        val lastModel =
+            if (chatModelConfigIdOverride == null || chatModelIndexOverride == null) lastRouteModel(targetChatId, lastRoute)
+            else null
         val effectiveChatModelConfigIdOverride =
-            chatModelConfigIdOverride ?: lastRoute?.modelConfigId
+            chatModelConfigIdOverride ?: lastModel?.first
         val effectiveChatModelIndexOverride =
-            chatModelIndexOverride ?: lastRoute?.modelIndex
+            chatModelIndexOverride ?: lastModel?.second
         val effectiveMemorySpaceIdOverride =
             memorySpaceIdOverride
                 ?: lastRoute?.memorySpaceId
@@ -429,7 +434,6 @@ class MessageCoordinationDelegate(
                     uiStateDelegate.showErrorMessage(context.getString(R.string.chat_cannot_create_new))
                     return@launch
                 }
-
                 AppLogger.d(
                     TAG,
                     "新对话创建完成，ID: ${chatHistoryDelegate.currentChatId.value}，现在发送消息"
@@ -529,8 +533,13 @@ class MessageCoordinationDelegate(
                 .getOrDefault(targetMessage.roleName)
                 .ifBlank { targetMessage.roleName }
 
+        // An Orbit's chat takes no override: its own model routing (quick switch, then the
+        // Orbit's settings) answers, as when sending. Elsewhere the quick switch, then a fixed card.
         val (resolvedChatModelConfigIdOverride, resolvedChatModelIndexOverride) =
-            resolveRoleCardChatModelOverrides(roleCardId)
+            if (isOrbitOwnedChat(chatId)) Pair(null, null)
+            else chatModelChoice(chatId, knownOwnChat = true)
+                ?: resolveRoleCardChatModelOverrides(roleCardId).takeIf { it.first != null }
+                ?: Pair(null, null)
         val resolvedMemorySpaceIdOverride =
             resolveRoleCardMemoryProfileOverride(roleCardId)
         val chatContextSettings =
@@ -766,6 +775,7 @@ class MessageCoordinationDelegate(
                     } else {
                         activePromptManager.resolveActiveCardIdForSend()
                     }
+            var modelFromChatChoice = false
             val resolvedOverrides = try {
                 if (promptFunctionType == PromptFunctionType.CHAT) {
                     val (resolvedChatModelConfigIdOverride, resolvedChatModelIndexOverride) =
@@ -781,14 +791,24 @@ class MessageCoordinationDelegate(
                                 // A subagent keeps the reasoning its spawn chose.
                                 orbitReasoningLevel = route?.backgroundReasoningLevel
                                     ?.takeUnless { turnOptions.isCollaborationAgent }
+                                modelFromChatChoice = route?.fromChatChoice == true
                                 Pair(route?.mapping?.configId, route?.mapping?.modelIndex)
                             }
                             isAutoContinuation -> {
+                                // The chat's quick switch is looked up again: it may have changed
+                                // while the history was being compressed.
                                 val lastRoute = lastSendRoutes[chatId]
-                                Pair(lastRoute?.modelConfigId, lastRoute?.modelIndex)
+                                chatModelChoice(chatId, knownOwnChat = true)
+                                    ?: lastRoute?.takeUnless { it.modelFromChatChoice }
+                                        ?.let { Pair(it.modelConfigId, it.modelIndex) }
+                                    ?: roleCardId?.let(::resolveRoleCardChatModelOverrides)?.takeIf { it.first != null }
+                                    ?: Pair(null, null)
                             }
                             else -> {
-                                roleCardId?.let(::resolveRoleCardChatModelOverrides)
+                                // The chat's own quick switch wins; otherwise a role card that
+                                // fixes the model; otherwise the configured main model.
+                                chatModelChoice(chatId, knownOwnChat = true)?.also { modelFromChatChoice = true }
+                                    ?: roleCardId?.let(::resolveRoleCardChatModelOverrides)?.takeIf { it.first != null }
                                     ?: Pair(null, null)
                             }
                         }
@@ -824,7 +844,8 @@ class MessageCoordinationDelegate(
 
             if (!isAutoContinuation && !turnOptions.isSubTask) {
                 lastSendRoutes[chatId] = LastSendRoute(promptFunctionType,
-                    resolvedChatModelConfigIdOverride, resolvedChatModelIndexOverride, resolvedMemorySpaceIdOverride)
+                    resolvedChatModelConfigIdOverride, resolvedChatModelIndexOverride, resolvedMemorySpaceIdOverride,
+                    modelFromChatChoice)
             }
 
             // 当前请求使用的Token使用率阈值，默认使用配置值
@@ -1239,8 +1260,14 @@ class MessageCoordinationDelegate(
             }
             .filterValues { it != null }
             .mapValues { it.value!! }
+        // A quick switch in this chat answers for every member, so its model alone decides.
         val groupMultimodalCapabilities =
-            resolveGroupMultimodalCapabilities(memberCardsById.values)
+            chatModelChoice(chatId)?.let { (configId, modelIndex) ->
+                runCatching {
+                    modelConfigManager.getModelConfigFlow(checkNotNull(configId)).first()
+                        .multimodalCapabilitiesForModel(modelIndex ?: 0)
+                }.getOrNull()
+            } ?: resolveGroupMultimodalCapabilities(memberCardsById.values)
 
         val isFirstMessage = !chatHistoryDelegate.hasUserMessage(chatId)
         val titleFallback = if (isFirstMessage) {
@@ -1775,8 +1802,9 @@ class MessageCoordinationDelegate(
         promptFunctionType: PromptFunctionType
     ) {
         val lastRoute = lastSendRoutes[chatId]
+        val lastModel = lastRouteModel(chatId, lastRoute)
         val chatContextSettings =
-            resolveChatContextSettingsForRequest(lastRoute?.modelConfigId, chatId)
+            resolveChatContextSettingsForRequest(lastModel?.first, chatId)
         if (!chatContextSettings.enableSummary) return
 
         val currentMessages = chatHistoryDelegate.getRuntimeChatHistory(chatId)
@@ -1801,8 +1829,7 @@ class MessageCoordinationDelegate(
                 autoContinue = false,
                 promptFunctionType = promptFunctionType,
                 chatIdOverride = chatId,
-                chatModelConfigIdOverride = lastRoute?.modelConfigId,
-                chatModelIndexOverride = lastRoute?.modelIndex,
+                // The summary looks the chat's last model up itself, when it needs it.
                 isGroupChat = true
             )
         }
@@ -1856,6 +1883,32 @@ class MessageCoordinationDelegate(
     private fun resolveRoleCardChatModelOverrides(roleCardId: String): Pair<String?, Int?> {
         val roleCard = runBlocking { characterCardManager.getCharacterCardFlow(roleCardId).first() }
         return resolveRoleCardChatModelOverrides(roleCard)
+    }
+
+    /**
+     * The model this chat switched to with the composer's quick switch, if it still exists. An
+     * Orbit's chats leave it to [com.ai.assistance.operit.features.orbit.OrbitModels.route], which
+     * knows when a task turn keeps its own model. [knownOwnChat]: the caller already knows the chat
+     * is not an Orbit's.
+     */
+    private suspend fun chatModelChoice(chatId: String, knownOwnChat: Boolean = false): Pair<String?, Int?>? =
+        withContext(Dispatchers.IO) {
+            if (!knownOwnChat && isOrbitOwnedChat(chatId)) null
+            else com.ai.assistance.operit.data.preferences.ChatModelSelections.getInstance(context).mapping(chatId)
+        }?.let { Pair(it.configId, it.modelIndex) }
+
+    /**
+     * The model [lastRoute] used. A quick-switch pick is looked up again, so one deleted since
+     * falls back to the main model like the composer does.
+     */
+    private suspend fun lastRouteModel(chatId: String, lastRoute: LastSendRoute?): Pair<String?, Int?>? =
+        if (lastRoute?.modelFromChatChoice == true) chatModelChoice(chatId, knownOwnChat = true)
+        else lastRoute?.let { Pair(it.modelConfigId, it.modelIndex) }
+
+    /** Whether an Orbit owns [chatId], or did before it was deleted. */
+    private suspend fun isOrbitOwnedChat(chatId: String): Boolean {
+        val orbits = com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context).current()
+        return orbits.ownerForChat(chatId) != null || chatId in orbits.chatOwners
     }
 
     private fun resolveRoleCardMemoryProfileOverride(roleCardId: String): String? {
@@ -2890,10 +2943,10 @@ class MessageCoordinationDelegate(
             )
         }
         val lastRoute = currentChatId?.let(lastSendRoutes::get)
-        val effectiveChatModelConfigIdOverride =
-            chatModelConfigIdOverride ?: lastRoute?.modelConfigId
-        val effectiveChatModelIndexOverride =
-            chatModelIndexOverride ?: lastRoute?.modelIndex
+        // The turn that continues after the summary works out its model again (a quick switch made
+        // meanwhile counts); only a model the caller fixed is carried over as such.
+        val continuationModelConfigIdOverride = chatModelConfigIdOverride
+        val continuationModelIndexOverride = chatModelIndexOverride
         val effectiveMemorySpaceIdOverride =
             memorySpaceIdOverride
                 ?: lastRoute?.memorySpaceId
@@ -2902,6 +2955,9 @@ class MessageCoordinationDelegate(
 
         var summarySuccess = false
         try {
+            // Looked up inside the try, so a failed or cancelled lookup still releases the summary lock.
+            val effectiveChatModelConfigIdOverride =
+                chatModelConfigIdOverride ?: currentChatId?.let { lastRouteModel(it, lastRoute) }?.first
             val service = getEnhancedAiService()
             if (service == null) {
                 uiStateDelegate.showErrorMessage(context.getString(R.string.chat_ai_service_unavailable_summarize))
@@ -2951,13 +3007,15 @@ class MessageCoordinationDelegate(
                 )
                 check(saved) { "Conversation changed before compaction could be saved" }
 
+                // Only a model the caller fixed is passed on; otherwise the refresh looks the chat's
+                // model up again, so a quick-switch model deleted while summarizing falls back.
                 refreshStableContextWindow(
                     chatId = currentChatId,
                     roleCardId = roleCardIdOverride,
                     groupOrchestrationMode = isGroupOrchestrationTurn,
                     groupParticipantNamesText = groupParticipantNamesText,
-                    chatModelConfigIdOverride = effectiveChatModelConfigIdOverride,
-                    chatModelIndexOverride = effectiveChatModelIndexOverride,
+                    chatModelConfigIdOverride = chatModelConfigIdOverride,
+                    chatModelIndexOverride = chatModelIndexOverride,
                     memorySpaceIdOverride = effectiveMemorySpaceIdOverride
                 )
                 summarySuccess = true
@@ -2998,8 +3056,8 @@ class MessageCoordinationDelegate(
                             queuePendingAutoContinuation(
                                 chatId = currentChatId,
                                 promptFunctionType = continuationPromptType,
-                                chatModelConfigIdOverride = effectiveChatModelConfigIdOverride,
-                                chatModelIndexOverride = effectiveChatModelIndexOverride,
+                                chatModelConfigIdOverride = continuationModelConfigIdOverride,
+                                chatModelIndexOverride = continuationModelIndexOverride,
                                 memorySpaceIdOverride = effectiveMemorySpaceIdOverride,
                                 roleCardIdOverride = roleCardIdOverride,
                                 isGroupOrchestrationTurn = isGroupOrchestrationTurn,
@@ -3014,8 +3072,8 @@ class MessageCoordinationDelegate(
                                 isAutoContinuation = true,
                                 roleCardIdOverride = roleCardIdOverride,
                                 chatIdOverride = currentChatId,
-                                chatModelConfigIdOverride = effectiveChatModelConfigIdOverride,
-                                chatModelIndexOverride = effectiveChatModelIndexOverride,
+                                chatModelConfigIdOverride = continuationModelConfigIdOverride,
+                                chatModelIndexOverride = continuationModelIndexOverride,
                                 memorySpaceIdOverride = effectiveMemorySpaceIdOverride,
                                 isGroupOrchestrationTurn = isGroupOrchestrationTurn,
                                 groupParticipantNamesText = groupParticipantNamesText

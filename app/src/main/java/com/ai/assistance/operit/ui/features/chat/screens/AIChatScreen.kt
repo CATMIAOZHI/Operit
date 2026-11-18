@@ -572,6 +572,13 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
             }
         }
     }
+    // The chat the composer acts for: the one on screen. A side chat counts from the moment it is
+    // shown; Orbit's chat, left over for a moment after leaving Orbit, never counts here.
+    val composerChatId = when {
+        chatIdOverride != null -> chatIdOverride
+        !isFloatingMode && !embedded && currentChatId?.let { it in orbitChatIds } == true -> null
+        else -> currentChatId
+    }
     val localizedUserRoleName = stringResource(R.string.message_role_user)
     // Only the two names matter: the chat list and the run record change on every saved message
     // or tool call, which must not rebuild every row of a running subagent's transcript.
@@ -1145,7 +1152,9 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                                                     .graphicsLayer {
                                                         translationY = -inputBarTranslationYPx
                                                     },
-                                    currentChatId = currentChatId,
+                                    // The chat being shown: while a side chat's ID is still catching
+                                    // up, a model picked here must not land on the chat before it.
+                                    currentChatId = composerChatId,
                                     featureStates = featureStates,
                                     onToggleFeature = { featureKey ->
                                         actualViewModel.toggleFeature(featureKey)
@@ -1231,7 +1240,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                             ChatInputBottomBar(
                                 actualViewModel = actualViewModel,
                                 inputStyle = inputStyle,
-                                currentChatId = currentChatId,
+                                currentChatId = composerChatId,
                                 inputMenuRuntime = chatViewRuntime,
                                 enableEnterToSend = enableEnterToSend,
                                 isLoading = isLoading,
@@ -2086,12 +2095,20 @@ private fun ChatInputBottomBar(
     // shows what still waits, so it does not flash up while the message is handed over.
     val shownQueueMessages = if (steerWhileBusy) pendingQueueMessages.filterNot { it.isSteering } else pendingQueueMessages
     val queueOrSteerDraft: () -> Unit = {
-        if (steerWhileBusy) steerDraftIntoCurrentTurn() else enqueueDraftToPendingQueue()
+        // As for sending: the draft belongs to the chat the view model holds, so it waits until
+        // that is the chat on screen.
+        if (currentChatId == actualViewModel.currentChatId.value) {
+            if (steerWhileBusy) steerDraftIntoCurrentTurn() else enqueueDraftToPendingQueue()
+        }
     }
 
     val pleaseCreateNewChatMessage = stringResource(R.string.chat_please_create_new_chat)
     val sendMessage: () -> Unit = {
         coroutineScope.launch {
+            // The composer belongs to the chat on screen. While the view model still holds another
+            // (a side chat being opened, or Orbit's chat just after leaving Orbit), sending would
+            // reach that one; the switch takes a moment, so such a tap does nothing.
+            if (currentChatId != actualViewModel.currentChatId.value) return@launch
             if (currentChatId.isNullOrBlank()) {
                 Toast.makeText(
                     context,
@@ -2100,6 +2117,7 @@ private fun ChatInputBottomBar(
                 ).show()
                 return@launch
             }
+            val expectedChatId = currentChatId
 
             val submitDecision =
                 ChatInputHookRegistry.dispatchSubmitRequested(
@@ -2108,6 +2126,8 @@ private fun ChatInputBottomBar(
                         submitSource = "send"
                     )
                 )
+            // The hook may take a while: the chat may have changed meanwhile, and its draft is not ours.
+            if (expectedChatId != actualViewModel.currentChatId.value) return@launch
             when (submitDecision.action) {
                 ChatInputSubmitActions.BLOCK -> {
                     showChatInputHookMessage(submitDecision.message)
