@@ -152,6 +152,7 @@ import com.ai.assistance.operit.plugins.toolpkg.ToolPkgAiProviderRegistry
 import com.ai.assistance.operit.ui.common.icons.MaterialIconNameResolver
 import com.ai.assistance.operit.ui.common.animations.SimpleAnimatedVisibility
 import com.ai.assistance.operit.ui.features.chat.components.AttachmentChip
+import com.ai.assistance.operit.ui.features.chat.components.editAttachmentAt
 import com.ai.assistance.operit.ui.features.chat.components.AttachmentSelectorPopupPanel
 import com.ai.assistance.operit.ui.features.chat.components.FullscreenInputDialog
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.CharacterCardMemoryBindingSwitchConfirmDialog
@@ -198,6 +199,8 @@ fun AgentChatInputSection(
     attachments: List<AttachmentInfo> = emptyList(),
     onRemoveAttachment: (String) -> Unit = {},
     onInsertAttachment: (AttachmentInfo) -> Unit = {},
+    /** Swaps a picture in the box for an edited copy (old path, new file, name to show); null: pictures only open to look at. */
+    onEditAttachment: (suspend (String, java.io.File, String) -> Unit)? = null,
     onAttachScreenContent: () -> Unit = {},
     onAttachNotifications: () -> Unit = {},
     onAttachLocation: () -> Unit = {},
@@ -790,6 +793,9 @@ fun AgentChatInputSection(
                             attachmentInfo = attachment,
                             onRemove = { onRemoveAttachment(attachment.filePath) },
                             onInsert = { onInsertAttachment(attachment) },
+                            onEdited = onEditAttachment?.takeIf { !isPreparingModel }?.let { edit -> editAttachmentAt(attachment.filePath, edit) },
+                            // While a message with these attachments is being got ready, they stay as they are.
+                            openable = !isPreparingModel,
                         )
                     }
                 }

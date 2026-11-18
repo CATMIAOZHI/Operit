@@ -33,6 +33,12 @@ object OrbitUploads {
      */
     private val referenced: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
 
+    /**
+     * Folders of copies saved with deferTrim that have not yet replaced the picture they stand
+     * for. Every trim leaves them out, so a replacement that falls through never cost older uploads.
+     */
+    private val unsettled: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
     fun markReferenced(path: String) {
         referenced += File(path).absolutePath
     }
@@ -59,15 +65,17 @@ object OrbitUploads {
     data class Cleanup(val limitBytes: Long, val autoDelete: Boolean) {
         /**
          * Which of [items] (oldest first, with their sizes) go so the rest fit in [limitBytes]. Nothing
-         * goes with automatic deleting off, and the newest [OrbitSettings.LIBRARY_KEEP_FILES] never go.
+         * goes with automatic deleting off, and the newest [OrbitSettings.LIBRARY_KEEP_FILES] never go;
+         * nor does an item [kept] says to keep, though its size still counts.
          */
-        fun <T> toDelete(items: List<T>, size: (T) -> Long): List<T> {
+        fun <T> toDelete(items: List<T>, kept: (T) -> Boolean = { false }, size: (T) -> Long): List<T> {
             if (!autoDelete) return emptyList()
             var total = items.sumOf(size)
             val removable = items.dropLast(OrbitSettings.LIBRARY_KEEP_FILES)
             val out = mutableListOf<T>()
             for (item in removable) {
                 if (total <= limitBytes) break
+                if (kept(item)) continue
                 out += item
                 total -= size(item)
             }
@@ -96,7 +104,17 @@ object OrbitUploads {
      * upload finishing meanwhile cannot trim it. Returns null (and keeps nothing) when the stream
      * was empty; throws [TooLargeException] for a file bigger than the whole Library, keeping nothing.
      */
-    fun save(context: Context, orbitId: String, name: String, input: InputStream): File? {
+    fun save(
+        context: Context,
+        orbitId: String,
+        name: String,
+        input: InputStream,
+        /**
+         * Leaves making room to a later [makeRoom]: an edited picture's copy waits until it has
+         * replaced the old one, so a replacement that falls through never costs older uploads.
+         */
+        deferTrim: Boolean = false,
+    ): File? {
         val root = root(context, orbitId)
         val cleanup = cleanup(context)
         val now = System.currentTimeMillis()
@@ -131,14 +149,30 @@ object OrbitUploads {
                 incoming.deleteRecursively()
                 error("Could not keep the upload")
             }
-            trim(root, keep = folder, cleanup)
+            if (deferTrim) unsettled += folder.absolutePath else trim(root, keep = folder, cleanup)
         }
         return File(folder, fileName)
     }
 
+    /**
+     * Makes room under the limit after a [save] that left it for later; [keep] (that upload) never
+     * goes, nor [protect] (the picture it replaced, when that one stays). Blocking IO.
+     */
+    fun makeRoom(context: Context, orbitId: String, keep: File, protect: File? = null) {
+        val root = root(context, orbitId)
+        val cleanup = cleanup(context)
+        synchronized(lock) {
+            unsettled -= keep.absoluteFile.parentFile?.absolutePath.orEmpty()
+            val folder = folderOf(root, keep) ?: return
+            trim(root, keep = folder, cleanup, protect = protect?.let { runCatching { folderOf(root, it) }.getOrNull() })
+        }
+    }
+
     /** Every upload, newest first. */
     suspend fun list(context: Context, orbitId: String): List<Upload> = withContext(Dispatchers.IO) {
-        synchronized(lock) { uploads(root(context, orbitId)) }.sortedByDescending { it.addedAt }
+        // A copy not yet in the input box in place of its picture is not shown either.
+        synchronized(lock) { uploads(root(context, orbitId)).filterNot { it.file.parentFile?.absolutePath in unsettled } }
+            .sortedByDescending { it.addedAt }
     }
 
     suspend fun delete(context: Context, orbitId: String, upload: Upload) = withContext(Dispatchers.IO) {
@@ -151,6 +185,17 @@ object OrbitUploads {
      * left alone. Blocking IO.
      */
     fun discard(context: Context, path: String) {
+        // A copy that never replaced its picture is settled by going: only once gone, so no trim
+        // in between counts it.
+        val settling = File(path).absoluteFile.parentFile?.absolutePath
+        try {
+            discardFolder(context, path)
+        } finally {
+            if (settling != null) synchronized(lock) { unsettled -= settling }
+        }
+    }
+
+    private fun discardFolder(context: Context, path: String) {
         if (isReferenced(path)) return
         val file = File(path)
         val canonical = runCatching { file.canonicalFile }.getOrNull() ?: return
@@ -184,16 +229,19 @@ object OrbitUploads {
         return folder.takeIf { it.parentFile == root.canonicalFile && FOLDER_NAME.matches(it.name) }
     }
 
-    /** Deletes the oldest uploads the [cleanup] rules let go; [keep] (the one just saved) never goes. */
-    private fun trim(root: File, keep: File, cleanup: Cleanup) {
+    /** Deletes the oldest uploads the [cleanup] rules let go; [keep] (the one just saved) and [protect] never go. */
+    private fun trim(root: File, keep: File, cleanup: Cleanup, protect: File? = null) {
         // Copies cut off by the app closing would otherwise stay forever.
         val cutoff = System.currentTimeMillis() - STALE_INCOMING_MS
         File(root, INCOMING).listFiles()?.forEach { folder ->
             val time = FOLDER_NAME.matchEntire(folder.name)?.groupValues?.get(1)?.toLongOrNull()
             if (time != null && time < cutoff) folder.deleteRecursively()
         }
-        val all = uploads(root).sortedWith(compareBy<Upload> { it.addedAt }.thenBy { it.file.parentFile?.name })
-        cleanup.toDelete(all) { it.size }.forEach { upload ->
+        val all = uploads(root).filterNot { it.file.parentFile?.absolutePath in unsettled }
+            .sortedWith(compareBy<Upload> { it.addedAt }.thenBy { it.file.parentFile?.name })
+        // Known by its folder's name, found once above, so no path is looked up per upload.
+        val protectedName = protect?.name
+        cleanup.toDelete(all, kept = { protectedName != null && it.file.parentFile?.name == protectedName }) { it.size }.forEach { upload ->
             upload.file.parentFile?.takeIf { it != keep }?.deleteRecursively()
         }
     }

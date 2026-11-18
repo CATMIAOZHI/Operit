@@ -2530,6 +2530,25 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         attachmentDelegate.discardAttachment(filePath)
     }
 
+    /**
+     * Puts an edited copy of a picture in the input box in place of [oldPath], in the same spot.
+     * Returns once it is there; throws if it could not be, so the editor keeps the changes.
+     */
+    suspend fun replaceEditedImage(oldPath: String, edited: java.io.File, fileName: String) {
+        val chatId = chatHistoryDelegate.currentChatId.value
+        // A message being got ready to send has already taken the pictures in the box.
+        fun sending() = chatId != null && chatId in modelPreparingChatIds.value
+        check(!sending()) { context.getString(R.string.attachment_edit_save_failed) }
+        try {
+            attachmentDelegate.replaceEditedImage(oldPath, edited, fileName, keepOld = ::sending)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "Could not replace an edited picture", e)
+            throw e
+        }
+    }
+
     /** Quotes an Orbit's own files in the input box, in place (no copies). */
     fun attachOrbitFiles(files: List<java.io.File>) {
         if (files.isEmpty()) return

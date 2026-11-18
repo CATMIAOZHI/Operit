@@ -320,14 +320,18 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
         }
 
     /** 从URI创建临时文件 */
-    private suspend fun createTempFileFromUri(uri: Uri, fileName: String): java.io.File? =
+    private suspend fun createTempFileFromUri(
+            uri: Uri,
+            fileName: String,
+            deferTrim: Boolean = false,
+    ): java.io.File? =
             withContext(Dispatchers.IO) {
                 // In an Orbit chat the file goes to that Orbit's own folder, so it lasts.
                 val orbitId = orbitForCurrentChat()
                 if (orbitId != null) {
                     return@withContext try {
                         context.contentResolver.openInputStream(uri)?.use { input ->
-                            com.ai.assistance.operit.features.orbit.OrbitUploads.save(context, orbitId, fileName, input)
+                            com.ai.assistance.operit.features.orbit.OrbitUploads.save(context, orbitId, fileName, input, deferTrim)
                         }
                     } catch (e: Exception) {
                         AppLogger.e(TAG, "Failed to keep an Orbit upload", e)
@@ -657,6 +661,91 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
     }
 
     private val discardScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * Swaps the picture at [oldPath] for [edited], an edited copy, keeping its place in the box,
+     * and returns once it is there. The copy is stored like any picture the user adds (an Orbit's
+     * upload in an Orbit chat); the old one goes as when taken out with its ✕, so a quoted Orbit
+     * file itself is never touched. While [keepOld] says a message is being sent, which has taken
+     * the box's pictures, nothing is replaced. Throws when the copy could not be stored or placed.
+     * [edited] is a scratch file the caller removes.
+     */
+    suspend fun replaceEditedImage(
+            oldPath: String,
+            edited: java.io.File,
+            fileName: String,
+            keepOld: () -> Boolean = { false },
+    ) =
+            withContext(Dispatchers.IO) {
+                // Gone from the box meanwhile: nothing to replace.
+                if (synchronized(attachmentListLock) { _attachments.value.none { it.filePath == oldPath } }) {
+                    return@withContext
+                }
+                // In an Orbit chat the copy is that Orbit's upload; room is made only once it has
+                // replaced the old picture, so a replacement that falls through costs no older upload.
+                val orbitId = orbitForCurrentChat()
+                val stored = createTempFileFromUri(Uri.fromFile(edited), fileName, deferTrim = true)
+                check(stored != null && stored.exists()) { context.getString(R.string.attachment_edit_save_failed) }
+                var placed = false
+                try {
+                    val size = stored.length()
+                    val mimeType = getMimeTypeFromPath(stored.absolutePath)
+                        ?: if (fileName.endsWith(".png", ignoreCase = true)) "image/png" else "image/jpeg"
+                    // On the main thread, where sending reads the box and marks the chat as preparing in
+                    // one go: either the send took the old picture (and keeps it), or it sees the new one.
+                    withContext(Dispatchers.Main.immediate) {
+                        synchronized(attachmentListLock) {
+                            val list = _attachments.value
+                            val index = list.indexOfFirst { it.filePath == oldPath }
+                            if (index >= 0 && !keepOld()) {
+                                val old = list[index]
+                                val others = list.filterIndexed { i, _ -> i != index }.mapTo(mutableSetOf()) { it.fileName }
+                                _attachments.value = list.toMutableList().also {
+                                    it[index] = AttachmentInfo(
+                                            filePath = stored.absolutePath,
+                                            fileName = uniqueAttachmentFileName(fileName, others),
+                                            mimeType = mimeType,
+                                            fileSize = size,
+                                    )
+                                }
+                                placed = true
+                                // Started here, with the swap: the editor closing now (its picture is
+                                // replaced) cannot stop the old upload's removal or the room making.
+                                val dropOld = !old.orbitReference
+                                discardScope.launch {
+                                    try {
+                                        if (dropOld) {
+                                            com.ai.assistance.operit.features.orbit.OrbitUploads.discard(context, oldPath)
+                                        }
+                                        if (orbitId != null) {
+                                            // The old picture, if still there (a quoted file, or one a
+                                            // message holds), is not made room with either.
+                                            com.ai.assistance.operit.features.orbit.OrbitUploads.makeRoom(
+                                                    context, orbitId, stored, protect = java.io.File(oldPath))
+                                        }
+                                    } catch (e: Exception) {
+                                        AppLogger.w(TAG, "Could not tidy up after an edited picture: ${e.message}")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    check(placed) { context.getString(R.string.attachment_edit_save_failed) }
+                } finally {
+                    // Taken out while being stored, a send under way, or stopped part way: the copy is not wanted.
+                    if (!placed) discardStoredCopy(stored)
+                }
+            }
+
+    /** Removes a copy made for the box that never got there. */
+    private fun discardStoredCopy(stored: java.io.File) {
+        try {
+            com.ai.assistance.operit.features.orbit.OrbitUploads.discard(context, stored.absolutePath)
+            if (stored.absoluteFile.startsWith(OperitPaths.cleanOnExitDir().absoluteFile)) stored.delete()
+        } catch (e: Exception) {
+            AppLogger.w(TAG, "Could not remove an unused edited picture: ${e.message}")
+        }
+    }
 
     /** Clear all attachments */
     fun clearAttachments() {
