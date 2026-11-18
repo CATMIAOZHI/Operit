@@ -303,6 +303,8 @@ open class GeminiProvider(
     private var activeCall: Call? = null
     private var activeResponse: Response? = null
     @Volatile private var isManuallyCancelled = false
+    /** The cache hit the running attempt's stream last reported; Gemini leaves it out of later frames. */
+    private var attemptReportedCached: Int? = null
 
     /** Gemini HTTP 4xx 响应；是否继续尝试下一密钥由统一重试策略决定。 */
     class NonRetriableException(
@@ -1484,6 +1486,10 @@ open class GeminiProvider(
             }
             
             try {
+                // Each attempt counts from scratch: a retried stream drops the text of the one before,
+                // so its output and the cache hit it reported go too.
+                if (retryCount > 0) tokenCacheManager.addOutputTokens(-tokenCacheManager.outputTokenCount)
+                attemptReportedCached = null
                 if (retryCount > 0) {
                     AppLogger.d(
                         TAG,
@@ -2143,6 +2149,8 @@ open class GeminiProvider(
             // blocked by safety policy). Record server usage before candidate-dependent content
             // parsing so the completed request does not fall back to unknown token counts.
             val usageMetadata = json.optJSONObject("usageMetadata")
+            // The text of a frame whose usage already counts its output is not estimated again.
+            var frameOutputReported = false
             if (usageMetadata != null) {
                 // Explicit all-zero usageMetadata is still observed usage: test field presence,
                 // not whether values are positive. Long parsing is saturated at the legacy Int UI.
@@ -2151,15 +2159,33 @@ open class GeminiProvider(
                         usageMetadata.has("cachedContentTokenCount") ||
                         usageMetadata.has("candidatesTokenCount")
                 if (hasServerUsage) {
-                    val promptTokenCount = usageMetadata.optLong("promptTokenCount", 0).saturateToInt()
-                    val cachedContentTokenCount =
-                        usageMetadata.optLong("cachedContentTokenCount", 0).saturateToInt()
-                    val candidatesTokenCount = usageMetadata.optLong("candidatesTokenCount", 0).saturateToInt()
-                    val actualInputTokens = (promptTokenCount - cachedContentTokenCount).coerceAtLeast(0)
-                    tokenCacheManager.updateActualTokens(actualInputTokens, cachedContentTokenCount)
-                    tokenCacheManager.setOutputTokens(candidatesTokenCount)
+                    // Only what the frame reports replaces the count: a frame without the prompt
+                    // count keeps the input, one without the output count keeps the output so far.
+                    // A cache hit reported earlier in the attempt stands until a frame reports
+                    // another figure (an explicit 0 included); Gemini leaves the field out otherwise.
+                    // Only a real number counts; a null or malformed field leaves the earlier figure.
+                    usageMetadata.optLong("cachedContentTokenCount", -1).takeIf { it >= 0 }?.let {
+                        attemptReportedCached = it.saturateToInt()
+                    }
+                    val reportedCached = attemptReportedCached
+                    if (usageMetadata.has("promptTokenCount")) {
+                        val promptTokenCount = usageMetadata.optLong("promptTokenCount", 0).saturateToInt()
+                        val cachedContentTokenCount = (reportedCached ?: 0).coerceAtMost(promptTokenCount)
+                        tokenCacheManager.updateActualTokens(
+                            (promptTokenCount - cachedContentTokenCount).coerceAtLeast(0), cachedContentTokenCount)
+                    } else if (reportedCached != null &&
+                        usageMetadata.optLong("cachedContentTokenCount", -1) >= 0) {
+                        // Without the prompt count the total is the estimate; the reported hit is kept whole.
+                        val total = tokenCacheManager.totalInputTokenCount
+                        tokenCacheManager.updateActualTokens((total - reportedCached).coerceAtLeast(0), reportedCached)
+                    }
+                    if (usageMetadata.has("candidatesTokenCount")) {
+                        tokenCacheManager.setOutputTokens(
+                            usageMetadata.optLong("candidatesTokenCount", 0).saturateToInt())
+                        frameOutputReported = true
+                    }
 
-                    logDebug("API实际Token使用: 输入=$actualInputTokens, 缓存=$cachedContentTokenCount, 输出=$candidatesTokenCount")
+                    logDebug("API实际Token使用: 输入=${tokenCacheManager.totalInputTokenCount}, 缓存=${tokenCacheManager.cachedInputTokenCount}, 输出=${tokenCacheManager.outputTokenCount}")
                     onTokensUpdated(
                         tokenCacheManager.totalInputTokenCount,
                         tokenCacheManager.cachedInputTokenCount,
@@ -2376,14 +2402,16 @@ open class GeminiProvider(
                         logDebug("提取文本，长度=${text.length}")
                     }
 
-                    // 估算token
-                    val tokens = ChatUtils.estimateTokenCount(text)
-                    tokenCacheManager.addOutputTokens(tokens)
-                    onTokensUpdated(
-                            tokenCacheManager.totalInputTokenCount,
-                            tokenCacheManager.cachedInputTokenCount,
-                            tokenCacheManager.outputTokenCount
-                    )
+                    // 估算token（本帧用量已含输出时不再叠加估算）
+                    if (!frameOutputReported) {
+                        val tokens = ChatUtils.estimateTokenCount(text)
+                        tokenCacheManager.addOutputTokens(tokens)
+                        onTokensUpdated(
+                                tokenCacheManager.totalInputTokenCount,
+                                tokenCacheManager.cachedInputTokenCount,
+                                tokenCacheManager.outputTokenCount
+                        )
+                    }
                 }
             }
 
