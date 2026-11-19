@@ -48,6 +48,21 @@ data class ResolvedCharacterCardToolAccess(
         }
     }
 
+    /**
+     * Whether this chat may call [toolName]: a built-in tool by its own switch, a package or MCP
+     * tool ("source:tool") by its source, and use_package also by the package it loads.
+     */
+    fun allowsTool(toolName: String, usePackageSourceName: String?): Boolean = when {
+        toolName == "use_package" ->
+            isBuiltinToolAllowed("use_package") &&
+                (usePackageSourceName.isNullOrBlank() || isExternalSourceAllowed(usePackageSourceName))
+        toolName.contains(':') -> {
+            val sourceName = toolName.substringBefore(':').trim()
+            sourceName.isBlank() || isExternalSourceAllowed(sourceName)
+        }
+        else -> isBuiltinToolAllowed(toolName)
+    }
+
     fun isExternalSourceAllowed(sourceName: String): Boolean {
         // A package switched off for this chat stays off even if another chat loaded its tools.
         if (!isPackageInScope(sourceName)) return false

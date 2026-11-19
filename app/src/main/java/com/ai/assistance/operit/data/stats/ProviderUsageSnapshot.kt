@@ -78,8 +78,6 @@ data class ProviderUsageSnapshot(
  *   缓存写入单独计费；`output_tokens` 包含 thinking → 推理已包含在输出。
  * - Gemini：`candidatesTokenCount` 包含 thought token；`thoughtsTokenCount` 有值时
  *   单独保留（仍计入输出）。
- * - 本地模型（llama/MNN）：没有 provider usage 对象，token 为本地实测计数
- *   （tokenizer 计数 + 逐 token 生成计数），缓存分量明确为 0。
  *
  * 不保存正文、API key、Cookie 或 endpoint 凭据。
  */
@@ -89,8 +87,6 @@ object ProviderUsageNormalizer {
     const val SOURCE_OPENAI_RESPONSES = "openai_responses"
     const val SOURCE_ANTHROPIC = "anthropic"
     const val SOURCE_GEMINI = "gemini"
-    const val SOURCE_LLAMA = "llama_cpp"
-    const val SOURCE_MNN = "mnn"
     const val SOURCE_TOOLPKG = "toolpkg_js"
 
     /** OpenAI chat/completions 系（含 DeepSeek、Kimi、Qwen、Mistral 等兼容端点）。
@@ -293,25 +289,6 @@ object ProviderUsageNormalizer {
             )
         return snapshot.takeIf { it.hasKnownFields() }
     }
-
-    /** 本地模型（llama.cpp/MNN）：本地实测计数，缓存分量明确为 0；单次完整上报。 */
-    fun local(
-        uncachedInputTokens: Int,
-        outputTokens: Int,
-        source: String,
-    ): ProviderUsageSnapshot =
-        ProviderUsageSnapshot(
-            uncachedInputTokens = uncachedInputTokens.coerceAtLeast(0).toLong(),
-            cachedInputTokens = 0L,
-            cacheWriteTokens = 0L,
-            totalInputTokens = uncachedInputTokens.coerceAtLeast(0).toLong(),
-            outputTokens = outputTokens.coerceAtLeast(0).toLong(),
-            reasoningTokens = null,
-            reasoningIncludedInOutput = null,
-            cacheWriteSeparateBilling = false,
-            completeSnapshot = true,
-            source = source,
-        )
 
     /**
      * ToolPkg JS provider：`input` 视为总量（含缓存命中），uncached 为差值。

@@ -372,6 +372,7 @@ private fun normalizeIndentForDisplay(line: String): String {
 }
 
 private fun normalizeToolDisplayForStrictProxy(toolName: String, params: String): Pair<String, String> {
+    // `proxy` is from chats saved in the removed CLI tool mode.
     if (toolName != "package_proxy" && toolName != "proxy") {
         return toolName to params
     }

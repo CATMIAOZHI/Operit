@@ -135,11 +135,6 @@
 ## 6. Provider 适配现状（当前代码语义）
 
 - `OpenAIProvider` 及其兼容派生 Provider：已实现较完整的双向转换（XML ↔ Tool Call JSON）。
-- `LLAMA_CPP`：
-  - **非 ToolCall 模式**：仍是提示词约束的 XML 路径。
-  - **ToolCall 模式**：除提示词外，已新增 JNI 原生 grammar 约束（`llama_sampler_init_grammar_lazy_patterns`），输出在 native 采样阶段被约束为 `tool_calls` 结构，再转换回项目内部 XML。
-  - 上层执行链仍保持 XML 规范，不改执行器协议。
-- `MNN`：当前仍未接入等价的原生 ToolCall 能力。
 
 ---
 

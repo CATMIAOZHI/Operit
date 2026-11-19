@@ -59,6 +59,7 @@ import com.ai.assistance.operit.R
 import com.ai.assistance.operit.core.agent.AgentProfile
 import com.ai.assistance.operit.core.agent.AgentProfileRepository
 import com.ai.assistance.operit.core.agent.normalizeCustomAgentId
+import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.ModelConfigSummary
 import com.ai.assistance.operit.data.model.getModelList
 import com.ai.assistance.operit.data.preferences.ModelConfigManager
@@ -635,7 +636,10 @@ private fun AgentModelBindingSelector(
                 expandedConfigId = null
             },
         )
-        modelConfigs.forEach { config ->
+        // Retired local providers are not offered; one already bound still shows so it can be changed.
+        modelConfigs.filter {
+            it.id == selectedConfigId || !ApiProviderType.isRetiredId(it.apiProviderTypeId)
+        }.forEach { config ->
             val models = getModelList(config.modelName)
             val hasMultipleModels = models.size > 1
             val isConfigSelected = selectedConfigId == config.id

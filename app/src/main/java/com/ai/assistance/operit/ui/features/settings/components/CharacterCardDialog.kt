@@ -38,6 +38,7 @@ import com.ai.assistance.operit.data.model.CharacterCardChatModelBindingMode
 import com.ai.assistance.operit.data.model.CharacterCardMemoryProfileBindingMode
 import com.ai.assistance.operit.data.model.CharacterCardToolAccessConfig
 import com.ai.assistance.operit.data.model.ModelConfigSummary
+import com.ai.assistance.operit.data.model.selectableForBinding
 import com.ai.assistance.operit.data.model.MemorySpace
 import com.ai.assistance.operit.data.model.PromptTag
 import com.ai.assistance.operit.data.model.getModelByIndex
@@ -119,6 +120,8 @@ fun CharacterCardDialog(
     val skillRepository = remember { SkillRepository.getInstance(context) }
     val modelConfigManager = remember { ModelConfigManager(context) }
     var configSummaries by remember { mutableStateOf<List<ModelConfigSummary>>(emptyList()) }
+    // New bindings leave out retired local providers; an existing one still shows so it can be changed.
+    val selectableConfigs = remember(configSummaries) { configSummaries.selectableForBinding() }
     var preferenceProfiles by remember { mutableStateOf<List<MemorySpace>>(emptyList()) }
     var builtinToolOptions by remember(characterCard.id) {
         mutableStateOf<List<CharacterCardToolAccessOption>>(emptyList())
@@ -155,7 +158,7 @@ fun CharacterCardDialog(
             configSummaries.isNotEmpty()
         ) {
             if (fixedChatModelConfigId.isBlank() || configSummaries.none { it.id == fixedChatModelConfigId }) {
-                fixedChatModelConfigId = configSummaries.first().id
+                selectableConfigs.firstOrNull()?.let { fixedChatModelConfigId = it.id }
             }
             val selectedConfig = configSummaries.find { it.id == fixedChatModelConfigId }
             if (selectedConfig != null) {
@@ -656,7 +659,7 @@ fun CharacterCardDialog(
 
                             CharacterCardFixedModelPickerDialog(
                                 visible = showFixedConfigPickerDialog,
-                                configSummaries = configSummaries,
+                                configSummaries = selectableConfigs,
                                 selectedConfigId = fixedChatModelConfigId,
                                 selectedModelIndex = fixedChatModelIndex,
                                 onSelect = { configId, modelIndex ->

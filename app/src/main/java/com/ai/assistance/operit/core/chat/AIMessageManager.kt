@@ -1306,6 +1306,7 @@ object AIMessageManager {
                     val toolBody = match.groupValues.getOrNull(3).orEmpty()
 
                     when {
+                        // `proxy` is from chats saved in the removed CLI tool mode.
                         toolName == "package_proxy" || toolName == "proxy" -> {
                             val proxiedToolName =
                                 ChatMarkupRegex.toolParamPattern

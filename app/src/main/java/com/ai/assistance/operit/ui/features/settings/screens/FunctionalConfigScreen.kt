@@ -31,6 +31,7 @@ import com.ai.assistance.operit.core.chat.hooks.PromptTurn
 import com.ai.assistance.operit.core.chat.hooks.PromptTurnKind
 import com.ai.assistance.operit.core.chat.hooks.toPromptTurns
 import com.ai.assistance.operit.data.model.FunctionType
+import com.ai.assistance.operit.data.model.selectableForBinding
 import com.ai.assistance.operit.data.model.ModelConfigSummary
 import com.ai.assistance.operit.data.model.forSelectedModel
 import com.ai.assistance.operit.data.model.getModelByIndex
@@ -84,6 +85,8 @@ fun FunctionalConfigScreen(
 
     // 配置摘要列表
     val configSummaries by modelConfigManager.configSummariesFlow.collectAsState(initial = emptyList())
+    // Retired local providers stay editable in config management but can't be bound.
+    val selectableConfigs = remember(configSummaries) { configSummaries.selectableForBinding() }
 
     // UI状态
     var isLoading by remember { mutableStateOf(true) }
@@ -151,7 +154,7 @@ fun FunctionalConfigScreen(
                             selectedModelName = currentConfigMapping.modelName,
                             currentThinkingQualityLevel =
                                 currentConfigMapping.thinkingQualityLevel,
-                            availableConfigs = configSummaries,
+                            availableConfigs = selectableConfigs,
                             onConfigSelected = { configId, modelIndex ->
                                 scope.launch {
                                     functionalConfigManager.setConfigForFunction(

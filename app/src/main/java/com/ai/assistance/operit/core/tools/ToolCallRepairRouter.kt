@@ -40,25 +40,40 @@ internal object ToolCallRepairRouter {
         val rule: String get() = rules.first()
     }
 
-    fun route(original: ToolInvocation): Repair? {
-        val tool = original.tool
-        val isProxy = tool.name == "proxy" || tool.name == "package_proxy"
-        val decoded = if (isProxy) (decodeProxy(tool) ?: return null) else null
-        val initial = decoded?.call ?: ToolRepairCall(tool.name,
-            tool.parameters.map { ToolRepairArgument(it.name, JsonPrimitive(it.value)) })
+    /**
+     * The tool a call from the removed CLI tool mode's `proxy` ran as, after the same repairs it got
+     * then, so saved history pairs it with its result. Only history reads this; a new `proxy` call
+     * is not routed.
+     */
+    fun legacyCliProxyTarget(tool: AITool): String? {
+        if (tool.name != "proxy") return null
+        val decoded = decodeProxy(tool, packageOnly = false) ?: return null
+        return repaired(decoded.call).first.targetName
+    }
+
+    private fun repaired(initial: ToolRepairCall): Pair<ToolRepairCall, List<String>> {
         var current = initial
         val applied = mutableListOf<String>()
-        decoded?.leadingRule?.let { applied += it }
         for (rule in ToolCallRepairRules.ordered) {
             val next = rule.apply(current) ?: continue
             if (next == current) continue
             current = next
             applied += rule.id
         }
+        return current to applied
+    }
+
+    fun route(original: ToolInvocation): Repair? {
+        val tool = original.tool
+        val isProxy = tool.name == "package_proxy"
+        val decoded = if (isProxy) (decodeProxy(tool) ?: return null) else null
+        val initial = decoded?.call ?: ToolRepairCall(tool.name,
+            tool.parameters.map { ToolRepairArgument(it.name, JsonPrimitive(it.value)) })
+        val (current, ruleIds) = repaired(initial)
+        val applied = listOfNotNull(decoded?.leadingRule) + ruleIds
         if (applied.isEmpty()) return null
-        // package_proxy only takes package:tool, so a built-in target found inside it is called
-        // directly; a CLI chat then gets the usual "call it through proxy" answer.
-        val direct = !isProxy || (tool.name == "package_proxy" && ':' !in current.targetName)
+        // package_proxy only takes package:tool, so a built-in target found inside it is called directly.
+        val direct = !isProxy || ':' !in current.targetName
         val routed = if (!direct) {
             val encoded = if (current.arguments == initial.arguments) null else
                 JsonObject(current.arguments.associate { it.name to it.value }).toString()
@@ -94,14 +109,14 @@ internal object ToolCallRepairRouter {
      * instead of declaring it as a sibling parameter. Recovering it is only safe when the rest of
      * the text is still exactly one argument object, so [splitFlattenedProxyParams] decides that.
      */
-    private fun decodeProxy(tool: AITool): DecodedProxy? {
+    private fun decodeProxy(tool: AITool, packageOnly: Boolean = true): DecodedProxy? {
         if (tool.parameters.map { it.name }.distinct().size != tool.parameters.size) return null
         val declared = tool.parameters.singleOrNull { it.name == "tool_name" }?.value?.trim()
             ?.takeIf { it.isNotEmpty() }
         val supplied = tool.parameters.singleOrNull { it.name == "params" }?.value ?: return null
         val flattened = if (declared == null) splitFlattenedProxyParams(supplied) else null
         val name = declared ?: flattened?.toolName ?: return null
-        if (tool.name == "package_proxy" && ':' !in name) return null
+        if (packageOnly && ':' !in name) return null
         val raw = flattened?.params ?: supplied
         val args = parseArguments(raw) ?: return null
         // A blank tool_name counts as undeclared, so the recovered one replaces that parameter

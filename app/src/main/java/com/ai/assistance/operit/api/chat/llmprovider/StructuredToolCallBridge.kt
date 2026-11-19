@@ -13,7 +13,8 @@ import org.json.JSONObject
 
 internal object StructuredToolCallBridge {
     private const val PACKAGE_PROXY_TOOL_NAME = "package_proxy"
-    private const val CLI_PROXY_TOOL_NAME = "proxy"
+    // Chats from the removed CLI tool mode still hold `proxy` calls whose results carry the target's name.
+    private const val LEGACY_CLI_PROXY_TOOL_NAME = "proxy"
     private const val PROXY_TARGET_TOOL_NAME_PARAM = "tool_name"
 
     private enum class ProviderHistoryBlockType {
@@ -58,11 +59,20 @@ internal object StructuredToolCallBridge {
                 else -> JSONObject()
             }
         }.getOrNull()
-        if (arguments != null) {
+        val tool = arguments?.let {
+            com.ai.assistance.operit.data.model.AITool(name, it.keys().asSequence().map { key ->
+                com.ai.assistance.operit.data.model.ToolParameter(key, it.get(key).toString())
+            }.toList())
+        }
+        // An old CLI-mode `proxy` call ran as its target, after the same repairs; only this history
+        // reading unwraps it, execution no longer accepts it.
+        if (name == LEGACY_CLI_PROXY_TOOL_NAME) {
+            tool?.let { com.ai.assistance.operit.core.tools.ToolCallRepairRouter.legacyCliProxyTarget(it) }
+                ?.let { return it }
+        }
+        if (tool != null) {
             val invocation = com.ai.assistance.operit.data.model.ToolInvocation(
-                tool = com.ai.assistance.operit.data.model.AITool(name, arguments.keys().asSequence().map { key ->
-                    com.ai.assistance.operit.data.model.ToolParameter(key, arguments.get(key).toString())
-                }.toList()),
+                tool = tool,
                 rawText = "",
                 responseLocation = 0..0,
             )
@@ -70,7 +80,7 @@ internal object StructuredToolCallBridge {
                 return it.targetToolName
             }
         }
-        if (name != PACKAGE_PROXY_TOOL_NAME && name != CLI_PROXY_TOOL_NAME) {
+        if (name != PACKAGE_PROXY_TOOL_NAME && name != LEGACY_CLI_PROXY_TOOL_NAME) {
             return name
         }
 
@@ -178,38 +188,6 @@ internal object StructuredToolCallBridge {
         preserveThinkInHistory: Boolean
     ): String {
         return buildStructuredMessages(history, preserveThinkInHistory).toString()
-    }
-
-    fun buildMnnChatHistory(
-        history: List<PromptTurn>,
-        preserveThinkInHistory: Boolean
-    ): List<Pair<String, String>> {
-        val messages = buildStructuredMessages(history, preserveThinkInHistory)
-        val compiledHistory = ArrayList<Pair<String, String>>(messages.length())
-        for (index in 0 until messages.length()) {
-            val message = messages.optJSONObject(index) ?: continue
-            val role = message.optString("role", "").trim()
-            val contentValue = message.opt("content")
-            val content =
-                when (contentValue) {
-                    null,
-                    JSONObject.NULL -> ""
-                    is String -> contentValue
-                    else -> contentValue.toString()
-                }
-            val isPlainRoleContentMessage =
-                role.isNotEmpty() &&
-                    message.length() == 2 &&
-                    message.has("role") &&
-                    message.has("content") &&
-                    (contentValue == null || contentValue == JSONObject.NULL || contentValue is String)
-            if (isPlainRoleContentMessage) {
-                compiledHistory.add(role to content)
-            } else {
-                compiledHistory.add("json" to message.toString())
-            }
-        }
-        return compiledHistory
     }
 
     fun compileHistoryForProvider(

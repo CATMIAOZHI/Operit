@@ -55,17 +55,26 @@ enum class ApiProviderType {
         ALIPAY_BAILING, // 支付宝百灵大模型
         DOUBAO, // 豆包（火山模型）
         NVIDIA, // NVIDIA API Catalog / NIM
-        LMSTUDIO, // LM Studio本地模型服务
-        OLLAMA, // Ollama 本地/私有部署服务（OpenAI兼容）
+        LMSTUDIO, // Retired (local model server): kept only to read existing configurations/backups.
+        OLLAMA, // Retired (local Ollama): kept only to read existing configurations/backups.
         OLLAMA_CLOUD, // Ollama 云端服务（OpenAI兼容，需要 API Key）
-        OPENAI_LOCAL, // OpenAI兼容本地模型服务
-        MNN, // Retired: retained only to deserialize existing configurations/backups.
-        LLAMA_CPP, // Retired: retained only to deserialize existing configurations/backups.
+        OPENAI_LOCAL, // Retired (local model server): kept only to read existing configurations/backups.
+        MNN, // Retired (on-device engine): kept only to read existing configurations/backups.
+        LLAMA_CPP, // Retired (on-device engine): kept only to read existing configurations/backups.
         PPINFRA, // 派欧云
         NOVITA, // Novita AI
         OTHER; // 其他提供商（自定义端点）
 
+        /** No longer offered or run; a configuration that still names one is asked to switch. */
+        val isRetired: Boolean get() = this in RETIRED
+
         companion object {
+                /** Local model support that was removed: the on-device engines and the local model servers. */
+                val RETIRED: Set<ApiProviderType> = setOf(LMSTUDIO, OLLAMA, OPENAI_LOCAL, MNN, LLAMA_CPP)
+
+                /** True for a retired provider id, whatever its case (a plugin cannot take one over). */
+                fun isRetiredId(providerTypeId: String): Boolean = fromProviderTypeId(providerTypeId)?.isRetired == true
+
                 fun fromProviderTypeId(providerTypeId: String): ApiProviderType? {
                         val normalized = providerTypeId.trim()
                         if (normalized.isEmpty()) {
@@ -190,22 +199,6 @@ data class ModelConfigData(
         val enableSummaryDialogueReview: Boolean = true,
         val summaryDialogueReviewTitle: String = "",
 
-        // MNN特定配置
-        // 注意：MNN模型路径会根据modelName自动构建，不需要单独存储
-        val mnnForwardType: Int = 0, // 前向计算类型 (CPU/GPU等)
-        val mnnThreadCount: Int = 4, // 推理线程数
-
-        // llama.cpp 特定配置
-        val llamaThreadCount: Int = 4, // 推理线程数
-        val llamaContextSize: Int = 2048, // n_ctx
-        val llamaBatchSize: Int = 512, // n_batch
-        val llamaUBatchSize: Int = 512, // n_ubatch
-        val llamaGpuLayers: Int = 0, // n_gpu_layers
-        val llamaUseMmap: Boolean = false, // Android上默认关闭，减少mmap导致的兼容性问题
-        val llamaFlashAttention: Boolean = false, // Android上默认关闭，更接近PocketPal安全值
-        val llamaKvUnified: Boolean = true, // 单并发聊天默认开启统一KV缓存
-        val llamaOffloadKqv: Boolean = false, // 仅在启用GPU层时有意义
-
         // 旧版配置级多模态开关；没有单模型配置时继续作为兼容回退值
         val enableDirectImageProcessing: Boolean = false, // 是否启用直接图片处理
         val enableDirectAudioProcessing: Boolean = false, // 是否启用直接音频处理
@@ -247,6 +240,10 @@ data class ModelConfigSummary(
         val modelIndex: Int = 0, // 当modelName包含多个模型（逗号分隔）时，选择第几个模型（从0开始）
         val modelProtocolSettings: Map<String, ModelProtocolSettings> = emptyMap(),
 )
+
+/** Configs that can still serve requests; retired local providers stay listed only for editing. */
+fun List<ModelConfigSummary>.selectableForBinding(): List<ModelConfigSummary> =
+    filterNot { ApiProviderType.isRetiredId(it.apiProviderTypeId) }
 
 /** 从逗号分隔的模型名称字符串中根据索引获取具体模型 */
 fun getModelByIndex(modelName: String, index: Int): String {

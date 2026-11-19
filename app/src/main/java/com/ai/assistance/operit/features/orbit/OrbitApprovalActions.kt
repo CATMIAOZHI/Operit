@@ -60,12 +60,6 @@ internal object OrbitApprovalActions {
     val SIGN_IN_PROVIDERS = setOf(ApiProviderType.OPENAI_CODEX, ApiProviderType.GROK_ACCOUNT,
         ApiProviderType.COMMAND_CODE, ApiProviderType.GOOGLE_ANTIGRAVITY, ApiProviderType.CLAUDE_ACCOUNT)
 
-    /** Models run on the phone; set up in the app's model settings (model files, downloads). */
-    val LOCAL_PROVIDERS = setOf(ApiProviderType.MNN, ApiProviderType.LLAMA_CPP)
-
-    /** Providers that work without an API key: sign-in accounts and models on the phone. */
-    val ACCOUNT_PROVIDERS = SIGN_IN_PROVIDERS + LOCAL_PROVIDERS
-
     /** Whether the user is signed in to the account [provider] uses. */
     fun signedIn(context: Context, provider: ApiProviderType): Boolean = runCatching {
         if (provider == ApiProviderType.OPENAI_CODEX) {
@@ -635,6 +629,10 @@ internal object OrbitApprovalActions {
         val before = checkNotNull(configs.getModelConfig(id)) {
             if (english) "That model configuration was deleted" else "这个模型配置已经被删掉了"
         }
+        require(!ApiProviderType.isRetiredId(before.apiProviderTypeId)) {
+            com.ai.assistance.operit.api.chat.llmprovider.AIServiceFactory.retiredProviderMessage(
+                context, checkNotNull(ApiProviderType.fromProviderTypeId(before.apiProviderTypeId)))
+        }
         require(!before.useMultipleApiKeys) {
             if (english) "This configuration uses several keys now; change them in the model settings" else "这个配置现在用的是多个密钥，请到模型配置页里改"
         }
@@ -678,6 +676,10 @@ internal object OrbitApprovalActions {
 
     private suspend fun createModel(context: Context, orbit: OrbitProfile, approvalId: String, m: ModelRequest,
         secret: String?, english: Boolean): String {
+        // A card approved before the update may still name a removed provider: nothing is created.
+        require(!m.provider.isRetired) {
+            com.ai.assistance.operit.api.chat.llmprovider.AIServiceFactory.retiredProviderMessage(context, m.provider)
+        }
         val key = secret?.trim().orEmpty()
         require(!m.needsKey || key.isNotEmpty()) { "API key missing" }
         require(key.length <= 4000) { "API key too long" }
@@ -757,7 +759,7 @@ internal object OrbitApprovalActions {
     }
 
     /** Providers Orbit may add, for the tool's list. Sign-in accounts need the user signed in first. */
-    fun providers(): List<String> = ApiProviderType.values().filter { it !in LOCAL_PROVIDERS }.map { it.name }
+    fun providers(): List<String> = ApiProviderType.values().filterNot { it.isRetired }.map { it.name }
 
     fun defaultEndpoint(provider: ApiProviderType): String = ApiProviderConfigs.getDefaultApiEndpoint(provider)
 

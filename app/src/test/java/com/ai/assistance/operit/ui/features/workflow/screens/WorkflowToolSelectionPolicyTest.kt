@@ -12,9 +12,8 @@ class WorkflowToolSelectionPolicyTest {
                 listOf(
                     "package_proxy",
                     "sleep",
-                    "proxy",
-                    "search",
                     "todowrite",
+                    "orbit_set_name",
                     "http_request",
                 )
             ),

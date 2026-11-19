@@ -155,8 +155,9 @@ internal object OrbitSetup {
 
     private fun ready(context: Context, config: com.ai.assistance.operit.data.model.ModelConfigData): Boolean {
         val provider = ApiProviderType.fromProviderTypeId(config.apiProviderTypeId) ?: config.apiProviderType
+        if (ApiProviderType.isRetiredId(config.apiProviderTypeId)) return false
         if (provider in OrbitApprovalActions.SIGN_IN_PROVIDERS) return signedIn(context, provider)
-        return hasKey(config) || provider in OrbitApprovalActions.LOCAL_PROVIDERS ||
+        return hasKey(config) ||
             !com.ai.assistance.operit.data.collects.ApiProviderConfigs.requiresApiKey(config.apiProviderTypeId, config.apiEndpoint)
     }
 

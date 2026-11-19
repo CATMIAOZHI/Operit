@@ -4,8 +4,8 @@ import com.ai.assistance.operit.data.model.ApiProviderType
 import okhttp3.OkHttpClient
 
 /**
- * Ollama provider.
- * Uses OpenAI-compatible API surface exposed by Ollama (e.g. /v1/chat/completions).
+ * Ollama Cloud provider.
+ * Uses the OpenAI-compatible API surface exposed by Ollama (e.g. /v1/chat/completions).
  */
 class OllamaProvider(
     apiEndpoint: String,
@@ -13,7 +13,7 @@ class OllamaProvider(
     modelName: String,
     client: OkHttpClient,
     customHeaders: Map<String, String> = emptyMap(),
-    providerType: ApiProviderType = ApiProviderType.OLLAMA,
+    providerType: ApiProviderType = ApiProviderType.OLLAMA_CLOUD,
     supportsVision: Boolean = false,
     supportsAudio: Boolean = false,
     supportsVideo: Boolean = false,

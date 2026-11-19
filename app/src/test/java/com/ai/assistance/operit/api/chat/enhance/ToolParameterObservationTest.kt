@@ -42,9 +42,10 @@ class ToolParameterObservationTest {
         assertEquals(listOf("startline"), first.snapshot())
     }
 
-    @Test fun proxyAndTargetParametersAreObservedWithoutNestedCallPollution() = runBlocking {
-        val proxy = tool("proxy", "tool_name" to "read_file", "params" to "{\"path\":\"x\",\"endline\":3}", "startline" to "2")
-        val target = tool("read_file", "path" to "x", "endline" to "3")
+    @Test fun packageProxyAndTargetParametersAreObservedWithoutNestedCallPollution() = runBlocking {
+        val proxy = tool("package_proxy", "tool_name" to "files_pkg:read",
+            "params" to """{"path":"x","endline":3}""", "startline" to "2")
+        val target = tool("files_pkg:read", "path" to "x", "endline" to "3")
         val observer = ToolParameterObservation(proxy, target) { throw AssertionError(it) }
         observing(observer) {
             ToolExecutionManager.observeToolParameterNames(proxy) { setOf("tool_name", "params") }

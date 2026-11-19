@@ -121,6 +121,14 @@ class LearningPromptSnapshotRepositoryTest {
         assertEquals("Alice XML", repo("group").bindSystem("Alice XML", emptyMap(), "xml", "alice"))
     }
 
+    @Test fun `a prompt saved under a retired protocol is rebuilt once`() = runBlocking {
+        repo("cli").beginEpoch("")
+        repo("cli").bindSystem("cli prompt", emptyMap(), "true:CLI")
+        val retired = setOf("true:CLI", "false:CLI")
+        assertEquals("full prompt", repo("cli").bindSystem("full prompt", emptyMap(), "true:FULL", retiredProtocols = retired))
+        assertEquals("full prompt", repo("cli").bindSystem("later", emptyMap(), "true:FULL", retiredProtocols = retired))
+    }
+
     @Test fun `manual changes mark existing chats pending without changing their prefixes`() = runBlocking {
         val context = mock<Context>()
         val prefs = mock<SharedPreferences>()

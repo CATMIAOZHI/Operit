@@ -115,7 +115,7 @@ Orbit 内置在 **Operit Ry** 里。Operit Ry 是 [Operit](https://github.com/AA
 
 ## 用你自己的模型
 
-Orbit 用你选的模型运行：OpenAI、Claude、Gemini、DeepSeek、OpenRouter、Ollama、LM Studio，以及其他兼容的接口。API Key 由你自己填，请求从你的手机直接发给服务商。Operit 不提供模型服务，也不中转你的聊天。
+Orbit 支持 OpenAI、Claude、Gemini、DeepSeek、OpenRouter 和 Ollama Cloud。选择 **OpenAI 通用** 可填写 OpenAI 兼容接口地址，包括局域网地址。服务需要 API Key 时由你自己填写，请求从手机直接发给你配置的服务。Operit 不提供模型服务，也不中转你的聊天。
 
 每周 token 额度和用量统计，让后台工作不超出你定的预算。
 

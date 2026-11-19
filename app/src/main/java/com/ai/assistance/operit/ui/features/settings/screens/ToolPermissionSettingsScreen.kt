@@ -80,7 +80,7 @@ fun ToolPermissionSettingsScreen(navigateBack: () -> Unit) {
     val storedOverrides by toolPermissionSystem.toolPermissionOverridesFlow.collectAsState(initial = emptyMap())
     val allTools = remember(storedOverrides.keys) {
         (toolHandler.getAllToolNames().filterNot {
-            it == "package_proxy" || it == "proxy" || it == "search" ||
+            it == "package_proxy" ||
                 it in PermissionReviewInternalTools.names
         } + storedOverrides.keys +
             // Free follow-ups can be given a level before super_admin is first loaded.

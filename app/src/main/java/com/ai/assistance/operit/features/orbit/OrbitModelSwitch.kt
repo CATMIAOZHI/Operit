@@ -109,6 +109,10 @@ internal object OrbitModelSwitch {
             if (english) "The model configuration \"$name\" no longer exists; nothing was switched. Check orbit_models list."
             else "模型配置「$name」已经不在了，什么都没换。用 orbit_models list 重新看看。"
         }
+        // A card approved before the update may still point at a removed provider: nothing is switched.
+        com.ai.assistance.operit.data.model.ApiProviderType.fromProviderTypeId(config.apiProviderTypeId)
+            ?.takeIf { it.isRetired }
+            ?.let { error(com.ai.assistance.operit.api.chat.llmprovider.AIServiceFactory.retiredProviderMessage(context, it)) }
         if (r.role == ROLE_MULTIMODAL &&
             !supportsPictures(checkNotNull(configs.getModelConfig(config.id)), r.model)) {
             return context.getString(R.string.orbit_model_switch_image_unsupported, name, r.model)

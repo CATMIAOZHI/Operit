@@ -242,6 +242,15 @@ internal fun parseProviderCustomHeaders(customHeadersJson: String): Map<String, 
 
 /** AI服务工厂，根据提供商类型创建相应的AIService实例 */
 object AIServiceFactory {
+    /** What a configuration of a retired provider is told: the engine left the phone, or the local server went. */
+    fun retiredProviderMessage(context: Context, providerType: ApiProviderType): String = context.getString(
+        if (providerType == ApiProviderType.MNN || providerType == ApiProviderType.LLAMA_CPP) {
+            com.ai.assistance.operit.R.string.local_llm_removed
+        } else {
+            com.ai.assistance.operit.R.string.local_server_provider_removed
+        }
+    )
+
 
     /**
      * 创建AI服务实例（统一统计记录边界）。
@@ -252,7 +261,7 @@ object AIServiceFactory {
      *
      * @param config 模型配置数据
      * @param modelConfigManager 模型配置管理器，用于多API Key模式
-     * @param context Android上下文，用于MNN等需要访问本地资源的提供商
+     * @param context Android上下文
      * @return 对应的AIService实现
      */
     fun createService(
@@ -262,6 +271,10 @@ object AIServiceFactory {
         allowPluginProviders: Boolean = true,
         useSnapshotApiKeys: Boolean = false,
     ): AIService {
+        // Checked on the stored provider, before a model protocol or a plugin can stand in for it.
+        ApiProviderType.fromProviderTypeId(config.apiProviderTypeId)?.takeIf { it.isRetired }?.let {
+            error(retiredProviderMessage(context, it))
+        }
         val rawService = buildService(config.withModelProtocol(), modelConfigManager, context, allowPluginProviders, useSnapshotApiKeys)
         return TokenTrackingAIService(
             delegate = rawService,
@@ -364,8 +377,7 @@ object AIServiceFactory {
             ApiProviderType.OPENAI,
             ApiProviderType.OPENAI_GENERIC,
             ApiProviderType.OPENCODE_GO,
-            ApiProviderType.OPENCODE_ZEN_FREE,
-            ApiProviderType.OPENAI_LOCAL ->
+            ApiProviderType.OPENCODE_ZEN_FREE ->
                 OpenAIProvider(
                     apiEndpoint = if (providerType == ApiProviderType.OPENCODE_ZEN_FREE)
                         OpenCodeZenFree.CHAT_ENDPOINT else config.apiEndpoint,
@@ -492,23 +504,7 @@ object AIServiceFactory {
                     enableToolCall = enableToolCall,
                 )
 
-            // LM Studio使用OpenAI兼容格式
-            ApiProviderType.LMSTUDIO ->
-                OpenAIProvider(
-                    apiEndpoint = config.apiEndpoint,
-                    apiKeyProvider = apiKeyProvider,
-                    modelName = config.modelName,
-                    client = httpClient,
-                    customHeaders = customHeaders,
-                    providerType = providerType,
-                    supportsVision = supportsVision,
-                    supportsAudio = supportsAudio,
-                    supportsVideo = supportsVideo,
-                    enableToolCall = enableToolCall
-                )
-
-            // Ollama使用OpenAI兼容格式
-            ApiProviderType.OLLAMA,
+            // Ollama 云端使用OpenAI兼容格式
             ApiProviderType.OLLAMA_CLOUD ->
                 OllamaProvider(
                     apiEndpoint = config.apiEndpoint,
@@ -523,8 +519,9 @@ object AIServiceFactory {
                     enableToolCall = enableToolCall
                 )
 
+            ApiProviderType.LMSTUDIO, ApiProviderType.OLLAMA, ApiProviderType.OPENAI_LOCAL,
             ApiProviderType.MNN, ApiProviderType.LLAMA_CPP ->
-                error(context.getString(com.ai.assistance.operit.R.string.local_llm_removed))
+                error(retiredProviderMessage(context, providerType))
 
             // 阿里云（通义千问）使用QwenProvider
             ApiProviderType.ALIYUN ->

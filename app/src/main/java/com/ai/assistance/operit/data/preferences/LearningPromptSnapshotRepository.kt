@@ -91,12 +91,14 @@ class LearningPromptSnapshotRepository internal constructor(root: File, chatId: 
      * layer put into the prompt. They are saved only with a new prefix and never change it.
      */
     suspend fun bindSystem(candidate: String, revisions: Map<String, String>, protocol: String = "",
-        lane: String = "main", sections: Map<String, String> = emptyMap()): String =
+        lane: String = "main", sections: Map<String, String> = emptyMap(),
+        retiredProtocols: Set<String> = emptySet()): String =
         withContext(Dispatchers.IO) {
             mutex.withLock {
                 val data = read()
                 val systems = data.optJSONObject("_systems") ?: JSONObject().also { data.put("_systems", it) }
-                val saved = systems.optJSONObject(lane)
+                // A prompt saved under a protocol the app no longer has can't be kept; it is rebuilt once.
+                val saved = systems.optJSONObject(lane)?.takeUnless { it.optString("protocol") in retiredProtocols }
                 if (saved != null) {
                     if (saved.optString("protocol") != protocol) {
                         saved.put("incompatible", true)

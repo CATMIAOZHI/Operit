@@ -6,7 +6,6 @@ import com.ai.assistance.operit.api.chat.ChatRuntimeHolder
 import com.ai.assistance.operit.api.chat.ChatRuntimeSlot
 import com.ai.assistance.operit.api.chat.EnhancedAIService
 import com.ai.assistance.operit.data.model.ChatTurnOptions
-import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.FunctionType
 import com.ai.assistance.operit.data.model.SubagentRunEntity
 import com.ai.assistance.operit.data.model.SubagentRunStatus
@@ -688,18 +687,13 @@ class SubagentCoordinator private constructor(context: Context) {
             .getOrPut(modelConfigId) { Mutex() }
             .withLock {
                 val config = modelConfigManager.getModelConfigFlow(modelConfigId).first()
-                val limit =
-                    SubagentConcurrencyPolicy.modelLimit(
-                        providerType = config.apiProviderType,
-                        configuredMaxConcurrentRequests = config.maxConcurrentRequests,
-                    )
+                val limit = config.maxConcurrentRequests
                 if (limit <= 0) return@withLock null
-                val effectiveLimit = limit
                 modelSemaphores
                     .computeIfAbsent(modelConfigId) {
-                        AdjustableConcurrencyGate(effectiveLimit)
+                        AdjustableConcurrencyGate(limit)
                     }
-                    .also { it.updateLimit(effectiveLimit) }
+                    .also { it.updateLimit(limit) }
             }
     }
 
@@ -732,19 +726,7 @@ class SubagentCoordinator private constructor(context: Context) {
     }
 }
 
-internal object SubagentConcurrencyPolicy {
-    fun modelLimit(
-        providerType: ApiProviderType,
-        configuredMaxConcurrentRequests: Int,
-    ): Int =
-        when (providerType) {
-            ApiProviderType.MNN,
-            ApiProviderType.LLAMA_CPP -> 1
-            else -> configuredMaxConcurrentRequests.coerceAtLeast(0)
-        }
-}
-
-/** Avoids a local-model self-deadlock when a running Subagent synchronously invokes the reviewer. */
+/** Lets a synchronous permission reviewer reuse its parent's lease for the same model. */
 internal object PermissionReviewerModelLeasePolicy {
     fun canReuse(
         parentRun: SubagentRunEntity?,

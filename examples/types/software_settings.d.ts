@@ -72,7 +72,6 @@ export namespace SoftwareSettings {
 
     /**
      * Known model-config provider enum names.
-     * `LMSTUDIO`, `OLLAMA`, `OPENAI_LOCAL`, `MNN`, and `LLAMA_CPP` are local-model providers.
      * Custom provider ids are also allowed.
      */
     type ModelConfigProviderType =
@@ -101,11 +100,7 @@ export namespace SoftwareSettings {
         | 'ALIPAY_BAILING'
         | 'DOUBAO'
         | 'NVIDIA'
-        | 'LMSTUDIO'
-        | 'OLLAMA'
-        | 'OPENAI_LOCAL'
-        | 'MNN'
-        | 'LLAMA_CPP'
+        | 'OLLAMA_CLOUD'
         | 'PPINFRA'
         | 'NOVITA'
         | 'OTHER'
@@ -114,7 +109,7 @@ export namespace SoftwareSettings {
     interface ModelConfigUpdateOptions {
         name?: string;
         /**
-         * Provider enum name, for example `OPENAI_GENERIC`, `OPENAI_LOCAL`, `LMSTUDIO`, `OLLAMA`, `MNN`, or `LLAMA_CPP`.
+         * Provider enum name, for example `OPENAI_GENERIC`, `DEEPSEEK`, or `OLLAMA_CLOUD`.
          */
         api_provider_type?: ModelConfigProviderType;
         api_endpoint?: string;
@@ -143,11 +138,6 @@ export namespace SoftwareSettings {
         enable_google_search?: boolean;
         enable_claude_1h_prompt_cache?: boolean;
         enable_tool_call?: boolean;
-        mnn_forward_type?: number;
-        mnn_thread_count?: number;
-        llama_thread_count?: number;
-        llama_context_size?: number;
-        llama_gpu_layers?: number;
         request_limit_per_minute?: number;
         max_concurrent_requests?: number;
     }

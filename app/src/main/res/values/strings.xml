@@ -20,6 +20,7 @@
     <string name="logcat_export_dropped">日志队列曾因繁忙或线程中断丢弃 %1$d 条记录，无法恢复。</string>
     <string name="logcat_export_write_failed">本次日志记录期间发生过文件写入失败。</string>
     <string name="logcat_export_interrupted">等待日志写入的操作被中断。</string>
+    <string name="local_server_provider_removed">内置的本地模型服务选项（LM Studio、本地 Ollama、OpenAI 兼容本地服务）已移除。你自己的服务器仍然能连：提供商选「OpenAI通用」，地址照旧填；服务器不需要 Key 的话，Key 填一个英文占位词（比如 none）即可。也可以换成云端服务。如果改了模型名，Orbit 用过这个配置的，到 Orbit「模型」里重新选一次。</string>
     <string name="local_llm_removed">此版本已移除手机本地大模型推理。请选择云端或远程服务；原模型文件保留在 Download/Operit/models，可通过文件管理器自行清理。</string>
     <string name="openai_error_repetition_truncation">模型因重复输出被服务端截断，已丢弃异常响应并停止本轮工具执行。</string>
     <string name="openai_retry_repetition_truncation">模型出现重复输出，已丢弃异常响应，正在重新请求一次。</string>
@@ -3323,7 +3324,7 @@
     <string name="chat_start_ai_computer_failed">启动AI电脑失败: %1$s</string>
     <string name="chat_ai_computer_closed_due_to_workspace">AI电脑已关闭（由于打开工作区）</string>
     <string name="thinking_mode">思考模式</string>
-    <string name="thinking_mode_desc">目前支持Gemini、Qwen3、Claude、豆包、NVIDIA、硅基流动和MNN本地模型，能够启用内置的思考。</string>
+    <string name="thinking_mode_desc">目前可为 Gemini、Qwen3、Claude、豆包、NVIDIA 和硅基流动启用内置思考功能。</string>
     <string name="details">详情</string>
     <string name="model_selection">模型选择</string>
     <string name="prompt_selection">提示词选择</string>
@@ -5232,33 +5233,6 @@
     <string name="toolpkg_widget_picker_empty_body">先启用一个注册了 desktop widget 的 ToolPkg，再回来添加。</string>
     <string name="toolpkg_widget_picker_selecting">正在配置…</string>
 
-    <!-- MNN Model Download -->
-    <string name="screen_title_mnn_model_download">MNN模型下载</string>
-    <string name="mnn_model_download">下载MNN模型</string>
-    <string name="mnn_model_management">模型管理</string>
-    <string name="mnn_download_from_modelscope">从ModelScope下载</string>
-    <string name="mnn_model_size">模型大小: %1$.2f GB</string>
-    <string name="mnn_downloading">下载中</string>
-    <string name="mnn_download_speed">速度: %1$s</string>
-    <string name="mnn_download_complete">下载完成</string>
-    <string name="mnn_download_failed">下载失败: %1$s</string>
-    <string name="mnn_no_models_downloaded">暂无已下载的模型</string>
-    <string name="mnn_select_downloaded_model">选择已下载的模型</string>
-    <string name="mnn_model_name_only">模型名称</string>
-    <string name="mnn_download_progress">进度: %1$d%%</string>
-    <string name="mnn_pause_download">暂停下载</string>
-    <string name="mnn_resume_download">继续下载</string>
-    <string name="mnn_delete_model">删除模型</string>
-    <string name="mnn_confirm_delete">确认删除此模型吗？</string>
-    <string name="mnn_loading_models">加载模型列表中...</string>
-    <string name="mnn_connecting">正在连接...</string>
-    <string name="mnn_load_failed">加载失败</string>
-    <string name="mnn_retry">重试</string>
-    <string name="mnn_start_download">开始下载</string>
-    <string name="mnn_no_local_models">尚未下载任何模型</string>
-    <string name="mnn_go_download">去下载</string>
-    <string name="mnn_search_models">搜索模型...</string>
-    <string name="mnn_no_search_results">没有找到匹配的模型</string>
 
     <!-- Persona Card Generation Screen -->
     <string name="persona_card_generation_title">将修改的角色卡</string>
@@ -5297,36 +5271,7 @@
     <string name="message_limit_reached_message">当前对话数量已达 %1$d 条上限。\n为了保持对话质量和性能，请清空历史记录后继续。</string>
     <string name="go_clear">去清空</string>
     
-    <!-- MNN 本地推理 -->
-    <string name="mnn_local_model_tip">本地运行模型理解能力较差，建议关闭记忆链接、开启禁用工具进行对话</string>
-    <string name="mnn_model_path">模型文件路径</string>
-    <string name="mnn_model_path_placeholder">输入MNN模型文件的完整路径</string>
-    <string name="mnn_forward_type">计算类型</string>
-    <string name="mnn_thread_count">线程数</string>
 
-    <!-- llama.cpp 本地推理 -->
-    <string name="llama_local_model_tip">本地运行模型理解能力较差，建议关闭记忆链接、开启禁用工具进行对话</string>
-    <string name="llama_local_model_download_tip">llama.cpp 模型需要自行下载（.gguf）。请将模型文件放入以下文件夹，然后在“模型名称”中填写文件名：</string>
-    <string name="llama_local_model_dir">默认模型目录：%1$s</string>
-    <string name="llama_auto_config_tip">批大小、mmap、Flash Attention、KV 等 Android 兼容参数已内置，普通使用只需要调整线程数、上下文大小和 GPU 层数。</string>
-    <string name="llama_select_downloaded_model">选择已下载的模型</string>
-    <string name="llama_thread_count">线程数</string>
-    <string name="llama_context_size">上下文长度</string>
-    <string name="llama_context_size_subtitle">Android 上建议先从 2048 开始，太大更容易因内存压力初始化失败</string>
-    <string name="llama_batch_size">批大小</string>
-    <string name="llama_batch_size_subtitle">建议不超过 512，并且不要大于上下文长度</string>
-    <string name="llama_ubatch_size">微批大小</string>
-    <string name="llama_ubatch_size_subtitle">建议不超过批大小，Android 上通常 512 更稳</string>
-    <string name="llama_gpu_layers">GPU 层数</string>
-    <string name="llama_gpu_layers_subtitle">当前构建存在 GPU backend 时才会生效，0 表示纯 CPU</string>
-    <string name="llama_use_mmap">使用 mmap</string>
-    <string name="llama_use_mmap_subtitle">Android 上默认建议关闭，很多机型关闭后更容易成功加载 GGUF</string>
-    <string name="llama_flash_attention">启用 Flash Attention</string>
-    <string name="llama_flash_attention_subtitle">移动端默认建议关闭，避免部分 Android backend 不稳定</string>
-    <string name="llama_kv_unified">统一 KV 缓存</string>
-    <string name="llama_kv_unified_subtitle">单会话聊天默认建议开启，可降低 Android 上的上下文管理开销</string>
-    <string name="llama_offload_kqv">卸载 KQV 到 GPU</string>
-    <string name="llama_offload_kqv_subtitle">仅在 GPU 层数大于 0 时有意义，没有 GPU backend 时会自动忽略</string>
     
     <!-- 工作流执行状态 -->
     <string name="workflow_execution_running">执行中…</string>
@@ -7634,25 +7579,6 @@
     <string name="ai_message_continue_task_if_complete">%1$s\n\n请你继续，如果任务完成，输出总结</string>
     <string name="ai_message_user_label">用户</string>
 
-    <!-- MNN Provider -->
-    <string name="mnn_model_dir_not_exist">模型目录不存在: %1$s\n请确保模型已下载</string>
-    <string name="mnn_config_not_exist">配置文件不存在: %1$s\n请确保模型完整下载</string>
-    <string name="mnn_cannot_create_session">无法创建MNN LLM会话，请检查模型文件和配置</string>
-    <string name="mnn_user_prompt">用户: %1$s\n</string>
-    <string name="mnn_assistant_prompt">助手: %1$s\n</string>
-    <string name="mnn_system_prompt">系统: %1$s\n</string>
-    <string name="mnn_message_format">用户: %1$s\n</string>
-    <string name="mnn_assistant">助手: </string>
-    <string name="mnn_error_with_message">错误: %1$s</string>
-    <string name="mnn_session_not_initialized">错误: LLM会话未初始化</string>
-    <string name="mnn_reasoning_error">\n\n[推理过程出现错误]</string>
-    <string name="mnn_error_request_cancelled">请求已被用户取消</string>
-    <string name="mnn_generic_error">错误: %1$s</string>
-    <string name="mnn_model_not_configured">未配置模型名称</string>
-    <string name="mnn_model_dir_missing">模型目录不存在: %1$s\n请先下载模型</string>
-    <string name="mnn_file_status">文件状态:</string>
-    <string name="mnn_init_failed">模型初始化失败</string>
-    <string name="mnn_connection_success">MNN LLM模型连接成功！\n\n模型: %1$s\n目录: %2$s\n总大小: %3$s\n\n%4$s</string>
 
     <!-- APK Reverse Engineer -->
     <string name="apk_unnamed_function">(未命名功能)</string>
@@ -7816,15 +7742,6 @@
     <string name="html_export_message_count">消息数</string>
     <string name="html_export_footer">导出自 Operit Ry Assistant</string>
 
-    <!-- MnnModelDownloadManager (新增) -->
-    <string name="mnn_no_cache_data">无缓存数据</string>
-    <string name="mnn_response_empty">响应体为空</string>
-    <string name="mnn_fetch_repo_files_failed">获取仓库文件列表失败: %1$s</string>
-    <string name="mnn_download_failed_http">下载失败: HTTP %1$d %2$s</string>
-    <string name="mnn_rename_failed">重命名失败</string>
-    <string name="mnn_unknown_error">未知错误</string>
-    <string name="mnn_download_file_failed">下载文件失败: %1$s (HTTP %2$d)</string>
-    <string name="mnn_download_paused">下载已暂停</string>
 
     <!-- MCPBridge (新增) -->
     <string name="mcp_send_command">发送桥接器命令</string>
@@ -7982,15 +7899,6 @@
     <string name="conversation_analyze_audio_prompt">Please analyze this audio.</string>
     <string name="conversation_analyze_video_prompt">Please analyze this video.</string>
 
-    <!-- LlamaProvider -->
-    <string name="llama_error_model_file_not_exist">模型文件不存在: %1$s</string>
-    <string name="llama_error_create_session_failed">创建 llama.cpp 会话失败（nativeCreateSession 返回 0）</string>
-    <string name="llama_error_prefix">错误</string>
-    <string name="llama_error_session_create_failed">错误: 创建 llama.cpp 会话失败（请检查模型文件与 JNI 编译输出）</string>
-    <string name="llama_error_chat_template_failed">错误: 无法应用模型对话模板（llama_model_chat_template/llama_chat_apply_template）</string>
-    <string name="llama_error_inference_failed">llama.cpp 推理过程出现错误</string>
-    <string name="llama_error_inference_tag">[推理过程出现错误]</string>
-    <string name="llama_error_request_cancelled">请求已被用户取消</string>
 
     <!-- TaskExecutor -->
     <string name="task_error_execution_failed">任务执行失败: %1$s</string>
@@ -8016,8 +7924,6 @@
     <!-- GraphVisualizer -->
     <string name="graph_char_for_measurement">中</string>
 
-    <!-- MnnModelDownloadScreen -->
-    <!-- No strings needed here -->
 
     <!-- User profile document -->
     <string name="date_format_pattern">yyyy年MM月dd日</string>

@@ -338,10 +338,6 @@ fun ModelApiSettingsSection(
         openCodeGoQuota = null
     }
 
-    // MNN特定配置状态
-
-    // llama.cpp 常用配置状态
-
     // 多模态处理配置状态
     var enableDirectImageProcessingInput by remember(config.id) { mutableStateOf(config.enableDirectImageProcessing) }
     var modelMultimodalCapabilitiesInput by remember(config.id) {
@@ -546,12 +542,6 @@ fun ModelApiSettingsSection(
                     enableGoogleSearch = state.enableGoogleSearch,
                     enableClaude1hPromptCache = state.enableClaude1hPromptCache,
                     enableToolCall = state.enableToolCall,
-                    // Preserve retired fields when editing/importing an older configuration.
-                    mnnForwardType = config.mnnForwardType,
-                    mnnThreadCount = config.mnnThreadCount,
-                    llamaThreadCount = config.llamaThreadCount,
-                    llamaContextSize = config.llamaContextSize,
-                    llamaGpuLayers = config.llamaGpuLayers,
                     finish = { stored, updated ->
                         fun <T> pick(mine: T, was: T, theirs: T) = if (mine != was) mine else theirs
                         val providerEdited = state.providerTypeId != page.providerTypeId
@@ -571,12 +561,6 @@ fun ModelApiSettingsSection(
                             enableClaude1hPromptCache = pick(state.enableClaude1hPromptCache,
                                 page.enableClaude1hPromptCache, stored.enableClaude1hPromptCache),
                             enableToolCall = pick(state.enableToolCall, page.enableToolCall, stored.enableToolCall),
-                            // Not on this page: always as stored.
-                            mnnForwardType = stored.mnnForwardType,
-                            mnnThreadCount = stored.mnnThreadCount,
-                            llamaThreadCount = stored.llamaThreadCount,
-                            llamaContextSize = stored.llamaContextSize,
-                            llamaGpuLayers = stored.llamaGpuLayers,
                         )
                         // Edits count only for models on the page; others keep their stored values.
                         val fields = ModelAutoFields.of(stored)
@@ -772,7 +756,10 @@ fun ModelApiSettingsSection(
                 isDefaultApiEndpoint(apiEndpointInput) ||
                 (previousDefaultEndpoint.isNotEmpty() && apiEndpointInput == previousDefaultEndpoint)
 
-        if (shouldApplyNewProviderDefault) {
+        // A removed local provider's address is the user's own server: a generic provider keeps it.
+        val keepsOwnServer = previousProvider?.isRetired == true &&
+            getDefaultApiEndpoint(selectedApiProvider).isBlank()
+        if (shouldApplyNewProviderDefault && !keepsOwnServer) {
             apiEndpointInput = getDefaultApiEndpoint(selectedApiProvider)
         }
         previousProviderTypeId = selectedProviderTypeId
@@ -804,18 +791,16 @@ fun ModelApiSettingsSection(
     val isUsingDefaultApiKey = apiKeyInput.isBlank()
     val providerRequiresApiKey =
         ApiProviderConfigs.requiresApiKey(selectedProviderTypeId, apiEndpointInput)
-    val isMnnProvider = selectedApiProvider == ApiProviderType.MNN
-    val isLlamaProvider = selectedApiProvider == ApiProviderType.LLAMA_CPP
+    // A configuration of a removed local provider only shows what to switch to.
+    val isRetiredProvider = selectedApiProvider?.isRetired == true
     val isToolPkgProvider = selectedApiProvider == null
     val canUseKeylessModelUi = isToolPkgProvider || !providerRequiresApiKey
     val canEditModelName =
-        !isMnnProvider &&
-            !isLlamaProvider &&
-            (canUseKeylessModelUi || !isUsingDefaultApiKey)
+        !isRetiredProvider && (canUseKeylessModelUi || !isUsingDefaultApiKey)
     val canRequestModelList = when {
         browserAccountType != null -> browserAccountState != null
         isCodexProvider -> codexAuthState != null && apiEndpointInput.isNotBlank()
-        isMnnProvider || isLlamaProvider -> false
+        isRetiredProvider -> false
         isToolPkgProvider -> true
         else ->
             apiEndpointInput.isNotBlank() &&
@@ -968,8 +953,12 @@ fun ModelApiSettingsSection(
                 SettingsInfoBanner(text = stringResource(R.string.provider_opencode_zen_free_warning))
             }
 
-            if (isMnnProvider || isLlamaProvider) {
-                SettingsInfoBanner(text = stringResource(R.string.local_llm_removed))
+            if (isRetiredProvider) {
+                SettingsInfoBanner(
+                    text = com.ai.assistance.operit.api.chat.llmprovider.AIServiceFactory.retiredProviderMessage(
+                        LocalContext.current, checkNotNull(selectedApiProvider)
+                    )
+                )
             } else if (browserAccountType != null) {
                 ProviderAccountSettings(browserAccountType) {
                     scope.launch { EnhancedAIService.refreshAllServices(configManager.appContext) }
@@ -1122,7 +1111,7 @@ fun ModelApiSettingsSection(
 
             }
             if (selectedApiProvider == ApiProviderType.OPENCODE_ZEN_FREE ||
-                (!isMnnProvider && !isLlamaProvider && browserAccountType == null && !isCodexProvider)) {
+                (!isRetiredProvider && browserAccountType == null && !isCodexProvider)) {
                 val apiKeyInteractionSource = remember { MutableInteractionSource() }
                 val isApiKeyFocused by apiKeyInteractionSource.collectIsFocusedAsState()
                 SettingsTextField(
@@ -1152,18 +1141,14 @@ fun ModelApiSettingsSection(
             }
             SettingsTextField(
                     title = stringResource(R.string.model_name),
-                    subtitle = when {
-                        isMnnProvider -> stringResource(R.string.mnn_select_downloaded_model)
-                        isLlamaProvider -> stringResource(R.string.llama_select_downloaded_model)
-                        else -> stringResource(R.string.model_name_placeholder) + stringResource(R.string.model_name_multiple_hint)
-                    },
+                    subtitle = stringResource(R.string.model_name_placeholder) + stringResource(R.string.model_name_multiple_hint),
                         value = modelNameInput,
                         onValueChange = {
                         if (canEditModelName) {
                                 modelNameInput = it.replace("\n", "").replace("\r", "")
                             }
                         },
-                    enabled = !isMnnProvider && !isLlamaProvider && canEditModelName,
+                    enabled = canEditModelName,
                     trailingContent = {
                 val fillEndpointKeyText = stringResource(R.string.fill_endpoint_and_key)
                 val modelsListSuccessText = stringResource(R.string.models_list_success)
@@ -1948,9 +1933,6 @@ fun ModelApiSettingsSection(
                                     val orderedSelection = modelsList.map { it.id }
                                         .filter { selectedModels.value.contains(it) }
                                     modelNameInput = orderedSelection.joinToString(",")
-                                    if (selectedApiProvider == ApiProviderType.MNN) {
-                                        AppLogger.d(TAG, "选择MNN模型: $modelNameInput")
-                                    }
                                     showModelsDialog = false
                                 },
                                 modifier = Modifier.height(36.dp),
@@ -2223,14 +2205,15 @@ private fun getProviderDisplayName(providerTypeId: String, context: android.cont
 
 private fun getProviderSelectionOptions(context: android.content.Context): List<ProviderSelectionOption> {
     val builtInProviders =
-        ApiProviderType.values().filterNot { it == ApiProviderType.MNN || it == ApiProviderType.LLAMA_CPP }.map { provider ->
+        ApiProviderType.values().filterNot { it.isRetired }.map { provider ->
             ProviderSelectionOption(
                 id = provider.name,
                 displayName = getBuiltInProviderDisplayName(provider, context)
             )
         }
     val toolPkgProviders =
-        ToolPkgAiProviderRegistry.list().map { provider ->
+        // A plugin cannot bring back a removed provider under its name.
+        ToolPkgAiProviderRegistry.list().filterNot { ApiProviderType.isRetiredId(it.providerId) }.map { provider ->
             ProviderSelectionOption(
                 id = provider.providerId,
                 displayName = provider.displayName
@@ -2811,15 +2794,12 @@ private fun getProviderColor(providerTypeId: String): androidx.compose.ui.graphi
         ApiProviderType.ALIPAY_BAILING -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.45f)
         ApiProviderType.DOUBAO -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.4f)
         ApiProviderType.NVIDIA -> MaterialTheme.colorScheme.primary.copy(alpha = 0.72f)
-        ApiProviderType.LMSTUDIO -> MaterialTheme.colorScheme.tertiary
-        ApiProviderType.OLLAMA -> MaterialTheme.colorScheme.primary.copy(alpha = 0.78f)
         ApiProviderType.OLLAMA_CLOUD -> MaterialTheme.colorScheme.primary.copy(alpha = 0.9f)
-        ApiProviderType.OPENAI_LOCAL -> MaterialTheme.colorScheme.primary.copy(alpha = 0.82f)
-        ApiProviderType.MNN -> MaterialTheme.colorScheme.secondary
-        ApiProviderType.LLAMA_CPP -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.9f)
         ApiProviderType.PPINFRA -> MaterialTheme.colorScheme.primaryContainer
         ApiProviderType.NOVITA -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.75f)
-        ApiProviderType.OTHER -> MaterialTheme.colorScheme.surfaceVariant
+        ApiProviderType.OTHER,
+        ApiProviderType.LMSTUDIO, ApiProviderType.OLLAMA, ApiProviderType.OPENAI_LOCAL,
+        ApiProviderType.MNN, ApiProviderType.LLAMA_CPP -> MaterialTheme.colorScheme.surfaceVariant
     }
 }
 

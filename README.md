@@ -115,7 +115,7 @@ Chat and side chats, option buttons and reactions, voice messages, and a WeChat 
 
 ## Bring your own model
 
-Orbit runs on the model you choose: OpenAI, Claude, Gemini, DeepSeek, OpenRouter, Ollama, LM Studio and other compatible endpoints. You add your own API key; requests go straight from your phone to that provider. Operit does not run a model service or relay your chats.
+Orbit works with OpenAI, Claude, Gemini, DeepSeek, OpenRouter and Ollama Cloud. Select **OpenAI (Generic)** to enter an OpenAI-compatible endpoint, including one on your local network. You add your own API key where required, and requests go straight from your phone to the service you configure. Operit does not run a model service or relay your chats.
 
 Weekly token allowances and usage statistics keep background work within a budget you set.
 

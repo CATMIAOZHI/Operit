@@ -1,6 +1,5 @@
 package com.ai.assistance.operit.api.chat.library
 
-import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.ModelConfigData
 import org.junit.Assert.*
 import org.junit.Test
@@ -55,21 +54,9 @@ class MemoryLearningSnapshotTest {
         assertEquals(160_000, MemoryLearningSnapshot.sourceBudget(2_000_000, 0))
     }
 
-    @Test fun windowKeepsLocalProviderCapsAndTheFallback() {
-        val llama = ModelConfigData("id", "n", apiProviderType = ApiProviderType.LLAMA_CPP,
-            apiProviderTypeId = ApiProviderType.LLAMA_CPP.name, contextLength = 128f,
-            maxContextLength = 256f, llamaContextSize = 4096)
-        assertEquals(4096, MemoryLearningSnapshot.modelWindowTokens(llama))
-        // A provider whose own cap leaves no room for instructions, evidence and a response is rejected
-        // instead of being handed a batch it cannot hold (the pre-existing MNN behavior).
-        val mnn = ModelConfigData("id", "n", apiProviderType = ApiProviderType.MNN,
-            apiProviderTypeId = ApiProviderType.MNN.name, contextLength = 128f, maxContextLength = 256f)
-        try {
-            MemoryLearningSnapshot.modelWindowTokens(mnn)
-            fail("a 2048 token local model has no room for a review batch")
-        } catch (e: IllegalArgumentException) {
-            assertTrue(e.message.orEmpty().contains("4096"))
-        }
+    @Test fun windowKeepsTheSharedCeilingAndFallback() {
+        assertEquals(2_000_000, MemoryLearningSnapshot.modelWindowTokens(
+            ModelConfigData("id", "n", contextLength = 128f, maxContextLength = 4_000f)))
         // Neither length usable -> the historical conservative default.
         assertEquals(8192, MemoryLearningSnapshot.modelWindowTokens(
             ModelConfigData("id", "n", contextLength = 0f, maxContextLength = 0f)))

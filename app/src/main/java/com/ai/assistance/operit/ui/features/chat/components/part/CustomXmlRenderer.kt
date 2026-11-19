@@ -74,7 +74,8 @@ internal fun resolveToolRequestPresentation(
     rawToolName: String,
     params: Map<String, String>,
 ): ResolvedToolRequestPresentation {
-    // Calls saved before the terminal was built in show under its built-in name.
+    // Calls saved before the terminal was built in show under its built-in name. `proxy` is from
+    // chats saved in the removed CLI tool mode.
     if (rawToolName != "proxy" && rawToolName != "package_proxy") {
         return ResolvedToolRequestPresentation(com.ai.assistance.operit.core.tools.TerminalTools.canonical(rawToolName), params)
     }

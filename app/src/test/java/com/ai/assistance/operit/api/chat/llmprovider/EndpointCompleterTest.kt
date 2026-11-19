@@ -115,11 +115,6 @@ class EndpointCompleterTest {
         assertEquals(endpoint, EndpointCompleter.completeEndpoint(endpoint, ApiProviderType.GEMINI_GENERIC))
     }
 
-    @Test fun mnnProvider_leavesEndpointUntouched() {
-        val endpoint = "http://127.0.0.1:8080"
-        assertEquals(endpoint, EndpointCompleter.completeEndpoint(endpoint, ApiProviderType.MNN))
-    }
-
     @Test fun openAiGeneric_usesDefaultCompletionLogic() {
         assertEquals(
             "https://api.example.com/v1/chat/completions",
