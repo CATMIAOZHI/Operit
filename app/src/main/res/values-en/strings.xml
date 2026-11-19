@@ -20,6 +20,7 @@
     <string name="logcat_export_dropped">%1$d records were dropped due to queue overload or thread interruption and cannot be recovered.</string>
     <string name="logcat_export_write_failed">A file write failed during this logging session.</string>
     <string name="logcat_export_interrupted">Waiting for log writes was interrupted.</string>
+    <string name="local_server_provider_removed">The built-in local server options (LM Studio, local Ollama, OpenAI-compatible local service) have been removed. Your own server still works: choose OpenAI (Generic) as the provider and keep its address; if the server needs no key, enter a placeholder such as none. You can also switch to a cloud provider. If you change the model name and an Orbit used this configuration, pick it again on the Orbit Models page.</string>
     <string name="local_llm_removed">On-device LLM inference has been removed. Select a cloud or remote provider. Existing files remain in Download/Operit/models and can be removed using a file manager.</string>
     <string name="openai_error_repetition_truncation">The server stopped repetitive model output. The response was discarded and its tools will not run.</string>
     <string name="openai_retry_repetition_truncation">Repetitive output was discarded. Retrying the request once.</string>
@@ -3434,7 +3435,7 @@
     <string name="chat_ai_computer_closed_due_to_workspace">AI computer closed (workspace opened)</string>
     <string name="ai_planning_desc">Will perform task decomposition and trigger multiple sub-agents to collect information, then summarize. Sub-agents have the same tool-calling capabilities as the chat agent. This can be very time-consuming, only recommended when collecting information.</string>
     <string name="thinking_mode">Thinking Mode</string>
-    <string name="thinking_mode_desc">Currently supports Gemini, Qwen3, Claude, Doubao, NVIDIA, SiliconFlow and MNN local models, enabling built-in thinking.</string>
+    <string name="thinking_mode_desc">Currently enables built-in thinking for Gemini, Qwen3, Claude, Doubao, NVIDIA, and SiliconFlow.</string>
     <string name="model_selection">Model Selection</string>
     <string name="prompt_selection">Prompt Selection</string>
     <string name="memory_selection">Memory Selection</string>
@@ -4182,29 +4183,6 @@
     <string name="select_api_provider_title">Select API Provider</string>
     <string name="search_providers">Search providers</string>
 
-    <!-- llama.cpp Local Inference -->
-    <string name="llama_local_model_tip">Local models are usually weaker. Consider disabling memory links and disabling tools for chat.</string>
-    <string name="llama_local_model_download_tip">llama.cpp models must be downloaded manually (.gguf). Put the model file in the folder below, then enter the file name in “Model name”:</string>
-    <string name="llama_local_model_dir">Default model folder: %1$s</string>
-    <string name="llama_auto_config_tip">Batch size, mmap, Flash Attention, KV, and other Android compatibility settings are built in. In normal use, you only need thread count, context size, and GPU layers.</string>
-    <string name="llama_select_downloaded_model">Select downloaded model</string>
-    <string name="llama_thread_count">Thread count</string>
-    <string name="llama_context_size">Context size</string>
-    <string name="llama_context_size_subtitle">On Android, start with 2048 first. Larger values are more likely to fail during initialization.</string>
-    <string name="llama_batch_size">Batch size</string>
-    <string name="llama_batch_size_subtitle">Keep this at or below 512, and never above the context size.</string>
-    <string name="llama_ubatch_size">Micro batch size</string>
-    <string name="llama_ubatch_size_subtitle">Keep this at or below the batch size. On Android, 512 is usually the safer choice.</string>
-    <string name="llama_gpu_layers">GPU layers</string>
-    <string name="llama_gpu_layers_subtitle">Only works when the current build has a GPU backend. Use 0 for CPU-only.</string>
-    <string name="llama_use_mmap">Use mmap</string>
-    <string name="llama_use_mmap_subtitle">Off is the safer default on Android. Disabling mmap helps many devices load GGUF successfully.</string>
-    <string name="llama_flash_attention">Enable Flash Attention</string>
-    <string name="llama_flash_attention_subtitle">Off is the safer default on mobile to avoid unstable Android backends.</string>
-    <string name="llama_kv_unified">Unified KV cache</string>
-    <string name="llama_kv_unified_subtitle">Recommended for single-session chat to reduce context management overhead on Android.</string>
-    <string name="llama_offload_kqv">Offload KQV to GPU</string>
-    <string name="llama_offload_kqv_subtitle">Only matters when GPU layers are above 0. It is ignored when no GPU backend is available.</string>
 
     <!-- ModelParametersSection strings -->
     <string name="max_tokens_name">Max Tokens</string>
@@ -4950,38 +4928,6 @@
     <string name="message_limit_reached_message">The current conversation has reached the limit of %1$d messages.\nTo maintain conversation quality and performance, please clear the history to continue.</string>
     <string name="go_clear">Clear Now</string>
     
-    <!-- MNN Local Inference -->
-    <string name="screen_title_mnn_model_download">MNN Model Download</string>
-    <string name="mnn_model_download">Download MNN Model</string>
-    <string name="mnn_model_management">Model Management</string>
-    <string name="mnn_download_from_modelscope">Download from ModelScope</string>
-    <string name="mnn_model_size">Model Size: %1$.2f GB</string>
-    <string name="mnn_downloading">Downloading</string>
-    <string name="mnn_download_speed">Speed: %1$s</string>
-    <string name="mnn_download_complete">Download Complete</string>
-    <string name="mnn_download_failed">Download Failed: %1$s</string>
-    <string name="mnn_no_models_downloaded">No models downloaded yet</string>
-    <string name="mnn_select_downloaded_model">Select downloaded model</string>
-    <string name="mnn_model_name_only">Model Name</string>
-    <string name="mnn_download_progress">Progress: %1$d%%</string>
-    <string name="mnn_pause_download">Pause Download</string>
-    <string name="mnn_resume_download">Resume Download</string>
-    <string name="mnn_delete_model">Delete Model</string>
-    <string name="mnn_confirm_delete">Confirm to delete this model?</string>
-    <string name="mnn_loading_models">Loading model list...</string>
-    <string name="mnn_connecting">Connecting...</string>
-    <string name="mnn_load_failed">Load Failed</string>
-    <string name="mnn_retry">Retry</string>
-    <string name="mnn_start_download">Start Download</string>
-    <string name="mnn_no_local_models">No models downloaded yet</string>
-    <string name="mnn_go_download">Go to Download</string>
-    <string name="mnn_search_models">Search models...</string>
-    <string name="mnn_no_search_results">No matching models found</string>
-    <string name="mnn_local_model_tip">Local models have limited understanding. It\'s recommended to disable memory links and enable tool restrictions for conversations</string>
-    <string name="mnn_model_path">Model File Path</string>
-    <string name="mnn_model_path_placeholder">Enter the full path to MNN model file</string>
-    <string name="mnn_forward_type">Forward Type</string>
-    <string name="mnn_thread_count">Thread Count</string>
 
     <!-- Default Assistant Setup Guide -->
     <string name="default_assistant_guide_title">Set Default Voice Assistant</string>
@@ -7173,25 +7119,6 @@
     <string name="ai_message_continue_task_if_complete">%1$s\n\nPlease continue, if the task is complete, output a summary</string>
     <string name="ai_message_user_label">User</string>
 
-    <!-- MNN Provider -->
-    <string name="mnn_model_dir_not_exist">Model directory does not exist: %1$s\nPlease ensure the model is downloaded</string>
-    <string name="mnn_config_not_exist">Configuration file does not exist: %1$s\nPlease ensure the model is fully downloaded</string>
-    <string name="mnn_cannot_create_session">Unable to create MNN LLM session, please check model files and configuration</string>
-    <string name="mnn_user_prompt">User: %1$s\n</string>
-    <string name="mnn_assistant_prompt">Assistant: %1$s\n</string>
-    <string name="mnn_system_prompt">System: %1$s\n</string>
-    <string name="mnn_message_format">User: %1$s\n</string>
-    <string name="mnn_assistant">Assistant: </string>
-    <string name="mnn_error_with_message">Error: %1$s</string>
-    <string name="mnn_session_not_initialized">Error: LLM session not initialized</string>
-    <string name="mnn_reasoning_error">\n\n[Reasoning process error]</string>
-    <string name="mnn_error_request_cancelled">Request cancelled by user</string>
-    <string name="mnn_generic_error">Error: %1$s</string>
-    <string name="mnn_model_not_configured">Model name not configured</string>
-    <string name="mnn_model_dir_missing">Model directory does not exist: %1$s\nPlease download the model first</string>
-    <string name="mnn_file_status">File status:</string>
-    <string name="mnn_init_failed">Model initialization failed</string>
-    <string name="mnn_connection_success">MNN LLM model connected successfully!\n\nModel: %1$s\nDirectory: %2$s\nTotal size: %3$s\n\n%4$s</string>
 
     <!-- APK Reverse Engineer -->
     <string name="apk_unnamed_function">(Unnamed function)</string>
@@ -7338,15 +7265,6 @@
     <string name="html_export_message_count">Message Count</string>
     <string name="html_export_footer">Exported from Operit Ry Assistant</string>
 
-    <!-- MnnModelDownloadManager -->
-    <string name="mnn_no_cache_data">No cache data</string>
-    <string name="mnn_response_empty">Response body is empty</string>
-    <string name="mnn_fetch_repo_files_failed">Failed to fetch repository file list: %1$s</string>
-    <string name="mnn_download_failed_http">Download failed: HTTP %1$d %2$s</string>
-    <string name="mnn_rename_failed">Rename failed</string>
-    <string name="mnn_unknown_error">Unknown error</string>
-    <string name="mnn_download_file_failed">Failed to download file: %1$s (HTTP %2$d)</string>
-    <string name="mnn_download_paused">Download paused</string>
 
     <!-- MCPBridge -->
     <string name="mcp_send_command">Send bridge command</string>
@@ -7461,15 +7379,6 @@
     <string name="conversation_analyze_audio_prompt">Please analyze this audio.</string>
     <string name="conversation_analyze_video_prompt">Please analyze this video.</string>
 
-    <!-- LlamaProvider -->
-    <string name="llama_error_model_file_not_exist">Model file does not exist: %1$s</string>
-    <string name="llama_error_create_session_failed">Failed to create llama.cpp session (nativeCreateSession returned 0)</string>
-    <string name="llama_error_prefix">Error</string>
-    <string name="llama_error_session_create_failed">Error: Failed to create llama.cpp session (please check model file and JNI compilation output)</string>
-    <string name="llama_error_chat_template_failed">Error: Cannot apply model chat template (llama_model_chat_template/llama_chat_apply_template)</string>
-    <string name="llama_error_inference_failed">llama.cpp inference process error</string>
-    <string name="llama_error_inference_tag">[Inference error occurred]</string>
-    <string name="llama_error_request_cancelled">Request cancelled by user</string>
 
     <!-- TaskExecutor -->
     <string name="task_error_execution_failed">Task execution failed: %1$s</string>
@@ -7495,8 +7404,6 @@
     <!-- GraphVisualizer -->
     <string name="graph_char_for_measurement">中</string>
 
-    <!-- MnnModelDownloadScreen -->
-    <!-- No strings needed here -->
 
     <!-- User profile document -->
     <string name="date_format_pattern">MMMM dd, yyyy</string>

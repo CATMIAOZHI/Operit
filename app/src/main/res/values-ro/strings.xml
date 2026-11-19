@@ -3185,7 +3185,7 @@
     <string name="chat_start_ai_computer_failed">PornireAIEroare la computer: %1$s</string>
     <string name="chat_ai_computer_closed_due_to_workspace">AIComputerul a fost oprit (din cauza deschiderii spațiului de lucru)</string>
     <string name="thinking_mode">Modul de gândire</string>
-    <string name="thinking_mode_desc">În prezent, se acceptăGemini,Qwen3,Claude, chifle cu fasole,NVIDIA, curgerea pe bază de siliciu șiMNNModel local, capabil să activeze gândirea integrată.</string>
+    <string name="thinking_mode_desc">Raționamentul integrat poate fi activat în prezent pentru Gemini, Qwen3, Claude, Doubao, NVIDIA și SiliconFlow.</string>
     <string name="details">Detalii</string>
     <string name="model_selection">Alegerea modelului</string>
     <string name="prompt_selection">Alegerea cuvintelor-cheie</string>
@@ -4849,33 +4849,6 @@
     <string name="toolpkg_widget_picker_empty_body">Mai întâi, activează un cont înregistrat desktop widget al ToolPkg, apoi revino pentru a adăuga.</string>
     <string name="toolpkg_widget_picker_selecting">Se configurează…</string>
 
-    <!-- MNN Model Download -->
-    <string name="screen_title_mnn_model_download">MNNDescărcare model</string>
-    <string name="mnn_model_download">DescărcareMNNModel</string>
-    <string name="mnn_model_management">Gestionarea modelelor</string>
-    <string name="mnn_download_from_modelscope">De laModelScopeDescărcare</string>
-    <string name="mnn_model_size">Dimensiunea modelului: %1$.2f GB</string>
-    <string name="mnn_downloading">Se descarcă</string>
-    <string name="mnn_download_speed">Viteză: %1$s</string>
-    <string name="mnn_download_complete">Descărcarea s-a încheiat</string>
-    <string name="mnn_download_failed">Descărcarea a eșuat: %1$s</string>
-    <string name="mnn_no_models_downloaded">Nu există încă modele descărcate</string>
-    <string name="mnn_select_downloaded_model">Selectați modelul descărcat</string>
-    <string name="mnn_model_name_only">Denumirea modelului</string>
-    <string name="mnn_download_progress">Stadiul de realizare: %1$d%%</string>
-    <string name="mnn_pause_download">Întârzierea descărcării</string>
-    <string name="mnn_resume_download">Continuă descărcarea</string>
-    <string name="mnn_delete_model">Ștergerea modelului</string>
-    <string name="mnn_confirm_delete">Doriți să confirmați ștergerea acestui model?</string>
-    <string name="mnn_loading_models">Se încarcă lista de modele...</string>
-    <string name="mnn_connecting">Se conectează...</string>
-    <string name="mnn_load_failed">Încărcarea a eșuat</string>
-    <string name="mnn_retry">Reîncercare</string>
-    <string name="mnn_start_download">Începe descărcarea</string>
-    <string name="mnn_no_local_models">Nu a fost descărcat încă niciun model</string>
-    <string name="mnn_go_download">Descărcați</string>
-    <string name="mnn_search_models">Modele de căutare...</string>
-    <string name="mnn_no_search_results">Nu s-au găsit modele corespunzătoare</string>
 
     <!-- Persona Card Generation Screen -->
     <string name="persona_card_generation_title">Cărțile de personaj modificate</string>
@@ -4914,36 +4887,7 @@
     <string name="message_limit_reached_message">Numărul actual de conversații a ajuns la %1$d Limita maximă.\nPentru a menține calitatea și performanța conversației, vă rugăm să ștergeți istoricul înainte de a continua.</string>
     <string name="go_clear">A merge la golire</string>
 
-    <!-- MNN 本地推理 -->
-    <string name="mnn_local_model_tip">Modelul care rulează local are o capacitate de înțelegere redusă; se recomandă dezactivarea legăturilor de memorie și activarea instrumentului de dezactivare pentru a purta o conversație</string>
-    <string name="mnn_model_path">Calea către fișierul modelului</string>
-    <string name="mnn_model_path_placeholder">IntroducereMNNCalea completă către fișierul modelului</string>
-    <string name="mnn_forward_type">Tip de calcul</string>
-    <string name="mnn_thread_count">Numărul de fire de execuție</string>
 
-    <!-- llama.cpp 本地推理 -->
-    <string name="llama_local_model_tip">Modelul care rulează local are o capacitate de înțelegere redusă; se recomandă dezactivarea legăturilor de memorie și activarea instrumentului de dezactivare pentru a purta o conversație</string>
-    <string name="llama_local_model_download_tip">llama.cpp Modelul trebuie descărcat separat (.gguf). Vă rugăm să plasați fișierul modelului în următorul folder, apoi să completați numele fișierului în câmpul „Numele modelului”:</string>
-    <string name="llama_local_model_dir">Directorul implicit al modelelor:%1$s</string>
-    <string name="llama_auto_config_tip">Dimensiunea lotului,mmap,Flash Attention,KV etc. Android Parametrii de compatibilitate sunt integrați; pentru utilizarea obișnuită, este suficient să reglați numărul de fire de execuție, dimensiunea contextului și GPU Numărul de etaje.</string>
-    <string name="llama_select_downloaded_model">Selectați modelul descărcat</string>
-    <string name="llama_thread_count">Numărul de fire de execuție</string>
-    <string name="llama_context_size">Lungimea contextului</string>
-    <string name="llama_context_size_subtitle">Android Se recomandă să începeți mai întâi cu 2048 La început, fișierele prea mari sunt mai susceptibile să eșueze la inițializare din cauza presiunii asupra memoriei</string>
-    <string name="llama_batch_size">Dimensiunea lotului</string>
-    <string name="llama_batch_size_subtitle">Se recomandă să nu depășească 512, și să nu depășească lungimea contextului</string>
-    <string name="llama_ubatch_size">Dimensiunea lotului mic</string>
-    <string name="llama_ubatch_size_subtitle">Se recomandă să nu se depășească dimensiunea lotului,Android De obicei 512 mai stabil</string>
-    <string name="llama_gpu_layers">GPU Numărul de etaje</string>
-    <string name="llama_gpu_layers_subtitle">Există o versiune de compilare curentă GPU backend abia atunci va intra în vigoare,0 înseamnă „pur” CPU</string>
-    <string name="llama_use_mmap">Utilizare mmap</string>
-    <string name="llama_use_mmap_subtitle">Android Opțiunea este dezactivată în mod implicit; pe multe modele, încărcarea se realizează mai ușor după dezactivarea acesteia GGUF</string>
-    <string name="llama_flash_attention">Activare Flash Attention</string>
-    <string name="llama_flash_attention_subtitle">Se recomandă ca opțiunea pentru dispozitivele mobile să fie dezactivată în mod implicit, pentru a evita anumite Android backend instabilitate</string>
-    <string name="llama_kv_unified">Unificare KV Cache</string>
-    <string name="llama_kv_unified_subtitle">Opțiunea de chat cu o singură sesiune este activată în mod implicit, ceea ce poate reduce Android Costurile asociate gestionării contextului</string>
-    <string name="llama_offload_kqv">Dezinstalare KQV până la GPU</string>
-    <string name="llama_offload_kqv_subtitle">Numai în GPU Numărul de etaje este mai mare decât 0 Uneori are sens, alteori nu GPU backend În acest caz, va fi ignorat automat</string>
 
     <!-- 工作流执行状态 -->
     <string name="workflow_execution_running">Se execută…</string>
@@ -6992,24 +6936,6 @@
     <string name="ai_message_continue_task_if_complete">%1$s\n\nTe rog să continui; dacă sarcina este finalizată, afișează un rezumat</string>
     <string name="ai_message_user_label">Utilizator</string>
 
-    <!-- MNN Provider -->
-    <string name="mnn_model_dir_not_exist">Catalogul de modele nu există: %1$s\nAsigurați-vă că modelul a fost descărcat</string>
-    <string name="mnn_config_not_exist">Fișierul de configurare nu există: %1$s\nAsigurați-vă că modelul a fost descărcat în întregime</string>
-    <string name="mnn_cannot_create_session">Nu se poate creaMNN LLMSesiune: vă rugăm să verificați fișierele modelului și configurația</string>
-    <string name="mnn_user_prompt">Utilizator: %1$s\n</string>
-    <string name="mnn_assistant_prompt">asistent: %1$s\n</string>
-    <string name="mnn_system_prompt">Sistem: %1$s\n</string>
-    <string name="mnn_message_format">Utilizator: %1$s\n</string>
-    <string name="mnn_assistant">asistent: </string>
-    <string name="mnn_error_with_message">Eroare: %1$s</string>
-    <string name="mnn_session_not_initialized">Eroare: LLMSesiunea nu a fost inițializată</string>
-    <string name="mnn_reasoning_error">\n\n[A apărut o eroare în procesul de deducție]</string>
-    <string name="mnn_generic_error">Eroare: %1$s</string>
-    <string name="mnn_model_not_configured">Numele modelului nu a fost configurat</string>
-    <string name="mnn_model_dir_missing">Catalogul de modele nu există: %1$s\nVă rugăm să descărcați mai întâi modelul</string>
-    <string name="mnn_file_status">Starea documentului:</string>
-    <string name="mnn_init_failed">Eșec la inițializarea modelului</string>
-    <string name="mnn_connection_success">MNN LLMModelul a fost conectat cu succes!\n\nModel: %1$s\nCuprins: %2$s\nDimensiunea totală: %3$s\n\n%4$s</string>
 
     <!-- APK Reverse Engineer -->
     <string name="apk_unnamed_function">(Funcție fără nume)</string>
@@ -7165,15 +7091,6 @@
     <string name="html_export_message_count">Numărul de mesaje</string>
     <string name="html_export_footer">Extras din Operit Ry</string>
 
-    <!-- MnnModelDownloadManager (新增) -->
-    <string name="mnn_no_cache_data">Date fără cache</string>
-    <string name="mnn_response_empty">Corpul răspunsului este gol</string>
-    <string name="mnn_fetch_repo_files_failed">Eroare la preluarea listei de fișiere din depozit: %1$s</string>
-    <string name="mnn_download_failed_http">Descărcarea a eșuat: HTTP %1$d %2$s</string>
-    <string name="mnn_rename_failed">Eșecul redenumirii</string>
-    <string name="mnn_unknown_error">Eroare necunoscută</string>
-    <string name="mnn_download_file_failed">Descărcarea fișierului a eșuat: %1$s (HTTP %2$d)</string>
-    <string name="mnn_download_paused">Descărcarea a fost suspendată</string>
 
     <!-- MCPBridge (新增) -->
     <string name="mcp_send_command">Trimiterea comenzii de bridge</string>
@@ -7324,14 +7241,6 @@
     <string name="conversation_analyze_audio_prompt">Please analyze this audio.</string>
     <string name="conversation_analyze_video_prompt">Please analyze this video.</string>
 
-    <!-- LlamaProvider -->
-    <string name="llama_error_model_file_not_exist">Fișierul modelului nu există: %1$s</string>
-    <string name="llama_error_create_session_failed">Creare llama.cpp Eroare de sesiune (nativeCreateSession Înapoi 0)</string>
-    <string name="llama_error_prefix">Eroare</string>
-    <string name="llama_error_session_create_failed">Eroare: Creare llama.cpp Eroare de sesiune (vă rugăm să verificați fișierul modelului și JNI (Rezultatul compilării)</string>
-    <string name="llama_error_chat_template_failed">Eroare: Nu se poate aplica șablonul de dialog al modelului (llama_model_chat_template/llama_chat_apply_template)</string>
-    <string name="llama_error_inference_failed">llama.cpp A apărut o eroare în procesul de deducție</string>
-    <string name="llama_error_inference_tag">[A apărut o eroare în procesul de deducție]</string>
 
     <!-- TaskExecutor -->
     <string name="task_error_execution_failed">Eșecul executării misiunii: %1$s</string>
@@ -7357,8 +7266,6 @@
     <!-- GraphVisualizer -->
     <string name="graph_char_for_measurement">în</string>
 
-    <!-- MnnModelDownloadScreen -->
-    <!-- No strings needed here -->
 
     <!-- User profile document -->
     <string name="date_format_pattern">yyyyanMMLunaddzi</string>

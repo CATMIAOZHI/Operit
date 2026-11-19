@@ -23,8 +23,6 @@ import com.ai.assistance.operit.core.tools.createToolErrorRecord
 import com.ai.assistance.operit.core.tools.ToolParameterObservation
 import com.ai.assistance.operit.core.tools.ToolCallRepairRouter
 import com.ai.assistance.operit.core.tools.ToolCallRepairLogger
-import com.ai.assistance.operit.core.tools.climode.CliToolModeSupport
-import com.ai.assistance.operit.core.tools.climode.ToolExposureMode
 import com.ai.assistance.operit.data.model.ToolInvocation
 import com.ai.assistance.operit.data.model.ToolExecutionState
 import com.ai.assistance.operit.data.model.ToolResult
@@ -107,7 +105,7 @@ object ToolExecutionManager {
     private val declaredSystemParameters by lazy {
         // Include the full file-tool declaration, not the capability-filtered model prompt.
         (SystemToolPrompts.getAllCategoriesEn().flatMap { it.tools } +
-            SystemToolPrompts.fileSystemTools.tools + CliToolModeSupport.buildCliPublicToolPrompts(true))
+            SystemToolPrompts.fileSystemTools.tools)
             .associate { it.name to it.parametersStructured?.map { parameter -> parameter.name }?.toSet() }
     }
 
@@ -188,7 +186,6 @@ object ToolExecutionManager {
         val callerName: String? = null,
         val callerCardId: String? = null,
         val callerChatId: String? = null,
-        val toolExposureMode: ToolExposureMode = ToolExposureMode.FULL,
         val conversationLabel: String? = null,
         val workspacePath: String? = null,
         val workspaceEnv: String? = null,
@@ -336,9 +333,7 @@ object ToolExecutionManager {
     }
 
     private fun resolveToolTarget(tool: AITool): ResolvedToolTarget {
-        if (tool.name != PACKAGE_PROXY_TOOL_NAME &&
-            tool.name != CliToolModeSupport.PROXY_TOOL_NAME
-        ) {
+        if (tool.name != PACKAGE_PROXY_TOOL_NAME) {
             return ResolvedToolTarget(tool = tool, displayName = tool.name)
         }
 
@@ -448,9 +443,7 @@ object ToolExecutionManager {
         val needsPackageLookup =
             invocations.any { invocation ->
                 val toolName = invocation.tool.name
-                toolName == PACKAGE_PROXY_TOOL_NAME ||
-                    toolName == CliToolModeSupport.PROXY_TOOL_NAME ||
-                    toolName.contains(':')
+                toolName == PACKAGE_PROXY_TOOL_NAME || toolName.contains(':')
             }
         if (!needsPackageLookup) {
             return HostPackageContext(toolHandler = toolHandler)
@@ -546,9 +539,7 @@ object ToolExecutionManager {
         tool: AITool,
         hostContext: HostPackageContext,
     ): AITool {
-        if (tool.name != PACKAGE_PROXY_TOOL_NAME &&
-            tool.name != CliToolModeSupport.PROXY_TOOL_NAME
-        ) {
+        if (tool.name != PACKAGE_PROXY_TOOL_NAME) {
             return tool
         }
         val targetToolName = tool.parameters
@@ -617,12 +608,6 @@ object ToolExecutionManager {
         val resolvedTarget = resolveToolTarget(invocation.tool).tool
 
         return when {
-            toolName == CliToolModeSupport.SEARCH_TOOL_NAME -> true
-
-            toolName == CliToolModeSupport.PROXY_TOOL_NAME -> {
-                isResolvedTargetAllowedForRoleCard(resolvedTarget, roleCardToolAccess)
-            }
-
             toolName == "use_package" -> {
                 if (!roleCardToolAccess.isBuiltinToolAllowed("use_package")) {
                     false
@@ -678,7 +663,7 @@ object ToolExecutionManager {
             }
         }
         val source = when (toolName) {
-            PACKAGE_PROXY_TOOL_NAME, CliToolModeSupport.PROXY_TOOL_NAME -> sourceOf(resolveToolTarget(invocation.tool).tool)
+            PACKAGE_PROXY_TOOL_NAME -> sourceOf(resolveToolTarget(invocation.tool).tool)
             else -> sourceOf(invocation.tool)
         }
         return source?.trim()?.takeIf { it.isNotEmpty() }
@@ -688,13 +673,12 @@ object ToolExecutionManager {
         return LocaleUtils.usesEnglishPrompt(context)
     }
 
-    private suspend fun buildToolExposureDeniedResult(
+    /** A call refused before review: an Orbit subagent's hidden tool, or the terminal switched off. */
+    private suspend fun buildCallDeniedResult(
         context: Context,
         invocation: ToolInvocation,
-        toolExposureMode: ToolExposureMode,
         callerChatId: String?,
     ): ToolResult? {
-        val toolName = invocation.tool.name.trim()
         // An Orbit's subagent knows all the Orbit's tools from its prompt; the hidden ones stay
         // with the main agent, through proxy as much as directly.
         val targetName = resolveToolTarget(invocation.tool).tool.name.trim()
@@ -708,48 +692,7 @@ object ToolExecutionManager {
             return ToolResult(toolName = targetName, success = false, result = StringResultData(""),
                 error = context.getString(R.string.terminal_tools_switched_off))
         }
-        if (PermissionReviewInternalTools.bypassesPermissionCheck(toolName) ||
-            com.ai.assistance.operit.features.orbit.OrbitTaskExecution.isTaskCapability(toolName)) {
-            return null
-        }
-        if (toolName in com.ai.assistance.operit.core.agent.collaboration.CollaborationTools.names &&
-            com.ai.assistance.operit.features.orbit.OrbitTaskExecution.resolve(context, callerChatId) != null) {
-            return null
-        }
-        val useEnglish = isEnglishLanguage(context)
-        val errorMessage =
-            when {
-                toolExposureMode == ToolExposureMode.CLI &&
-                    !CliToolModeSupport.isCliPublicTool(toolName) -> {
-                    CliToolModeSupport.buildCliTopLevelRestrictionErrorMessage(
-                        attemptedToolName = resolveDisplayToolName(invocation.tool),
-                        useEnglish = useEnglish
-                    )
-                }
-
-                toolExposureMode == ToolExposureMode.FULL &&
-                    CliToolModeSupport.isCliPublicTool(toolName) -> {
-                    CliToolModeSupport.buildCliModeUnavailableMessage(useEnglish)
-                }
-
-                else -> null
-            } ?: return null
-
-        val resultToolName =
-            if (toolExposureMode == ToolExposureMode.CLI &&
-                !CliToolModeSupport.isCliPublicTool(toolName)
-            ) {
-                resolveDisplayToolName(invocation.tool)
-            } else {
-                toolName
-            }
-
-        return ToolResult(
-            toolName = resultToolName,
-            success = false,
-            result = StringResultData(""),
-            error = errorMessage
-        )
+        return null
     }
 
     private fun isResolvedTargetAllowedForRoleCard(
@@ -768,11 +711,7 @@ object ToolExecutionManager {
                 null
             }
 
-        return CliToolModeSupport.isToolNameAllowedForRoleCard(
-            toolName = resolvedTargetName,
-            usePackageSourceName = usePackageSourceName,
-            roleCardToolAccess = roleCardToolAccess
-        )
+        return roleCardToolAccess.allowsTool(resolvedTargetName, usePackageSourceName)
     }
 
     private fun resolveProxyParameters(tool: AITool): List<ToolParameter> {
@@ -869,7 +808,6 @@ object ToolExecutionManager {
     internal suspend fun checkToolPermission(
         toolHandler: AIToolHandler,
         invocation: ToolInvocation,
-        toolExposureMode: ToolExposureMode = ToolExposureMode.FULL,
         conversationLabel: String? = null,
         workspacePath: String? = null,
         workspaceEnv: String? = null,
@@ -895,16 +833,6 @@ object ToolExecutionManager {
         val resolvedTarget = resolveToolTarget(invocation.tool)
         val permissionTool = resolvedTarget.tool
 
-        if (toolExposureMode == ToolExposureMode.CLI &&
-            invocation.tool.name == CliToolModeSupport.SEARCH_TOOL_NAME
-        ) {
-            toolHandler.notifyToolPermissionChecked(
-                permissionTool,
-                granted = true,
-                reason = "CLI public tool"
-            )
-            return ToolPermissionCheckResult(ToolPermissionDecision.Allowed, null)
-        }
 
         // Always check the resolved target. Model-controlled raw XML must never bypass permission.
         val toolPermissionSystem = toolHandler.getToolPermissionSystem()
@@ -967,7 +895,6 @@ object ToolExecutionManager {
         packageManager: PackageManager,
         collector: StreamCollector<String>,
         timingScopeId: String? = null,
-        toolExposureMode: ToolExposureMode = ToolExposureMode.FULL,
         callerName: String? = null,
         callerChatId: String? = null,
         callerCardId: String? = null,
@@ -1006,10 +933,7 @@ object ToolExecutionManager {
         val boundInvocations =
             invocations.map { invocation ->
                 val repaired = ToolCallRepairRouter.route(invocation)?.invocation ?: invocation
-                if (
-                    repaired.tool.name == PACKAGE_PROXY_TOOL_NAME ||
-                    repaired.tool.name == CliToolModeSupport.PROXY_TOOL_NAME
-                ) {
+                if (repaired.tool.name == PACKAGE_PROXY_TOOL_NAME) {
                     repaired.copy(
                         tool = bindProxyContextParameters(repaired.tool, hostContext)
                     )
@@ -1050,7 +974,6 @@ object ToolExecutionManager {
                         packageManager = packageManager,
                         collector = collector,
                         timingScopeId = timingScopeId,
-                        toolExposureMode = toolExposureMode,
                         callerName = callerName,
                         callerChatId = callerChatId,
                         callerCardId = callerCardId,
@@ -1075,7 +998,6 @@ object ToolExecutionManager {
                         packageManager = packageManager,
                         collector = collector,
                         timingScopeId = timingScopeId,
-                        toolExposureMode = toolExposureMode,
                         callerName = callerName,
                         callerChatId = callerChatId,
                         callerCardId = callerCardId,
@@ -1107,7 +1029,7 @@ object ToolExecutionManager {
             ToolCallRepairRouter.route(invocation)
                 ?.takeUnless {
                     it.rules == listOf(ToolCallRepairRouter.LEGACY_TERMINAL_NAME) &&
-                        (it.original.tool.name !in setOf("proxy", "package_proxy") ||
+                        (it.original.tool.name != "package_proxy" ||
                             it.original.tool.parameters.none { p -> p.name == "package_name" })
                 }
                 ?.let { repair ->
@@ -1179,15 +1101,9 @@ object ToolExecutionManager {
                 if (consecutiveCount < SUBAGENT_EXACT_REPEAT_REVIEW_THRESHOLD) {
                     continue
                 }
-                val isCliPublicTool =
-                    toolExposureMode == ToolExposureMode.CLI &&
-                        (
-                            invocation.tool.name == CliToolModeSupport.SEARCH_TOOL_NAME ||
-                                invocation.tool.name == CliToolModeSupport.PROXY_TOOL_NAME
-                            )
                 val effectivePermission =
                     permissionSystem.getEffectivePermissionLevel(resolvedTool.name, callerChatId)
-                if (!isCliPublicTool && effectivePermission == PermissionLevel.FORBID) {
+                if (effectivePermission == PermissionLevel.FORBID) {
                     // The normal permission path will reject this call without offering an override.
                     continue
                 }
@@ -1253,7 +1169,6 @@ object ToolExecutionManager {
                 callerName = callerName,
                 callerCardId = callerCardId,
                 callerChatId = callerChatId,
-                toolExposureMode = toolExposureMode,
                 conversationLabel = conversationLabel,
                 workspacePath = workspacePath,
                 workspaceEnv = workspaceEnv,
@@ -1285,7 +1200,7 @@ object ToolExecutionManager {
                         error = "Subagents cannot invoke tools that start nested AI turns.",
                     )
                 } else {
-                    buildToolExposureDeniedResult(context, invocation, toolExposureMode, callerChatId)
+                    buildCallDeniedResult(context, invocation, callerChatId)
                 }
             if (deniedResult == null) {
                 toolExposurePermittedInvocations.add(invocation)
@@ -1468,7 +1383,6 @@ object ToolExecutionManager {
                     checkToolPermission(
                         toolHandler,
                         invocation,
-                        toolExposureMode,
                         conversationLabel,
                         workspacePath,
                         workspaceEnv,
@@ -1983,7 +1897,7 @@ object ToolExecutionManager {
                 val executor = toolHandler.getToolExecutorOrActivate(toolName)
                 // A call let through unreviewed as the app's own package tool is checked on the executor
                 // that runs it. A proxy picks its target's executor itself and checks it there.
-                val proxied = toolName == PACKAGE_PROXY_TOOL_NAME || toolName == CliToolModeSupport.PROXY_TOOL_NAME
+                val proxied = toolName == PACKAGE_PROXY_TOOL_NAME
                 val reviewAgain = executor != null && !proxied &&
                     !toolHandler.getToolPermissionSystem()
                         .orbitDefaultAllowStillHolds(

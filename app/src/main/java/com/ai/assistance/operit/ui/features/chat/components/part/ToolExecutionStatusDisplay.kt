@@ -252,7 +252,7 @@ internal fun shouldAllowUnmatchedTaskExecution(
     requestedToolName: String?,
     liveExecution: ToolExecutionTimingSnapshot?,
 ): Boolean =
-    requestedToolName == "task" && liveExecution?.toolName in setOf("task", "proxy")
+    requestedToolName == "task" && liveExecution?.toolName == "task"
 
 @Composable
 internal fun ToolExecutionStatusDisplay(

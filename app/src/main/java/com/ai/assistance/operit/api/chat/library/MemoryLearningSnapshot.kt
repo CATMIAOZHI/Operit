@@ -3,7 +3,6 @@ package com.ai.assistance.operit.api.chat.library
 import android.content.Context
 import com.ai.assistance.operit.api.chat.EnhancedAIService
 import com.ai.assistance.operit.data.model.FunctionType
-import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.ModelConfigData
 
 /** Detached, bounded evidence: never rewrites the foreground transcript or its cached prefix. */
@@ -42,11 +41,8 @@ internal object MemoryLearningSnapshot {
         val length = listOf(positive(config.contextLength), positive(config.maxContextLength))
             .filter { it * 1000f >= MIN_WINDOW_TOKENS }
             .maxOrNull() ?: 0f
-        var window = if (length > 0f) (length.toDouble() * 1000).coerceAtMost(2_000_000.0).toInt()
+        val window = if (length > 0f) (length.toDouble() * 1000).coerceAtMost(2_000_000.0).toInt()
             else maxOf(FALLBACK_WINDOW_TOKENS, minimumWindowTokens(instructionBytes))
-        val provider = ApiProviderType.fromProviderTypeId(config.apiProviderTypeId) ?: config.apiProviderType
-        if (provider == ApiProviderType.LLAMA_CPP) window = minOf(window, config.llamaContextSize)
-        if (provider == ApiProviderType.MNN) window = minOf(window, 2048)
         // A review needs room for its own instructions, the minimum evidence and a response.
         val required = minimumWindowTokens(instructionBytes)
         require(window >= required) {

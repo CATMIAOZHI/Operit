@@ -21,6 +21,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.FunctionType
 import com.ai.assistance.operit.data.model.ModelConfigSummary
 import com.ai.assistance.operit.data.model.getModelList
@@ -178,7 +179,8 @@ internal fun OrbitModelsPage(orbit: OrbitProfile, onBack: () -> Unit, onOpenMode
 private fun ModelRow(title: String, ref: OrbitModelRef?, summaries: List<ModelConfigSummary>,
     follow: Boolean = false, onClick: () -> Unit) {
     val summary = summaries.firstOrNull { it.id == ref?.configId }
-    val valid = ref != null && summary != null && ref.resolveIndex(summary.modelName, summary.apiProviderTypeId) >= 0
+    val valid = ref != null && summary != null && !ApiProviderType.isRetiredId(summary.apiProviderTypeId) &&
+        ref.resolveIndex(summary.modelName, summary.apiProviderTypeId) >= 0
     val modelName = ref?.modelName?.ifEmpty { stringResource(R.string.orbit_model_plugin_default) }.orEmpty()
     SettingsNavRow(title, onClick, searchable = false, subtitle = when {
         ref == null -> stringResource(if (follow) R.string.orbit_model_follow else R.string.orbit_model_not_set)
@@ -221,7 +223,8 @@ private fun OrbitModelPicker(title: String, summaries: List<ModelConfigSummary>,
     var query by rememberSaveable { mutableStateOf("") }
     var expanded by rememberSaveable { mutableStateOf(current?.configId) }
     val groups by produceState<List<PickerGroup>?>(null, summaries, imageOnly) {
-        value = summaries.mapNotNull { summary ->
+        // Retired local providers can no longer serve requests, so they are not offered.
+        value = summaries.filterNot { ApiProviderType.isRetiredId(it.apiProviderTypeId) }.mapNotNull { summary ->
             val config = if (imageOnly) manager.getModelConfig(summary.id) else null
             // A config may list one model twice; the list keys need each once.
             val refs = getModelList(summary.modelName).distinct().map { OrbitModelRef(summary.id, it) }

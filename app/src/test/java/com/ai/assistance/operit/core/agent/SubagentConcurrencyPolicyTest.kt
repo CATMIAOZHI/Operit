@@ -2,10 +2,8 @@ package com.ai.assistance.operit.core.agent
 
 import com.ai.assistance.operit.core.tools.PermissionReviewSubmissionTool
 import com.ai.assistance.operit.core.tools.PermissionReviewInternalTools
-import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.SubagentRunEntity
 import com.ai.assistance.operit.data.model.SubagentRunStatus
-import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -16,18 +14,6 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.yield
 
 class SubagentConcurrencyPolicyTest {
-    @Test
-    fun localNativeProvidersAlwaysRunOneAtATime() {
-        assertEquals(1, SubagentConcurrencyPolicy.modelLimit(ApiProviderType.MNN, 0))
-        assertEquals(1, SubagentConcurrencyPolicy.modelLimit(ApiProviderType.LLAMA_CPP, 8))
-    }
-
-    @Test
-    fun remoteProviderUsesConfiguredLimitAndZeroMeansUnlimited() {
-        assertEquals(3, SubagentConcurrencyPolicy.modelLimit(ApiProviderType.OPENAI, 3))
-        assertEquals(0, SubagentConcurrencyPolicy.modelLimit(ApiProviderType.OPENAI, 0))
-    }
-
     @Test
     fun isolatedResultToolPermissionReviewerReusesItsRunningParentModelLease() {
         val parentRun =

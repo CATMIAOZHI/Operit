@@ -2,6 +2,7 @@ package com.ai.assistance.operit.core.agent.collaboration
 
 import com.ai.assistance.operit.data.model.ModelConfigSummary
 import com.ai.assistance.operit.data.model.getModelList
+import com.ai.assistance.operit.data.model.selectableForBinding
 
 /** Resolve readable model choices to the exact configuration and model index. */
 internal object CollaborationModels {
@@ -12,8 +13,9 @@ internal object CollaborationModels {
         val provider: String,
     )
 
+    // Retired local providers can't run a subagent, so they are neither listed nor resolved.
     fun choices(configs: List<ModelConfigSummary>): List<Choice> {
-        val models = configs.flatMap { config ->
+        val models = configs.selectableForBinding().flatMap { config ->
             val configName = config.name.trim().ifEmpty {
                 config.apiProviderTypeId.ifBlank { config.apiProviderType.name }
             }

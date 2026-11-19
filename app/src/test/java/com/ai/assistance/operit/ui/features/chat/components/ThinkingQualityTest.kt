@@ -798,9 +798,7 @@ class ThinkingQualityTest {
     @Test fun requestSummary_preservesProviderOverridesWhileGlobalThinkingIsOff() {
         val plainOpenAiCompatibleProviders =
             listOf(
-                ApiProviderType.OPENAI_LOCAL,
-                ApiProviderType.LMSTUDIO,
-                ApiProviderType.OLLAMA,
+                ApiProviderType.OLLAMA_CLOUD,
                 ApiProviderType.MISTRAL,
                 ApiProviderType.FOUR_ROUTER,
                 ApiProviderType.BAIDU,
@@ -841,7 +839,7 @@ class ThinkingQualityTest {
         assertEquals(
             ThinkingRequestSummary.CustomValue("   "),
             ThinkingRequestSemantics.resolve(
-                providerType = ApiProviderType.OPENAI_LOCAL,
+                providerType = ApiProviderType.OLLAMA_CLOUD,
                 modelName = "openai-compatible-model",
                 qualityLevel = 5,
                 modelParameters = listOf(stringParameter("reasoning_effort", "   ")),
@@ -1425,6 +1423,42 @@ class ThinkingQualityTest {
         )
     }
 
+    @Test fun requestSummary_reportsNotSentForRetiredProviders() {
+        val parameters = listOf(stringParameter("reasoning_effort", "high"))
+        listOf(
+            ApiProviderType.LMSTUDIO,
+            ApiProviderType.OLLAMA,
+            ApiProviderType.OPENAI_LOCAL,
+            ApiProviderType.MNN,
+            ApiProviderType.LLAMA_CPP,
+        ).forEach { provider ->
+            val config = ModelConfigSummary(
+                id = "retired",
+                name = "Retired",
+                apiProviderType = provider,
+                apiProviderTypeId = " ${provider.name.lowercase()} ",
+            )
+            for (enableThinking in listOf(true, false)) {
+                assertEquals(
+                    provider.name,
+                    ThinkingRequestSummary.NotSent,
+                    ThinkingRequestSemantics.resolve(
+                        providerType = provider,
+                        modelName = "legacy-model",
+                        qualityLevel = 5,
+                        modelParameters = parameters,
+                        enableThinking = enableThinking,
+                    ),
+                )
+                assertEquals(
+                    provider.name,
+                    ThinkingRequestSummary.NotSent,
+                    ThinkingRequestSemantics.resolve(config, "legacy-model", 5, parameters, enableThinking),
+                )
+            }
+        }
+    }
+
     @Test fun requestSummary_reportsNotSentForUnknownProviderId() {
         assertEquals(
             ThinkingRequestSummary.NotSent,
@@ -1506,16 +1540,6 @@ class ThinkingQualityTest {
                     modelName = "gpt-5.6",
                     qualityLevel = 5,
                     modelParameters = listOf(stringParameter("reasoning_effort", paddedEffort)),
-                    enableThinking = enableThinking,
-                ),
-            )
-            assertEquals(
-                ThinkingRequestSummary.NotSent,
-                ThinkingRequestSemantics.resolve(
-                    providerType = ApiProviderType.LLAMA_CPP,
-                    modelName = "local-model.gguf",
-                    qualityLevel = 5,
-                    modelParameters = listOf(stringParameter("reasoning_effort", "high")),
                     enableThinking = enableThinking,
                 ),
             )

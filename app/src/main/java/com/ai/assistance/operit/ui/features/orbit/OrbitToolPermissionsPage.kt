@@ -97,7 +97,7 @@ internal fun OrbitToolPermissionsPage(onBack: () -> Unit) {
     val storedKeys = stored?.keys
     val folders = remember(storedKeys, internalTitle, builtinTitle) {
         val names = (toolHandler.getAllToolNames().filterNot {
-            it == "package_proxy" || it == "proxy" || it == "search" || it in PermissionReviewInternalTools.names
+            it == "package_proxy" || it in PermissionReviewInternalTools.names
         } + storedKeys.orEmpty() + FOLLOW_UP_TOOLS).distinct().sortedBy { it.lowercase() }
         val internal = names.filter(::isOrbitInternalTool)
         val rest = names.filterNot(::isOrbitInternalTool)

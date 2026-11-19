@@ -52,7 +52,7 @@ body:
         - Tool calling or workflow / 工具调用或工作流
         - Plugin, Skill or MCP / 插件、Skill 或 MCP
         - UI/UX / 界面交互
-        - Local model, audio or voice / 本地模型、音频或语音
+        - Audio or voice / 音频或语音
         - Permission, system or device / 权限、系统或设备
         - Web chat / 网页聊天
         - Documentation or contributor experience / 文档或贡献体验

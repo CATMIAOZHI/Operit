@@ -109,7 +109,7 @@ writeEnvironmentVariable(key: string, value?: string): Promise<StringResultData>
 - 模型上下文容量：`max_context_length`，单位 K token，须为有限正数。
 - 多模态开关：`enable_direct_image_processing`、`enable_direct_audio_processing`、`enable_direct_video_processing`
 - 扩展能力：`enable_google_search`、`enable_tool_call`
-- 本地模型/并发控制：`mnn_forward_type`、`mnn_thread_count`、`llama_thread_count`、`llama_context_size`、`request_limit_per_minute`、`max_concurrent_requests`
+- 并发与限流：`request_limit_per_minute`、`max_concurrent_requests`
 
 同一组字段都带有对应的 `..._enabled` 布尔控制项时，应按类型定义一起传递。
 

@@ -130,12 +130,12 @@ class ComposerPredictionService internal constructor(
         /** Plugin adapters have no isolation/tool-free contract; retired local modes cannot run. */
         fun supports(config: ModelConfigData): Boolean {
             val sourceProvider = ApiProviderType.fromProviderTypeId(config.apiProviderTypeId) ?: return false
+            if (sourceProvider.isRetired) return false
             val resolvedProvider = ApiProviderType.fromProviderTypeId(config.withModelProtocol().apiProviderTypeId)
                 ?: return false
             // Account-specific adapters apply the same request transformations to both calls.
             // Codex OAuth and Zen Free can use the isolated path just like other text providers.
-            val unsupported = setOf(ApiProviderType.MNN, ApiProviderType.LLAMA_CPP)
-            if (sourceProvider in unsupported || resolvedProvider in unsupported) return false
+            if (resolvedProvider.isRetired) return false
             // Media/embedding-only modes cannot promise a short text completion.
             return !Regex("(?:^|[-_/])(?:image|audio|realtime|tts|whisper|veo|embedding|transcription)(?:$|[-_/])", RegexOption.IGNORE_CASE)
                 .containsMatchIn(config.modelName)

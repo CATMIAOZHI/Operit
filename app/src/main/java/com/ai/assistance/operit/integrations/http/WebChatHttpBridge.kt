@@ -23,6 +23,7 @@ import com.ai.assistance.operit.data.model.InputProcessingState
 import com.ai.assistance.operit.data.model.SYSTEM_UNGROUPED_FOLDER_ID
 import com.ai.assistance.operit.data.model.getModelByIndex
 import com.ai.assistance.operit.data.model.getModelList
+import com.ai.assistance.operit.data.model.selectableForBinding
 import com.ai.assistance.operit.data.model.getValidModelIndex
 import com.ai.assistance.operit.data.preferences.ActivePromptManager
 import com.ai.assistance.operit.data.preferences.CharacterCardManager
@@ -1686,7 +1687,7 @@ class WebChatHttpBridge(
             lockedByCharacterCard = lockedCard != null,
             lockedCharacterCardId = lockedCard?.id,
             lockedCharacterCardName = lockedCard?.name,
-            configs = configSummaries.map { config ->
+            configs = configSummaries.selectableForBinding().map { config ->
                 val models = getModelList(config.modelName)
                 WebModelSelectorConfig(
                     id = config.id,

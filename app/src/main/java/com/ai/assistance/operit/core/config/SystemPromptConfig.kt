@@ -4,8 +4,6 @@ import android.content.Context
 import android.os.Environment
 import com.ai.assistance.operit.core.chat.hooks.PromptHookContext
 import com.ai.assistance.operit.core.chat.hooks.PromptHookRegistry
-import com.ai.assistance.operit.core.tools.climode.CliToolModeSupport
-import com.ai.assistance.operit.core.tools.climode.ToolExposureMode
 import com.ai.assistance.operit.core.tools.packTool.PackageManager
 import com.ai.assistance.operit.data.preferences.ApiPreferences
 import com.ai.assistance.operit.data.skill.SkillRepository
@@ -312,7 +310,6 @@ AVAILABLE_TOOLS_SECTION""".trimIndent()
           chatModelHasDirectAudio: Boolean = false,
           chatModelHasDirectVideo: Boolean = false,
           useToolCallApi: Boolean = false,
-          toolExposureMode: ToolExposureMode = ToolExposureMode.FULL,
           toolVisibility: Map<String, Boolean> = emptyMap(),
           allowedPackageNames: Set<String>? = null,
           allowedSkillNames: Set<String>? = null,
@@ -325,7 +322,7 @@ AVAILABLE_TOOLS_SECTION""".trimIndent()
         .scopeFor(context, packageManager, chatId)?.toList()
         ?: packageManager.getEnabledPackageNames()
     val packageSystemVisible =
-        toolExposureMode == ToolExposureMode.FULL && enableTools && (toolVisibility["use_package"] ?: true)
+        enableTools && (toolVisibility["use_package"] ?: true)
     // An Orbit lists the servers it has switched on, started or not; use_package starts one.
     val mcpServers: Map<String, String> =
         com.ai.assistance.operit.features.orbit.OrbitMcp.promptServers(context, chatId)
@@ -454,7 +451,7 @@ AVAILABLE_TOOLS_SECTION""".trimIndent()
 
     // Determine the available tools string based on tool visibility and recognition capabilities.
     // 当使用Tool Call API时，不在系统提示词中包含工具描述（工具已通过API的tools字段发送）
-    val availableToolsEn = if (useToolCallApi || toolExposureMode == ToolExposureMode.CLI) "" else (
+    val availableToolsEn = if (useToolCallApi) "" else (
         getMemoryToolsEn(toolVisibility) +
             getAvailableToolsEn(
                 chatId = chatId,
@@ -471,7 +468,7 @@ AVAILABLE_TOOLS_SECTION""".trimIndent()
                 context = context
             )
     )
-    val availableToolsCn = if (useToolCallApi || toolExposureMode == ToolExposureMode.CLI) "" else (
+    val availableToolsCn = if (useToolCallApi) "" else (
         getMemoryToolsCn(toolVisibility) +
             getAvailableToolsCn(
                 chatId = chatId,
@@ -493,13 +490,7 @@ AVAILABLE_TOOLS_SECTION""".trimIndent()
     if (enableTools) {
         val executionGuidelines =
             if (useEnglish) TOOL_EXECUTION_GUIDELINES_EN else TOOL_EXECUTION_GUIDELINES_CN
-        if (toolExposureMode == ToolExposureMode.CLI) {
-            prompt = prompt
-                .replace("TOOL_USAGE_GUIDELINES_SECTION", executionGuidelines + "\n" + CliToolModeSupport.buildCliModePrompt(useEnglish))
-                .replace("PACKAGE_SYSTEM_GUIDELINES_SECTION", "")
-                .replace("ACTIVE_PACKAGES_SECTION", "")
-                .replace("AVAILABLE_TOOLS_SECTION", "")
-        } else if (useToolCallApi) {
+        if (useToolCallApi) {
             // 当使用Tool Call API时，移除XML格式说明和工具列表
             val packageGuidelines =
                 if (useEnglish) {
@@ -669,7 +660,6 @@ AVAILABLE_TOOLS_SECTION""".trimIndent()
           chatModelHasDirectAudio: Boolean = false,
           chatModelHasDirectVideo: Boolean = false,
           useToolCallApi: Boolean = false,
-          toolExposureMode: ToolExposureMode = ToolExposureMode.FULL,
           toolVisibility: Map<String, Boolean> = emptyMap(),
           allowedPackageNames: Set<String>? = null,
           allowedSkillNames: Set<String>? = null,
@@ -702,7 +692,6 @@ AVAILABLE_TOOLS_SECTION""".trimIndent()
                         "chatModelHasDirectAudio" to chatModelHasDirectAudio,
                         "chatModelHasDirectVideo" to chatModelHasDirectVideo,
                         "useToolCallApi" to useToolCallApi,
-                        "toolExposureMode" to toolExposureMode.name,
                         "toolVisibility" to toolVisibility,
                         "allowedPackageNames" to allowedPackageNames.orEmpty().toList(),
                         "allowedSkillNames" to allowedSkillNames.orEmpty().toList(),
@@ -732,7 +721,6 @@ AVAILABLE_TOOLS_SECTION""".trimIndent()
             chatModelHasDirectAudio = chatModelHasDirectAudio,
             chatModelHasDirectVideo = chatModelHasDirectVideo,
             useToolCallApi = useToolCallApi,
-            toolExposureMode = toolExposureMode,
             toolVisibility = toolVisibility,
             allowedPackageNames = allowedPackageNames,
             allowedSkillNames = allowedSkillNames,

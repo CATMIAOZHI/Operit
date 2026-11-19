@@ -1062,6 +1062,7 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
 
     suspend fun createModelConfig(tool: AITool): ToolResult {
         return try {
+            getParameterValue(tool, "api_provider_type")?.let(::requireSupportedModelConfigProvider)
             val modelConfigManager = ModelConfigManager(context)
             modelConfigManager.initializeIfNeeded()
 
@@ -1421,6 +1422,7 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
                         result = StringResultData(""),
                         error = "Model config not found: $configId"
                     )
+            requireSupportedModelConfigProvider(config.apiProviderTypeId)
             val actualModelIndex = requestedModelIndex
             val selectedModel = getModelByIndex(config.modelName, actualModelIndex)
 
@@ -1667,8 +1669,10 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
         return FunctionType.values().firstOrNull { it.name.equals(value.trim(), ignoreCase = true) }
     }
 
-    private fun parseApiProviderType(value: String): ApiProviderType? {
-        return ApiProviderType.values().firstOrNull { it.name.equals(value.trim(), ignoreCase = true) }
+    private fun requireSupportedModelConfigProvider(providerTypeId: String) {
+        require(!ApiProviderType.isRetiredId(providerTypeId)) {
+            "Provider ${providerTypeId.trim()} has been removed. Choose a supported provider such as OPENAI_GENERIC."
+        }
     }
 
     private fun applyModelConfigUpdates(
@@ -1676,6 +1680,8 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
         current: ModelConfigData,
         includeName: Boolean
     ): Pair<ModelConfigData, List<String>> {
+        val providerTypeId = getParameterValue(tool, "api_provider_type")?.trim()
+        requireSupportedModelConfigProvider(providerTypeId ?: current.apiProviderTypeId)
         var updated = current
         val changedFields = mutableListOf<String>()
 
@@ -1720,15 +1726,9 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
         applyString("api_key") { config, value -> config.copy(apiKey = value) }
         applyString("api_endpoint") { config, value -> config.copy(apiEndpoint = value) }
         applyString("model_name") { config, value -> config.withModelNames(value) }
-        getParameterValue(tool, "api_provider_type")?.let { raw ->
-            val providerTypeId = raw.trim()
-            if (providerTypeId.isEmpty()) {
-                throw IllegalArgumentException("Invalid api_provider_type: $raw")
-            }
-            val provider = parseApiProviderType(providerTypeId) ?: ApiProviderType.OTHER
-            require(provider != ApiProviderType.MNN && provider != ApiProviderType.LLAMA_CPP) {
-                context.getString(com.ai.assistance.operit.R.string.local_llm_removed)
-            }
+        if (providerTypeId != null) {
+            require(providerTypeId.isNotEmpty()) { "Invalid api_provider_type: provider ID is empty" }
+            val provider = ApiProviderType.fromProviderTypeId(providerTypeId) ?: ApiProviderType.OTHER
             updated = updated.copy(
                 apiProviderType = provider,
                 apiProviderTypeId = providerTypeId
@@ -1789,21 +1789,6 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
             config.copy(customHeaders = json)
         }
 
-        applyInt("mnn_forward_type") { config, value -> config.copy(mnnForwardType = value) }
-        applyInt("mnn_thread_count") { config, value -> config.copy(mnnThreadCount = value.coerceAtLeast(1)) }
-        applyInt("llama_thread_count") { config, value -> config.copy(llamaThreadCount = value.coerceAtLeast(1)) }
-        applyInt("llama_context_size") { config, value -> config.copy(llamaContextSize = value.coerceAtLeast(1)) }
-        applyInt("llama_batch_size") { config, value -> config.copy(llamaBatchSize = value.coerceAtLeast(1)) }
-        applyInt("llama_ubatch_size") { config, value -> config.copy(llamaUBatchSize = value.coerceAtLeast(1)) }
-        applyInt("llama_gpu_layers") { config, value -> config.copy(llamaGpuLayers = value.coerceAtLeast(0)) }
-        applyBoolean("llama_use_mmap") { config, value -> config.copy(llamaUseMmap = value) }
-        applyBoolean("llama_flash_attention") { config, value ->
-            config.copy(llamaFlashAttention = value)
-        }
-        applyBoolean("llama_kv_unified") { config, value -> config.copy(llamaKvUnified = value) }
-        applyBoolean("llama_offload_kqv") { config, value ->
-            config.copy(llamaOffloadKqv = value)
-        }
         applyInt("request_limit_per_minute") { config, value ->
             config.copy(requestLimitPerMinute = value.coerceAtLeast(0))
         }
@@ -1825,10 +1810,6 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
             config.copy(enableClaude1hPromptCache = value)
         }
         applyBoolean("enable_tool_call") { config, value -> config.copy(enableToolCall = value) }
-
-        if (updated.llamaGpuLayers <= 0 && updated.llamaOffloadKqv) {
-            updated = updated.copy(llamaOffloadKqv = false)
-        }
 
         return updated to changedFields.distinct()
     }
@@ -1869,17 +1850,6 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
             enableSummary = config.enableSummary,
             enableSummaryByMessageCount = config.enableSummaryByMessageCount,
             summaryMessageCountThreshold = config.summaryMessageCountThreshold,
-            mnnForwardType = config.mnnForwardType,
-            mnnThreadCount = config.mnnThreadCount,
-            llamaThreadCount = config.llamaThreadCount,
-            llamaContextSize = config.llamaContextSize,
-            llamaBatchSize = config.llamaBatchSize,
-            llamaUBatchSize = config.llamaUBatchSize,
-            llamaGpuLayers = config.llamaGpuLayers,
-            llamaUseMmap = config.llamaUseMmap,
-            llamaFlashAttention = config.llamaFlashAttention,
-            llamaKvUnified = config.llamaKvUnified,
-            llamaOffloadKqv = config.llamaOffloadKqv,
             enableDirectImageProcessing = config.enableDirectImageProcessing,
             enableDirectAudioProcessing = config.enableDirectAudioProcessing,
             enableDirectVideoProcessing = config.enableDirectVideoProcessing,

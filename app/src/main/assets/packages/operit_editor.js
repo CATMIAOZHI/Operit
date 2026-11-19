@@ -1023,8 +1023,8 @@
         {
           name: "api_provider_type"
           description: {
-            zh: "可选，提供商枚举名（如 OPENAI_GENERIC/OPENAI_LOCAL/OPENAI_RESPONSES_GENERIC/DEEPSEEK/GEMINI_GENERIC/LMSTUDIO/OLLAMA/MNN/LLAMA_CPP；其中 LMSTUDIO/OLLAMA/OPENAI_LOCAL/MNN/LLAMA_CPP 为本地模型链路）"
-            en: "Optional provider enum name (e.g. OPENAI_GENERIC/OPENAI_LOCAL/OPENAI_RESPONSES_GENERIC/DEEPSEEK/GEMINI_GENERIC/LMSTUDIO/OLLAMA/MNN/LLAMA_CPP; LMSTUDIO/OLLAMA/OPENAI_LOCAL/MNN/LLAMA_CPP are local-model providers)"
+            zh: "可选，提供商枚举名（如 OPENAI_GENERIC/OPENAI_RESPONSES_GENERIC/DEEPSEEK/GEMINI_GENERIC/OLLAMA_CLOUD）"
+            en: "Optional provider enum name (e.g. OPENAI_GENERIC/OPENAI_RESPONSES_GENERIC/DEEPSEEK/GEMINI_GENERIC/OLLAMA_CLOUD)"
           }
           type: string
           required: false
@@ -1261,51 +1261,6 @@
             en: "Optional tool-call switch"
           }
           type: boolean
-          required: false
-        },
-        {
-          name: "mnn_forward_type"
-          description: {
-            zh: "可选，MNN 前向类型"
-            en: "Optional MNN forward type"
-          }
-          type: integer
-          required: false
-        },
-        {
-          name: "mnn_thread_count"
-          description: {
-            zh: "可选，MNN 线程数"
-            en: "Optional MNN thread count"
-          }
-          type: integer
-          required: false
-        },
-        {
-          name: "llama_thread_count"
-          description: {
-            zh: "可选，llama.cpp 线程数"
-            en: "Optional llama.cpp thread count"
-          }
-          type: integer
-          required: false
-        },
-        {
-          name: "llama_context_size"
-          description: {
-            zh: "可选，llama.cpp 上下文长度"
-            en: "Optional llama.cpp context size"
-          }
-          type: integer
-          required: false
-        },
-        {
-          name: "llama_gpu_layers"
-          description: {
-            zh: "可选，llama.cpp GPU 层数"
-            en: "Optional llama.cpp GPU layer count"
-          }
-          type: integer
           required: false
         },
         {
@@ -1356,8 +1311,8 @@
         {
           name: "api_provider_type"
           description: {
-            zh: "可选，提供商枚举名（如 OPENAI_GENERIC/OPENAI_LOCAL/OPENAI_RESPONSES_GENERIC/DEEPSEEK/GEMINI_GENERIC/LMSTUDIO/OLLAMA/MNN/LLAMA_CPP；其中 LMSTUDIO/OLLAMA/OPENAI_LOCAL/MNN/LLAMA_CPP 为本地模型链路）"
-            en: "Optional provider enum name (e.g. OPENAI_GENERIC/OPENAI_LOCAL/OPENAI_RESPONSES_GENERIC/DEEPSEEK/GEMINI_GENERIC/LMSTUDIO/OLLAMA/MNN/LLAMA_CPP; LMSTUDIO/OLLAMA/OPENAI_LOCAL/MNN/LLAMA_CPP are local-model providers)"
+            zh: "可选，提供商枚举名（如 OPENAI_GENERIC/OPENAI_RESPONSES_GENERIC/DEEPSEEK/GEMINI_GENERIC/OLLAMA_CLOUD）"
+            en: "Optional provider enum name (e.g. OPENAI_GENERIC/OPENAI_RESPONSES_GENERIC/DEEPSEEK/GEMINI_GENERIC/OLLAMA_CLOUD)"
           }
           type: string
           required: false
@@ -1594,51 +1549,6 @@
             en: "Optional tool-call switch"
           }
           type: boolean
-          required: false
-        },
-        {
-          name: "mnn_forward_type"
-          description: {
-            zh: "可选，MNN 前向类型"
-            en: "Optional MNN forward type"
-          }
-          type: integer
-          required: false
-        },
-        {
-          name: "mnn_thread_count"
-          description: {
-            zh: "可选，MNN 线程数"
-            en: "Optional MNN thread count"
-          }
-          type: integer
-          required: false
-        },
-        {
-          name: "llama_thread_count"
-          description: {
-            zh: "可选，llama.cpp 线程数"
-            en: "Optional llama.cpp thread count"
-          }
-          type: integer
-          required: false
-        },
-        {
-          name: "llama_context_size"
-          description: {
-            zh: "可选，llama.cpp 上下文长度"
-            en: "Optional llama.cpp context size"
-          }
-          type: integer
-          required: false
-        },
-        {
-          name: "llama_gpu_layers"
-          description: {
-            zh: "可选，llama.cpp GPU 层数"
-            en: "Optional llama.cpp GPU layer count"
-          }
-          type: integer
           required: false
         },
         {

@@ -67,8 +67,7 @@ object ModelListFetcher {
                     ApiProviderType.OPENAI,
                     ApiProviderType.OPENAI_RESPONSES,
                     ApiProviderType.OPENAI_RESPONSES_GENERIC,
-                    ApiProviderType.OPENAI_GENERIC,
-                    ApiProviderType.OPENAI_LOCAL -> "${extractBaseUrl(apiEndpoint)}/v1/models"
+                    ApiProviderType.OPENAI_GENERIC -> "${extractBaseUrl(apiEndpoint)}/v1/models"
                     ApiProviderType.ANTHROPIC,
                     ApiProviderType.ANTHROPIC_GENERIC,
                     ApiProviderType.CLAUDE_ACCOUNT -> "${extractBaseUrl(apiEndpoint)}/v1/models"
@@ -91,8 +90,6 @@ object ModelListFetcher {
                     ApiProviderType.BAICHUAN -> "${extractBaseUrl(apiEndpoint)}/v1/models"
                     ApiProviderType.INFINIAI -> "${extractBaseUrl(apiEndpoint)}/maas/v1/models"
                     ApiProviderType.ALIPAY_BAILING -> "${extractBaseUrl(apiEndpoint)}/llm/v1/models"
-                    ApiProviderType.LMSTUDIO -> "${extractBaseUrl(apiEndpoint)}/v1/models"
-                    ApiProviderType.OLLAMA -> "${extractBaseUrl(apiEndpoint)}/v1/models"
                     ApiProviderType.OLLAMA_CLOUD -> "${extractBaseUrl(apiEndpoint)}/api/tags"
                     ApiProviderType.PPINFRA -> "${extractBaseUrl(apiEndpoint)}/v1/models"
                     // 其他API提供商可能需要特殊处理
@@ -257,6 +254,10 @@ object ModelListFetcher {
             httpClient: OkHttpClient = client,
     ): Result<List<ModelOption>> {
         AppLogger.d(TAG, "开始获取模型列表: 端点=${sanitizeUrlForLog(apiEndpoint, apiKey)}, 提供商=${apiProviderType.name}")
+        if (apiProviderType.isRetired) {
+            return Result.failure(IllegalStateException(
+                com.ai.assistance.operit.api.chat.llmprovider.AIServiceFactory.retiredProviderMessage(context, apiProviderType)))
+        }
 
         return withContext(Dispatchers.IO) {
             val goHeaders = OpenCodeGoHeaders()
@@ -389,7 +390,7 @@ object ModelListFetcher {
                         val errorBody = response.body?.string() ?: context.getString(R.string.model_fetch_no_error_details)
                         val responseCode = response.code
                         response.close()
-                        if ((apiProviderType == ApiProviderType.OPENAI || apiProviderType == ApiProviderType.OPENAI_RESPONSES || apiProviderType == ApiProviderType.OPENAI_RESPONSES_GENERIC || apiProviderType == ApiProviderType.OPENAI_GENERIC || apiProviderType == ApiProviderType.OPENAI_LOCAL || apiProviderType == ApiProviderType.IFLOW || apiProviderType == ApiProviderType.NVIDIA || apiProviderType == ApiProviderType.LMSTUDIO || apiProviderType == ApiProviderType.OLLAMA || apiProviderType == ApiProviderType.FOUR_ROUTER || apiProviderType == ApiProviderType.NOUS_PORTAL || apiProviderType == ApiProviderType.MIMO) &&
+                        if ((apiProviderType == ApiProviderType.OPENAI || apiProviderType == ApiProviderType.OPENAI_RESPONSES || apiProviderType == ApiProviderType.OPENAI_RESPONSES_GENERIC || apiProviderType == ApiProviderType.OPENAI_GENERIC || apiProviderType == ApiProviderType.IFLOW || apiProviderType == ApiProviderType.NVIDIA || apiProviderType == ApiProviderType.FOUR_ROUTER || apiProviderType == ApiProviderType.NOUS_PORTAL || apiProviderType == ApiProviderType.MIMO) &&
                                         modelsUrl.endsWith("/v1/models")) {
                             val fallbackUrl = modelsUrl.removeSuffix("/v1/models") + "/models"
                             AppLogger.w(TAG, "API请求失败，尝试兼容路径: $fallbackUrl")
@@ -444,7 +445,6 @@ object ModelListFetcher {
                                     ApiProviderType.OPENAI_RESPONSES,
                                     ApiProviderType.OPENAI_RESPONSES_GENERIC,
                                     ApiProviderType.OPENAI_GENERIC,
-                                    ApiProviderType.OPENAI_LOCAL,
                                     ApiProviderType.DEEPSEEK,
                                     ApiProviderType.MOONSHOT,
                                     ApiProviderType.MIMO,
@@ -460,8 +460,6 @@ object ModelListFetcher {
                                     ApiProviderType.INFINIAI,
                                     ApiProviderType.ALIPAY_BAILING,
                                     ApiProviderType.ZHIPU,
-                                    ApiProviderType.LMSTUDIO,
-                                    ApiProviderType.OLLAMA,
                                     ApiProviderType.PPINFRA -> parseOpenAIModelResponse(context, responseBody)
                                     ApiProviderType.OLLAMA_CLOUD -> parseOllamaCloudModelResponse(context, responseBody)
                                     ApiProviderType.ANTHROPIC,

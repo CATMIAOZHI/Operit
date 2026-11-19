@@ -333,12 +333,22 @@ private fun ModelConfigContent(
                                 com.ai.assistance.operit.data.api.ProviderAccountManager.get(context, it).account.value != null
                             } == true,
                     )
+                if (readiness.issue == ChatConfigReadinessIssue.PROVIDER_RETIRED) {
+                    showOnboardingError(
+                        com.ai.assistance.operit.api.chat.llmprovider.AIServiceFactory.retiredProviderMessage(
+                            context,
+                            checkNotNull(com.ai.assistance.operit.data.model.ApiProviderType.fromProviderTypeId(targetConfig.apiProviderTypeId)),
+                        )
+                    )
+                    return@RegisterRouteBackGuard false
+                }
                 if (!readiness.isReady) {
                     val messageResId =
                         when (readiness.issue) {
                             ChatConfigReadinessIssue.PROVIDER_MISSING ->
                                 R.string.onboarding_config_provider_missing
-                            ChatConfigReadinessIssue.PROVIDER_UNAVAILABLE ->
+                            ChatConfigReadinessIssue.PROVIDER_UNAVAILABLE,
+                            ChatConfigReadinessIssue.PROVIDER_RETIRED ->
                                 R.string.onboarding_config_provider_unavailable
                             ChatConfigReadinessIssue.ENDPOINT_INVALID ->
                                 R.string.onboarding_config_endpoint_invalid
