@@ -53,14 +53,24 @@ data class ResolvedChatContext(
     val compactRatio: Float get() = compactAtK / windowK
 }
 
-fun resolveChatContext(policy: ChatContextPolicy, config: ModelConfigData): ResolvedChatContext {
+/**
+ * [model] is the model the chat sends to; without it only a configuration listing a single model
+ * is held to that model's window.
+ */
+fun resolveChatContext(
+    policy: ChatContextPolicy,
+    config: ModelConfigData,
+    model: String? = null,
+): ResolvedChatContext {
     policy.validate()
-    val capacity = config.maxContextLength
+    // The configured maximum, but never past what the model can read.
+    val capacity = config.contextLimitK(model)?.let { min(config.maxContextLength, it) }
+        ?: config.maxContextLength
     require(capacity.isFinite() && capacity > 0f) { "Invalid model context capacity" }
     val window = if (policy.maxMode) capacity else min(policy.windowK, capacity)
     // Keep room for the next reply; a configured output limit may require earlier compaction.
     val outputReserve = if (config.maxTokensEnabled && config.maxTokens > 0)
-        config.maxTokens / 1024f else window * 0.1f
+        config.effectiveMaxTokens(model) / 1024f else window * 0.1f
     val automatic = min(window * 0.9f, (window - outputReserve).coerceAtLeast(window * 0.1f))
     return ResolvedChatContext(policy, capacity, window,
         min(policy.compactAtK ?: automatic, automatic))

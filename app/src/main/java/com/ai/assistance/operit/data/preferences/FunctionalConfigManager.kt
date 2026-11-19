@@ -248,6 +248,18 @@ class FunctionalConfigManager(private val context: Context) {
     }
 
     /**
+     * [getConfigMappingForFunction] for one function, reading only that function's configuration
+     * ([readModels] gives its model list) instead of every saved configuration.
+     */
+    suspend fun getConfigMappingForFunction(
+        functionType: FunctionType,
+        readModels: suspend (configId: String) -> String?,
+    ): FunctionConfigMapping {
+        val stored = storedMappingFlow.first()[functionType] ?: FunctionConfigMapping()
+        return stored.resolveModelIndex(readModels(stored.configId))
+    }
+
+    /**
      * 功能实际生效的配置。
      *
      * 只有 [FUNCTION_CONFIG_FOLLOWERS] 中的功能会跟随：当它自己的配置仍是应用默认配置

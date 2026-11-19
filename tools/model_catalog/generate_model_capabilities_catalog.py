@@ -63,14 +63,30 @@ def build_document(source: dict[str, Any]) -> dict[str, Any]:
         model_id = str(official_model_id).strip()
         if not model_id or "/" not in model_id:
             raise CatalogError(f"invalid official model ID: {official_model_id!r}")
-        result[model_id] = {
+        entry: dict[str, Any] = {
             "name": str(value.get("name") or model_id),
             "family": str(value.get("family") or ""),
             "modalities": {"input": normalized_inputs},
         }
+        limits = build_limits(value.get("limit"))
+        if limits:
+            entry["limit"] = limits
+        result[model_id] = entry
     if not result:
         raise CatalogError("source contains no usable official models")
     return result
+
+
+def build_limits(value: Any) -> dict[str, int]:
+    """Keeps the context window and the longest reply, both in tokens."""
+    if not isinstance(value, dict):
+        return {}
+    limits: dict[str, int] = {}
+    for key in ("context", "output"):
+        amount = value.get(key)
+        if isinstance(amount, int) and not isinstance(amount, bool) and 0 < amount < 2**31:
+            limits[key] = amount
+    return limits
 
 
 def render(document: dict[str, Any]) -> str:
@@ -110,7 +126,7 @@ def main() -> int:
             print(f"Model capability catalog is current: {len(document)} models")
             return 0
         args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(rendered, encoding="utf-8")
+        args.output.write_text(rendered, encoding="utf-8", newline="\n")
         print(f"Generated {len(document)} models at {args.output}")
         return 0
     except (CatalogError, OSError, json.JSONDecodeError) as error:

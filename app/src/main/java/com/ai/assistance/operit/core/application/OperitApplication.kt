@@ -385,12 +385,15 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
             AppLogger.d(TAG, "【启动计时】当前角色自定义表情初始化完成（异步） - ${System.currentTimeMillis() - emojiStartTime}ms")
         }
 
-        // On the first start, fetch the newest model catalogs and fill in each saved model's
-        // protocol and picture support; a failed download is tried again next start.
+        // Once a week, fetch the newest model catalogs and fill in what they know about each saved
+        // model (protocol, inputs, context window); a failed download is tried again a day later.
+        // Checked at each start and once a day in the background.
         if (isMainAppProcess()) {
+            runCatching { com.ai.assistance.operit.data.model.ModelAutoConfig.schedule(applicationContext) }
+                .onFailure { AppLogger.w(TAG, "Could not schedule the model catalog refresh: ${it.message}") }
             applicationScope.launch {
-                runCatching { com.ai.assistance.operit.data.model.ModelAutoConfig.firstStart(applicationContext) }
-                    .onFailure { AppLogger.w(TAG, "Model auto-configuration at first start failed: ${it.message}") }
+                runCatching { com.ai.assistance.operit.data.model.ModelAutoConfig.refreshIfStale(applicationContext) }
+                    .onFailure { AppLogger.w(TAG, "Model catalog refresh failed: ${it.message}") }
             }
         }
 

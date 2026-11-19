@@ -24,6 +24,8 @@ import com.ai.assistance.operit.data.model.SummarySectionOverride
 import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.ApiKeyInfo
 import com.ai.assistance.operit.data.model.getModelList
+import com.ai.assistance.operit.data.model.effectiveMaxTokens
+import com.ai.assistance.operit.data.model.limitsFor
 import com.ai.assistance.operit.data.model.normalizeProviderId
 import com.ai.assistance.operit.data.model.normalizeConfigOrder
 import com.ai.assistance.operit.data.model.withModelNames
@@ -34,6 +36,8 @@ import java.util.UUID
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -59,6 +63,9 @@ class ModelConfigManager(
 
     // 定义key
     companion object {
+        /** Custom parameter names that set the reply length, held to the model's output limit. */
+        private val OUTPUT_LENGTH_PARAMETERS = setOf("max_tokens", "max_completion_tokens", "max_output_tokens", "maxOutputTokens")
+
         // 配置相关key
         val CONFIG_LIST_KEY = stringPreferencesKey("config_list")
         val FAVORITE_MODELS_KEY = stringPreferencesKey("favorite_models")
@@ -174,6 +181,7 @@ class ModelConfigManager(
                 modelName = ApiPreferences.DEFAULT_MODEL_NAME,
                 apiProviderType = DEFAULT_API_PROVIDER_TYPE,
                 apiProviderTypeId = DEFAULT_API_PROVIDER_TYPE.name,
+                settledCapabilityModels = emptySet(),
                 hasCustomParameters = false,
                 maxTokensEnabled = false,
                 temperatureEnabled = false,
@@ -399,6 +407,16 @@ class ModelConfigManager(
         }
     }
 
+    /** One configuration as stored, each time it changes; null while it is missing or unreadable. */
+    fun observeStoredConfig(configId: String): Flow<ModelConfigData?> {
+        val key = stringPreferencesKey("config_${configId}")
+        return configDataStore.data
+            .map { it[key] }
+            .distinctUntilChanged()
+            .map { raw -> raw?.let { runCatching { json.decodeFromString<ModelConfigData>(it) }.getOrNull() } }
+            .flowOn(kotlinx.coroutines.Dispatchers.Default)
+    }
+
     // 获取指定ID的配置的非Flow版本
     suspend fun getModelConfig(configId: String): ModelConfigData? {
         return loadConfigFromDataStore(configId)
@@ -498,7 +516,9 @@ class ModelConfigManager(
                         name = name,
                         apiProviderType = ApiProviderType.OPENAI_GENERIC,
                         apiProviderTypeId = ApiProviderType.OPENAI_GENERIC.name,
-                        enableToolCall = true
+                        enableToolCall = true,
+                        // A new configuration's models are all left for the catalog to fill in.
+                        settledCapabilityModels = emptySet(),
                 )
 
         configDataStore.edit { preferences ->
@@ -622,9 +642,14 @@ class ModelConfigManager(
             enableClaude1hPromptCache: Boolean,
             enableToolCall: Boolean,
             modelProtocolSettings: Map<String, com.ai.assistance.operit.data.model.ModelProtocolSettings>? = null,
+            modelLimits: Map<String, com.ai.assistance.operit.data.model.ModelLimits>? = null,
+            /** Last step of the same edit: gets the stored value and the result so far. */
+            finish: (stored: ModelConfigData, updated: ModelConfigData) -> ModelConfigData = { _, updated -> updated },
     ): ModelConfigData {
-        return updateConfigInternal(configId) {
-            it.copy(
+        val listed = com.ai.assistance.operit.data.model.getModelList(modelName).toSet()
+        return updateConfigInternal(configId) { stored ->
+            val it = stored
+            finish(stored, it.copy(
                     apiKey = apiKey,
                     apiEndpoint = apiEndpoint,
                     modelName = modelName,
@@ -640,11 +665,13 @@ class ModelConfigManager(
                     enableDirectVideoProcessing = enableDirectVideoProcessing,
                     modelMultimodalCapabilities = modelMultimodalCapabilities,
                     modelProtocolSettings = (modelProtocolSettings ?: it.modelProtocolSettings)
-                        .filterKeys { model -> model in com.ai.assistance.operit.data.model.getModelList(modelName) },
+                        .filterKeys { model -> model in listed },
+                    modelLimits = (modelLimits ?: it.modelLimits)
+                        .filterKeys { model -> model in listed },
                     enableGoogleSearch = enableGoogleSearch,
                     enableClaude1hPromptCache = enableClaude1hPromptCache,
                     enableToolCall = enableToolCall
-            )
+            ))
         }
     }
 
@@ -858,7 +885,8 @@ class ModelConfigManager(
         StandardModelParameters.DEFINITIONS.forEach { def ->
             val (currentValue, isEnabled) =
                     when (def.id) {
-                        "max_tokens" -> config.maxTokens to config.maxTokensEnabled
+                        // A configuration narrowed to one model asks for no more than it can write.
+                        "max_tokens" -> config.effectiveMaxTokens() to config.maxTokensEnabled
                         "temperature" -> config.temperature to config.temperatureEnabled
                         "top_p" -> config.topP to config.topPEnabled
                         "top_k" -> config.topK to config.topKEnabled
@@ -890,6 +918,7 @@ class ModelConfigManager(
         }
 
         // 添加自定义参数
+        val outputLimit = config.limitsFor()?.outputTokens
         if (config.hasCustomParameters &&
                         config.customParameters.isNotBlank() &&
                         config.customParameters != "[]"
@@ -904,6 +933,7 @@ class ModelConfigManager(
                     val category = ParameterCategory.valueOf(data.category)
 
                     val convertedParam =
+                            outputLengthParameter(data, valueType, category, outputLimit) ?:
                             when (valueType) {
                                 ParameterValueType.INT ->
                                         ModelParameter(
@@ -986,6 +1016,37 @@ class ModelConfigManager(
     }
     
     /**
+     * A reply length set as a custom parameter, of any number type: sent as a whole number and held
+     * to the model's output limit, like the standard one it overrides.
+     */
+    private fun outputLengthParameter(
+        data: com.ai.assistance.operit.data.model.CustomParameterData,
+        valueType: ParameterValueType,
+        category: ParameterCategory,
+        outputLimit: Int?,
+    ): ModelParameter<Int>? {
+        if (data.apiName !in OUTPUT_LENGTH_PARAMETERS) return null
+        if (valueType != ParameterValueType.INT && valueType != ParameterValueType.FLOAT &&
+            valueType != ParameterValueType.STRING) return null
+        val value = data.currentValue.trim().toDoubleOrNull()?.toInt() ?: return null
+        fun held(n: Int) = outputLimit?.let { n.coerceAtMost(it) } ?: n
+        return ModelParameter(
+                id = data.id,
+                name = data.name,
+                apiName = data.apiName,
+                description = data.description,
+                defaultValue = held(data.defaultValue.trim().toDoubleOrNull()?.toInt() ?: value),
+                currentValue = held(value),
+                isEnabled = data.isEnabled,
+                valueType = ParameterValueType.INT,
+                minValue = data.minValue?.trim()?.toDoubleOrNull()?.toInt(),
+                maxValue = data.maxValue?.trim()?.toDoubleOrNull()?.toInt(),
+                category = category,
+                isCustom = true
+        )
+    }
+
+    /**
      * 导出所有模型配置为带版本号的 JSON 字符串。
      * 包含配置顺序、收藏和折叠状态。
      * @return JSON格式的 ModelConfigBackup 数据
@@ -1037,7 +1098,10 @@ class ModelConfigManager(
      * @param jsonContent JSON格式的配置数据
      * @return 导入结果统计 (新增数量, 更新数量, 跳过数量)
      */
-    suspend fun importConfigs(jsonContent: String): Triple<Int, Int, Int> {
+    suspend fun importConfigs(jsonContent: String): Triple<Int, Int, Int> =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { importConfigsNow(jsonContent) }
+
+    private suspend fun importConfigsNow(jsonContent: String): Triple<Int, Int, Int> {
         val trimmed = jsonContent.trim()
 
         // 尝试解析为带版本号的对象
@@ -1049,20 +1113,49 @@ class ModelConfigManager(
         runCatching {
             backupJson.decodeFromString<ModelConfigBackup>(trimmed)
         }.onSuccess { backup ->
-            return importVersionedBackup(backup)
+            return importVersionedBackup(backup, importCatalogs())
         }
 
         // 尝试解析为旧版纯配置数组
         runCatching {
             backupJson.decodeFromString<List<ModelConfigData>>(trimmed)
         }.onSuccess { configs ->
-            return importLegacyConfigs(configs)
+            return importLegacyConfigs(configs, importCatalogs())
         }
 
         throw Exception(context.getString(R.string.model_config_import_failed, "Unrecognized backup format"))
     }
 
-    private suspend fun importVersionedBackup(backup: ModelConfigBackup): Triple<Int, Int, Int> {
+    /**
+     * Restored configurations get what the local model catalogs know, like any other, as they are
+     * written; without readable catalogs the next check fills them in instead.
+     */
+    private suspend fun importCatalogs(): com.ai.assistance.operit.data.model.ModelAutoConfig.Catalogs? = try {
+        com.ai.assistance.operit.data.model.ModelAutoConfig.catalogsForImport(context)
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        AppLogger.w("ModelConfigManager", "Could not read the model catalogs for restored models: ${e.message}")
+        com.ai.assistance.operit.data.model.ModelAutoConfig.invalidate(context)
+        null
+    }
+
+    private fun ModelConfigData.filledForImport(
+        catalogs: com.ai.assistance.operit.data.model.ModelAutoConfig.Catalogs?,
+    ): ModelConfigData {
+        if (catalogs == null) return this
+        return try {
+            with(com.ai.assistance.operit.data.model.ModelAutoConfig) { filled(catalogs) }
+        } catch (e: Exception) {
+            AppLogger.w("ModelConfigManager", "Could not match restored models of $id: ${e.message}")
+            this
+        }
+    }
+
+    private suspend fun importVersionedBackup(
+        backup: ModelConfigBackup,
+        catalogs: com.ai.assistance.operit.data.model.ModelAutoConfig.Catalogs?,
+    ): Triple<Int, Int, Int> {
         // 版本检查
         if (backup.version <= 0 || backup.version > BACKUP_VERSION) {
             throw Exception(
@@ -1099,7 +1192,7 @@ class ModelConfigManager(
             for (config in dedupedBackupConfigs) {
                 pinBindingsBeforeImportedConfig(preferences, config)
                 preferences[stringPreferencesKey("config_${config.id}")] =
-                    json.encodeToString(config)
+                    json.encodeToString(config.filledForImport(catalogs))
                 if (config.id in currentIdSet) {
                     updatedCount++
                 } else {
@@ -1188,7 +1281,10 @@ class ModelConfigManager(
         return Triple(newCount, updatedCount, skippedCount)
     }
 
-    private suspend fun importLegacyConfigs(configs: List<ModelConfigData>): Triple<Int, Int, Int> {
+    private suspend fun importLegacyConfigs(
+        configs: List<ModelConfigData>,
+        catalogs: com.ai.assistance.operit.data.model.ModelAutoConfig.Catalogs?,
+    ): Triple<Int, Int, Int> {
         var newCount = 0
         var updatedCount = 0
         var skippedCount = 0
@@ -1205,7 +1301,7 @@ class ModelConfigManager(
 
                 pinBindingsBeforeImportedConfig(preferences, config)
                 preferences[stringPreferencesKey("config_${config.id}")] =
-                    json.encodeToString(config)
+                    json.encodeToString(config.filledForImport(catalogs))
 
                 if (config.id in currentIdSet) {
                     updatedCount++

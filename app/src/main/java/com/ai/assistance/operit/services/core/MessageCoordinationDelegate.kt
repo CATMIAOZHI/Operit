@@ -543,7 +543,8 @@ class MessageCoordinationDelegate(
         val resolvedMemorySpaceIdOverride =
             resolveRoleCardMemoryProfileOverride(roleCardId)
         val chatContextSettings =
-            resolveChatContextSettingsForRequest(resolvedChatModelConfigIdOverride, chatId)
+            resolveChatContextSettingsForRequest(resolvedChatModelConfigIdOverride, chatId,
+                resolvedChatModelIndexOverride)
 
         chatHistoryDelegate.clearTodoSnapshot(chatId)
         try {
@@ -839,7 +840,8 @@ class MessageCoordinationDelegate(
             val resolvedMemorySpaceIdOverride = resolvedOverrides.third
             val chatContextSettings =
                 withContext(Dispatchers.IO) {
-                    resolveChatContextSettingsForRequest(resolvedChatModelConfigIdOverride, chatId)
+                    resolveChatContextSettingsForRequest(resolvedChatModelConfigIdOverride, chatId,
+                        resolvedChatModelIndexOverride)
                 }
 
             if (!isAutoContinuation && !turnOptions.isSubTask) {
@@ -1804,7 +1806,7 @@ class MessageCoordinationDelegate(
         val lastRoute = lastSendRoutes[chatId]
         val lastModel = lastRouteModel(chatId, lastRoute)
         val chatContextSettings =
-            resolveChatContextSettingsForRequest(lastModel?.first, chatId)
+            resolveChatContextSettingsForRequest(lastModel?.first, chatId, lastModel?.second)
         if (!chatContextSettings.enableSummary) return
 
         val currentMessages = chatHistoryDelegate.getRuntimeChatHistory(chatId)
@@ -1928,8 +1930,10 @@ class MessageCoordinationDelegate(
     private suspend fun resolveChatContextSettingsForRequest(
         chatModelConfigIdOverride: String?,
         chatId: String,
+        chatModelIndexOverride: Int?,
     ): ChatContextSettings {
-        return apiConfigDelegate.resolveChatContextSettings(chatModelConfigIdOverride, chatId)
+        return apiConfigDelegate.resolveChatContextSettings(chatModelConfigIdOverride, chatId,
+            chatModelIndexOverride)
     }
 
     /**
@@ -2226,7 +2230,9 @@ class MessageCoordinationDelegate(
         if (isGroupChatSession(chatId)) return
         // A summary the last turn started is still being written; it saves itself when done.
         if (turnSummaries[chatId]?.isActive == true) return
-        val settings = resolveChatContextSettingsForRequest(lastSendRoutes[chatId]?.modelConfigId, chatId)
+        val settings = lastSendRoutes[chatId].let {
+            resolveChatContextSettingsForRequest(it?.modelConfigId, chatId, it?.modelIndex)
+        }
         if (!settings.enableSummary) return
         val ceiling = compactionCeiling(settings.effectiveContextLength, settings.summaryTokenThreshold.toDouble())
         if (ceiling <= 0) return
@@ -2956,8 +2962,10 @@ class MessageCoordinationDelegate(
         var summarySuccess = false
         try {
             // Looked up inside the try, so a failed or cancelled lookup still releases the summary lock.
-            val effectiveChatModelConfigIdOverride =
-                chatModelConfigIdOverride ?: currentChatId?.let { lastRouteModel(it, lastRoute) }?.first
+            val effectiveChatModel =
+                if (chatModelConfigIdOverride != null) Pair(chatModelConfigIdOverride, chatModelIndexOverride)
+                else currentChatId?.let { lastRouteModel(it, lastRoute) }
+            val effectiveChatModelConfigIdOverride = effectiveChatModel?.first
             val service = getEnhancedAiService()
             if (service == null) {
                 uiStateDelegate.showErrorMessage(context.getString(R.string.chat_ai_service_unavailable_summarize))
@@ -2978,7 +2986,8 @@ class MessageCoordinationDelegate(
             val summaryInsertReferenceMessages = currentMessages.filterNot {
                 it.sender == "ai" && it.completedAt <= 0L && it.content.isBlank()
             }
-            val contextSettings = resolveChatContextSettingsForRequest(effectiveChatModelConfigIdOverride, currentChatId!!)
+            val contextSettings = resolveChatContextSettingsForRequest(effectiveChatModelConfigIdOverride,
+                currentChatId!!, effectiveChatModel?.second)
             val ceiling = compactionCeiling(contextSettings.effectiveContextLength, contextSettings.summaryTokenThreshold.toDouble())
             // The newest conversation stays word for word after the summary.
             val insertPosition =

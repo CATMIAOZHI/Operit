@@ -212,6 +212,14 @@ data class ModelConfigData(
         val enableDirectVideoProcessing: Boolean = false, // 是否启用直接视频处理
         val modelMultimodalCapabilities: Map<String, ModelMultimodalCapabilities> = emptyMap(),
         val modelProtocolSettings: Map<String, ModelProtocolSettings> = emptyMap(),
+        /** Each model's context window and longest reply; see [ModelLimits]. */
+        val modelLimits: Map<String, ModelLimits> = emptyMap(),
+        /**
+         * Models whose picture, audio and video switches are settled, by the catalog or by hand;
+         * automatic matching leaves them alone. Null for a configuration saved before this was
+         * kept; see [settledModels].
+         */
+        val settledCapabilityModels: Set<String>? = null,
 
         // Gemini特定配置
         val enableGoogleSearch: Boolean = false, // 是否启用Google Search Grounding (仅Gemini支持)
@@ -322,8 +330,10 @@ fun ModelConfigData.forSelectedModel(modelIndex: Int): ModelConfigData {
 /** 更新模型列表，并让新增模型的图片、音频、视频能力默认关闭。 */
 fun ModelConfigData.withModelNames(updatedModelNames: String): ModelConfigData {
     val existingModelNames = getModelList(modelName).toSet()
+    val updatedList = getModelList(updatedModelNames)
+    val updatedSet = updatedList.toSet()
     val updatedCapabilities =
-        getModelList(updatedModelNames).associateWith { updatedModelName ->
+        updatedList.associateWith { updatedModelName ->
             if (updatedModelName in existingModelNames) {
                 multimodalCapabilitiesForModel(updatedModelName)
             } else {
@@ -333,9 +343,24 @@ fun ModelConfigData.withModelNames(updatedModelNames: String): ModelConfigData {
     return copy(
         modelName = updatedModelNames,
         modelMultimodalCapabilities = updatedCapabilities,
-        modelProtocolSettings = modelProtocolSettings.filterKeys { it in getModelList(updatedModelNames) },
+        modelProtocolSettings = modelProtocolSettings.filterKeys { it in updatedSet },
+        modelLimits = modelLimits.filterKeys { it in updatedSet },
+        settledCapabilityModels = settledModels().filterTo(mutableSetOf()) { it in updatedSet },
     )
 }
+
+/**
+ * The models whose inputs automatic matching leaves alone; see
+ * [ModelConfigData.settledCapabilityModels]. A configuration saved before these were kept counts
+ * every model with its own inputs as settled, or all of them while it only has the old
+ * configuration-wide switches.
+ */
+fun ModelConfigData.settledModels(): Set<String> =
+    settledCapabilityModels
+        ?: if (modelMultimodalCapabilities.isEmpty()) getModelList(modelName).toSet()
+        else modelMultimodalCapabilities.keys
+
+fun ModelConfigData.capabilitiesSettled(model: String): Boolean = model.trim() in settledModels()
 
 private fun ModelConfigData.updateAllModelMultimodalCapabilities(
     transform: (ModelMultimodalCapabilities) -> ModelMultimodalCapabilities,
@@ -352,6 +377,8 @@ fun ModelConfigData.withDirectImageProcessingForAllModels(enabled: Boolean): Mod
         enableDirectImageProcessing = enabled,
         modelMultimodalCapabilities =
             updateAllModelMultimodalCapabilities { it.copy(image = enabled) },
+        // Set by hand for every model, so automatic matching leaves them alone.
+        settledCapabilityModels = getModelList(modelName).toSet(),
     )
 
 /** 兼容旧调用方：把配置级音频开关应用到当前配置内的全部模型。 */
@@ -360,6 +387,8 @@ fun ModelConfigData.withDirectAudioProcessingForAllModels(enabled: Boolean): Mod
         enableDirectAudioProcessing = enabled,
         modelMultimodalCapabilities =
             updateAllModelMultimodalCapabilities { it.copy(audio = enabled) },
+        // Set by hand for every model, so automatic matching leaves them alone.
+        settledCapabilityModels = getModelList(modelName).toSet(),
     )
 
 /** 兼容旧调用方：把配置级视频开关应用到当前配置内的全部模型。 */
@@ -368,6 +397,8 @@ fun ModelConfigData.withDirectVideoProcessingForAllModels(enabled: Boolean): Mod
         enableDirectVideoProcessing = enabled,
         modelMultimodalCapabilities =
             updateAllModelMultimodalCapabilities { it.copy(video = enabled) },
+        // Set by hand for every model, so automatic matching leaves them alone.
+        settledCapabilityModels = getModelList(modelName).toSet(),
     )
 
 /** 规范化 provider ID：trim + 小写 */

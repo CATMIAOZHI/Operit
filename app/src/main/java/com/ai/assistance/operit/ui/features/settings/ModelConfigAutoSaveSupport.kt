@@ -88,11 +88,12 @@ class ModelConfigSaveCoordinator {
         }
     }
 
-    fun flushInBackground(key: String, showSuccess: Boolean = false) {
+    /** Saves [key] in the background; the save's job, or null when nothing is registered. */
+    fun flushInBackground(key: String, showSuccess: Boolean = false): Job? {
         val action =
             synchronized(lock) {
                 saveActions[key]
-            } ?: return
+            } ?: return null
 
         val job = modelConfigSaveCoordinatorScope.launch(start = CoroutineStart.LAZY) {
             try {
@@ -117,6 +118,7 @@ class ModelConfigSaveCoordinator {
             }
         }
         job.start()
+        return job
     }
 }
 
@@ -129,18 +131,27 @@ fun rememberModelConfigSaveCoordinator(): ModelConfigSaveCoordinator {
 fun RegisterModelConfigSaveAction(
     coordinator: ModelConfigSaveCoordinator,
     key: String,
+    /** Runs once the save made on leaving is over, saved or not. */
+    onLeftSaved: () -> Unit = {},
     action: suspend (Boolean) -> Unit
 ) {
-    val latestAction by rememberUpdatedState(action)
+    // Grouped by the registration, so a page replaced in place by another configuration's never
+    // saves or cleans up with the newer one's callbacks.
+    androidx.compose.runtime.key(coordinator, key) {
+        val latestAction by rememberUpdatedState(action)
+        val latestOnLeftSaved by rememberUpdatedState(onLeftSaved)
 
-    DisposableEffect(coordinator, key) {
-        coordinator.register(key) { showSuccess ->
-            latestAction(showSuccess)
-        }
+        DisposableEffect(coordinator, key) {
+            coordinator.register(key) { showSuccess ->
+                latestAction(showSuccess)
+            }
 
-        onDispose {
-            coordinator.flushInBackground(key, showSuccess = false)
-            coordinator.unregister(key)
+            onDispose {
+                val done = latestOnLeftSaved
+                val job = coordinator.flushInBackground(key, showSuccess = false)
+                coordinator.unregister(key)
+                if (job == null) done() else job.invokeOnCompletion { done() }
+            }
         }
     }
 }

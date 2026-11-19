@@ -2,7 +2,10 @@ package com.ai.assistance.operit.data.model
 
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -11,6 +14,8 @@ data class OfficialModelCapabilities(
     val displayName: String,
     val family: String,
     val capabilities: ModelMultimodalCapabilities,
+    /** The context window and longest reply the catalog gives; null when it gives neither. */
+    val limits: ModelLimits? = null,
 )
 
 sealed interface OfficialModelCapabilitiesLookup {
@@ -30,19 +35,33 @@ class OfficialModelCapabilitiesCatalog private constructor(
         models.groupBy { normalize(it.officialModelId.substringAfterLast('/')) }
     private val modelsByDisplayName = models.groupBy { normalize(it.displayName) }
 
+    private val modelsByRouteQualifiedId =
+        models.groupBy { normalize(it.officialModelId).replace('/', '-') }
+    private val catalogOrder = models.withIndex().associate { (index, model) -> model to index }
+
+    /** False for a catalog from before limits were kept (an older cache). */
+    val hasLimits: Boolean = models.any { it.limits != null }
+
     fun matchAll(
         configuredModelNames: List<String>,
     ): Map<String, ModelMultimodalCapabilities> =
+        matchEntries(configuredModelNames).mapValues { it.value.capabilities }
+
+    /** The catalog entry of each configured model that matches exactly one. */
+    fun matchEntries(
+        configuredModelNames: List<String>,
+    ): Map<String, OfficialModelCapabilities> =
         configuredModelNames.mapNotNull { configuredModelName ->
-            when (val lookup = lookup(configuredModelName)) {
+            when (val lookup = lookup(configuredModelName, suggest = false)) {
                 is OfficialModelCapabilitiesLookup.Match ->
-                    configuredModelName to lookup.model.capabilities
+                    configuredModelName to lookup.model
                 is OfficialModelCapabilitiesLookup.Candidates,
                 OfficialModelCapabilitiesLookup.NotFound -> null
             }
         }.toMap()
 
-    fun lookup(configuredModelName: String): OfficialModelCapabilitiesLookup {
+    /** With [suggest] off, a model with no match is [OfficialModelCapabilitiesLookup.NotFound] at once. */
+    fun lookup(configuredModelName: String, suggest: Boolean = true): OfficialModelCapabilitiesLookup {
         val normalizedQuery = normalize(configuredModelName)
         if (normalizedQuery.isEmpty()) {
             return OfficialModelCapabilitiesLookup.NotFound
@@ -64,15 +83,18 @@ class OfficialModelCapabilitiesCatalog private constructor(
             uniqueOrCandidates(modelsByShortId[freeBaseId])?.let { return it }
         }
 
+        // The ID itself, or what follows any '-' in it, named as a route-qualified catalog ID.
         val suffixMatches =
-            models.filter { model ->
-                val routeQualifiedId = normalize(model.officialModelId).replace('/', '-')
-                routedModelId == routeQualifiedId ||
-                    routedModelId.endsWith("-$routeQualifiedId")
-            }
+            buildList {
+                modelsByRouteQualifiedId[routedModelId]?.let(::addAll)
+                routedModelId.forEachIndexed { index, char ->
+                    if (char == '-') modelsByRouteQualifiedId[routedModelId.substring(index + 1)]?.let(::addAll)
+                }
+            }.distinct().sortedBy { catalogOrder.getValue(it) }
         uniqueOrCandidates(suffixMatches)?.let { return it }
 
         uniqueOrCandidates(modelsByDisplayName[normalizedQuery])?.let { return it }
+        if (!suggest) return OfficialModelCapabilitiesLookup.NotFound
 
         val suggestions =
             models
@@ -147,6 +169,12 @@ class OfficialModelCapabilitiesCatalog private constructor(
                                 audio = "audio" in inputModalities,
                                 video = "video" in inputModalities,
                             ),
+                        limits = (modelObject["limit"] as? JsonObject)?.let { limit ->
+                            fun tokens(key: String): Int? = (limit[key] as? JsonPrimitive)?.longOrNull
+                                ?.takeIf { it in 1..Int.MAX_VALUE.toLong() }?.toInt()
+                            ModelLimits(tokens("context"), tokens("output"))
+                                .takeIf { it.contextTokens != null || it.outputTokens != null }
+                        },
                     )
                 }
             require(models.isNotEmpty()) { "Official model catalog contains no usable models" }

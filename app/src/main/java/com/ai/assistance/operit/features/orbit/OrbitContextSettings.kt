@@ -63,7 +63,7 @@ internal object OrbitContextSettings {
             preferences.updateAll(orbit.chatId, orbit.talkChatIds, config) { fixed(it).validate() }
             policy = preferences.resolve(orbit.chatId, config)
         }
-        val resolved = resolveChatContext(policy, config)
+        val resolved = resolveChatContext(policy, config, modelName)
         return State(policy, resolved.capacityK, resolved.windowK, resolved.compactAtK, modelName)
     }
 

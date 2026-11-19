@@ -25,8 +25,9 @@ internal class WebChatInputSettingsBridge(
         val permissionLevel = core.getUiStateDelegate().masterPermissionLevel.first()
         val permissionStop = toolPermissionSystem.permissionStopFlow.first()
         val currentWindowTokens = core.currentWindowSizeFlow.first()
+        val target = apiConfigDelegate.effectiveChatConfigTarget.value
         val resolved = apiConfigDelegate.resolveChatContextSettings(
-            apiConfigDelegate.effectiveChatConfigTarget.value.configId, core.currentChatId.value)
+            target.configId, core.currentChatId.value, target.modelIndex.takeIf { target.isResolved })
         val baseContextLengthK = resolved.baseContextLength
         val maxContextLengthK = resolved.maxContextLength
         val activeContextLengthK = resolved.effectiveContextLength
