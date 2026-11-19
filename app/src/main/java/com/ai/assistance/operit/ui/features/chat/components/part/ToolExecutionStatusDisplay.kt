@@ -604,13 +604,15 @@ private fun PermissionReviewLifecycleDisplay(
             onDismissRequest = { showDetails = false },
             title = { Text(stringResource(R.string.permission_review_detail_title)) },
             text = {
+                // The details scroll; where to change the tool's permission stays in view under them.
+                Column {
                 Column(
                     modifier =
                         Modifier
+                            .weight(1f, fill = false)
                             .heightIn(max = 420.dp)
                             .verticalScroll(rememberScrollState()),
                 ) {
-                    com.ai.assistance.operit.ui.permissions.AlwaysAllowReviewedToolButton(event.action.toolName)
                     Text(
                         stringResource(R.string.permission_review_detail_status, lifecycle),
                         color = statusColor,
@@ -809,6 +811,8 @@ private fun PermissionReviewLifecycleDisplay(
                             )
                         )
                     }
+                }
+                com.ai.assistance.operit.ui.permissions.ToolPermissionSettingsLink(event.parentChatId) { showDetails = false }
                 }
             },
             confirmButton = {

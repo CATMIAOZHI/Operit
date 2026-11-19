@@ -976,6 +976,22 @@ private fun OrbitChatPage(
     // The chat's text box sits under the card: drop its focus so typing never goes there.
     val pageFocus = androidx.compose.ui.platform.LocalFocusManager.current
     LaunchedEffect(settingsModal) { if (settingsModal) pageFocus.clearFocus(force = true) }
+    // A review's details here point to Orbit's own per-tool rules, which its chats follow (Operit's
+    // do not apply); that page is in developer mode, so without it they say how to get there.
+    val toolPermissionsEntry = remember(orbit.id, settings.developerMode) {
+        com.ai.assistance.operit.ui.permissions.ToolPermissionsEntry(
+            orbit = true,
+            open = if (!settings.developerMode) null else ({
+                // Read when tapped, so the page goes over whatever is open then.
+                val now = stackNames.split(',').filter { it.isNotEmpty() }
+                stackNames = (now + OrbitSubPage.TOOL_PERMISSIONS.name).joinToString(",")
+            }),
+            hint = if (settings.developerMode) null else R.string.permission_review_orbit_tool_permissions_hint,
+        )
+    }
+    androidx.compose.runtime.CompositionLocalProvider(
+        com.ai.assistance.operit.ui.permissions.LocalToolPermissionsEntry provides toolPermissionsEntry,
+    ) {
     Box(Modifier.fillMaxSize()) {
     Box(
         Modifier.fillMaxSize()
@@ -1491,6 +1507,7 @@ private fun OrbitChatPage(
     // Orbit asked for a login or a key: the secure entry card, over every page of this Orbit.
     val vaultRequest by com.ai.assistance.operit.features.orbit.OrbitVault.request.collectAsState()
     vaultRequest?.takeIf { it.orbitId == orbit.id }?.let { OrbitVaultEntrySheet(orbit = orbit, request = it) }
+    }
 }
 
 private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, ALIGNMENT, FILES, PACKAGES, TOOL_PERMISSIONS, TOOL_ACCESS, VAULT, VAULT_ENTRY, USAGE, USAGE_TRENDS, APPEARANCE, PET, MODELS, CONTEXT, MODEL_CONFIG, PHONE_PERMISSIONS, DEVICE_ACCESS, NOTIFICATION_SETTINGS, SPEECH_SETTINGS, CHANNELS, WEIXIN, TEXT_SETTINGS, AUTOMATION_SETTINGS, BACKUP, ABOUT, UPDATE_HISTORY, LANGUAGE, STORAGE, COMPONENTS, MCP_CONFIG, TERMINAL_STARTUP, HELP, AGREEMENT, APP_COSTS, APP_PRICING, APP_GROUPS }
