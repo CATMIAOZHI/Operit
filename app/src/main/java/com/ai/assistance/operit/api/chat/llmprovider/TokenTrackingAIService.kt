@@ -290,13 +290,12 @@ class TokenTrackingAIService(
                 }
             } catch (t: Throwable) {
                 request.finish(classify(t))
-                onFinished?.let { withContext(NonCancellable) { it() } }
-                persistAndCapture(appContext, request, t)
+                persistAndCapture(appContext, request, t, onFinished)
                 throw t
             }
             request.finish(TokenStatStatus.COMPLETED)
-            onFinished?.let { withContext(NonCancellable) { it() } }
-            recordSafely(appContext, request)
+            // The ledger prices the call first, so Orbit's own count can keep what it cost.
+            recordSafely(appContext, request, onFinished)
         }
     }
 
@@ -327,13 +326,11 @@ class TokenTrackingAIService(
                 }
             } catch (t: Throwable) {
                 request.finish(classify(t))
-                onFinished?.let { withContext(NonCancellable) { it() } }
-                persistAndCapture(appContext, request, t)
+                persistAndCapture(appContext, request, t, onFinished)
                 throw t
             }
             request.finish(TokenStatStatus.COMPLETED)
-            onFinished?.let { withContext(NonCancellable) { it() } }
-            recordSafely(appContext, request)
+            recordSafely(appContext, request, onFinished)
         }
     }
 
@@ -344,7 +341,8 @@ class TokenTrackingAIService(
          * Counts an ended Orbit call against its allowance, whether it finished, failed or was
          * stopped: what the provider reported, and this call's own count for whatever it did not
          * report, so neither a provider without usage reports nor a call cut short spends for free.
-         * Counting never fails the call.
+         * What the ledger priced the call at comes along for the usage page. Counting never fails
+         * the call.
          */
         private suspend fun recordOrbitUsage(
             appContext: Context,
@@ -362,7 +360,18 @@ class TokenTrackingAIService(
                 val output = usage?.let {
                     it.outputTokens?.plus(if (it.reasoningIncludedInOutput == false) it.reasoningTokens ?: 0L else 0L)
                 } ?: meter.output()
-                com.ai.assistance.operit.features.orbit.OrbitQuota.record(appContext, tag, input, output)
+                val frozen = request.frozenPricing
+                val bill = com.ai.assistance.operit.features.orbit.OrbitQuota.Bill(
+                    model = request.model,
+                    // Cache reads count only when the whole input they are part of is known too.
+                    cached = usage?.cachedInputTokens?.takeIf {
+                        usage.totalInputTokens != null || (usage.uncachedInputTokens != null && usage.cacheWriteTokens != null)
+                    },
+                    cost = frozen?.cost,
+                    currency = frozen?.pricing?.currency ?: com.ai.assistance.operit.data.collects.PricingCurrency.CNY,
+                )
+                com.ai.assistance.operit.features.orbit.OrbitQuota.record(appContext, tag, input, output, bill,
+                    at = request.endedAtMs)
             } catch (e: Exception) {
                 AppLogger.e(TAG, "Orbit 用量记录失败，不影响请求", e)
             }
@@ -391,32 +400,48 @@ class TokenTrackingAIService(
         internal suspend fun recordSafely(
             appContext: Context,
             request: TokenStatRequestContext,
+            /**
+             * Runs once the call's price is frozen (or could not be), before the event is written
+             * and before waiting for Room; it still runs if writing fails.
+             */
+            afterPriced: (suspend () -> Unit)? = null,
         ): RecordOutcome {
             return withContext(NonCancellable) {
-                val baseJson = request.toSpoolBaseJson()
-                val line =
-                    try {
-                        prepareLineBounded(appContext, request)
-                    } catch (e: JavaTimeoutException) {
-                        TokenStatsLedger.prepareUnresolvedEventLine(
-                            request,
-                            baseJson,
-                            "pricing_read_timeout",
-                        )
-                    } catch (e: Exception) {
-                        TokenStatsLedger.prepareUnresolvedEventLine(
-                            request,
-                            baseJson,
-                            "pricing_read_failed:${e.javaClass.simpleName}",
+                var notified = false
+                suspend fun notifyPriced() {
+                    if (notified) return
+                    notified = true
+                    afterPriced?.invoke()
+                }
+                try {
+                    val baseJson = request.toSpoolBaseJson()
+                    val line =
+                        try {
+                            prepareLineBounded(appContext, request)
+                        } catch (e: JavaTimeoutException) {
+                            TokenStatsLedger.prepareUnresolvedEventLine(
+                                request,
+                                baseJson,
+                                "pricing_read_timeout",
+                            )
+                        } catch (e: Exception) {
+                            TokenStatsLedger.prepareUnresolvedEventLine(
+                                request,
+                                baseJson,
+                                "pricing_read_failed:${e.javaClass.simpleName}",
+                            )
+                        }
+                    notifyPriced()
+                    if (!TokenStatSpool.append(appContext, line, request.eventId, request.sessionEpoch)) {
+                        throw TokenStatsPersistenceException(
+                            "Token statistics could not be durably persisted for ${request.eventId}",
                         )
                     }
-                if (!TokenStatSpool.append(appContext, line, request.eventId, request.sessionEpoch)) {
-                    throw TokenStatsPersistenceException(
-                        "Token statistics could not be durably persisted for ${request.eventId}",
-                    )
+                    TokenStatSpool.awaitRoomVisibility(request.eventId, recordTimeoutMs)
+                    RecordOutcome.DURABLE
+                } finally {
+                    notifyPriced()
                 }
-                TokenStatSpool.awaitRoomVisibility(request.eventId, recordTimeoutMs)
-                RecordOutcome.DURABLE
             }
         }
 
@@ -482,9 +507,10 @@ class TokenTrackingAIService(
             appContext: Context,
             request: TokenStatRequestContext,
             original: Throwable?,
+            afterPriced: (suspend () -> Unit)? = null,
         ): TokenStatsPersistenceException? =
             try {
-                recordSafely(appContext, request)
+                recordSafely(appContext, request, afterPriced)
                 null
             } catch (e: TokenStatsPersistenceException) {
                 original?.addSuppressed(e)

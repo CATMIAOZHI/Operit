@@ -21,6 +21,7 @@ import com.ai.assistance.operit.data.stats.LegacyProviderModelKeyDecoder
 import com.ai.assistance.operit.plugins.toolpkg.ToolPkgAiProviderRegistry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.runBlocking
@@ -1079,6 +1080,12 @@ class ApiPreferences private constructor(private val context: Context) {
     }
 
     // ===== 统计页偏好（阶段 4；与汇率共用 api_settings 文件，备份自动覆盖） =====
+
+    /** Changes whenever the stats display currency or the USD to CNY rate changes; pages showing costs re-read on it. */
+    val statsMoneySettingsFlow: Flow<Pair<String?, Float?>> =
+        context.apiDataStore.data
+            .map { preferences -> preferences[STATS_TARGET_CURRENCY] to preferences[USD_TO_CNY_EXCHANGE_RATE] }
+            .distinctUntilChanged()
 
     suspend fun getStatsTargetCurrency(): com.ai.assistance.operit.data.collects.PricingCurrency {
         val preferences = context.apiDataStore.data.first()
