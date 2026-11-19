@@ -342,6 +342,24 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
         )
     }
 
+    // A follow-up let through unreviewed as the app's own package tool runs only on that package's
+    // executor: the one the proxy has just picked, which is the one it runs.
+    fun proxiedSourceChanged(targetToolName: String, executor: ToolExecutor): ToolResult? {
+        val runtime = ToolExecutionManager.currentToolRuntimeContext() ?: return null
+        val targetId = runtime.callId ?: "${runtime.timingScopeId}:${runtime.invocationIndex ?: -1}"
+        if (handler.getToolPermissionSystem().orbitDefaultAllowStillHolds(targetToolName, targetId, executor)) {
+            return null
+        }
+        return ToolResult(
+            toolName = targetToolName,
+            success = false,
+            result = StringResultData(""),
+            error = "Not run: $targetToolName was allowed as the app's built-in package tool, " +
+                "but it now resolves to another source with the same name (such as an MCP server). " +
+                "Call it again; that call goes through permission review.",
+        )
+    }
+
     suspend fun executeProxyTargetWithPermissionCheck(
         targetToolName: String,
         forwardedParameters: List<ToolParameter>,
@@ -411,6 +429,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
         }
 
         handler.notifyToolPermissionChecked(proxiedTool, granted = true)
+        proxiedSourceChanged(targetToolName, executor)?.let { return it }
         // Execute the already-resolved executor instead of re-resolving: the marker
         // classification above is only valid for the exact executor instance it was made
         // against, and a re-resolution could replace it with an MCP executor between the
@@ -1329,6 +1348,8 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                     name = resolvedInvocation.targetToolName,
                     parameters = finalForwardedParameters
                 )
+                proxiedSourceChanged(resolvedInvocation.targetToolName, targetExecutor)
+                    ?.let { return@registerSuspendTool it }
                 // Execute the already-resolved executor instead of re-resolving: the marker
                 // classification above is only valid for the exact executor instance it was made
                 // against, and a re-resolution could replace it with an MCP executor between the

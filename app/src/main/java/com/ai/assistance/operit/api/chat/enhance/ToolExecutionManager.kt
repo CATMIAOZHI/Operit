@@ -1395,11 +1395,17 @@ object ToolExecutionManager {
         // 空候选批次同样要走这一步：它会让旧分数按“一批一步”老化，否则被 hook 全部拦截的
         // 派发不会消耗分数的时间预算。子代理精确重复拆分会递归进入本函数两次，因此这种少见的
         // 派发会记两步——方向只会让分数更早失效，不会放宽任何判断。
+        // 跟进本聊天自己终端/Shell 任务的调用直接放行，不评分也不排审核顺序。
+        val permissionSystem = toolHandler.getToolPermissionSystem()
+        val freeFollowUps =
+            permissionCandidates.map { (_, _, interceptionTool) ->
+                permissionSystem.isFreeFollowUp(interceptionTool, callerChatId)
+            }
         withContext(Dispatchers.IO) {
-            toolHandler
-                .getToolPermissionSystem()
+            permissionSystem
                 .prepareBatchRiskScores(
-                    tools = permissionCandidates.map { (_, _, tool) -> tool },
+                    tools = permissionCandidates.filterIndexed { index, _ -> !freeFollowUps[index] }
+                        .map { (_, _, tool) -> tool },
                     callerChatId = callerChatId,
                     conversationLabel = conversationLabel,
                     workspacePath = workspacePath,
@@ -1420,10 +1426,10 @@ object ToolExecutionManager {
         // for that review only up to the reviewer's continuation timeout, past which they sent a
         // prompt of their own. A level that never reaches the reviewer keeps the parallel dispatch,
         // where order can only decide which reply comes back first.
-        val permissionSystem = toolHandler.getToolPermissionSystem()
         val candidateLevels =
-            permissionCandidates.map { (_, invocation, interceptionTool) ->
-                permissionSystem.getEffectivePermissionLevel(
+            permissionCandidates.mapIndexed { index, (_, invocation, interceptionTool) ->
+                if (freeFollowUps[index]) PermissionLevel.ALLOW
+                else permissionSystem.getEffectivePermissionLevel(
                     interceptionTool.name, callerChatId,
                     lookupDefault = resolveToolTarget(invocation.tool).tool.name == invocation.tool.name,
                 )
@@ -1960,8 +1966,10 @@ object ToolExecutionManager {
                         ?.let { com.ai.assistance.operit.features.orbit.OrbitVault.envKeys(context, it.id) }.orEmpty()
                 } catch (e: CancellationException) { throw e } catch (e: Exception) { emptyList() }
                 val executor = toolHandler.getToolExecutorOrActivate(toolName)
-                // Only a direct call can be let through by the lookup default (a proxy call is reviewed).
-                val reviewAgain = executor != null &&
+                // A call let through unreviewed as the app's own package tool is checked on the executor
+                // that runs it. A proxy picks its target's executor itself and checks it there.
+                val proxied = toolName == PACKAGE_PROXY_TOOL_NAME || toolName == CliToolModeSupport.PROXY_TOOL_NAME
+                val reviewAgain = executor != null && !proxied &&
                     !toolHandler.getToolPermissionSystem()
                         .orbitDefaultAllowStillHolds(
                             toolName, invocation.callId ?: "$timingScopeId:${invocation.invocationIndex}", executor,

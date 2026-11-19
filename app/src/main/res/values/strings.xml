@@ -5413,12 +5413,12 @@
 
     <!-- Tool Permission Settings -->
     <string name="tool_permissions_title">工具权限</string>
-    <string name="tool_permissions_description">默认情况下，所有工具都走自动审核：工作区内的操作直接放行，其余交给审核代理判断。您可以在下面添加例外。</string>
+    <string name="tool_permissions_description">默认情况下，工具都走自动审核：工作区内的操作直接放行，其余交给审核代理判断（下面「允许」分组里写了几类默认直接放行的工具）。您可以在下面添加例外。</string>
     <string name="global_permission_switch">全局权限开关</string>
     <string name="global_permission_switch_description">此设置控制默认行为；单个工具的“以后都允许/拒绝”等例外规则优先级更高。</string>
     <string name="permission_level_allow">允许</string>
     <string name="permission_level_allow_description">这些工具将自动运行。</string>
-    <string name="permission_level_allow_default_hint">子代理协作工具（spawn_agent 等）默认就允许，没有单独的开关。想让它们换档位，就在其他分组里用 + 添加。</string>
+    <string name="permission_level_allow_default_hint">子代理协作工具（spawn_agent 等）默认就允许，没有单独的开关。想让它们换档位，就在其他分组里用 + 添加。查看或取消本聊天自己的终端、Shell 任务（等结果、看屏幕、取消）也直接放行，除非你给这个工具单独设了档位，或把全局开关设为禁止。</string>
     <string name="permission_level_auto_review">自动审核</string>
     <string name="permission_level_auto_review_description">可确认位于当前工作区内的操作直接放行；其余需要审核的操作交给独立代理批准或拒绝。审核失败、超时或无有效结果时，操作不执行，原因返回给 AI，由 AI 重试或向你说明配置问题。单工具规则优先，此模式不是系统沙箱。</string>
     <string name="permission_level_forbid">禁止</string>
@@ -7866,6 +7866,7 @@
 
     <!-- StandardTerminalCommandExecutor -->
     <string name="terminal_error_missing_session_name">缺少参数: session_name</string>
+    <string name="terminal_error_no_chat_session">本聊天还没有终端会话，先用 terminal 运行一条命令。</string>
     <string name="terminal_error_create_session">创建或获取终端会话时出错: %1$s</string>
     <string name="terminal_error_missing_command">缺少参数: command</string>
     <string name="terminal_error_missing_session_id">缺少参数: session_id</string>
@@ -9852,7 +9853,7 @@
     <string name="orbit_tools_row">每个工具的权限</string>
     <string name="orbit_tools_row_desc">Orbit 自己的一套，和主应用分开</string>
     <string name="orbit_tools_title">工具权限</string>
-    <string name="orbit_tools_help">只管 Orbit 的聊天和它的后台任务，主应用的工具权限不受影响。Orbit 自己的工具，以及内置包里只做查询的工具（时间、搜索、天气等），默认直接允许；对外发消息的工具默认在聊天里放卡片问你；其他工具默认走自动审核（快速）。</string>
+    <string name="orbit_tools_help">只管 Orbit 的聊天和它的后台任务，主应用的工具权限不受影响。Orbit 自己的工具，以及内置包里只做查询的工具（时间、搜索、天气等），默认直接允许；对外发消息的工具默认在聊天里放卡片问你；查看或取消本聊天自己的终端、Shell 任务（等结果、看屏幕、取消），在你没单独设定时直接放行；其他工具默认走自动审核（快速）。</string>
     <string name="orbit_tools_search">搜索工具</string>
     <string name="orbit_tools_empty">没有找到工具</string>
     <string name="orbit_tools_folder_internal">Orbit 内部工具</string>
