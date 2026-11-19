@@ -32,17 +32,33 @@ class ModelProtocolCatalog private constructor(private val providers: List<Provi
             "qwen3.6-plus", "qwen3.7-plus", "qwen3.7-max", "qwen3.8-max", "qwen3.8-flash",
         )
 
+        /**
+         * models.dev lists no address for providers whose SDK has one built in. Accounts on these
+         * official addresses keep the protocol their provider type already speaks; the catalog only
+         * adds the model's thinking levels. Keep in step with
+         * `tools/model_catalog/generate_model_protocols_catalog.py`.
+         */
+        internal val OFFICIAL_ENDPOINTS = mapOf(
+            "openai" to "https://api.openai.com/v1",
+            "anthropic" to "https://api.anthropic.com/v1",
+            "google" to "https://generativelanguage.googleapis.com",
+            "xai" to "https://api.x.ai/v1",
+        )
+
         fun parse(raw: String): ModelProtocolCatalog {
             val root = Json.parseToJsonElement(raw).jsonObject
             val providers = root.mapNotNull { (id, value) ->
                 val provider = value as? JsonObject ?: return@mapNotNull null
-                val endpoint = provider.text("api") ?: return@mapNotNull null
+                val listedEndpoint = provider.text("api")
+                val endpoint = listedEndpoint ?: OFFICIAL_ENDPOINTS[id] ?: return@mapNotNull null
+                val official = listedEndpoint == null
                 val models = (provider["models"] as? JsonObject)?.mapNotNull model@{ (modelId, item) ->
                     val model = item as? JsonObject ?: return@model null
                     val override = model["provider"] as? JsonObject
                     val npm = override?.text("npm") ?: provider.text("npm")
                     val field = (model["interleaved"] as? JsonObject)?.text("field")
                     val protocol = when {
+                        official -> ModelProtocol.INHERIT
                         id == "opencode-go" && modelId in goAnthropicModels -> ModelProtocol.ANTHROPIC
                         npm == "@ai-sdk/anthropic" -> ModelProtocol.ANTHROPIC
                         npm == "@ai-sdk/google" -> ModelProtocol.GEMINI
@@ -50,6 +66,8 @@ class ModelProtocolCatalog private constructor(private val providers: List<Provi
                         npm == "@ai-sdk/openai" -> ModelProtocol.RESPONSES
                         npm == "@ai-sdk/openai-compatible" && field == "reasoning_content" -> ModelProtocol.CHAT_REASONING
                         npm == "@ai-sdk/openai-compatible" && field == null -> ModelProtocol.CHAT_COMPLETIONS
+                        // OpenRouter speaks Chat Completions under its own SDK name.
+                        npm == "@openrouter/ai-sdk-provider" -> ModelProtocol.INHERIT
                         else -> return@model null
                     }
                     val reasoningEfforts = (model["reasoning_options"] as? JsonArray)?.flatMap { option ->
@@ -60,7 +78,8 @@ class ModelProtocolCatalog private constructor(private val providers: List<Provi
                             }.orEmpty()
                         } else emptyList()
                     }
-                    modelId to ModelProtocolSettings(protocol, override?.text("api").orEmpty(), reasoningEfforts)
+                    val modelEndpoint = if (protocol == ModelProtocol.INHERIT) "" else override?.text("api").orEmpty()
+                    modelId to ModelProtocolSettings(protocol, modelEndpoint, reasoningEfforts)
                 }?.toMap().orEmpty()
                 if (models.isEmpty()) null else Provider(id, endpoint, models)
             }.flatMap { provider ->
@@ -80,6 +99,76 @@ class ModelProtocolCatalog private constructor(private val providers: List<Provi
         }
 
         private const val GO_LEGACY_ENDPOINT = "https://opencode.ai/zen/go/v1"
+
+        /**
+         * models.dev's full api.json cut down to what [parse] and the Codex model list read, in
+         * the format of the bundled copy (`tools/model_catalog/generate_model_protocols_catalog.py`
+         * writes the same). The full file is several MB; the cut one is a tenth of that.
+         */
+        fun slim(raw: String): String = slim(java.io.StringReader(raw))
+
+        /**
+         * [slim] read from a stream one provider at a time, so a download is never held as one
+         * whole tree.
+         */
+        fun slim(reader: java.io.Reader): String {
+            val json = com.google.gson.stream.JsonReader(reader)
+            val slimmed = buildJsonObject {
+                json.beginObject()
+                while (json.hasNext()) {
+                    val id = json.nextName()
+                    val provider = Json.parseToJsonElement(
+                        com.google.gson.JsonParser.parseReader(json).toString()
+                    ) as? JsonObject ?: continue
+                    slimProvider(id, provider)?.let { put(id, it) }
+                }
+                json.endObject()
+            }
+            return slimmed.toString()
+        }
+
+        private fun slimProvider(id: String, provider: JsonObject): JsonObject? {
+            val api = provider.text("api")
+            if (api == null && id !in OFFICIAL_ENDPOINTS) return null
+            val models = (provider["models"] as? JsonObject)?.takeIf { it.isNotEmpty() } ?: return null
+            return buildJsonObject {
+                api?.let { put("api", it) }
+                provider.text("npm")?.let { put("npm", it) }
+                putJsonObject("models") {
+                    models.forEach model@{ (modelId, item) ->
+                        val model = item as? JsonObject ?: return@model
+                        put(modelId, slimModel(id, model))
+                    }
+                }
+            }
+        }
+
+        private fun slimModel(providerId: String, model: JsonObject): JsonObject = buildJsonObject {
+            // The Codex provider lists OpenAI's models by name when no account is signed in.
+            if (providerId == "openai") model.text("name")?.let { put("name", it) }
+            model["interleaved"]?.let { put("interleaved", it) }
+            (model["reasoning_options"] as? JsonArray)?.let { put("reasoning_options", it) }
+            (model["provider"] as? JsonObject)?.let { override ->
+                val kept = listOf("npm", "api", "shape").mapNotNull { key -> override.text(key)?.let { key to it } }
+                if (kept.isNotEmpty()) putJsonObject("provider") { kept.forEach { (key, text) -> put(key, text) } }
+            }
+            val modes = ((model["experimental"] as? JsonObject)?.get("modes") as? JsonObject)
+            if (providerId == "openai" && modes != null && modes.isNotEmpty()) {
+                putJsonObject("experimental") {
+                    putJsonObject("modes") {
+                        modes.forEach { (mode, config) ->
+                            val reasoning = (((config as? JsonObject)?.get("provider") as? JsonObject)
+                                ?.get("body") as? JsonObject)?.get("reasoning") as? JsonObject
+                            putJsonObject(mode) {
+                                if (reasoning != null) {
+                                    putJsonObject("provider") { putJsonObject("body") { put("reasoning", reasoning) } }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         private fun JsonObject.text(name: String): String? =
             (get(name) as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }

@@ -738,7 +738,7 @@ private fun ModelConfigContent(
             }
 
             selectedConfig.value?.let { config ->
-                item {
+                item(key = "api:${config.id}") {
                     ModelApiSettingsSection(
                         config = config,
                         configManager = configManager,

@@ -1069,16 +1069,7 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
                 getParameterValue(tool, "name")?.trim().takeUnless { it.isNullOrBlank() }
                     ?: "New Model Config"
             val configId = modelConfigManager.createConfig(name)
-            val created = modelConfigManager.getModelConfigFlow(configId).first()
-
-            val (updated, changedFields) = applyModelConfigUpdates(tool, created, includeName = false)
-            val finalConfig =
-                if (changedFields.isNotEmpty()) {
-                    modelConfigManager.saveModelConfig(updated)
-                    updated
-                } else {
-                    created
-                }
+            val (finalConfig, changedFields) = editWithTool(modelConfigManager, configId, tool, includeName = false)
 
             ToolResult(
                 toolName = tool.name,
@@ -1107,6 +1098,31 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
         }
     }
 
+    /**
+     * Applies the tool's changes to the stored configuration in one edit, so anything saved
+     * meanwhile is kept. After the models, address or provider changed, what the model catalogs
+     * know about the models is filled in, as the model settings page does.
+     */
+    private suspend fun editWithTool(
+        modelConfigManager: ModelConfigManager,
+        configId: String,
+        tool: AITool,
+        includeName: Boolean,
+    ): Pair<ModelConfigData, List<String>> {
+        val catalogs = com.ai.assistance.operit.data.model.ModelAutoConfig.loadCatalogs(context)
+        var changedFields = emptyList<String>()
+        val saved = modelConfigManager.editModelConfig(configId) { now ->
+            val (updated, changed) = applyModelConfigUpdates(tool, now, includeName)
+            changedFields = changed
+            when {
+                changed.isEmpty() -> now
+                changed.none { it == "model_name" || it == "api_endpoint" || it == "api_provider_type" } -> updated
+                else -> with(com.ai.assistance.operit.data.model.ModelAutoConfig) { updated.filled(catalogs) }
+            }
+        }
+        return saved to changedFields
+    }
+
     suspend fun updateModelConfig(tool: AITool): ToolResult {
         val configId = getParameterValue(tool, "config_id")?.trim().orEmpty()
         if (configId.isBlank()) {
@@ -1133,14 +1149,7 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
                         error = "Model config not found: $configId"
                     )
 
-            val (updated, changedFields) = applyModelConfigUpdates(tool, current, includeName = true)
-            val finalConfig =
-                if (changedFields.isNotEmpty()) {
-                    modelConfigManager.saveModelConfig(updated)
-                    updated
-                } else {
-                    current
-                }
+            val (finalConfig, changedFields) = editWithTool(modelConfigManager, configId, tool, includeName = true)
 
             val mappingWithIndex = functionalConfigManager.functionConfigMappingWithIndexFlow.first()
             val affectedFunctions =

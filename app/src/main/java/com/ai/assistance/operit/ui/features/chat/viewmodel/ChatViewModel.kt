@@ -606,12 +606,14 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     fun openContextEditor(draft: String? = null) {
         val chatId = currentChatId.value ?: return
-        val configId = apiConfigDelegate.effectiveChatConfigTarget.value.configId
+        val target = apiConfigDelegate.effectiveChatConfigTarget.value
+        val configId = target.configId
         val revision = messageProcessingDelegate.draftRevision
         val request = ++contextEditorRequest
         viewModelScope.launch {
             try {
-                val resolved = apiConfigDelegate.loadChatContext(chatId, configId)
+                val resolved = apiConfigDelegate.loadChatContext(chatId, configId,
+                    target.modelIndex.takeIf { target.isResolved })
                 if (currentChatId.value != chatId || request != contextEditorRequest) return@launch
                 _contextEditor.value = com.ai.assistance.operit.ui.features.chat.components.ChatContextEditorTarget(
                     chatId, configId, resolved.policy, resolved.capacityK, draft, revision)

@@ -380,6 +380,10 @@ interface OrbitTaskDao {
     @Query("SELECT * FROM orbit_tasks WHERE id = :id")
     suspend fun task(id: String): OrbitTaskEntity?
 
+    /** One task's model columns, followed as they change; null once the task is gone. */
+    @Query("SELECT source, useSubagent, modelRole FROM orbit_tasks WHERE id = :id")
+    fun observeTaskModelFields(id: String): Flow<com.ai.assistance.operit.data.model.OrbitTaskModelFields?>
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertTask(task: OrbitTaskEntity): Long
 

@@ -69,7 +69,8 @@ object ModelConfigConnectionTester {
         onActiveServiceChanged(service)
 
         try {
-            val parameters = modelConfigManager.getModelParametersForConfig(configForTest.id)
+            // The tested model's own parameters, held to what that model can write.
+            val parameters = modelConfigManager.getModelParametersForConfigSnapshot(configForTest)
 
             suspend fun runCase(type: ModelConnectionTestType, block: suspend () -> Unit) {
                 val result =

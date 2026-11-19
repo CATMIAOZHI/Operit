@@ -522,6 +522,10 @@ object ThinkingRequestSemantics {
             ApiProviderType.OPENCODE_GO,
         )
 
+    /** Whether [providerType]'s requests send a model's catalog thinking levels. */
+    fun readsCatalogEfforts(providerType: ApiProviderType?): Boolean =
+        providerType in effortCatalogProviderTypes
+
     fun normalizeDeepseekEffort(effort: String): String =
         when (effort) {
             "low" -> "low"

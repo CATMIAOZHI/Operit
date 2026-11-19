@@ -6,6 +6,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 131072
     }
   },
   "ai21/jamba-large": {
@@ -15,6 +19,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 256000,
+      "output": 4096
     }
   },
   "ai21/jamba-mini": {
@@ -24,6 +32,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 256000,
+      "output": 4096
     }
   },
   "aion-labs/aion-2.0": {
@@ -33,6 +45,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 32768
     }
   },
   "aion-labs/aion-3.0": {
@@ -42,6 +58,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 32768
     }
   },
   "aion-labs/aion-3.0-mini": {
@@ -51,6 +71,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 32768
     }
   },
   "aion-labs/aion-rp-llama-3.1-8b": {
@@ -60,6 +84,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 32768,
+      "output": 29491
     }
   },
   "aisingapore/gemma-sea-lion-v4-27b-it": {
@@ -70,6 +98,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 128000
     }
   },
   "aleph-alpha/kolibri-1": {
@@ -79,6 +111,9 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 1048576
     }
   },
   "alibaba/qwen-flash": {
@@ -88,6 +123,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 32768
     }
   },
   "alibaba/qwen-image-2.1": {
@@ -98,6 +137,9 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 8192
     }
   },
   "alibaba/qwen-max": {
@@ -107,6 +149,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 32768,
+      "output": 8192
     }
   },
   "alibaba/qwen-mt-plus": {
@@ -116,6 +162,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 16384,
+      "output": 8192
     }
   },
   "alibaba/qwen-omni-turbo": {
@@ -128,6 +178,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 32768,
+      "output": 2048
     }
   },
   "alibaba/qwen-plus": {
@@ -137,6 +191,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 32768
     }
   },
   "alibaba/qwen-turbo": {
@@ -146,6 +204,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 16384
     }
   },
   "alibaba/qwen-vl-max": {
@@ -156,6 +218,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 8192
     }
   },
   "alibaba/qwen-vl-plus": {
@@ -166,6 +232,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 8192
     }
   },
   "alibaba/qwen2-5-vl-72b-instruct": {
@@ -176,6 +246,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 8192
     }
   },
   "alibaba/qwen2.5-7b-instruct": {
@@ -185,6 +259,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 8192
     }
   },
   "alibaba/qwen2.5-coder-0.5b": {
@@ -194,6 +272,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 32768,
+      "output": 8192
     }
   },
   "alibaba/qwen2.5-coder-32b-instruct": {
@@ -203,6 +285,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 8192
     }
   },
   "alibaba/qwen3-235b-a22b": {
@@ -212,6 +298,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 16384
     }
   },
   "alibaba/qwen3-235b-a22b-instruct-2507": {
@@ -221,6 +311,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 16384
     }
   },
   "alibaba/qwen3-235b-a22b-thinking-2507": {
@@ -230,6 +324,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 81920
     }
   },
   "alibaba/qwen3-30b-a3b": {
@@ -239,6 +337,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 16384
     }
   },
   "alibaba/qwen3-30b-a3b-instruct-2507": {
@@ -248,6 +350,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 16384
     }
   },
   "alibaba/qwen3-32b": {
@@ -257,6 +363,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 16384
     }
   },
   "alibaba/qwen3-8b": {
@@ -266,6 +376,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 32768,
+      "output": 32768
     }
   },
   "alibaba/qwen3-coder-30b-a3b-instruct": {
@@ -275,6 +389,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 65536
     }
   },
   "alibaba/qwen3-coder-480b-a35b-instruct": {
@@ -284,6 +402,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 65536
     }
   },
   "alibaba/qwen3-coder-flash": {
@@ -293,6 +415,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 65536
     }
   },
   "alibaba/qwen3-coder-next": {
@@ -302,6 +428,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 65536
     }
   },
   "alibaba/qwen3-coder-plus": {
@@ -311,6 +441,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 65536
     }
   },
   "alibaba/qwen3-embedding-8b": {
@@ -320,6 +454,9 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 32768
     }
   },
   "alibaba/qwen3-max": {
@@ -329,6 +466,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 65536
     }
   },
   "alibaba/qwen3-max-preview": {
@@ -338,6 +479,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 32768
     }
   },
   "alibaba/qwen3-next-80b-a3b-instruct": {
@@ -347,6 +492,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 32768
     }
   },
   "alibaba/qwen3-next-80b-a3b-thinking": {
@@ -356,6 +505,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 32768
     }
   },
   "alibaba/qwen3-omni-30b-a3b-thinking": {
@@ -368,6 +521,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 65536,
+      "output": 16384
     }
   },
   "alibaba/qwen3-reranker-8b": {
@@ -377,6 +534,9 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 32768
     }
   },
   "alibaba/qwen3-vl-235b-a22b-instruct": {
@@ -387,6 +547,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 32768
     }
   },
   "alibaba/qwen3-vl-235b-a22b-thinking": {
@@ -397,6 +561,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 32768
     }
   },
   "alibaba/qwen3-vl-30b-a3b-instruct": {
@@ -408,6 +576,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 32768
     }
   },
   "alibaba/qwen3-vl-flash": {
@@ -418,6 +590,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 32768
     }
   },
   "alibaba/qwen3-vl-plus": {
@@ -426,8 +602,13 @@
     "modalities": {
       "input": [
         "image",
-        "text"
+        "text",
+        "video"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 32768
     }
   },
   "alibaba/qwen3.5-0.8b": {
@@ -439,6 +620,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 81920
     }
   },
   "alibaba/qwen3.5-122b-a10b": {
@@ -450,6 +635,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 65536
     }
   },
   "alibaba/qwen3.5-27b": {
@@ -461,6 +650,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 65536
     }
   },
   "alibaba/qwen3.5-2b": {
@@ -472,6 +665,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 81920
     }
   },
   "alibaba/qwen3.5-35b-a3b": {
@@ -483,6 +680,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 65536
     }
   },
   "alibaba/qwen3.5-35b-a3b-base": {
@@ -494,6 +695,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 65536
     }
   },
   "alibaba/qwen3.5-397b-a17b": {
@@ -505,6 +710,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 65536
     }
   },
   "alibaba/qwen3.5-4b": {
@@ -516,6 +725,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 81920
     }
   },
   "alibaba/qwen3.5-9b": {
@@ -527,6 +740,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 65536
     }
   },
   "alibaba/qwen3.5-9b-base": {
@@ -538,6 +755,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 65536
     }
   },
   "alibaba/qwen3.5-flash": {
@@ -549,6 +770,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 65536
     }
   },
   "alibaba/qwen3.5-plus": {
@@ -560,6 +785,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 65536
     }
   },
   "alibaba/qwen3.6-27b": {
@@ -571,6 +800,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 65536
     }
   },
   "alibaba/qwen3.6-35b-a3b": {
@@ -582,6 +815,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 65536
     }
   },
   "alibaba/qwen3.6-flash": {
@@ -593,6 +830,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 65536
     }
   },
   "alibaba/qwen3.6-max-preview": {
@@ -602,6 +843,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 65536
     }
   },
   "alibaba/qwen3.6-plus": {
@@ -613,6 +858,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 65536
     }
   },
   "alibaba/qwen3.7-flash": {
@@ -624,6 +873,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 131072
     }
   },
   "alibaba/qwen3.7-max": {
@@ -633,6 +886,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 131072
     }
   },
   "alibaba/qwen3.7-plus": {
@@ -644,6 +901,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 64000
     }
   },
   "alibaba/qwen3.8-2.4t-a95b": {
@@ -653,6 +914,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 131072
     }
   },
   "alibaba/qwen3.8-27b": {
@@ -664,6 +929,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 32768
     }
   },
   "alibaba/qwen3.8-flash": {
@@ -675,6 +944,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 131072
     }
   },
   "alibaba/qwen3.8-flash-next": {
@@ -686,6 +959,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 131072
     }
   },
   "alibaba/qwen3.8-max": {
@@ -698,6 +975,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 131072
     }
   },
   "alibaba/qwen3.8-max-0902": {
@@ -710,6 +991,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 131072
     }
   },
   "alibaba/qwen3.8-max-preview": {
@@ -721,6 +1006,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 131072
     }
   },
   "alibaba/qwen3.8-max-prime": {
@@ -732,6 +1021,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 131072
     }
   },
   "alibaba/qwen3.8-omni-flash": {
@@ -744,6 +1037,26 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 131072
+    }
+  },
+  "alibaba/qwen4-max": {
+    "name": "Qwen4 Max",
+    "family": "qwen",
+    "modalities": {
+      "input": [
+        "image",
+        "pdf",
+        "text",
+        "video"
+      ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 262144
     }
   },
   "alibaba/qwq-32b": {
@@ -753,6 +1066,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 8192
     }
   },
   "alibaba/qwq-plus": {
@@ -762,6 +1079,23 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 8192
+    }
+  },
+  "allenai/olmocr-2-7b": {
+    "name": "olmOCR 2 7B",
+    "family": "",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    },
+    "limit": {
+      "context": 16384
     }
   },
   "amazon/nova-2-lite": {
@@ -774,6 +1108,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 65536
     }
   },
   "amazon/nova-2-lite-v1": {
@@ -786,6 +1124,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 65535
     }
   },
   "amazon/nova-lite": {
@@ -798,6 +1140,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 300000,
+      "output": 10000
     }
   },
   "amazon/nova-lite-v1": {
@@ -808,6 +1154,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 300000,
+      "output": 5120
     }
   },
   "amazon/nova-micro": {
@@ -817,6 +1167,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 10000
     }
   },
   "amazon/nova-micro-v1": {
@@ -826,6 +1180,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 5120
     }
   },
   "amazon/nova-premier": {
@@ -838,6 +1196,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 10000
     }
   },
   "amazon/nova-pro": {
@@ -850,6 +1212,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 300000,
+      "output": 10000
     }
   },
   "amazon/nova-pro-v1": {
@@ -860,6 +1226,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 300000,
+      "output": 5120
     }
   },
   "anthracite-org/magnum-v4-72b": {
@@ -869,6 +1239,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 32768,
+      "output": 4096
     }
   },
   "anthropic/claude-3-5-haiku-20241022": {
@@ -880,6 +1254,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 200000,
+      "output": 8192
     }
   },
   "anthropic/claude-3-5-sonnet-20241022": {
@@ -891,6 +1269,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 200000,
+      "output": 8192
     }
   },
   "anthropic/claude-3-7-sonnet-20250219": {
@@ -902,6 +1284,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 200000,
+      "output": 64000
     }
   },
   "anthropic/claude-3-haiku-20240307": {
@@ -913,6 +1299,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 200000,
+      "output": 4096
     }
   },
   "anthropic/claude-fable-5": {
@@ -924,6 +1314,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 128000
     }
   },
   "anthropic/claude-fable-5-1": {
@@ -935,6 +1329,25 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 128000
+    }
+  },
+  "anthropic/claude-fable-5-2": {
+    "name": "Claude Fable 5.2",
+    "family": "claude-fable",
+    "modalities": {
+      "input": [
+        "image",
+        "pdf",
+        "text"
+      ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 128000
     }
   },
   "anthropic/claude-haiku-4-5": {
@@ -946,6 +1359,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 200000,
+      "output": 64000
     }
   },
   "anthropic/claude-haiku-4-5-20251001": {
@@ -957,6 +1374,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 200000,
+      "output": 64000
     }
   },
   "anthropic/claude-haiku-5-5": {
@@ -968,6 +1389,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 128000
     }
   },
   "anthropic/claude-mythos-5": {
@@ -979,6 +1404,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 128000
     }
   },
   "anthropic/claude-mythos-5-1": {
@@ -990,6 +1419,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 128000
     }
   },
   "anthropic/claude-opus-4-0": {
@@ -1001,6 +1434,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 200000,
+      "output": 32000
     }
   },
   "anthropic/claude-opus-4-1": {
@@ -1012,6 +1449,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 200000,
+      "output": 32000
     }
   },
   "anthropic/claude-opus-4-1-20250805": {
@@ -1023,6 +1464,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 200000,
+      "output": 32000
     }
   },
   "anthropic/claude-opus-4-20250514": {
@@ -1034,6 +1479,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 200000,
+      "output": 32000
     }
   },
   "anthropic/claude-opus-4-5": {
@@ -1045,6 +1494,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 200000,
+      "output": 64000
     }
   },
   "anthropic/claude-opus-4-5-20251101": {
@@ -1056,6 +1509,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 200000,
+      "output": 64000
     }
   },
   "anthropic/claude-opus-4-6": {
@@ -1067,6 +1524,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 128000
     }
   },
   "anthropic/claude-opus-4-7": {
@@ -1078,6 +1539,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 128000
     }
   },
   "anthropic/claude-opus-4-8": {
@@ -1089,6 +1554,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 128000
     }
   },
   "anthropic/claude-opus-5": {
@@ -1100,6 +1569,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 128000
     }
   },
   "anthropic/claude-opus-5-5": {
@@ -1111,6 +1584,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 128000
     }
   },
   "anthropic/claude-sonnet-4-0": {
@@ -1122,6 +1599,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 200000,
+      "output": 64000
     }
   },
   "anthropic/claude-sonnet-4-20250514": {
@@ -1133,6 +1614,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 200000,
+      "output": 64000
     }
   },
   "anthropic/claude-sonnet-4-5": {
@@ -1144,6 +1629,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 200000,
+      "output": 64000
     }
   },
   "anthropic/claude-sonnet-4-5-20250929": {
@@ -1155,6 +1644,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 200000,
+      "output": 64000
     }
   },
   "anthropic/claude-sonnet-4-6": {
@@ -1166,6 +1659,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 64000
     }
   },
   "anthropic/claude-sonnet-5": {
@@ -1177,6 +1674,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 128000
     }
   },
   "anthropic/claude-sonnet-5-5": {
@@ -1188,6 +1689,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 128000
     }
   },
   "apodex/apodex-1.1-mini": {
@@ -1197,6 +1702,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 262144
     }
   },
   "arcee-ai/trinity-large-preview": {
@@ -1206,6 +1715,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 524288,
+      "output": 262144
     }
   },
   "arcee-ai/trinity-large-thinking": {
@@ -1215,6 +1728,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 524288,
+      "output": 262144
     }
   },
   "arcee-ai/trinity-mini": {
@@ -1224,6 +1741,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 131072
     }
   },
   "arcee-ai/trinity-nano-preview": {
@@ -1233,6 +1754,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 131072
     }
   },
   "baai/bge-m3": {
@@ -1242,6 +1767,9 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 8192
     }
   },
   "baai/bge-multilingual-gemma2": {
@@ -1251,6 +1779,9 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 8192
     }
   },
   "baai/bge-reranker-v2-m3": {
@@ -1260,6 +1791,9 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 8192
     }
   },
   "baichuan/baichuan-m2-32b": {
@@ -1269,6 +1803,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 131072
     }
   },
   "baidu/cobuddy": {
@@ -1278,6 +1816,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 65536
     }
   },
   "baidu/ernie-4.5-21b-a3b": {
@@ -1287,6 +1829,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 8000
     }
   },
   "baidu/ernie-4.5-300b-a47b": {
@@ -1296,6 +1842,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 12000
     }
   },
   "baidu/ernie-4.5-vl-424b-a47b": {
@@ -1306,6 +1856,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 123000,
+      "output": 16000
     }
   },
   "black-forest-labs/flux-1-dev": {
@@ -1345,6 +1899,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 256000,
+      "output": 64000
     }
   },
   "bytedance-seed/seed-1-6-flash": {
@@ -1356,6 +1914,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 256000,
+      "output": 32000
     }
   },
   "bytedance-seed/seed-1-6-vision": {
@@ -1366,6 +1928,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 256000,
+      "output": 32000
     }
   },
   "bytedance-seed/seed-1-8": {
@@ -1376,6 +1942,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 256000,
+      "output": 64000
     }
   },
   "bytedance-seed/seed-2.0-code": {
@@ -1387,6 +1957,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 131072
     }
   },
   "bytedance-seed/seed-2.0-lite": {
@@ -1398,6 +1972,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 256000,
+      "output": 32000
     }
   },
   "bytedance-seed/seed-2.0-mini": {
@@ -1409,6 +1987,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 256000,
+      "output": 32000
     }
   },
   "bytedance-seed/seed-2.0-pro": {
@@ -1420,6 +2002,26 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 256000,
+      "output": 128000
+    }
+  },
+  "bytedance-seed/seed-2.1-lite": {
+    "name": "Seed 2.1 Lite",
+    "family": "seed",
+    "modalities": {
+      "input": [
+        "audio",
+        "image",
+        "text",
+        "video"
+      ]
+    },
+    "limit": {
+      "context": 1024000,
+      "output": 256000
     }
   },
   "bytedance-seed/seed-2.1-pro": {
@@ -1431,6 +2033,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1024000,
+      "output": 256000
     }
   },
   "bytedance-seed/seed-2.1-turbo": {
@@ -1442,6 +2048,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 256000,
+      "output": 256000
     }
   },
   "bytedance-seed/seed-character": {
@@ -1453,6 +2063,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 256000,
+      "output": 256000
     }
   },
   "bytedance-seed/seed-evolving": {
@@ -1464,6 +2078,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1024000,
+      "output": 256000
     }
   },
   "bytedance-seed/seed-oss-36b-instruct": {
@@ -1473,6 +2091,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 524288,
+      "output": 524288
     }
   },
   "bytedance-seed/seedance-2.0": {
@@ -1506,6 +2128,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 4000,
+      "output": 50000
     }
   },
   "canopylabs/orpheus-v1-english": {
@@ -1515,6 +2141,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 4000,
+      "output": 50000
     }
   },
   "cognitivecomputations/dolphin-mistral-24b-venice-edition": {
@@ -1524,6 +2154,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 8192
     }
   },
   "cohere/c4ai-aya-expanse-32b": {
@@ -1533,6 +2167,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 4000
     }
   },
   "cohere/c4ai-aya-expanse-8b": {
@@ -1542,6 +2180,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 8000,
+      "output": 4000
     }
   },
   "cohere/c4ai-aya-vision-32b": {
@@ -1552,6 +2194,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 16000,
+      "output": 4000
     }
   },
   "cohere/c4ai-aya-vision-8b": {
@@ -1562,6 +2208,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 16000,
+      "output": 4000
     }
   },
   "cohere/command-a": {
@@ -1571,6 +2221,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 256000,
+      "output": 8192
     }
   },
   "cohere/command-a-03-2025": {
@@ -1580,6 +2234,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 256000,
+      "output": 8000
     }
   },
   "cohere/command-a-plus-05-2026": {
@@ -1590,6 +2248,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 64000
     }
   },
   "cohere/command-a-reasoning-08-2025": {
@@ -1599,6 +2261,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 256000,
+      "output": 32000
     }
   },
   "cohere/command-a-translate-08-2025": {
@@ -1608,6 +2274,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 8000,
+      "output": 8000
     }
   },
   "cohere/command-a-vision-07-2025": {
@@ -1618,6 +2288,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 8000
     }
   },
   "cohere/command-r-08-2024": {
@@ -1627,6 +2301,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 4000
     }
   },
   "cohere/command-r-plus-08-2024": {
@@ -1636,6 +2314,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 4000
     }
   },
   "cohere/command-r7b-12-2024": {
@@ -1645,6 +2327,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 4000
     }
   },
   "cohere/command-r7b-arabic-02-2025": {
@@ -1654,6 +2340,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 4000
     }
   },
   "cohere/north-mini-code-1-0": {
@@ -1663,6 +2353,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 256000,
+      "output": 64000
     }
   },
   "cohere/north-small-translate-1-0": {
@@ -1672,6 +2366,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 16000,
+      "output": 16000
     }
   },
   "cohere/tiny-aya-earth": {
@@ -1681,6 +2379,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 8000,
+      "output": 8000
     }
   },
   "cohere/tiny-aya-fire": {
@@ -1690,6 +2392,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 8000,
+      "output": 8000
     }
   },
   "cohere/tiny-aya-global": {
@@ -1699,6 +2405,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 8000,
+      "output": 8000
     }
   },
   "cohere/tiny-aya-water": {
@@ -1708,6 +2418,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 8000,
+      "output": 8000
     }
   },
   "deepreinforce/ornith-1.0-31b": {
@@ -1718,6 +2432,9 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144
     }
   },
   "deepreinforce/ornith-1.0-35b": {
@@ -1728,6 +2445,9 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144
     }
   },
   "deepreinforce/ornith-1.0-397b": {
@@ -1738,6 +2458,9 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144
     }
   },
   "deepreinforce/ornith-1.0-9b": {
@@ -1748,6 +2471,23 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144
+    }
+  },
+  "deepreinforce/ornith-1.5-122b": {
+    "name": "Ornith 1.5 122B",
+    "family": "ornith",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 32768
     }
   },
   "deepreinforce/ornith-1.5-35b-a3b": {
@@ -1758,6 +2498,9 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144
     }
   },
   "deepseek/deepseek-chat": {
@@ -1767,6 +2510,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 384000
     }
   },
   "deepseek/deepseek-chat-v3-0324": {
@@ -1776,6 +2523,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 163840,
+      "output": 147456
     }
   },
   "deepseek/deepseek-chat-v3.1": {
@@ -1785,6 +2536,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 163840,
+      "output": 32768
     }
   },
   "deepseek/deepseek-ocr-2": {
@@ -1795,6 +2550,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 8192,
+      "output": 8192
     }
   },
   "deepseek/deepseek-r1": {
@@ -1804,6 +2563,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 32768
     }
   },
   "deepseek/deepseek-r1-0528": {
@@ -1813,6 +2576,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 163840,
+      "output": 32768
     }
   },
   "deepseek/deepseek-r1-0528-qwen3-8b": {
@@ -1822,6 +2589,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 32000
     }
   },
   "deepseek/deepseek-r1-distill-qwen-32b": {
@@ -1831,6 +2602,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 32768
     }
   },
   "deepseek/deepseek-reasoner": {
@@ -1840,6 +2615,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 384000
     }
   },
   "deepseek/deepseek-v3": {
@@ -1849,6 +2628,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 8192
     }
   },
   "deepseek/deepseek-v3-0324": {
@@ -1858,6 +2641,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 163840,
+      "output": 163840
     }
   },
   "deepseek/deepseek-v3.1": {
@@ -1867,6 +2654,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 8192
     }
   },
   "deepseek/deepseek-v3.2": {
@@ -1876,6 +2667,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 64000
     }
   },
   "deepseek/deepseek-v4-flash": {
@@ -1885,6 +2680,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 384000
     }
   },
   "deepseek/deepseek-v4-flash-0423": {
@@ -1894,6 +2693,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 384000
     }
   },
   "deepseek/deepseek-v4-flash-0731": {
@@ -1903,6 +2706,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 384000
     }
   },
   "deepseek/deepseek-v4-flash-vision-exp": {
@@ -1913,6 +2720,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 384000
     }
   },
   "deepseek/deepseek-v4-pro": {
@@ -1922,6 +2733,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 384000
     }
   },
   "deepseek/deepseek-v4-pro-0423": {
@@ -1931,6 +2746,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 384000
     }
   },
   "deepseek/deepseek-v4-pro-0813": {
@@ -1940,6 +2759,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 384000
     }
   },
   "deepseek/deepseek-v4.1-flash": {
@@ -1950,6 +2773,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 384000
     }
   },
   "deepseek/deepseek-v4.1-flash-1017": {
@@ -1960,6 +2787,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 384000
     }
   },
   "essentialai/rnj-1-instruct": {
@@ -1969,6 +2800,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 32768,
+      "output": 32768
     }
   },
   "fireworks/ember-1": {
@@ -1979,6 +2814,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 131072
     }
   },
   "google/deep-research-max-preview-04-2026": {
@@ -1992,6 +2831,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 65536
     }
   },
   "google/deep-research-preview-04-2026": {
@@ -2005,6 +2848,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 65536
     }
   },
   "google/diffusiongemma-26b-a4b-it": {
@@ -2015,6 +2862,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 32768
     }
   },
   "google/gemini-2.0-flash": {
@@ -2028,6 +2879,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 8192
     }
   },
   "google/gemini-2.0-flash-lite": {
@@ -2041,6 +2896,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 8192
     }
   },
   "google/gemini-2.5-computer-use-preview-10-2025": {
@@ -2051,6 +2910,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 64000
     }
   },
   "google/gemini-2.5-flash": {
@@ -2064,6 +2927,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 65536
     }
   },
   "google/gemini-2.5-flash-image": {
@@ -2074,6 +2941,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 32768,
+      "output": 32768
     }
   },
   "google/gemini-2.5-flash-lite": {
@@ -2087,6 +2958,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 65536
     }
   },
   "google/gemini-2.5-flash-lite-preview-06-17": {
@@ -2100,6 +2975,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 65536
     }
   },
   "google/gemini-2.5-flash-lite-preview-09-2025": {
@@ -2113,6 +2992,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 65536
     }
   },
   "google/gemini-2.5-flash-preview-05-20": {
@@ -2126,6 +3009,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 65536
     }
   },
   "google/gemini-2.5-flash-tts": {
@@ -2135,6 +3022,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 32768,
+      "output": 16384
     }
   },
   "google/gemini-2.5-pro": {
@@ -2148,6 +3039,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 65536
     }
   },
   "google/gemini-2.5-pro-preview": {
@@ -2160,6 +3055,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 65536
     }
   },
   "google/gemini-2.5-pro-tts": {
@@ -2169,6 +3068,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 32768,
+      "output": 16384
     }
   },
   "google/gemini-3-flash-preview": {
@@ -2182,6 +3085,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 65536
     }
   },
   "google/gemini-3-pro-image": {
@@ -2192,6 +3099,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 65536,
+      "output": 32768
     }
   },
   "google/gemini-3-pro-image-preview": {
@@ -2202,6 +3113,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 65536,
+      "output": 32768
     }
   },
   "google/gemini-3-pro-preview": {
@@ -2215,6 +3130,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 65536
     }
   },
   "google/gemini-3.1-flash-image": {
@@ -2227,6 +3146,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 32768
     }
   },
   "google/gemini-3.1-flash-image-preview": {
@@ -2238,6 +3161,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 65536,
+      "output": 65536
     }
   },
   "google/gemini-3.1-flash-lite": {
@@ -2251,6 +3178,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 65536
     }
   },
   "google/gemini-3.1-flash-lite-image": {
@@ -2261,6 +3192,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 65536,
+      "output": 4096
     }
   },
   "google/gemini-3.1-flash-lite-preview": {
@@ -2274,6 +3209,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 65536
     }
   },
   "google/gemini-3.1-flash-live-preview": {
@@ -2286,6 +3225,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 65536
     }
   },
   "google/gemini-3.1-flash-tts-preview": {
@@ -2295,6 +3238,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 8192,
+      "output": 16384
     }
   },
   "google/gemini-3.1-pro-preview": {
@@ -2308,6 +3255,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 65536
     }
   },
   "google/gemini-3.1-pro-preview-customtools": {
@@ -2321,6 +3272,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 65536
     }
   },
   "google/gemini-3.5-flash": {
@@ -2334,6 +3289,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 65536
     }
   },
   "google/gemini-3.5-flash-lite": {
@@ -2347,6 +3306,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 65536
     }
   },
   "google/gemini-3.5-live-translate-preview": {
@@ -2356,6 +3319,10 @@
       "input": [
         "audio"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 65536
     }
   },
   "google/gemini-3.5-transcribe-live": {
@@ -2378,6 +3345,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 65536
     }
   },
   "google/gemini-3.7-flash": {
@@ -2391,6 +3362,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 65536
     }
   },
   "google/gemini-3.8-flash": {
@@ -2404,6 +3379,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 65536
     }
   },
   "google/gemini-4-argon": {
@@ -2417,6 +3396,61 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 65536
+    }
+  },
+  "google/gemini-4-carbon": {
+    "name": "Gemini 4 Carbon",
+    "family": "gemini",
+    "modalities": {
+      "input": [
+        "audio",
+        "image",
+        "pdf",
+        "text",
+        "video"
+      ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 65536
+    }
+  },
+  "google/gemini-4-hydrogen": {
+    "name": "Gemini 4 Hydrogen",
+    "family": "gemini",
+    "modalities": {
+      "input": [
+        "audio",
+        "image",
+        "pdf",
+        "text",
+        "video"
+      ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 65536
+    }
+  },
+  "google/gemini-4-neon": {
+    "name": "Gemini 4 Neon",
+    "family": "gemini",
+    "modalities": {
+      "input": [
+        "audio",
+        "image",
+        "pdf",
+        "text",
+        "video"
+      ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 65536
     }
   },
   "google/gemini-embedding-001": {
@@ -2426,6 +3460,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 2048,
+      "output": 1
     }
   },
   "google/gemini-embedding-2": {
@@ -2439,6 +3477,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 8192,
+      "output": 3072
     }
   },
   "google/gemini-flash-latest": {
@@ -2452,6 +3494,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 65536
     }
   },
   "google/gemini-flash-lite-latest": {
@@ -2465,6 +3511,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 65536
     }
   },
   "google/gemini-nano-banana-2.1": {
@@ -2476,6 +3526,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 32768
     }
   },
   "google/gemini-omni-1.1-flash": {
@@ -2487,6 +3541,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 57920
     }
   },
   "google/gemini-omni-flash-preview": {
@@ -2498,6 +3556,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 57920
     }
   },
   "google/gemini-robotics-er-1.6-preview": {
@@ -2510,6 +3572,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 65536
     }
   },
   "google/gemma-2-27b-it": {
@@ -2519,6 +3585,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 8192,
+      "output": 2048
     }
   },
   "google/gemma-2-2b-it": {
@@ -2528,6 +3598,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 8192,
+      "output": 8192
     }
   },
   "google/gemma-3-12b-it": {
@@ -2538,6 +3612,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 131072
     }
   },
   "google/gemma-3-27b-it": {
@@ -2548,6 +3626,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 131072
     }
   },
   "google/gemma-3-4b-it": {
@@ -2558,6 +3640,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 131072
     }
   },
   "google/gemma-3n-e2b-it": {
@@ -2569,6 +3655,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 32768,
+      "output": 32768
     }
   },
   "google/gemma-3n-e4b-it": {
@@ -2580,6 +3670,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 32768,
+      "output": 32768
     }
   },
   "google/gemma-4-12b-it": {
@@ -2590,6 +3684,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 32768
     }
   },
   "google/gemma-4-26b-a4b-it": {
@@ -2600,6 +3698,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 32768
     }
   },
   "google/gemma-4-31b-it": {
@@ -2610,6 +3712,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 32768
     }
   },
   "google/gemma-4-E2B-it": {
@@ -2621,6 +3727,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 8192
     }
   },
   "google/gemma-4-E4B-it": {
@@ -2632,6 +3742,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 8192
     }
   },
   "google/lyria-3-clip-preview": {
@@ -2642,6 +3756,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 65536
     }
   },
   "google/lyria-3-pro-preview": {
@@ -2652,6 +3770,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 8192
     }
   },
   "google/veo-3.1-fast-generate-preview": {
@@ -2663,6 +3785,9 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1024
     }
   },
   "google/veo-3.1-generate-preview": {
@@ -2673,6 +3798,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1024,
+      "output": 1
     }
   },
   "google/veo-3.1-lite-generate-preview": {
@@ -2683,6 +3812,9 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1024
     }
   },
   "gryphe/mythomax-l2-13b": {
@@ -2692,6 +3824,36 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 4096,
+      "output": 3200
+    }
+  },
+  "huawei/openpangu-2.0-flash": {
+    "name": "openPangu 2.0 Flash",
+    "family": "pangu",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    },
+    "limit": {
+      "context": 524288,
+      "output": 131072
+    }
+  },
+  "huawei/openpangu-2.0-pro": {
+    "name": "openPangu 2.0 Pro",
+    "family": "pangu",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    },
+    "limit": {
+      "context": 524288,
+      "output": 131072
     }
   },
   "ibm/granite-4-h-micro": {
@@ -2701,6 +3863,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 131072
     }
   },
   "ibm/granite-4-h-small": {
@@ -2710,6 +3876,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 131072
     }
   },
   "ibm/granite-4.2-8b": {
@@ -2719,6 +3889,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 117964
     }
   },
   "inception/mercury-2": {
@@ -2728,6 +3902,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 50000
     }
   },
   "inception/mercury-2.5": {
@@ -2737,6 +3915,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 260000,
+      "output": 65536
     }
   },
   "inception/mercury-3": {
@@ -2746,6 +3928,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 131072
     }
   },
   "inception/mercury-edit-2": {
@@ -2755,6 +3941,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 32000,
+      "output": 8192
     }
   },
   "inclusionai/ling-3.0-flash": {
@@ -2764,6 +3954,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 32768
     }
   },
   "inclusionai/ling-3.0-flash-fin": {
@@ -2773,6 +3967,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 32768
     }
   },
   "inclusionai/ling-3.0-flash-sante": {
@@ -2782,6 +3980,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 32768
     }
   },
   "inclusionai/ling-3.0-flash-vl": {
@@ -2793,6 +3995,23 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 32768
+    }
+  },
+  "inclusionai/ling-3.0-tiny": {
+    "name": "Ling 3.0 Tiny",
+    "family": "ling",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 32768
     }
   },
   "inclusionai/ling-3.1-flash": {
@@ -2802,6 +4021,25 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 32768
+    }
+  },
+  "inclusionai/ling-3.2-flash": {
+    "name": "Ling 3.2 Flash",
+    "family": "ling",
+    "modalities": {
+      "input": [
+        "image",
+        "text",
+        "video"
+      ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 32768
     }
   },
   "inference-net/schematron-v2-small": {
@@ -2811,6 +4049,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 4096
     }
   },
   "inference-net/schematron-v2-turbo": {
@@ -2820,6 +4062,23 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 8192
+    }
+  },
+  "lightonai/lightonocr-2-1b": {
+    "name": "LightOnOCR 2 1B",
+    "family": "",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    },
+    "limit": {
+      "context": 16384
     }
   },
   "lightonai/lightonocr-3-0.8b": {
@@ -2830,6 +4089,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 16384
     }
   },
   "liquid/lfm2-24b-a2b": {
@@ -2839,6 +4102,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 32768,
+      "output": 32768
     }
   },
   "mancer/weaver": {
@@ -2848,6 +4115,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 8000,
+      "output": 6000
     }
   },
   "meituan/longcat-2.0": {
@@ -2857,6 +4128,24 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 131072
+    }
+  },
+  "meituan/longcat-2.5": {
+    "name": "LongCat-2.5",
+    "family": "longcat",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 262144
     }
   },
   "meituan/longcat-2.5-preview": {
@@ -2867,6 +4156,23 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 131072
+    }
+  },
+  "meragpt/restyler-1": {
+    "name": "Restyler 1",
+    "family": "",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    },
+    "limit": {
+      "context": 4096,
+      "output": 2048
     }
   },
   "meta/llama-3.1-70b-instruct": {
@@ -2876,6 +4182,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 4096
     }
   },
   "meta/llama-3.1-8b-instruct": {
@@ -2885,6 +4195,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 4096
     }
   },
   "meta/llama-3.2-11b-vision-instruct": {
@@ -2895,6 +4209,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 4096
     }
   },
   "meta/llama-3.2-1b": {
@@ -2904,6 +4222,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 8192
     }
   },
   "meta/llama-3.2-1b-instruct": {
@@ -2913,6 +4235,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 32000
     }
   },
   "meta/llama-3.2-3b": {
@@ -2922,6 +4248,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 8192
     }
   },
   "meta/llama-3.2-3b-instruct": {
@@ -2931,6 +4261,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 131072
     }
   },
   "meta/llama-3.2-90b-vision-instruct": {
@@ -2941,6 +4275,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 4096
     }
   },
   "meta/llama-3.3-70b-instruct": {
@@ -2950,6 +4288,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 4096
     }
   },
   "meta/llama-4-maverick-17b-instruct": {
@@ -2960,6 +4302,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 16384
     }
   },
   "meta/llama-4-scout-17b-instruct": {
@@ -2970,6 +4316,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 10000000,
+      "output": 16384
     }
   },
   "meta/llama-guard-3-8b": {
@@ -2979,6 +4329,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 4096
     }
   },
   "meta/llama-guard-4-12b": {
@@ -2989,6 +4343,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 163840,
+      "output": 163840
     }
   },
   "meta/llama-prompt-guard-2-22m": {
@@ -2998,6 +4356,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 512,
+      "output": 512
     }
   },
   "meta/llama-prompt-guard-2-86m": {
@@ -3007,6 +4369,27 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 512,
+      "output": 512
+    }
+  },
+  "meta/muse-ember-1.0": {
+    "name": "Muse Ember",
+    "family": "muse",
+    "modalities": {
+      "input": [
+        "audio",
+        "image",
+        "pdf",
+        "text",
+        "video"
+      ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 524288
     }
   },
   "meta/muse-glimmer-30b": {
@@ -3017,6 +4400,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 131072
     }
   },
   "meta/muse-spark-1.1": {
@@ -3029,6 +4416,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 131072
     }
   },
   "meta/muse-spark-1.2": {
@@ -3042,6 +4433,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 131072
     }
   },
   "meta/muse-spark-1.3": {
@@ -3055,6 +4450,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 131072
     }
   },
   "meta/muse-spark-open": {
@@ -3067,6 +4466,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 131072
     }
   },
   "meta/muse-wonder-1.0": {
@@ -3080,6 +4483,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 131072
     }
   },
   "meta/muse-wonder-full": {
@@ -3092,6 +4499,9 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1048576
     }
   },
   "microsoft/mai-code-1-flash": {
@@ -3101,6 +4511,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 256000,
+      "output": 128000
     }
   },
   "microsoft/mai-code-1.1-flash": {
@@ -3111,6 +4525,38 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 256000,
+      "output": 128000
+    }
+  },
+  "microsoft/mai-code-2": {
+    "name": "MAI Code 2",
+    "family": "mai",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    },
+    "limit": {
+      "context": 1050000,
+      "output": 128000
+    }
+  },
+  "microsoft/mai-code-2-flash": {
+    "name": "MAI Code 2 Flash",
+    "family": "mai",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    },
+    "limit": {
+      "context": 1050000,
+      "output": 128000
     }
   },
   "microsoft/phi-4-mini": {
@@ -3120,6 +4566,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 4096
     }
   },
   "microsoft/phi-4-multimodal-instruct": {
@@ -3131,6 +4581,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 131072
     }
   },
   "microsoft/wizardlm-2-8x22b": {
@@ -3140,6 +4594,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 65536,
+      "output": 8000
     }
   },
   "mindlab/macaron-v1-tall": {
@@ -3150,6 +4608,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 32768
     }
   },
   "mindlab/macaron-v1-venti": {
@@ -3159,6 +4621,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 131072
     }
   },
   "minimax/MiniMax-H3": {
@@ -3180,6 +4646,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 204800,
+      "output": 131072
     }
   },
   "minimax/MiniMax-M2-Her": {
@@ -3189,6 +4659,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 65536,
+      "output": 2048
     }
   },
   "minimax/MiniMax-M2.1": {
@@ -3198,6 +4672,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 204800,
+      "output": 131072
     }
   },
   "minimax/MiniMax-M2.5": {
@@ -3207,6 +4685,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 204800,
+      "output": 131072
     }
   },
   "minimax/MiniMax-M2.5-highspeed": {
@@ -3216,6 +4698,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 204800,
+      "output": 131072
     }
   },
   "minimax/MiniMax-M2.7": {
@@ -3225,6 +4711,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 204800,
+      "output": 131072
     }
   },
   "minimax/MiniMax-M2.7-highspeed": {
@@ -3234,6 +4724,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 204800,
+      "output": 131072
     }
   },
   "minimax/MiniMax-M3": {
@@ -3245,6 +4739,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 512000
     }
   },
   "minimax/MiniMax-M3.1-Flash": {
@@ -3256,6 +4754,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 512000
     }
   },
   "minimax/MiniMax-M3.1-Flash-Preview": {
@@ -3267,6 +4769,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 512000
     }
   },
   "minimax/MiniMax-Text-01": {
@@ -3276,6 +4782,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 131072
     }
   },
   "minimax/image-01": {
@@ -3283,7 +4793,6 @@
     "family": "minimax",
     "modalities": {
       "input": [
-        "image",
         "text"
       ]
     }
@@ -3295,6 +4804,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 80000
     }
   },
   "mistral/codestral-22b-v0.1": {
@@ -3304,6 +4817,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 32768,
+      "output": 8192
     }
   },
   "mistral/codestral-2508": {
@@ -3313,6 +4830,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 8192
     }
   },
   "mistral/codestral-latest": {
@@ -3322,6 +4843,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 256000,
+      "output": 4096
     }
   },
   "mistral/devstral-2512": {
@@ -3331,6 +4856,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 262144
     }
   },
   "mistral/devstral-medium-2507": {
@@ -3340,6 +4869,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 128000
     }
   },
   "mistral/devstral-medium-latest": {
@@ -3349,6 +4882,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 262144
     }
   },
   "mistral/devstral-small-2": {
@@ -3359,6 +4896,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 262144
     }
   },
   "mistral/devstral-small-2507": {
@@ -3368,6 +4909,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 128000
     }
   },
   "mistral/magistral-medium-latest": {
@@ -3377,6 +4922,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 16384
     }
   },
   "mistral/magistral-small-2506": {
@@ -3386,6 +4935,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 8192
     }
   },
   "mistral/magistral-small-2509": {
@@ -3396,6 +4949,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 131072
     }
   },
   "mistral/ministral-14b": {
@@ -3406,6 +4963,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 262144
     }
   },
   "mistral/ministral-14b-2512": {
@@ -3416,6 +4977,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 209715
     }
   },
   "mistral/ministral-3-14b-instruct-2512": {
@@ -3426,6 +4991,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 262144
     }
   },
   "mistral/ministral-3-3b-instruct-2512": {
@@ -3436,6 +5005,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 262144
     }
   },
   "mistral/ministral-3-8b-instruct-2512": {
@@ -3446,6 +5019,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 262144
     }
   },
   "mistral/ministral-3b": {
@@ -3455,6 +5032,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 8192
     }
   },
   "mistral/ministral-3b-2512": {
@@ -3465,6 +5046,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 104857
     }
   },
   "mistral/ministral-8b-2512": {
@@ -3475,6 +5060,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 209715
     }
   },
   "mistral/ministral-8b-instruct-2410": {
@@ -3484,6 +5073,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 8192
     }
   },
   "mistral/mistral-7b-instruct-v0.3": {
@@ -3493,6 +5086,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 32768,
+      "output": 32768
     }
   },
   "mistral/mistral-embed": {
@@ -3502,6 +5099,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 8000,
+      "output": 3072
     }
   },
   "mistral/mistral-large": {
@@ -3512,6 +5113,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 102400
     }
   },
   "mistral/mistral-large-2407": {
@@ -3522,6 +5127,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 104857
     }
   },
   "mistral/mistral-large-2411": {
@@ -3531,6 +5140,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 16384
     }
   },
   "mistral/mistral-large-2512": {
@@ -3541,6 +5154,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 262144
     }
   },
   "mistral/mistral-large-4": {
@@ -3551,6 +5168,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 262144
     }
   },
   "mistral/mistral-large-latest": {
@@ -3561,6 +5182,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 262144
     }
   },
   "mistral/mistral-medium-2505": {
@@ -3571,6 +5196,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 131072
     }
   },
   "mistral/mistral-medium-2604": {
@@ -3581,6 +5210,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 262144
     }
   },
   "mistral/mistral-medium-3": {
@@ -3592,6 +5225,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 104857
     }
   },
   "mistral/mistral-medium-3-5": {
@@ -3603,6 +5240,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 209715
     }
   },
   "mistral/mistral-medium-3.1": {
@@ -3614,6 +5255,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 104857
     }
   },
   "mistral/mistral-medium-latest": {
@@ -3624,6 +5269,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 262144
     }
   },
   "mistral/mistral-nemo": {
@@ -3633,6 +5282,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 128000
     }
   },
   "mistral/mistral-saba": {
@@ -3643,6 +5296,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 32768,
+      "output": 26214
     }
   },
   "mistral/mistral-small-24b-instruct-2501": {
@@ -3652,6 +5309,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 32768,
+      "output": 16384
     }
   },
   "mistral/mistral-small-2506": {
@@ -3662,6 +5323,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 16384
     }
   },
   "mistral/mistral-small-2603": {
@@ -3672,6 +5337,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 256000,
+      "output": 256000
     }
   },
   "mistral/mistral-small-3-1-24b-instruct-2503": {
@@ -3682,6 +5351,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 16384
     }
   },
   "mistral/mistral-small-3.1-24b-instruct": {
@@ -3692,6 +5365,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 102400
     }
   },
   "mistral/mistral-small-3.2-24b-instruct": {
@@ -3702,6 +5379,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 256000,
+      "output": 16384
     }
   },
   "mistral/mistral-small-latest": {
@@ -3712,6 +5393,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 256000,
+      "output": 256000
     }
   },
   "mistral/mixtral-8x22b-instruct": {
@@ -3722,6 +5407,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 65536,
+      "output": 52428
     }
   },
   "mistral/mixtral-8x7b-instruct-v0.1": {
@@ -3731,6 +5420,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 32768,
+      "output": 32768
     }
   },
   "mistral/pixtral-12b": {
@@ -3741,6 +5434,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 128000
     }
   },
   "mistral/pixtral-large-2502": {
@@ -3751,6 +5448,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 8192
     }
   },
   "mistral/pixtral-large-latest": {
@@ -3761,6 +5462,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 128000
     }
   },
   "mistral/voxtral-mini-3b-2507": {
@@ -3771,6 +5476,10 @@
         "audio",
         "text"
       ]
+    },
+    "limit": {
+      "context": 32768,
+      "output": 32768
     }
   },
   "mistral/voxtral-small-24b-2507": {
@@ -3781,6 +5490,10 @@
         "audio",
         "text"
       ]
+    },
+    "limit": {
+      "context": 32768,
+      "output": 32768
     }
   },
   "mistral/voxtral-small-latest": {
@@ -3791,6 +5504,10 @@
         "audio",
         "text"
       ]
+    },
+    "limit": {
+      "context": 32000,
+      "output": 32000
     }
   },
   "mixedbread/toast-1": {
@@ -3800,6 +5517,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131000,
+      "output": 4000
     }
   },
   "moonshotai/kimi-k2": {
@@ -3809,6 +5530,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 98304
     }
   },
   "moonshotai/kimi-k2-0905": {
@@ -3818,6 +5543,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 98304
     }
   },
   "moonshotai/kimi-k2-instruct": {
@@ -3827,6 +5556,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 32768
     }
   },
   "moonshotai/kimi-k2-thinking": {
@@ -3836,6 +5569,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 262144
     }
   },
   "moonshotai/kimi-k2-thinking-turbo": {
@@ -3845,6 +5582,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 262144
     }
   },
   "moonshotai/kimi-k2.5": {
@@ -3856,6 +5597,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 262144
     }
   },
   "moonshotai/kimi-k2.6": {
@@ -3867,6 +5612,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 262144
     }
   },
   "moonshotai/kimi-k2.7-code": {
@@ -3878,6 +5627,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 262144
     }
   },
   "moonshotai/kimi-k2.7-code-highspeed": {
@@ -3889,6 +5642,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 262144
     }
   },
   "moonshotai/kimi-k2.8-preview": {
@@ -3900,6 +5657,9 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1048576
     }
   },
   "moonshotai/kimi-k3": {
@@ -3911,6 +5671,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 1048576
     }
   },
   "moonshotai/kimi-k3.1-pro": {
@@ -3922,6 +5686,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 1048576
     }
   },
   "morph/morph-v3-fast": {
@@ -3931,6 +5699,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 131072
     }
   },
   "morph/morph-v3-large": {
@@ -3940,6 +5712,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 131072
     }
   },
   "motif-technologies/motif-3": {
@@ -3949,6 +5725,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 262144
     }
   },
   "nex-agi/nex-n2-pro": {
@@ -3959,6 +5739,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 262144
     }
   },
   "nousresearch/hermes-2-pro-llama-3-8b": {
@@ -3968,6 +5752,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 8192,
+      "output": 8192
     }
   },
   "nousresearch/hermes-3-llama-3.1-405b": {
@@ -3977,6 +5765,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 16384
     }
   },
   "nousresearch/hermes-3-llama-3.1-70b": {
@@ -3986,6 +5778,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 16384
     }
   },
   "nousresearch/hermes-4-405b": {
@@ -3995,6 +5791,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 117964
     }
   },
   "nvidia/llama-3.1-nemotron-70b-instruct": {
@@ -4004,6 +5804,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 8192
     }
   },
   "nvidia/llama-3.1-nemotron-safety-guard-8b-v3": {
@@ -4013,6 +5817,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 4096
     }
   },
   "nvidia/llama-3.1-nemotron-ultra-253b": {
@@ -4022,6 +5830,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 8192
     }
   },
   "nvidia/llama-3.3-nemotron-super-49b-v1": {
@@ -4031,6 +5843,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 131072
     }
   },
   "nvidia/llama-3.3-nemotron-super-49b-v1.5": {
@@ -4040,6 +5856,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 131072
     }
   },
   "nvidia/llama-nemotron-embed-1b-v2": {
@@ -4049,6 +5869,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 8192,
+      "output": 2048
     }
   },
   "nvidia/llama-nemotron-embed-vl-1b-v2": {
@@ -4059,6 +5883,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 10240,
+      "output": 2048
     }
   },
   "nvidia/llama-nemotron-rerank-vl-1b-v2": {
@@ -4069,6 +5897,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 10240,
+      "output": 4096
     }
   },
   "nvidia/mistral-nemotron": {
@@ -4078,6 +5910,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 8192
     }
   },
   "nvidia/nemotron-3-content-safety": {
@@ -4087,6 +5923,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 4096
     }
   },
   "nvidia/nemotron-3-nano-30b-a3b": {
@@ -4096,6 +5936,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 262144
     }
   },
   "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning": {
@@ -4108,6 +5952,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 256000,
+      "output": 65536
     }
   },
   "nvidia/nemotron-3-super-120b-a12b": {
@@ -4117,6 +5965,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 262144
     }
   },
   "nvidia/nemotron-3-ultra-550b-a55b": {
@@ -4126,6 +5978,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 128000
     }
   },
   "nvidia/nemotron-3.5-content-safety": {
@@ -4136,6 +5992,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 8192
     }
   },
   "nvidia/nemotron-3.5-lightning": {
@@ -4145,6 +6005,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 262144
     }
   },
   "nvidia/nemotron-3.5-super-120b-a12b": {
@@ -4154,6 +6018,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 131072
     }
   },
   "nvidia/nemotron-3.5-super-vl-120b-a12b": {
@@ -4165,6 +6033,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 8192
     }
   },
   "nvidia/nemotron-cascade-2-30b-a3b": {
@@ -4174,6 +6046,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 256000,
+      "output": 32768
     }
   },
   "nvidia/nemotron-content-safety-reasoning-4b": {
@@ -4183,6 +6059,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 4096
     }
   },
   "nvidia/nemotron-mini-4b-instruct": {
@@ -4192,6 +6072,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 8192
     }
   },
   "nvidia/nemotron-nano-12b-v2-vl": {
@@ -4203,6 +6087,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 128000
     }
   },
   "nvidia/nemotron-nano-9b-v2": {
@@ -4212,6 +6100,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 131072
     }
   },
   "nvidia/nemotron-voicechat": {
@@ -4222,6 +6114,10 @@
         "audio",
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 8192
     }
   },
   "openai/gpt-3.5-turbo": {
@@ -4231,6 +6127,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 16385,
+      "output": 4096
     }
   },
   "openai/gpt-4": {
@@ -4240,6 +6140,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 8192,
+      "output": 8192
     }
   },
   "openai/gpt-4-turbo": {
@@ -4250,6 +6154,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 4096
     }
   },
   "openai/gpt-4.1": {
@@ -4261,6 +6169,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1047576,
+      "output": 32768
     }
   },
   "openai/gpt-4.1-mini": {
@@ -4272,6 +6184,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1047576,
+      "output": 32768
     }
   },
   "openai/gpt-4.1-nano": {
@@ -4282,6 +6198,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1047576,
+      "output": 32768
     }
   },
   "openai/gpt-4o": {
@@ -4293,6 +6213,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 16384
     }
   },
   "openai/gpt-4o-2024-05-13": {
@@ -4303,6 +6227,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 4096
     }
   },
   "openai/gpt-4o-2024-08-06": {
@@ -4313,6 +6241,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 16384
     }
   },
   "openai/gpt-4o-2024-11-20": {
@@ -4323,6 +6255,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 16384
     }
   },
   "openai/gpt-4o-mini": {
@@ -4334,6 +6270,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 16384
     }
   },
   "openai/gpt-5": {
@@ -4344,6 +6284,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 400000,
+      "output": 128000
     }
   },
   "openai/gpt-5-chat-latest": {
@@ -4354,6 +6298,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 400000,
+      "output": 128000
     }
   },
   "openai/gpt-5-codex": {
@@ -4364,6 +6312,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 400000,
+      "output": 128000
     }
   },
   "openai/gpt-5-image": {
@@ -4375,6 +6327,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 400000,
+      "output": 128000
     }
   },
   "openai/gpt-5-image-mini": {
@@ -4386,6 +6342,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 400000,
+      "output": 128000
     }
   },
   "openai/gpt-5-mini": {
@@ -4396,6 +6356,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 400000,
+      "output": 128000
     }
   },
   "openai/gpt-5-nano": {
@@ -4406,6 +6370,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 400000,
+      "output": 128000
     }
   },
   "openai/gpt-5-pro": {
@@ -4416,6 +6384,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 400000,
+      "output": 272000
     }
   },
   "openai/gpt-5.1": {
@@ -4426,6 +6398,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 400000,
+      "output": 128000
     }
   },
   "openai/gpt-5.1-chat-latest": {
@@ -4436,6 +6412,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 16384
     }
   },
   "openai/gpt-5.1-codex": {
@@ -4446,6 +6426,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 400000,
+      "output": 128000
     }
   },
   "openai/gpt-5.1-codex-max": {
@@ -4456,6 +6440,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 400000,
+      "output": 128000
     }
   },
   "openai/gpt-5.1-codex-mini": {
@@ -4466,6 +6454,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 400000,
+      "output": 128000
     }
   },
   "openai/gpt-5.2": {
@@ -4476,6 +6468,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 400000,
+      "output": 128000
     }
   },
   "openai/gpt-5.2-chat-latest": {
@@ -4486,6 +6482,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 16384
     }
   },
   "openai/gpt-5.2-codex": {
@@ -4497,6 +6497,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 400000,
+      "output": 128000
     }
   },
   "openai/gpt-5.2-pro": {
@@ -4507,6 +6511,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 400000,
+      "output": 128000
     }
   },
   "openai/gpt-5.3-chat-latest": {
@@ -4517,6 +6525,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 16384
     }
   },
   "openai/gpt-5.3-codex": {
@@ -4528,6 +6540,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 400000,
+      "output": 128000
     }
   },
   "openai/gpt-5.3-codex-spark": {
@@ -4539,6 +6555,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 32000
     }
   },
   "openai/gpt-5.4": {
@@ -4550,6 +6570,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1050000,
+      "output": 128000
     }
   },
   "openai/gpt-5.4-image-2": {
@@ -4561,6 +6585,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 272000,
+      "output": 128000
     }
   },
   "openai/gpt-5.4-mini": {
@@ -4571,6 +6599,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 400000,
+      "output": 128000
     }
   },
   "openai/gpt-5.4-nano": {
@@ -4581,6 +6613,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 400000,
+      "output": 128000
     }
   },
   "openai/gpt-5.4-pro": {
@@ -4591,6 +6627,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1050000,
+      "output": 128000
     }
   },
   "openai/gpt-5.5": {
@@ -4602,6 +6642,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1050000,
+      "output": 128000
     }
   },
   "openai/gpt-5.5-instant": {
@@ -4613,6 +6657,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 400000,
+      "output": 128000
     }
   },
   "openai/gpt-5.5-pro": {
@@ -4624,6 +6672,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1050000,
+      "output": 128000
     }
   },
   "openai/gpt-5.6-cyber": {
@@ -4634,6 +6686,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 400000,
+      "output": 128000
     }
   },
   "openai/gpt-5.6-luna": {
@@ -4645,6 +6701,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1050000,
+      "output": 128000
     }
   },
   "openai/gpt-5.6-sol": {
@@ -4656,6 +6716,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1050000,
+      "output": 128000
     }
   },
   "openai/gpt-5.6-terra": {
@@ -4667,6 +6731,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1050000,
+      "output": 128000
     }
   },
   "openai/gpt-6-astra": {
@@ -4678,6 +6746,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1050000,
+      "output": 128000
     }
   },
   "openai/gpt-6-astra-fast": {
@@ -4689,6 +6761,24 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1050000,
+      "output": 128000
+    }
+  },
+  "openai/gpt-6-cyber": {
+    "name": "GPT-6 Cyber",
+    "family": "gpt",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    },
+    "limit": {
+      "context": 1050000,
+      "output": 128000
     }
   },
   "openai/gpt-6-luna": {
@@ -4700,6 +6790,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1050000,
+      "output": 128000
     }
   },
   "openai/gpt-6-sol": {
@@ -4711,6 +6805,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1050000,
+      "output": 128000
     }
   },
   "openai/gpt-6.1-sol": {
@@ -4722,6 +6820,55 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1050000,
+      "output": 128000
+    }
+  },
+  "openai/gpt-6.1-terra": {
+    "name": "GPT-6.1 Terra",
+    "family": "gpt-terra",
+    "modalities": {
+      "input": [
+        "image",
+        "pdf",
+        "text"
+      ]
+    },
+    "limit": {
+      "context": 1050000,
+      "output": 128000
+    }
+  },
+  "openai/gpt-6.2-astra": {
+    "name": "GPT-6.2 Astra",
+    "family": "gpt-astra",
+    "modalities": {
+      "input": [
+        "image",
+        "pdf",
+        "text"
+      ]
+    },
+    "limit": {
+      "context": 1050000,
+      "output": 128000
+    }
+  },
+  "openai/gpt-6.2-sol": {
+    "name": "GPT-6.2 Sol",
+    "family": "gpt-sol",
+    "modalities": {
+      "input": [
+        "image",
+        "pdf",
+        "text"
+      ]
+    },
+    "limit": {
+      "context": 1050000,
+      "output": 128000
     }
   },
   "openai/gpt-image-1": {
@@ -4781,6 +6928,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 131072
     }
   },
   "openai/gpt-oss-20b": {
@@ -4790,6 +6941,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 131072
     }
   },
   "openai/gpt-oss-safeguard-120b": {
@@ -4799,6 +6954,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 131072
     }
   },
   "openai/gpt-oss-safeguard-20b": {
@@ -4808,6 +6967,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 131072
     }
   },
   "openai/gpt-realtime-2.1": {
@@ -4819,6 +6982,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 32000
     }
   },
   "openai/gpt-realtime-whisper": {
@@ -4828,6 +6995,10 @@
       "input": [
         "audio"
       ]
+    },
+    "limit": {
+      "context": 16000,
+      "output": 2000
     }
   },
   "openai/o1": {
@@ -4839,6 +7010,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 200000,
+      "output": 100000
     }
   },
   "openai/o1-pro": {
@@ -4849,6 +7024,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 200000,
+      "output": 100000
     }
   },
   "openai/o3": {
@@ -4860,6 +7039,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 200000,
+      "output": 100000
     }
   },
   "openai/o3-deep-research": {
@@ -4870,6 +7053,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 200000,
+      "output": 100000
     }
   },
   "openai/o3-mini": {
@@ -4879,6 +7066,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 200000,
+      "output": 100000
     }
   },
   "openai/o3-pro": {
@@ -4889,6 +7080,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 200000,
+      "output": 100000
     }
   },
   "openai/o4-mini": {
@@ -4899,6 +7094,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 200000,
+      "output": 100000
     }
   },
   "openai/o4-mini-deep-research": {
@@ -4909,6 +7108,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 200000,
+      "output": 100000
     }
   },
   "openai/whisper-large-v3": {
@@ -4918,6 +7121,10 @@
       "input": [
         "audio"
       ]
+    },
+    "limit": {
+      "context": 448,
+      "output": 448
     }
   },
   "openai/whisper-large-v3-turbo": {
@@ -4927,6 +7134,10 @@
       "input": [
         "audio"
       ]
+    },
+    "limit": {
+      "context": 448,
+      "output": 448
     }
   },
   "openbmb/minicpm-v-4.7-1b": {
@@ -4938,6 +7149,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 262144
     }
   },
   "openbmb/minicpm-v-4.7-35b-a3b": {
@@ -4949,6 +7164,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 262144
     }
   },
   "openbmb/minicpm5-1b": {
@@ -4958,6 +7177,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 131072
     }
   },
   "openbmb/minicpm5-2b": {
@@ -4967,6 +7190,23 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 131072
+    }
+  },
+  "opendatalab/mineru2.5-2509-1.2b": {
+    "name": "MinerU2.5 2509 1.2B",
+    "family": "",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    },
+    "limit": {
+      "context": 16384
     }
   },
   "paddlepaddle/paddleocr-vl": {
@@ -4977,6 +7217,24 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 16384
+    }
+  },
+  "particle-ai/particle-1": {
+    "name": "Particle-1",
+    "family": "",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 131072
     }
   },
   "perceptron/perceptron-mk1": {
@@ -4988,6 +7246,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 32768,
+      "output": 8192
     }
   },
   "perceptron/perceptron-mk1.5": {
@@ -5000,6 +7262,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 36864,
+      "output": 8192
     }
   },
   "perplexity/sonar": {
@@ -5009,6 +7275,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 4096
     }
   },
   "perplexity/sonar-deep-research": {
@@ -5018,6 +7288,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 32768
     }
   },
   "perplexity/sonar-pro": {
@@ -5028,6 +7302,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 200000,
+      "output": 8192
     }
   },
   "perplexity/sonar-reasoning-pro": {
@@ -5038,6 +7316,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 4096
     }
   },
   "poolside/laguna-m.1": {
@@ -5047,6 +7329,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 32768
     }
   },
   "poolside/laguna-s-2.1": {
@@ -5056,6 +7342,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 32768
     }
   },
   "poolside/laguna-xs-2.1": {
@@ -5065,6 +7355,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 32768
     }
   },
   "poolside/laguna-xs.2": {
@@ -5074,6 +7368,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 32768
     }
   },
   "quiverai/arrow-2": {
@@ -5084,6 +7382,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 65536
     }
   },
   "quiverai/arrow-2-telos": {
@@ -5094,6 +7396,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1050000,
+      "output": 65536
     }
   },
   "recursive/flint": {
@@ -5103,6 +7409,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 262144
     }
   },
   "reflection/beam-1.0-501b-a23b": {
@@ -5112,6 +7422,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 131072
     }
   },
   "rekaai/reka-edge": {
@@ -5123,6 +7437,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 16384,
+      "output": 14745
     }
   },
   "rekaai/reka-flash-3": {
@@ -5132,6 +7450,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 65536,
+      "output": 58982
     }
   },
   "relace/relace-apply-3": {
@@ -5141,6 +7463,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 256000,
+      "output": 128000
     }
   },
   "relace/relace-search": {
@@ -5150,6 +7476,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 256000,
+      "output": 128000
     }
   },
   "sakana/fugu": {
@@ -5160,6 +7490,9 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000
     }
   },
   "sakana/fugu-max": {
@@ -5171,6 +7504,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 128000
     }
   },
   "sakana/fugu-ultra": {
@@ -5181,6 +7518,9 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000
     }
   },
   "sakana/fugu-ultra-v2": {
@@ -5192,6 +7532,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 128000
     }
   },
   "sakana/sakana-namazu": {
@@ -5203,6 +7547,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 65536
     }
   },
   "sao10k/l3-lunaris-8b": {
@@ -5212,6 +7560,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 8192,
+      "output": 7372
     }
   },
   "sao10k/l3.1-euryale-70b": {
@@ -5221,6 +7573,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 16384
     }
   },
   "sao10k/l3.3-euryale-70b": {
@@ -5230,6 +7586,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 16384
     }
   },
   "sarvam/sarvam-105b": {
@@ -5239,6 +7599,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 131072
     }
   },
   "sarvam/sarvam-30b": {
@@ -5248,6 +7612,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 128000
     }
   },
   "sarvam/sarvam-m": {
@@ -5257,6 +7625,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 32768,
+      "output": 32768
     }
   },
   "sdaia/allam-2-7b": {
@@ -5266,6 +7638,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 4096,
+      "output": 4096
     }
   },
   "stepfun/step-3.5-flash": {
@@ -5275,6 +7651,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 256000,
+      "output": 256000
     }
   },
   "stepfun/step-3.5-flash-2603": {
@@ -5284,6 +7664,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 256000,
+      "output": 256000
     }
   },
   "stepfun/step-3.7-flash": {
@@ -5295,6 +7679,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 256000,
+      "output": 256000
     }
   },
   "stepfun/step-5-preview": {
@@ -5306,6 +7694,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 1000000
     }
   },
   "swiss-ai/apertus-70b": {
@@ -5315,6 +7707,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 65536,
+      "output": 8192
     }
   },
   "swiss-ai/apertus-8b": {
@@ -5324,6 +7720,39 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 65536,
+      "output": 8192
+    }
+  },
+  "swiss-ai/apertus-v1.5-70b": {
+    "name": "Apertus 1.5 70B",
+    "family": "",
+    "modalities": {
+      "input": [
+        "audio",
+        "image",
+        "text"
+      ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 8192
+    }
+  },
+  "swiss-ai/apertus-v1.5-8b": {
+    "name": "Apertus v1.5 8B",
+    "family": "",
+    "modalities": {
+      "input": [
+        "audio",
+        "image",
+        "text"
+      ]
+    },
+    "limit": {
+      "context": 262144
     }
   },
   "tencent/hy-mt2-1.8b": {
@@ -5333,6 +7762,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 8192,
+      "output": 4096
     }
   },
   "tencent/hy-mt2-30b-a3b": {
@@ -5342,6 +7775,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 8192,
+      "output": 4096
     }
   },
   "tencent/hy-mt2-7b": {
@@ -5351,6 +7788,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 8192,
+      "output": 4096
     }
   },
   "tencent/hy3": {
@@ -5360,6 +7801,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 256000,
+      "output": 128000
     }
   },
   "tencent/hy3-preview": {
@@ -5369,6 +7814,38 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 256000,
+      "output": 64000
+    }
+  },
+  "tencent/hy4": {
+    "name": "Hy4",
+    "family": "Hy",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 65536
+    }
+  },
+  "tencent/hy4-flash": {
+    "name": "Hy4 flash",
+    "family": "Hy",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 65536
     }
   },
   "tencent/hy4-preview": {
@@ -5378,6 +7855,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 1024000,
+      "output": 64000
     }
   },
   "thedrummer/cydonia-24b-v4.1": {
@@ -5387,6 +7868,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 117964
     }
   },
   "thedrummer/skyfall-36b-v2": {
@@ -5396,6 +7881,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 32768,
+      "output": 29491
     }
   },
   "thedrummer/unslopnemo-12b": {
@@ -5405,6 +7894,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 1024000,
+      "output": 819200
     }
   },
   "thinkingmachines/inkling": {
@@ -5416,6 +7909,24 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 1048576
+    }
+  },
+  "thinkingmachines/inkling-2-small": {
+    "name": "Inkling 2 Small",
+    "family": "ling",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 131072
     }
   },
   "thinkingmachines/inkling-small": {
@@ -5427,6 +7938,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 1048576
     }
   },
   "trendyol/asure-12b": {
@@ -5437,6 +7952,9 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072
     }
   },
   "unbiased/pareto": {
@@ -5447,6 +7965,24 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 131072
+    }
+  },
+  "unbiased/pareto-26.10": {
+    "name": "Pareto 26.10",
+    "family": "",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 131072
     }
   },
   "undi95/remm-slerp-l2-13b": {
@@ -5456,6 +7992,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 6144,
+      "output": 5529
     }
   },
   "upstage/solar-10.7b-instruct-v1.0": {
@@ -5465,6 +8005,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 4096,
+      "output": 4096
     }
   },
   "upstage/solar-mini4": {
@@ -5474,6 +8018,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 524288,
+      "output": 131072
     }
   },
   "upstage/solar-pro2": {
@@ -5483,6 +8031,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 65536,
+      "output": 8192
     }
   },
   "upstage/solar-pro3": {
@@ -5492,6 +8044,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 8192
     }
   },
   "upstage/solar-pro4": {
@@ -5501,6 +8057,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 524288,
+      "output": 131072
     }
   },
   "vispark/vision-large": {
@@ -5514,6 +8074,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 65536
     }
   },
   "vispark/vision-medium": {
@@ -5527,6 +8091,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 65536
     }
   },
   "vispark/vision-small": {
@@ -5540,6 +8108,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 65536
     }
   },
   "vivgrid/viv-fast": {
@@ -5550,6 +8122,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 256000
     }
   },
   "writer/palmyra-x4": {
@@ -5559,6 +8135,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 4096
     }
   },
   "writer/palmyra-x5": {
@@ -5569,6 +8149,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 8192
     }
   },
   "xai/grok-4-fast-non-reasoning": {
@@ -5581,6 +8165,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 2000000,
+      "output": 2000000
     }
   },
   "xai/grok-4-fast-reasoning": {
@@ -5593,6 +8181,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 2000000,
+      "output": 2000000
     }
   },
   "xai/grok-4.1-fast": {
@@ -5603,6 +8195,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 2000000,
+      "output": 30000
     }
   },
   "xai/grok-4.1-fast-reasoning": {
@@ -5613,6 +8209,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 2000000,
+      "output": 30000
     }
   },
   "xai/grok-4.20-0309-non-reasoning": {
@@ -5624,6 +8224,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 30000
     }
   },
   "xai/grok-4.20-0309-reasoning": {
@@ -5635,6 +8239,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 30000
     }
   },
   "xai/grok-4.3": {
@@ -5646,6 +8254,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 30000
     }
   },
   "xai/grok-4.5": {
@@ -5656,6 +8268,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 500000,
+      "output": 500000
     }
   },
   "xai/grok-4.6": {
@@ -5666,6 +8282,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 500000,
+      "output": 500000
     }
   },
   "xai/grok-4.7": {
@@ -5677,6 +8297,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 500000,
+      "output": 500000
     }
   },
   "xai/grok-build-0.1": {
@@ -5688,6 +8312,10 @@
         "pdf",
         "text"
       ]
+    },
+    "limit": {
+      "context": 256000,
+      "output": 256000
     }
   },
   "xai/grok-code-fast-1": {
@@ -5697,6 +8325,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 256000,
+      "output": 10000
     }
   },
   "xai/grok-imagine-image": {
@@ -5707,6 +8339,9 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 16000
     }
   },
   "xai/grok-imagine-image-2.0": {
@@ -5717,6 +8352,9 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 64000
     }
   },
   "xai/grok-imagine-image-quality": {
@@ -5727,6 +8365,9 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 16000
     }
   },
   "xai/grok-imagine-video-1.5": {
@@ -5738,6 +8379,9 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1024
     }
   },
   "xai/grok-imagine-video-1.5-lite": {
@@ -5748,6 +8392,9 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 1024
     }
   },
   "xai/grok-tts": {
@@ -5757,6 +8404,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 15000,
+      "output": 15000
     }
   },
   "xai/grok-voice-transcribe-2.0": {
@@ -5775,6 +8426,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 65536
     }
   },
   "xiaomi/mimo-v2-omni": {
@@ -5788,6 +8443,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 262144,
+      "output": 131072
     }
   },
   "xiaomi/mimo-v2-pro": {
@@ -5797,6 +8456,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 131072
     }
   },
   "xiaomi/mimo-v2-tts": {
@@ -5806,6 +8469,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 8192,
+      "output": 8192
     }
   },
   "xiaomi/mimo-v2.5": {
@@ -5818,6 +8485,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 131072
     }
   },
   "xiaomi/mimo-v2.5-pro": {
@@ -5827,6 +8498,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 131072
     }
   },
   "xiaomi/mimo-v2.5-pro-ultraspeed": {
@@ -5836,6 +8511,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 131072
     }
   },
   "xiaomi/mimo-v2.5-tts": {
@@ -5845,6 +8524,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 8192,
+      "output": 8192
     }
   },
   "xiaomi/mimo-v2.5-tts-voiceclone": {
@@ -5854,6 +8537,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 8192,
+      "output": 8192
     }
   },
   "xiaomi/mimo-v2.5-tts-voicedesign": {
@@ -5863,6 +8550,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 8192,
+      "output": 8192
     }
   },
   "xiaomi/mimo-v2.6-flash": {
@@ -5875,6 +8566,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 131072
     }
   },
   "xiaomi/mimo-v2.6-pro": {
@@ -5887,6 +8582,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 131072
     }
   },
   "xiaomi/mimo-v2.6-pro-ultraspeed": {
@@ -5899,6 +8598,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1048576,
+      "output": 131072
     }
   },
   "zhipuai/autoglm-phone-9b-multilingual": {
@@ -5909,6 +8612,10 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 65536,
+      "output": 65536
     }
   },
   "zhipuai/glm-4.5": {
@@ -5918,6 +8625,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 98304
     }
   },
   "zhipuai/glm-4.5-air": {
@@ -5927,6 +8638,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 98304
     }
   },
   "zhipuai/glm-4.5-flash": {
@@ -5936,6 +8651,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 131072,
+      "output": 98304
     }
   },
   "zhipuai/glm-4.5v": {
@@ -5947,6 +8666,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 64000,
+      "output": 16384
     }
   },
   "zhipuai/glm-4.6": {
@@ -5956,6 +8679,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 204800,
+      "output": 131072
     }
   },
   "zhipuai/glm-4.6v": {
@@ -5967,6 +8694,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 32768
     }
   },
   "zhipuai/glm-4.6v-flash": {
@@ -5978,6 +8709,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 128000,
+      "output": 32768
     }
   },
   "zhipuai/glm-4.7": {
@@ -5987,6 +8722,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 204800,
+      "output": 131072
     }
   },
   "zhipuai/glm-4.7-flash": {
@@ -5996,6 +8735,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 200000,
+      "output": 131072
     }
   },
   "zhipuai/glm-4.7-flashx": {
@@ -6005,6 +8748,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 200000,
+      "output": 131072
     }
   },
   "zhipuai/glm-5": {
@@ -6014,6 +8761,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 204800,
+      "output": 131072
     }
   },
   "zhipuai/glm-5-turbo": {
@@ -6023,6 +8774,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 200000,
+      "output": 131072
     }
   },
   "zhipuai/glm-5.1": {
@@ -6032,6 +8787,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 200000,
+      "output": 131072
     }
   },
   "zhipuai/glm-5.2": {
@@ -6041,6 +8800,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 131072
     }
   },
   "zhipuai/glm-5.3": {
@@ -6050,6 +8813,10 @@
       "input": [
         "text"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 131072
     }
   },
   "zhipuai/glm-5.3-flash": {
@@ -6062,6 +8829,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 1000000,
+      "output": 131072
     }
   },
   "zhipuai/glm-5v-turbo": {
@@ -6074,6 +8845,10 @@
         "text",
         "video"
       ]
+    },
+    "limit": {
+      "context": 200000,
+      "output": 131072
     }
   },
   "zhipuai/glm-image": {
@@ -6084,6 +8859,9 @@
         "image",
         "text"
       ]
+    },
+    "limit": {
+      "context": 10240
     }
   }
 }
