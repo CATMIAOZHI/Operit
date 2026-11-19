@@ -22,26 +22,89 @@ class OfficialPricingIndex(entries: List<PricingCatalogEntry>) {
         entry.aliases.map { normalize(it) to entry }
     }.groupBy({ it.first }, { it.second })
     private val routes = entries.groupBy { normalize(it.model).replace('/', '-') }
+    /** Dated snapshots by the name without their date ("model" for "model-1017" or "model-20260101"). */
+    private val bySnapshotBase = entries.mapNotNull { entry ->
+        val short = normalize(entry.model.substringAfterLast('/'))
+        SNAPSHOT.matchEntire(short)?.let { it.groupValues[1] to entry }
+    }.groupBy({ it.first }, { it.second })
+    /** Answers already worked out; the index never changes, and model names in use are few. */
+    private val cache = java.util.concurrent.ConcurrentHashMap<String, java.util.Optional<ModelPricingDefaults>>()
 
     fun lookup(model: String): ModelPricingDefaults? {
         val query = normalize(model)
-        byId[query]?.let { return unique(it) }
+        cache[query]?.let { return it.orElse(null) }
+        val found = find(query)
+        if (cache.size >= MAX_CACHED) cache.clear()
+        cache[query] = java.util.Optional.ofNullable(found)
+        return found
+    }
+
+    private fun find(query: String): ModelPricingDefaults? {
+        // A name the catalog lists directly is answered from those entries alone, even when they
+        // disagree (then no price); the fallbacks below are only for names it does not list.
+        direct(query, owner = null)?.let { return unique(it) }
+        // A tag after a colon (Ollama style, "name:1017") names the same release as "name-1017".
+        if (':' in query) {
+            val name = query.substringBeforeLast(':')
+            val tag = query.substringAfterLast(':')
+            // With a vendor in front ("other/name:tag"), only that vendor's entries may answer.
+            val owner = name.substringBeforeLast('/', "").substringAfterLast('/').ifEmpty { null }
+            if (tag.isNotEmpty()) direct("$name-$tag", owner)?.let { return unique(it) }
+            direct(name, owner)?.let { return unique(it) }
+            // A named release the catalog does not list ("name:9999") never borrows another one's price.
+            return if (tag.isEmpty() || tag == "latest") snapshotOf(name) else null
+        }
+        return snapshotOf(query)
+    }
+
+    /**
+     * The catalog entries [query] names directly, or null when it names none. With [owner], only
+     * that vendor's entries count, and a way of naming that finds only other vendors is skipped.
+     */
+    private fun direct(query: String, owner: String?): List<PricingCatalogEntry>? {
+        fun own(entries: List<PricingCatalogEntry>) =
+            (if (owner == null) entries else entries.filter { ownerOf(it) == owner }).ifEmpty { null }
+        byId[query]?.let(::own)?.let { return it }
         val short = query.substringAfterLast('/')
-        byShortId[short]?.let { return unique(it) }
+        byShortId[short]?.let(::own)?.let { return it }
         OfficialModelAliases.resolve(query)?.let { officialId ->
-            byId[normalize(officialId)]?.let { return unique(it) }
+            byId[normalize(officialId)]?.let(::own)?.let { return it }
         }
         val routed = routes.filterKeys { short == it || short.endsWith("-$it") }
             .values.flatten()
-        if (routed.isNotEmpty()) return unique(routed)
-        return byAlias[query]?.let(::unique)
+        own(routed)?.let { return it }
+        return byAlias[query]?.let(::own)
     }
+
+    /**
+     * A name without the dated snapshot the catalog lists ("model" for "model-1017"): matched only
+     * when every such snapshot costs the same, so no arbitrary price is picked.
+     */
+    private fun snapshotOf(query: String): ModelPricingDefaults? {
+        val short = query.substringAfterLast('/')
+        if (short.length < 3) return null
+        val owner = query.substringBeforeLast('/', "").substringAfterLast('/')
+        val candidates = bySnapshotBase[short].orEmpty()
+            .filter { owner.isEmpty() || ownerOf(it) == owner }
+        if (candidates.isEmpty()) return null
+        val prices = candidates.map { PricingCatalogJson.entryToDefaults(it) }.distinct()
+        return prices.singleOrNull()
+    }
+
+    private fun ownerOf(entry: PricingCatalogEntry): String = normalize(entry.model).substringBefore('/')
 
     private fun unique(entries: List<PricingCatalogEntry>): ModelPricingDefaults? =
         entries.distinctBy { normalize(it.model) }.singleOrNull()?.let(PricingCatalogJson::entryToDefaults)
 
     companion object {
         fun normalize(value: String): String = value.trim().lowercase().replace('_', '-')
+
+        /**
+         * A dated snapshot: 4, 6 or 8 digits at the end (MMDD, YYMMDD, YYYYMMDD), so a generation
+         * number like "gpt-image-2" or "glm-5" is never read as a date.
+         */
+        private val SNAPSHOT = Regex("(.+)-(\\d{4}|\\d{6}|\\d{8})")
+        private const val MAX_CACHED = 512
     }
 }
 

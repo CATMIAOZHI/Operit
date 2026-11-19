@@ -57,14 +57,37 @@ object DefaultModelPricingCollect {
     }
 
     fun getDefaultPricing(providerModel: String): ModelPricingDefaults {
+        val provider = providerModel.substringBefore(':', "")
         val model = providerModel.substringAfter(':', providerModel)
-        return catalog.lookup(model) ?: ModelPricingDefaults(
+        // Free first: "name:free" must not fall back to the paid "name".
+        return freePricing(provider, model) ?: catalog.lookup(model) ?: ModelPricingDefaults(
             billingMode = BillingMode.TOKEN,
             inputPricePerMillion = 0.0,
             outputPricePerMillion = 0.0,
             cachedInputPricePerMillion = 0.0,
             pricePerRequest = 0.0,
             currency = PricingCurrency.USD,
+        )
+    }
+
+    /**
+     * A free service or free model costs nothing: OpenCode Zen's free service, or a model named as
+     * free (OpenRouter's ":free", "-free").
+     */
+    private fun freePricing(provider: String, model: String): ModelPricingDefaults? {
+        val name = model.trim().lowercase()
+        val free = provider.trim().equals("OPENCODE_ZEN_FREE", ignoreCase = true) ||
+            name.endsWith(":free") || name.endsWith("-free")
+        if (!free) return null
+        return ModelPricingDefaults(
+            billingMode = BillingMode.TOKEN,
+            inputPricePerMillion = 0.0,
+            outputPricePerMillion = 0.0,
+            cachedInputPricePerMillion = 0.0,
+            pricePerRequest = 0.0,
+            currency = PricingCurrency.USD,
+            known = true,
+            cacheWritePricePerMillion = 0.0,
         )
     }
 

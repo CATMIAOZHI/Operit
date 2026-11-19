@@ -3632,9 +3632,15 @@
     <string name="token_stats_pricing_catalog_revision">当前版本 %1$s · 生成时间 %2$s</string>
     <string name="token_stats_pricing_catalog_checked">上次检查：%1$s</string>
     <string name="token_stats_pricing_catalog_not_checked">尚未检查云端更新</string>
-    <string name="token_stats_pricing_catalog_refresh">更新云端目录</string>
+    <string name="token_stats_pricing_catalog_refresh">立即检查</string>
     <string name="token_stats_pricing_catalog_refresh_failed">操作失败，当前价格未变更：%1$s</string>
-    <string name="token_stats_pricing_catalog_hint">按模型名匹配官方价格，与接入提供商无关。更新优先获取 models.dev，超时读取仓库缓存；点击覆盖后生效。手动价格始终优先，历史费用不变。</string>
+    <string name="token_stats_pricing_catalog_hint">按模型名匹配官方价格，与接入提供商无关；名字带冒号标签、厂商前缀或少了日期也能认出，免费模型算 0 元。更新优先获取 models.dev，超时读取仓库缓存。手动价格始终优先，历史费用不变。</string>
+    <string name="token_stats_pricing_catalog_auto">自动更新价格</string>
+    <string name="token_stats_pricing_catalog_auto_desc">连着 Wi-Fi 时，打开 App 或价格页会定期检查，有新价格就直接用上</string>
+    <string name="token_stats_pricing_catalog_auto_not_saved">开关没保存成功，重启 App 后可能变回原样</string>
+    <string name="token_stats_pricing_catalog_result_up_to_date">已是最新价格</string>
+    <string name="token_stats_pricing_catalog_result_updated">已更新到最新价格</string>
+    <string name="token_stats_pricing_catalog_result_downloaded">找到新价格，点「覆盖内置价格」后生效</string>
     <string name="token_stats_pricing_catalog_details">目录详情</string>
     <string name="token_stats_pricing_context_tiers">官方价格按输入上下文长度分档，此处显示基础档；手动价格优先。</string>
     <string name="token_stats_pricing_catalog_downloaded">已下载版本 %1$s · 生成时间 %2$s</string>
