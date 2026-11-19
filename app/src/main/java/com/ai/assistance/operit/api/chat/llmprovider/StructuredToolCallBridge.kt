@@ -113,10 +113,15 @@ internal object StructuredToolCallBridge {
     ): List<MatchedToolCall> {
         val matched = ArrayList<MatchedToolCall>(minOf(openToolCalls.size, resultToolNames.size))
         resultToolNames.forEachIndexed { resultIndex, resultName ->
+            // A result saved before the terminal was built in names its old super_admin tool, while
+            // its call is read under the built-in name (see matchingName).
             val normalizedResultName = resultName?.trim().orEmpty()
+                .let(com.ai.assistance.operit.core.tools.TerminalTools::canonical)
             if (normalizedResultName.isEmpty()) return@forEachIndexed
 
-            val callIndex = openToolCalls.indexOfFirst { it.matchingName == normalizedResultName }
+            val callIndex = openToolCalls.indexOfFirst {
+                com.ai.assistance.operit.core.tools.TerminalTools.canonical(it.matchingName) == normalizedResultName
+            }
             if (callIndex >= 0) {
                 val call = openToolCalls.removeAt(callIndex)
                 matched.add(MatchedToolCall(resultIndex, call))

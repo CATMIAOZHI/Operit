@@ -701,6 +701,13 @@ object ToolExecutionManager {
         com.ai.assistance.operit.core.tools.OrbitTools.subagentDenial(context, callerChatId, targetName)?.let {
             return ToolResult(toolName = targetName, success = false, result = StringResultData(""), error = it)
         }
+        // The terminal's switch is checked on the call too, not only on the tool list.
+        if (com.ai.assistance.operit.core.tools.TerminalTools.canonical(targetName) in
+                com.ai.assistance.operit.core.tools.TerminalTools.switchedNames &&
+            !com.ai.assistance.operit.core.tools.TerminalTools.available(context, callerChatId)) {
+            return ToolResult(toolName = targetName, success = false, result = StringResultData(""),
+                error = context.getString(R.string.terminal_tools_switched_off))
+        }
         if (PermissionReviewInternalTools.bypassesPermissionCheck(toolName) ||
             com.ai.assistance.operit.features.orbit.OrbitTaskExecution.isTaskCapability(toolName)) {
             return null
@@ -1095,7 +1102,15 @@ object ToolExecutionManager {
 
         // Record after batch splitting so recursive execution does not log a repair twice.
         rawInvocations.forEach { invocation ->
-            ToolCallRepairRouter.route(invocation)?.let { repair ->
+            // An old terminal name alone is no mistake of the model's: it is what the tool was called.
+            // Dropping a stray package_name on the way is one, and is logged.
+            ToolCallRepairRouter.route(invocation)
+                ?.takeUnless {
+                    it.rules == listOf(ToolCallRepairRouter.LEGACY_TERMINAL_NAME) &&
+                        (it.original.tool.name !in setOf("proxy", "package_proxy") ||
+                            it.original.tool.parameters.none { p -> p.name == "package_name" })
+                }
+                ?.let { repair ->
                 ToolCallRepairLogger.record(context, repair)
                 com.ai.assistance.operit.core.chat.OrbitDevRecorder.event(
                     callerChatId, com.ai.assistance.operit.core.chat.OrbitDevRecorder.EVENT_REPAIR,

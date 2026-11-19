@@ -21,6 +21,8 @@ internal data class ToolCallRepairRule(
 
 internal object ToolCallRepairRules {
     private val repeatedTerminalSeparator = Regex("""^super_admin::+terminal$""")
+    /** The terminal's run tool, by its built-in name or its old super_admin one. */
+    internal val TERMINAL_RUN_NAMES = setOf(TerminalTools.RUN, TerminalTools.legacyName(TerminalTools.RUN))
     private val actionSuffix = Regex("""^([a-z][a-z0-9_]*):([a-z][a-z0-9_]*)$""")
 
     /**
@@ -80,7 +82,7 @@ internal object ToolCallRepairRules {
         ToolCallRepairRule(ToolCallRepairRouter.TERMINAL_SEPARATOR) { call ->
             // Any run of separators is the same typo; every other name stays untouched.
             if (repeatedTerminalSeparator.matches(call.targetName))
-                call.copy(targetName = "super_admin:terminal") else null
+                call.copy(targetName = TerminalTools.legacyName(TerminalTools.RUN)) else null
         },
         ToolCallRepairRule(ToolCallRepairRouter.REDUNDANT_PACKAGE_NAME) { call ->
             val outer = call.proxyParameters
@@ -113,14 +115,14 @@ internal object ToolCallRepairRules {
         ToolCallRepairRule(ToolCallRepairRouter.REDUNDANT_PARAMS_TOOL_NAME) { call ->
             // params repeating the proxy's own tool_name, seen as `params.tool_name` undeclared on
             // the terminal. Other package tools may take a tool_name of their own, so only this one.
-            if (call.proxyParameters == null || call.targetName != "super_admin:terminal") return@ToolCallRepairRule null
+            if (call.proxyParameters == null || call.targetName !in TERMINAL_RUN_NAMES) return@ToolCallRepairRule null
             val inner = call.arguments.filter { it.name == "tool_name" }
             if (inner.size != 1 || (inner.single().value as? JsonPrimitive)?.takeIf { it.isString }?.content
                     != call.targetName) return@ToolCallRepairRule null
             call.copy(arguments = call.arguments.filterNot { it.name == "tool_name" })
         },
         ToolCallRepairRule(ToolCallRepairRouter.TERMINAL_TIMEOUT) { call ->
-            if (call.targetName != "super_admin:terminal") return@ToolCallRepairRule null
+            if (call.targetName !in TERMINAL_RUN_NAMES) return@ToolCallRepairRule null
             val alias = call.arguments.singleOrNull { it.name == "timeout" }
                 ?: return@ToolCallRepairRule null
             val rawTimeout = (alias.value as? JsonPrimitive)?.content?.toLongOrNull()
@@ -162,6 +164,22 @@ internal object ToolCallRepairRules {
                 if (it.name == MEMORY_ARGUMENT_FIELD) it.copy(value = JsonPrimitive(renamed)) else it
             })
         },
+        // Last, after the fixes above read the old name: the terminal tools are built in now.
+        ToolCallRepairRule(ToolCallRepairRouter.LEGACY_TERMINAL_NAME) { call ->
+            val canonical = TerminalTools.canonical(call.targetName)
+            if (canonical !in TerminalTools.names) return@ToolCallRepairRule null
+            // A proxy that also names the old package keeps no package for a built-in tool.
+            val outer = call.proxyParameters
+            val strayPackage = outer?.filter { it.name == "package_name" }
+                ?.takeIf { it.isNotEmpty() && it.all { p -> p.value.trim() == "super_admin" } }
+            // Any other field around the call (another package, an unknown key) is left for the proxy
+            // to refuse as before: package_proxy would otherwise drop it on the way to a direct call.
+            if (outer != null && outer.any { it.name !in setOf("tool_name", "params", "package_name") ||
+                    (it.name == "package_name" && strayPackage == null) }) return@ToolCallRepairRule null
+            if (canonical == call.targetName && strayPackage == null) return@ToolCallRepairRule null
+            call.copy(targetName = canonical,
+                proxyParameters = if (strayPackage == null) outer else outer?.filterNot { it.name == "package_name" })
+        },
     )
 }
 
@@ -170,7 +188,7 @@ internal object ToolCallRepairRules {
  * it is a whole number in [range] and params does not already say something else.
  */
 private fun moveTerminalProxyNumber(call: ToolRepairCall, name: String, range: LongRange): ToolRepairCall? {
-    if (call.targetName != "super_admin:terminal") return null
+    if (call.targetName !in ToolCallRepairRules.TERMINAL_RUN_NAMES) return null
     val outer = call.proxyParameters ?: return null
     val misplaced = outer.singleOrNull { it.name == name } ?: return null
     val value = misplaced.value.toLongOrNull()?.takeIf { it in range } ?: return null

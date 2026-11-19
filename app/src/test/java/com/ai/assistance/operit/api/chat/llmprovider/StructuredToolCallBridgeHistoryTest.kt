@@ -57,8 +57,29 @@ class StructuredToolCallBridgeHistoryTest {
         shapes.forEach { assertEquals("read_file_part", StructuredToolCallBridge.toolCallName(it)) }
         assertEquals("read_file", StructuredToolCallBridge.toolCallName(
             JSONObject().put("name", "read_file").put("args", JSONObject().put("path", "file"))))
-        assertEquals("super_admin:terminal", StructuredToolCallBridge.toolCallName(
+        assertEquals("terminal", StructuredToolCallBridge.toolCallName(
             JSONObject().put("name", "super_admin::terminal").put("args", JSONObject().put("command", "pwd"))))
+    }
+
+    @Test
+    fun `a terminal call saved under its old package name still gets its result`() {
+        for (resultName in listOf("super_admin:terminal_wait", "terminal_wait")) {
+            val messages =
+                buildMessages(
+                    listOf(
+                        PromptTurn(kind = PromptTurnKind.USER, content = "Wait for it."),
+                        PromptTurn(
+                            kind = PromptTurnKind.ASSISTANT,
+                            content = toolCall("super_admin:terminal_wait", "runId" to "r1")
+                        ),
+                        PromptTurn(kind = PromptTurnKind.TOOL_RESULT, content = toolResult(resultName, "DONE"))
+                    )
+                )
+            val call = messages.at(1).getJSONArray("tool_calls").getJSONObject(0)
+            assertEquals(call.getString("id"), messages.at(2).getString("tool_call_id"))
+            assertEquals("DONE", messages.at(2).getString("content"))
+            assertToolResultsFollowTheirCalls(messages)
+        }
     }
 
     @Test

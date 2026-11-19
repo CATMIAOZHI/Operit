@@ -36,6 +36,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
@@ -332,7 +333,9 @@ fun SettingsSwitchRow(
     /** False for rows that only link to a page, such as the settings home and its search results. */
     searchable: Boolean = true,
     /** 0.dp lines the text up with other content in a card that already has its own padding. */
-    horizontalPadding: Dp = 8.dp
+    horizontalPadding: Dp = 8.dp,
+    /** True while the value is still being read: the switch keeps its place but is not drawn. */
+    loading: Boolean = false
 ) {
     // Felt as it flips, like the system's own switches.
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
@@ -348,7 +351,7 @@ fun SettingsSwitchRow(
             (if (searchable) modifier.settingsSearchTarget(title) else modifier)
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(14.dp))
-                .clickable(enabled = enabled) { change(!checked) }
+                .clickable(enabled = enabled && !loading) { change(!checked) }
                 .padding(horizontal = horizontalPadding, vertical = 10.dp)
                 .alpha(if (enabled) 1f else 0.38f),
         verticalAlignment = Alignment.CenterVertically
@@ -366,7 +369,19 @@ fun SettingsSwitchRow(
                 )
             }
         }
-        Switch(checked = checked, onCheckedChange = change, enabled = enabled)
+        // Made anew once the value is read, so it appears in place instead of sliding there.
+        androidx.compose.runtime.key(loading) {
+            Switch(
+                checked = checked,
+                onCheckedChange = change,
+                enabled = enabled && !loading,
+                modifier = if (loading) {
+                    Modifier.alpha(0f).clearAndSetSemantics {}
+                } else {
+                    Modifier
+                },
+            )
+        }
     }
 }
 

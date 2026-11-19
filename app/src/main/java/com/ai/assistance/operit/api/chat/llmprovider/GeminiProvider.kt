@@ -1166,9 +1166,12 @@ open class GeminiProvider(
                             val partsArray = JSONArray()
                             for (sourceResponse in responsesList) {
                                 val response = JSONObject(sourceResponse.toString())
-                                val resultName = response.optString("name", "").trim()
+                                // A result saved before the terminal was built in names its old tool.
+                                val resultName = com.ai.assistance.operit.core.tools.TerminalTools
+                                    .canonical(response.optString("name", "").trim())
                                 val callIndex = openFunctionCalls.indexOfFirst {
-                                    resultName.isNotBlank() && it.matchingName == resultName
+                                    resultName.isNotBlank() &&
+                                        com.ai.assistance.operit.core.tools.TerminalTools.canonical(it.matchingName) == resultName
                                 }
                                 if (callIndex < 0) {
                                     logDebug("忽略未匹配的Gemini functionResponse")

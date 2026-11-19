@@ -1060,7 +1060,12 @@ private fun buildCharacterCardPackageToolAccessOptions(
             CharacterCardToolAccessOption(
                 key = packageName,
                 title = packageName,
-                subtitle = description
+                // The built-in terminal was this package's, so a role card still allows it through here.
+                subtitle = if (packageName == "super_admin") {
+                    description + "\n" + context.getString(R.string.role_card_super_admin_terminal_note)
+                } else {
+                    description
+                }
             )
         }
 }

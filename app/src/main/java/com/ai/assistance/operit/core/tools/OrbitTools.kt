@@ -69,9 +69,15 @@ internal object OrbitTools {
      * Hides Orbit tools everywhere except in a chat that belongs to an Orbit. Suspends: it reads
      * settings and the database, and is reached from the main thread when a chat is opened.
      */
-    suspend fun visibility(context: Context, chatId: String?): Map<String, Boolean> {
+    suspend fun visibility(context: Context, chatId: String?): Map<String, Boolean> =
+        visibility(context, chatId, com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context, chatId))
+
+    /** [visibility] with the Orbit that owns [chatId] already looked up ([owner], null for none). */
+    suspend fun visibility(
+        context: Context, chatId: String?, owner: com.ai.assistance.operit.data.preferences.OrbitProfile?,
+    ): Map<String, Boolean> {
         val isOrbitChat = OrbitPreferences.getInstance(context).current().orbitForChat(chatId) != null
-        val hasOrbitSkills = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context, chatId) != null
+        val hasOrbitSkills = owner != null
         val isTaskRoot = chatId?.let {
             com.ai.assistance.operit.data.db.AppDatabase.getDatabase(context).orbitTaskDao().binding(it)
         }?.let { it.chatId == it.rootChatId } == true

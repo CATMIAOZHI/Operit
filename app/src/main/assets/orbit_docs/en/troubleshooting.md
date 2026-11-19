@@ -30,9 +30,9 @@ Symptom: `terminal` returns `status: running` and a `runId`, and `output` is emp
 
 ## The terminal says parameters are missing
 
-Symptom: `Missing required parameters: …`.
+Symptom: `terminal needs all of command, background, timeoutMs and yieldMs; missing: …`.
 
-`terminal` (and `bash`) needs all of `command`, `background`, `timeoutMs` and `yieldMs` on every call.
+`terminal` needs all of `command`, `background`, `timeoutMs` and `yieldMs` on every call.
 Usually `background="false"`, `timeoutMs="1800000"`, `yieldMs="10000"`; use `background="true"` only to run in the background and return at once.
 
 ## Building an Android project on the phone fails at strip

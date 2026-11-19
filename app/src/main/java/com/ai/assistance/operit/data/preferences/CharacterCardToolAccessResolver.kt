@@ -170,9 +170,13 @@ class CharacterCardToolAccessResolver private constructor(private val context: C
             allowedSkillNames.isNotEmpty() ||
             allowedMcpServerNames.isNotEmpty()
 
+        // The terminal was the super_admin package's: a role card that allows that package keeps it.
+        val terminalVisibility = com.ai.assistance.operit.core.tools.TerminalTools.names
+            .associateWith { "super_admin" in allowedPackageNames }
+
         return ResolvedCharacterCardToolAccess(
             customEnabled = true,
-            effectiveBuiltinToolVisibility = effectiveBuiltinToolVisibility,
+            effectiveBuiltinToolVisibility = effectiveBuiltinToolVisibility + terminalVisibility,
             allowedPackageNames = allowedPackageNames,
             allowedSkillNames = allowedSkillNames,
             allowedMcpServerNames = allowedMcpServerNames,

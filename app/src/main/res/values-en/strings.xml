@@ -3552,6 +3552,8 @@
     
     <string name="settings_data_permissions">Data and Permissions</string>
     <string name="settings_tool_permissions_subtitle">Tool permissions and security settings</string>
+    <string name="settings_terminal_tools">Ubuntu terminal tools</string>
+    <string name="settings_terminal_tools_subtitle">Let the AI run commands in the built-in Ubuntu terminal. When off, main-app chats do not get it; Orbit always has it.</string>
     <string name="settings_privacy_data_cleanup">Privacy and Data Cleanup</string>
     <string name="settings_clear_cookies">Clear Cookies</string>
     <string name="settings_clear_cookies_subtitle">Clear cookies saved by search tools, the Browser package, and the built-in browser</string>
@@ -7388,6 +7390,8 @@
     <!-- StandardTerminalCommandExecutor -->
     <string name="terminal_error_missing_session_name">Missing parameter: session_name</string>
     <string name="terminal_error_no_chat_session">This chat has no terminal session yet; run a command with terminal first.</string>
+    <string name="role_card_super_admin_terminal_note">Allowing this package also keeps the built-in Ubuntu terminal tools for the role card.</string>
+    <string name="terminal_tools_switched_off">Not run: the Ubuntu terminal tools are switched off in settings. If needed, the user can turn them on in Settings → Data and Permissions → Ubuntu terminal tools.</string>
     <string name="terminal_error_create_session">Error creating or getting terminal session: %1$s</string>
     <string name="terminal_error_missing_command">Missing parameter: command</string>
     <string name="terminal_error_missing_session_id">Missing parameter: session_id</string>
@@ -8770,6 +8774,7 @@
     <string name="tool_repairs_proxy_timeout">Moved terminal timeoutMs into tool parameters</string>
     <string name="tool_repairs_params_tool_name">Removed a tool_name repeated inside params</string>
     <string name="tool_repairs_write_file_new">Renamed new to content in write_file</string>
+    <string name="tool_repairs_legacy_terminal">Renamed an old super_admin terminal tool to the built-in terminal tool</string>
     <string name="tool_repairs_package">Removed redundant package_name matching the target package</string>
     <string name="tool_repairs_flattened_proxy">Recovered the tool_name that was folded into the params text</string>
     <string name="tool_repairs_memory_argument">Renamed the memory tool\'s new_text argument to content</string>

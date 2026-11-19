@@ -280,7 +280,7 @@ const progress = await Tools.System.terminal.poll({ runId: task.runId, yieldMs: 
 ```
 
 `start` 和 `poll` 默认等待 10 秒，允许 0–30000 毫秒。`start` 的执行上限默认 30 分钟。
-`super_admin:terminal`、`terminal_wait`、`terminal_cancel` 使用这组接口；
+内置终端工具 `terminal`、`terminal_wait`、`terminal_cancel` 使用这组接口；
 后台执行也会返回可查询的 `runId`。原有 `terminal.input` 仍按明确的 `sessionId` 输入。
 
 结果包含 `runId`、`sessionId`、`status`、`output`、`outputMode`、`outputTruncated`、

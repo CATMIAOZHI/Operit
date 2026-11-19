@@ -10,7 +10,7 @@ import org.junit.Test
 class ToolCallRepairRouterTest {
     @Test fun misplacedTerminalYieldIsMovedOnlyWhenUnambiguous() {
         for (value in listOf("0", "30000")) {
-            val original = call("package_proxy", "tool_name" to "super_admin:terminal",
+            val original = call("proxy", "tool_name" to "terminal",
                 "params" to """{"command":"echo ok"}""", "yieldMs" to value)
             val repair = ToolCallRepairRouter.route(original)!!
             assertTrue(repair.rules.contains(ToolCallRepairRouter.TERMINAL_PROXY_YIELD))
@@ -19,30 +19,30 @@ class ToolCallRepairRouterTest {
             assertNull(ToolCallRepairRouter.route(repair.invocation))
         }
         for (value in listOf("-1", "30001", "1.5", "abc")) {
-            assertNull(ToolCallRepairRouter.route(call("package_proxy", "tool_name" to "super_admin:terminal",
+            assertNull(ToolCallRepairRouter.route(call("proxy", "tool_name" to "terminal",
                 "params" to """{"command":"echo ok"}""", "yieldMs" to value)))
         }
-        assertNull(ToolCallRepairRouter.route(call("package_proxy", "tool_name" to "super_admin:terminal",
+        assertNull(ToolCallRepairRouter.route(call("proxy", "tool_name" to "terminal",
             "params" to """{"yieldMs":5}""", "yieldMs" to "10")))
         assertNull(ToolCallRepairRouter.route(call("package_proxy", "tool_name" to "other:terminal",
             "params" to "{}", "yieldMs" to "10")))
-        assertNull(ToolCallRepairRouter.route(call("package_proxy", "tool_name" to "super_admin:terminal",
+        assertNull(ToolCallRepairRouter.route(call("proxy", "tool_name" to "terminal",
             "params" to "{}", "yieldMs" to "10", "yieldMs" to "10")))
-        val same = ToolCallRepairRouter.route(call("package_proxy", "tool_name" to "super_admin:terminal",
+        val same = ToolCallRepairRouter.route(call("proxy", "tool_name" to "terminal",
             "params" to """{"yieldMs":10}""", "yieldMs" to "10"))!!
         assertFalse(same.invocation.tool.parameters.any { it.name=="yieldMs" })
     }
     @Test fun terminalSecondsCompatibilityConvertsAndChecksCanonicalConflict() {
         for (seconds in listOf(3,60,90,300)) {
-            val result = ToolCallRepairRouter.route(call("super_admin:terminal","timeout" to "$seconds"))!!.invocation
+            val result = ToolCallRepairRouter.route(call("terminal","timeout" to "$seconds"))!!.invocation
             assertEquals("${seconds*1000}",result.tool.parameters.single().value)
             assertNull(ToolCallRepairRouter.route(result))
         }
-        assertNull(ToolCallRepairRouter.route(call("super_admin:terminal","timeout" to "301")))
-        assertNull(ToolCallRepairRouter.route(call("super_admin:terminal","timeout" to "60","timeoutMs" to "60")))
+        assertNull(ToolCallRepairRouter.route(call("terminal","timeout" to "301")))
+        assertNull(ToolCallRepairRouter.route(call("terminal","timeout" to "60","timeoutMs" to "60")))
         assertEquals(listOf(ToolParameter("timeoutMs","60000")),ToolCallRepairRouter.route(
-            call("super_admin:terminal","timeout" to "60","timeoutMs" to "60000"))!!.invocation.tool.parameters)
-        val proxy = ToolCallRepairRouter.route(call("proxy","tool_name" to "super_admin:terminal",
+            call("terminal","timeout" to "60","timeoutMs" to "60000"))!!.invocation.tool.parameters)
+        val proxy = ToolCallRepairRouter.route(call("proxy","tool_name" to "terminal",
             "params" to """{"timeout":90}"""))!!.invocation
         assertEquals(90000,JSONObject(proxy.tool.parameters.last().value).getInt("timeoutMs"))
     }
@@ -79,7 +79,7 @@ class ToolCallRepairRouterTest {
 
     @Test fun terminalTimeoutNextToToolNameMovesIntoParams() {
         // Seen on a device: timeoutMs and yieldMs both written beside tool_name.
-        val repair = ToolCallRepairRouter.route(call("package_proxy", "tool_name" to "super_admin:terminal",
+        val repair = ToolCallRepairRouter.route(call("proxy", "tool_name" to "terminal",
             "params" to """{"command":"ls"}""", "timeoutMs" to "60000", "yieldMs" to "15000"))!!
         assertEquals(setOf(ToolCallRepairRouter.TERMINAL_PROXY_YIELD, ToolCallRepairRouter.TERMINAL_PROXY_TIMEOUT),
             repair.rules.toSet())
@@ -89,22 +89,22 @@ class ToolCallRepairRouterTest {
         assertEquals(15000L, params.getLong("yieldMs"))
         assertNull(ToolCallRepairRouter.route(repair.invocation))
         for (value in listOf("0", "-5", "abc")) {
-            assertNull(ToolCallRepairRouter.route(call("package_proxy", "tool_name" to "super_admin:terminal",
+            assertNull(ToolCallRepairRouter.route(call("proxy", "tool_name" to "terminal",
                 "params" to """{"command":"ls"}""", "timeoutMs" to value)))
         }
-        assertNull(ToolCallRepairRouter.route(call("package_proxy", "tool_name" to "super_admin:terminal",
+        assertNull(ToolCallRepairRouter.route(call("proxy", "tool_name" to "terminal",
             "params" to """{"command":"ls","timeoutMs":5000}""", "timeoutMs" to "60000")))
     }
 
     @Test fun toolNameRepeatedInsideParamsIsDroppedOnlyWhenItIsTheSame() {
         // Seen on a device: "Undeclared parameters: params.tool_name".
-        val repair = ToolCallRepairRouter.route(call("package_proxy", "tool_name" to "super_admin:terminal",
-            "params" to """{"command":"ls","tool_name":"super_admin:terminal"}"""))!!
+        val repair = ToolCallRepairRouter.route(call("proxy", "tool_name" to "terminal",
+            "params" to """{"command":"ls","tool_name":"terminal"}"""))!!
         assertEquals(listOf(ToolCallRepairRouter.REDUNDANT_PARAMS_TOOL_NAME), repair.rules)
         val params = JSONObject(repair.invocation.tool.parameters.single { it.name == "params" }.value)
         assertFalse(params.has("tool_name"))
         assertEquals("ls", params.getString("command"))
-        assertNull(ToolCallRepairRouter.route(call("package_proxy", "tool_name" to "super_admin:terminal",
+        assertNull(ToolCallRepairRouter.route(call("proxy", "tool_name" to "terminal",
             "params" to """{"command":"ls","tool_name":"other:tool"}""")))
         assertNull(ToolCallRepairRouter.route(call("package_proxy", "tool_name" to "pkg:tool",
             "params" to """{"tool_name":"pkg:tool"}""")))
@@ -261,25 +261,25 @@ class ToolCallRepairRouterTest {
     }
 
     @Test fun terminalTimeoutAliasPreservesValueAndDoesNotAffectShell() {
-        val original = call("super_admin:terminal", "command" to "sleep 120", "timeout" to "180000")
+        val original = call("terminal", "command" to "sleep 120", "timeout" to "180000")
         val repair = ToolCallRepairRouter.route(original)!!
         assertEquals("180000", repair.invocation.tool.parameters.single { it.name == "timeoutMs" }.value)
         assertEquals(original.rawText, repair.invocation.rawText)
         assertNull(ToolCallRepairRouter.route(repair.invocation))
         assertNull(ToolCallRepairRouter.route(call("super_admin:shell", "timeout" to "180000")))
-        assertNull(ToolCallRepairRouter.route(call("super_admin:terminal", "timeout" to "180seconds")))
+        assertNull(ToolCallRepairRouter.route(call("terminal", "timeout" to "180seconds")))
     }
 
     @Test fun equalTimeoutAliasesAreDeduplicatedAndConflictsAreLeftAlone() {
-        val same = call("super_admin:terminal", "timeout" to "180000", "timeoutMs" to "180000")
+        val same = call("terminal", "timeout" to "180000", "timeoutMs" to "180000")
         assertEquals(listOf(ToolParameter("timeoutMs", "180000")),
             ToolCallRepairRouter.route(same)!!.invocation.tool.parameters)
-        assertNull(ToolCallRepairRouter.route(call("super_admin:terminal",
+        assertNull(ToolCallRepairRouter.route(call("terminal",
             "timeout" to "180000", "timeoutMs" to "15000")))
-        assertNull(ToolCallRepairRouter.route(call("super_admin:terminal",
+        assertNull(ToolCallRepairRouter.route(call("terminal",
             "timeout" to "180000", "timeout" to "30000")))
         for (value in listOf("0", "-1", "2999", "2147483648", "null", "true", "3000.5")) {
-            assertNull(value, ToolCallRepairRouter.route(call("super_admin:terminal", "timeout" to value)))
+            assertNull(value, ToolCallRepairRouter.route(call("terminal", "timeout" to value)))
         }
     }
 
@@ -289,7 +289,8 @@ class ToolCallRepairRouterTest {
             "params" to """{"command":"echo \"test\"","timeout":180000,"background":false}""")
         val repair = ToolCallRepairRouter.route(original)!!
         assertEquals(listOf(ToolCallRepairRouter.TERMINAL_SEPARATOR,
-            ToolCallRepairRouter.REDUNDANT_PACKAGE_NAME, ToolCallRepairRouter.TERMINAL_TIMEOUT), repair.rules)
+            ToolCallRepairRouter.REDUNDANT_PACKAGE_NAME, ToolCallRepairRouter.TERMINAL_TIMEOUT,
+            ToolCallRepairRouter.LEGACY_TERMINAL_NAME), repair.rules)
         assertEquals("proxy", repair.invocation.tool.name)
         assertFalse(repair.invocation.tool.parameters.any { it.name == "package_name" })
         val args = JSONObject(repair.invocation.tool.parameters.single { it.name == "params" }.value)
@@ -299,9 +300,9 @@ class ToolCallRepairRouterTest {
         assertEquals(false, args.get("background"))
         assertNull(ToolCallRepairRouter.route(repair.invocation))
         val log = JSONObject(ToolCallRepairLogger.entry(repair, 123))
-        assertEquals(3, log.getJSONArray("rules").length())
+        assertEquals(4, log.getJSONArray("rules").length())
         assertEquals("super_admin::terminal", log.getString("originalToolName"))
-        assertEquals("super_admin:terminal", log.getString("targetToolName"))
+        assertEquals("terminal", log.getString("targetToolName"))
         assertFalse(log.toString().contains("echo"))
     }
 
@@ -322,11 +323,11 @@ class ToolCallRepairRouterTest {
 
     @Test fun separatorRuleIsAnExactAllowlist() {
         for (name in listOf("super_admin::terminal", "super_admin:::terminal")) {
-            assertEquals(name, "super_admin:terminal",
+            assertEquals(name, "terminal",
                 ToolCallRepairRouter.route(call(name))!!.invocation.tool.name)
         }
         for (name in listOf("super_admin::shell", "another::terminal",
-            "super_admin::terminal_wait", "super_admin:terminal")) {
+            "super_admin::terminal_wait", "terminal")) {
             assertNull(ToolCallRepairRouter.route(call(name)))
         }
     }
@@ -334,13 +335,13 @@ class ToolCallRepairRouterTest {
     @Test fun flattenedProxyParamsRestoreTheToolNameAndItsArguments() {
         val inner = """{"command":"echo hi","timeoutMs":150000}"""
         for (params in listOf(
-            """$inner, {"tool_name": "super_admin:terminal"}""",
-            """$inner, "tool_name": "super_admin:terminal"}""",
+            """$inner, {"tool_name": "files_pkg:run"}""",
+            """$inner, "tool_name": "files_pkg:run"}""",
         )) {
             val repair = ToolCallRepairRouter.route(call("package_proxy", "params" to params))!!
             assertEquals(listOf(ToolCallRepairRouter.PROXY_FLATTENED_TOOL_NAME), repair.rules)
             assertEquals("package_proxy", repair.invocation.tool.name)
-            assertEquals("super_admin:terminal",
+            assertEquals("files_pkg:run",
                 repair.invocation.tool.parameters.single { it.name == "tool_name" }.value)
             assertEquals(2, repair.invocation.tool.parameters.size)
             val args = JSONObject(repair.invocation.tool.parameters.single { it.name == "params" }.value)
@@ -351,7 +352,7 @@ class ToolCallRepairRouterTest {
             val log = JSONObject(ToolCallRepairLogger.entry(repair, 123))
             // No target was declared, so the log names the proxy tool the model actually called.
             assertEquals("package_proxy", log.getString("originalToolName"))
-            assertEquals("super_admin:terminal", log.getString("targetToolName"))
+            assertEquals("files_pkg:run", log.getString("targetToolName"))
             assertEquals(ToolCallRepairRouter.PROXY_FLATTENED_TOOL_NAME, log.getString("rule"))
             assertFalse(log.toString().contains("echo hi"))
         }
@@ -361,10 +362,10 @@ class ToolCallRepairRouterTest {
         val inner = """{"command":"echo hi"}"""
         for (params in listOf(
             // Two candidate names: the first object would keep a tool_name of its own.
-            """$inner, {"tool_name": "super_admin:terminal"}, {"tool_name": "read_file"}""",
+            """$inner, {"tool_name": "files_pkg:run"}, {"tool_name": "read_file"}""",
             // Missing separator, unseparated inside one object, and a brace inside the arguments.
-            """$inner "tool_name": "super_admin:terminal"}""",
-            """{"command":"echo hi","tool_name":"super_admin:terminal"}""",
+            """$inner "tool_name": "files_pkg:run"}""",
+            """{"command":"echo hi","tool_name":"files_pkg:run"}""",
             // An empty name cannot address anything.
             """$inner, {"tool_name": ""}""",
         )) {
@@ -379,10 +380,10 @@ class ToolCallRepairRouterTest {
 
     @Test fun flattenedProxyParamsTolerateBracesInsideArguments() {
         // Braces inside the command text are common; they must not hide the shape from the rule.
-        val params = """{"command":"echo ${'$'}{VAR}; awk '{print}'","timeoutMs":1}, "tool_name": "super_admin:terminal"}"""
+        val params = """{"command":"echo ${'$'}{VAR}; awk '{print}'","timeoutMs":1}, "tool_name": "files_pkg:run"}"""
         val repair = ToolCallRepairRouter.route(call("package_proxy", "params" to params))!!
         assertEquals(listOf(ToolCallRepairRouter.PROXY_FLATTENED_TOOL_NAME), repair.rules)
-        assertEquals("super_admin:terminal",
+        assertEquals("files_pkg:run",
             repair.invocation.tool.parameters.single { it.name == "tool_name" }.value)
         val args = JSONObject(repair.invocation.tool.parameters.single { it.name == "params" }.value)
         assertTrue(args.getString("command").contains("{VAR}"))
@@ -390,7 +391,7 @@ class ToolCallRepairRouterTest {
         assertEquals(1, args.getInt("timeoutMs"))
         // An unclosed object stays unrepaired rather than being repaired with a truncated argument.
         assertNull(ToolCallRepairRouter.route(call("package_proxy",
-            "params" to """{"command":"echo hi, "tool_name": "super_admin:terminal"}""")))
+            "params" to """{"command":"echo hi, "tool_name": "files_pkg:run"}""")))
     }
 
     @Test fun flattenedProxyRepairLeavesTheEnvelopeTheProxyParserRequires() {
@@ -399,7 +400,7 @@ class ToolCallRepairRouterTest {
         // non-blank tool_name, one params, a qualified target for package_proxy, and params that is
         // a JSON object.
         val repair = ToolCallRepairRouter.route(call("package_proxy",
-            "params" to """{"command":"echo hi"}, {"tool_name": "super_admin:terminal"}"""))!!
+            "params" to """{"command":"echo hi"}, {"tool_name": "files_pkg:run"}"""))!!
         val parameters = repair.invocation.tool.parameters
         assertEquals(2, parameters.size)
         assertEquals(setOf("tool_name", "params"), parameters.map { it.name }.toSet())
@@ -412,22 +413,22 @@ class ToolCallRepairRouterTest {
 
     @Test fun flattenedProxyTrailerToleratesWhitespaceOnBothShapes() {
         for (params in listOf(
-            """{"command":"echo hi"} , "tool_name": "super_admin:terminal"}""",
-            """{"command":"echo hi"}, "tool_name": "super_admin:terminal" }""",
-            """{"command":"echo hi"}, {"tool_name": "super_admin:terminal" }""",
+            """{"command":"echo hi"} , "tool_name": "files_pkg:run"}""",
+            """{"command":"echo hi"}, "tool_name": "files_pkg:run" }""",
+            """{"command":"echo hi"}, {"tool_name": "files_pkg:run" }""",
         )) {
-            assertEquals(params, "super_admin:terminal",
+            assertEquals(params, "files_pkg:run",
                 ToolCallRepairRouter.route(call("package_proxy", "params" to params))!!.targetToolName)
         }
         // The recovered name is trimmed; an escaped quote in it cannot be resolved and is left alone.
-        assertEquals("super_admin:terminal", ToolCallRepairRouter.route(call("package_proxy",
-            "params" to """{"command":"echo hi"}, "tool_name": " super_admin:terminal "}"""))!!.targetToolName)
+        assertEquals("files_pkg:run", ToolCallRepairRouter.route(call("package_proxy",
+            "params" to """{"command":"echo hi"}, "tool_name": " files_pkg:run "}"""))!!.targetToolName)
         assertNull(ToolCallRepairRouter.route(call("package_proxy",
-            "params" to """{"command":"echo hi"}, "tool_name": "super_admin:termi\"nal"}""")))
+            "params" to """{"command":"echo hi"}, "tool_name": "files_pkg:r\"un"}""")))
     }
 
     @Test fun flattenedProxyParamsNeverOverrideADeclaredToolName() {
-        val original = call("package_proxy", "tool_name" to "super_admin:terminal",
+        val original = call("proxy", "tool_name" to "terminal",
             "params" to """{"command":"echo hi"}, {"tool_name": "read_file"}""")
         assertNull(ToolCallRepairRouter.route(original))
     }
@@ -435,12 +436,12 @@ class ToolCallRepairRouterTest {
     @Test fun flattenedProxyReplacesABlankToolNameInsteadOfDuplicatingIt() {
         for (blank in listOf("", "   ")) {
             val repair = ToolCallRepairRouter.route(call("package_proxy", "tool_name" to blank,
-                "params" to """{"command":"echo hi"}, {"tool_name": "super_admin:terminal"}"""))!!
+                "params" to """{"command":"echo hi"}, {"tool_name": "files_pkg:run"}"""))!!
             assertEquals(listOf(ToolCallRepairRouter.PROXY_FLATTENED_TOOL_NAME), repair.rules)
-            assertEquals("super_admin:terminal", repair.targetToolName)
+            assertEquals("files_pkg:run", repair.targetToolName)
             assertEquals(listOf("tool_name", "params"),
                 repair.invocation.tool.parameters.map { it.name })
-            assertEquals("super_admin:terminal",
+            assertEquals("files_pkg:run",
                 repair.invocation.tool.parameters.single { it.name == "tool_name" }.value)
             val args = JSONObject(repair.invocation.tool.parameters.single { it.name == "params" }.value)
             assertEquals("echo hi", args.getString("command"))
@@ -546,6 +547,58 @@ class ToolCallRepairRouterTest {
     @Test fun ruleIdsAreUnique() {
         val ids = ToolCallRepairRules.ordered.map { it.id }
         assertEquals(ids.size, ids.distinct().size)
+    }
+
+    @Test fun oldTerminalNamesReachTheBuiltInTerminal() {
+        for (name in TerminalTools.names) {
+            // A direct call keeps its arguments under the built-in name.
+            val direct = ToolCallRepairRouter.route(call("super_admin:$name", "runId" to "r1"))!!
+            assertEquals(listOf(ToolCallRepairRouter.LEGACY_TERMINAL_NAME), direct.rules)
+            assertEquals(AITool(name, listOf(ToolParameter("runId", "r1"))), direct.invocation.tool)
+            assertNull(ToolCallRepairRouter.route(direct.invocation))
+            // package_proxy only takes package tools, so the built-in one is called directly.
+            val wrapped = ToolCallRepairRouter.route(call("package_proxy", "tool_name" to "super_admin:$name",
+                "package_name" to "super_admin", "params" to """{"runId":"r1"}"""))!!.invocation
+            assertEquals(AITool(name, listOf(ToolParameter("runId", "r1"))), wrapped.tool)
+            // The CLI proxy keeps its envelope, without the old package.
+            val cli = ToolCallRepairRouter.route(call("proxy", "tool_name" to "super_admin:$name",
+                "package_name" to "super_admin", "params" to """{"runId":"r1"}"""))!!.invocation
+            assertEquals(listOf("tool_name", "params"), cli.tool.parameters.map { it.name })
+            assertEquals(name, cli.tool.parameters.first().value)
+        }
+        // The shell stays in the package; other packages' tools of the same name are theirs.
+        assertNull(ToolCallRepairRouter.route(call("super_admin:shell", "command" to "ls")))
+        assertNull(ToolCallRepairRouter.route(call("other:terminal", "command" to "ls")))
+        assertEquals("terminal", TerminalTools.canonical("super_admin:terminal"))
+        assertEquals("super_admin:shell_wait", TerminalTools.canonical("super_admin:shell_wait"))
+    }
+
+    @Test fun oldTerminalProxyWithOtherFieldsIsLeftToTheProxy() {
+        // Another package or an unknown field around the call is not dropped on the way to a direct call.
+        assertNull(ToolCallRepairRouter.route(call("package_proxy", "tool_name" to "super_admin:terminal_wait",
+            "package_name" to "files_pkg", "params" to """{"runId":"r1"}""")))
+        assertNull(ToolCallRepairRouter.route(call("package_proxy", "tool_name" to "super_admin:terminal_wait",
+            "extra" to "x", "params" to """{"runId":"r1"}""")))
+    }
+
+    @Test fun terminalNumbersReadLikeThePackageDid() {
+        assertEquals(10_000L, TerminalTools.safeInteger("10000"))
+        assertEquals(10_000L, TerminalTools.safeInteger("1e4"))
+        assertEquals(10_000L, TerminalTools.safeInteger(" 10000.0 "))
+        assertEquals(0L, TerminalTools.safeInteger(""))
+        assertNull(TerminalTools.safeInteger("1.5"))
+        assertNull(TerminalTools.safeInteger("abc"))
+        assertNull(TerminalTools.safeInteger("1e300"))
+        // JavaScript's own number forms, and none of the JVM's.
+        assertEquals(3000L, TerminalTools.safeInteger("0xBB8"))
+        assertEquals(5L, TerminalTools.safeInteger("0b101"))
+        assertEquals(8L, TerminalTools.safeInteger("0o10"))
+        assertNull(TerminalTools.safeInteger("-0x10"))
+        assertNull(TerminalTools.safeInteger("3000d"))
+        assertNull(TerminalTools.safeInteger("0x1.77p11"))
+        assertNull(TerminalTools.safeInteger("Infinity"))
+        assertEquals(3000L, TerminalTools.safeInteger("\uFEFF3000\u00A0"))
+        assertNull(TerminalTools.safeInteger("\u001C3000"))
     }
 
     @Test fun renamingDoesNotRoundOtherJsonNumbers() {
