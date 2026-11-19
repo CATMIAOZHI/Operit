@@ -950,7 +950,8 @@ private fun OrbitChatPage(
                 onOpenDelivery = { push(OrbitSubPage.NOTIFICATIONS) })
             OrbitSubPage.USAGE -> OrbitUsagePage(orbit, onBack = back,
                 onOpenTrends = { push(OrbitSubPage.USAGE_TRENDS) },
-                onOpenAppCosts = { push(OrbitSubPage.APP_COSTS) })
+                onOpenAppCosts = { push(OrbitSubPage.APP_COSTS) },
+                onOpenPricing = { push(OrbitSubPage.APP_PRICING) })
             OrbitSubPage.USAGE_TRENDS -> OrbitUsageTrendsPage(orbit, onBack = back)
             OrbitSubPage.SOUL -> OrbitSoulFilePage(orbit.id, onBack = back)
             OrbitSubPage.IDENTITY -> OrbitIdentityFilePage(orbit.id, onBack = back)
