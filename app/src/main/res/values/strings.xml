@@ -23,11 +23,9 @@
     <string name="local_llm_removed">此版本已移除手机本地大模型推理。请选择云端或远程服务；原模型文件保留在 Download/Operit/models，可通过文件管理器自行清理。</string>
     <string name="openai_error_repetition_truncation">模型因重复输出被服务端截断，已丢弃异常响应并停止本轮工具执行。</string>
     <string name="openai_retry_repetition_truncation">模型出现重复输出，已丢弃异常响应，正在重新请求一次。</string>
-    <string name="permission_review_always_allow">始终允许此工具</string>
-    <string name="permission_review_always_allowed">此工具已设为始终允许</string>
-    <string name="permission_review_always_allow_confirm">将“%1$s”加入始终允许列表？\n\n该设置对所有对话生效，允许此工具的所有参数，不再进行权限询问或自动审核。其他工具不受影响。\n\n已结束的调用不会自动重试。可在“设置 → 工具权限管理”中撤销。</string>
-    <string name="permission_review_always_allow_confirm_button">确认始终允许</string>
-    <string name="permission_review_always_allow_failed">保存失败，请重试。</string>
+    <string name="permission_review_open_tool_permissions">去工具权限设置</string>
+    <string name="permission_review_tool_permissions_hint">想调整这个工具的权限，可以到「设置 → 工具权限设置」。</string>
+    <string name="permission_review_orbit_tool_permissions_hint">打开 Orbit 设置里的「开发者模式」后，可以在「每个工具的权限」里调整。</string>
     <string name="phone_control_observing">正在操作</string>
     <string name="phone_control_waiting">正在思考</string>
     <string name="phone_control_acting">正在操作</string>

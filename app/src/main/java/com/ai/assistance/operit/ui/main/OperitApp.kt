@@ -15,6 +15,7 @@ import androidx.compose.runtime.movableContentOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -603,6 +604,11 @@ fun OperitApp(
                 AppRouteDiscoveryGateway.clear()
             }
         }
+        // Kept as one value, so the review details reading it are not redrawn on every recomposition.
+        val openToolPermissions by rememberUpdatedState { navigateTo(Screen.ToolPermission) }
+        val toolPermissionsEntry = remember {
+            com.ai.assistance.operit.ui.permissions.ToolPermissionsEntry(orbit = false, open = { openToolPermissions() }, hint = null)
+        }
         CompositionLocalProvider(
             LocalAppNavigationModel provides navigationModel,
             LocalRouteBackGuardRegistry provides routeBackGuardRegistry,
@@ -613,6 +619,7 @@ fun OperitApp(
                 topBarTitleContent = titleContent
             },
             LocalLeaveOrbit provides { navigateTo(Screen.AiChat, fromDrawer = true) },
+            com.ai.assistance.operit.ui.permissions.LocalToolPermissionsEntry provides toolPermissionsEntry,
             LocalOrbitHomeShown provides reportOrbitHome,
         ) {
             if (useTabletLayout) {
