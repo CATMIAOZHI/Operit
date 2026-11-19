@@ -30,9 +30,9 @@ git 能用时就用 git，不要改用 REST 接口一个个造 blob、tree、com
 
 ## 终端提示缺少参数
 
-症状：`Missing required parameters: …`。
+症状：`terminal needs all of command, background, timeoutMs and yieldMs; missing: …`（缺少必填参数）。
 
-`terminal`（`bash` 同样）每次都要传齐 `command`、`background`、`timeoutMs`、`yieldMs`。
+`terminal` 每次都要传齐 `command`、`background`、`timeoutMs`、`yieldMs`。
 一般用 `background="false"`、`timeoutMs="1800000"`、`yieldMs="10000"`；只有要放到后台、立刻返回时才用 `background="true"`。
 
 ## 在手机上编译 Android 工程，strip 失败

@@ -21,6 +21,7 @@ internal object ToolCallRepairRouter {
     const val TERMINAL_PROXY_TIMEOUT = "terminal_proxy_timeout"
     const val REDUNDANT_PARAMS_TOOL_NAME = "redundant_params_tool_name"
     const val WRITE_FILE_NEW_ALIAS = "write_file_new_alias"
+    const val LEGACY_TERMINAL_NAME = "legacy_terminal_name"
 
     fun terminalToolName(invocation: ToolInvocation): String =
         if (invocation.tool.name == "memory_learning_action")

@@ -610,6 +610,9 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
             }
     )
 
+    // The Ubuntu terminal the model uses (once the super_admin package's terminal tools).
+    TerminalTools.register(handler, context)
+
     // 音乐播放工具
     val musicPlaybackTools = ToolGetter.getMusicPlaybackTools(context)
 

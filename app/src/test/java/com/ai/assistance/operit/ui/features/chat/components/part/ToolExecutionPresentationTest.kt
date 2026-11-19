@@ -354,6 +354,19 @@ class ToolExecutionPresentationTest {
     }
 
     @Test
+    fun oldTerminalCallsShowTheBuiltInName() {
+        assertEquals("terminal", resolveToolRequestPresentation("super_admin:terminal", emptyMap()).toolName)
+        assertEquals(
+            "terminal_wait",
+            resolveToolRequestPresentation(
+                "package_proxy",
+                mapOf("tool_name" to "super_admin:terminal_wait", "params" to "{}"),
+            ).toolName,
+        )
+        assertEquals("super_admin:shell", resolveToolRequestPresentation("super_admin:shell", emptyMap()).toolName)
+    }
+
+    @Test
     fun toolOrdinal_ignoresMalformedToolRequests() {
         val nodes =
             listOf(

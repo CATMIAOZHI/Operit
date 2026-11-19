@@ -33,7 +33,24 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.resume
 
 // Define DataStore
-private val Context.toolPermissionsDataStore: DataStore<Preferences> by preferencesDataStore(name = "tool_permissions")
+// Version 1: the terminal tools left the super_admin package, so their levels move to the built-in names.
+private val Context.toolPermissionsDataStore: DataStore<Preferences> by
+    com.ai.assistance.operit.data.preferences.versionedPreferencesDataStore(name = "tool_permissions", currentVersion = 1) {
+        version, preferences ->
+        when (version) {
+            0 -> for (prefix in listOf("tool_permission_", ORBIT_TOOL_PERMISSION_PREFIX)) {
+                for (name in com.ai.assistance.operit.core.tools.TerminalTools.names) {
+                    val old = stringPreferencesKey(prefix + com.ai.assistance.operit.core.tools.TerminalTools.legacyName(name))
+                    val value = preferences[old] ?: continue
+                    val new = stringPreferencesKey(prefix + name)
+                    // A level already set on the built-in name stays.
+                    if (preferences[new] == null) preferences[new] = value
+                    preferences.remove(old)
+                }
+            }
+            else -> com.ai.assistance.operit.data.preferences.missingPreferencesSchemaMigration(version)
+        }
+    }
 
 internal object PermissionCircuitBreakerNoticeState {
     private val _pendingCount = MutableStateFlow(0)
@@ -142,9 +159,12 @@ class ToolPermissionSystem private constructor(private val context: Context) {
     }
     
     // 工具权限存储：使用 "tool_permission_<tool_name>" 作为key
-    private fun toolPermissionKey(toolName: String) = stringPreferencesKey("tool_permission_$toolName")
+    // The terminal's old names ("super_admin:terminal") share the built-in tool's level.
+    private fun toolPermissionKey(toolName: String) =
+        stringPreferencesKey("tool_permission_${com.ai.assistance.operit.core.tools.TerminalTools.canonical(toolName)}")
     // Orbit keeps its own list, apart from the main app's: "orbit_tool_permission_<tool_name>".
-    private fun orbitToolPermissionKey(toolName: String) = stringPreferencesKey("$ORBIT_TOOL_PERMISSION_PREFIX$toolName")
+    private fun orbitToolPermissionKey(toolName: String) =
+        stringPreferencesKey("$ORBIT_TOOL_PERMISSION_PREFIX${com.ai.assistance.operit.core.tools.TerminalTools.canonical(toolName)}")
 
     val toolPermissionOverridesFlow: Flow<Map<String, PermissionLevel>> =
         context.toolPermissionsDataStore.data.map { preferences ->
@@ -519,20 +539,22 @@ class ToolPermissionSystem private constructor(private val context: Context) {
     /**
      * [tool] only waits on, looks at or stops a terminal or shell run that [callerChatId] started.
      * Shell and terminal runs answer only the chat that started them; a screen counts only for an
-     * open session this chat created. Without a session, super_admin reads only a session this chat
-     * created (create_terminal_session with existing_only checks that). A package tool counts only
-     * as the app's own package tool.
+     * open session this chat created. Without a session, terminal_getscreen reads only a session this
+     * chat created (create_terminal_session with existing_only checks that). A package tool counts
+     * only as the app's own package tool.
      */
     private fun followsUpOwnRun(tool: AITool, callerChatId: String?): Boolean {
         val chatId = callerChatId?.takeIf { it.isNotBlank() } ?: return false
-        if (tool.name !in FOLLOW_UP_TOOLS) return false
-        if (':' in tool.name && !isBuiltInPackageTool(tool.name)) return false
+        // The terminal's old names ("super_admin:terminal_wait") follow up the same way.
+        val name = com.ai.assistance.operit.core.tools.TerminalTools.canonical(tool.name)
+        if (name !in FOLLOW_UP_TOOLS) return false
+        if (':' in name && !isBuiltInPackageTool(name)) return false
         fun param(name: String) = tool.parameters.firstOrNull { it.name == name }?.value?.trim()?.takeIf { it.isNotEmpty() }
         fun ownSession(sessionId: String) =
             com.ai.assistance.operit.core.tools.defaultTool.standard.StandardTerminalCommandExecutor
                 .chatOwnsSession(context, chatId, sessionId)
-        return when (tool.name) {
-            "super_admin:terminal_getscreen" -> param("sessionId")?.let(::ownSession) ?: true
+        return when (name) {
+            "terminal_getscreen" -> param("sessionId")?.let(::ownSession) ?: true
             "get_terminal_session_screen" -> param("session_id")?.let(::ownSession) ?: false
             else -> true
         }
@@ -1361,7 +1383,7 @@ internal val ORBIT_DEFAULT_ALLOW_TOOLS: Set<String> = buildSet {
  * user chose a level for them. Closing a whole session is left out: it can end what the user runs.
  */
 internal val FOLLOW_UP_TOOLS: Set<String> = setOf(
-    "super_admin:terminal_wait", "super_admin:terminal_getscreen", "super_admin:terminal_cancel",
+    "terminal_wait", "terminal_getscreen", "terminal_cancel",
     "super_admin:shell_wait", "super_admin:shell_cancel",
     "poll_shell_task", "poll_terminal_task", "get_terminal_session_screen",
     "cancel_shell_task", "cancel_terminal_task",

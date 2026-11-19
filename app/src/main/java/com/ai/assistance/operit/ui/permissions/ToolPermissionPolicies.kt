@@ -95,7 +95,9 @@ internal object WorkspaceToolPermissionPolicy {
                 normalizedName == "execute_in_terminal_session" ||
                 normalizedName == "execute_in_terminal_session_streaming" ||
                 normalizedName == "super_admin:terminal" ||
-                normalizedName == "super_admin:bash"
+                normalizedName == "super_admin:bash" ||
+                normalizedName == "terminal" ||
+                normalizedName == "terminal_input"
         ) {
             return false
         }

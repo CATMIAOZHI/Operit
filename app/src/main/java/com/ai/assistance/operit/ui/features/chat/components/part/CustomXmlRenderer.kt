@@ -74,8 +74,9 @@ internal fun resolveToolRequestPresentation(
     rawToolName: String,
     params: Map<String, String>,
 ): ResolvedToolRequestPresentation {
+    // Calls saved before the terminal was built in show under its built-in name.
     if (rawToolName != "proxy" && rawToolName != "package_proxy") {
-        return ResolvedToolRequestPresentation(rawToolName, params)
+        return ResolvedToolRequestPresentation(com.ai.assistance.operit.core.tools.TerminalTools.canonical(rawToolName), params)
     }
 
     val targetToolName = params["tool_name"]?.decodeToolXmlText()?.trim().orEmpty()
@@ -97,7 +98,7 @@ internal fun resolveToolRequestPresentation(
             }
             .getOrDefault(emptyMap())
     return ResolvedToolRequestPresentation(
-        toolName = targetToolName.ifBlank { rawToolName },
+        toolName = com.ai.assistance.operit.core.tools.TerminalTools.canonical(targetToolName).ifBlank { rawToolName },
         forwardedParams = forwardedParams,
     )
 }
@@ -1096,7 +1097,8 @@ class CustomXmlRenderer(
         val renderState =
             remember(content) {
                 val nameMatch = ChatMarkupRegex.nameAttr.find(content)
-                val toolName = nameMatch?.groupValues?.get(1) ?: ""
+                // A result saved before the terminal was built in shows under its built-in name too.
+                val toolName = com.ai.assistance.operit.core.tools.TerminalTools.canonical(nameMatch?.groupValues?.get(1) ?: "")
                 val statusMatch = ChatMarkupRegex.statusAttr.find(content)
                 val status = statusMatch?.groupValues?.get(1) ?: "success"
                 val contentMatch = ChatMarkupRegex.contentTag.find(content)

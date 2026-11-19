@@ -43,7 +43,7 @@ class CollaborationToolExecutor(context: Context) : ToolExecutor {
                 tool.name, tool.parameters.map { it.name },
             )
             val chatId = requireNotNull(runtime?.callerChatId?.takeIf { it.isNotBlank() }) { "Collaboration requires a caller chat" }
-            require(CollaborationToolPolicy.visibility(appContext, chatId, runtime.isSubagent)[tool.name] == true) {
+            require(CollaborationToolPolicy.collaborationVisibility(appContext, chatId, runtime.isSubagent)[tool.name] == true) {
                 "This tool is not available in the caller's subagent version"
             }
             val result = when (tool.name) {

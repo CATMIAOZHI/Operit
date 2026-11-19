@@ -3443,6 +3443,8 @@
     
     <string name="settings_data_permissions">数据和权限</string>
     <string name="settings_tool_permissions_subtitle">工具权限和安全设置</string>
+    <string name="settings_terminal_tools">Ubuntu 终端工具</string>
+    <string name="settings_terminal_tools_subtitle">让 AI 在内置的 Ubuntu 终端里运行命令。关掉后主应用的聊天不再提供；Orbit 里一直可用。</string>
     <string name="settings_privacy_data_cleanup">隐私与数据清理</string>
     <string name="settings_clear_cookies">清除 Cookie</string>
     <string name="settings_clear_cookies_subtitle">清除搜索工具、Browser 包和内置浏览器保存的 Cookie</string>
@@ -7867,6 +7869,8 @@
     <!-- StandardTerminalCommandExecutor -->
     <string name="terminal_error_missing_session_name">缺少参数: session_name</string>
     <string name="terminal_error_no_chat_session">本聊天还没有终端会话，先用 terminal 运行一条命令。</string>
+    <string name="role_card_super_admin_terminal_note">勾选这个包，角色卡也会保留内置的 Ubuntu 终端工具。</string>
+    <string name="terminal_tools_switched_off">没有运行：Ubuntu 终端工具在设置里是关闭的。需要的话，可以请用户在「设置 → 数据和权限 → Ubuntu 终端工具」里打开。</string>
     <string name="terminal_error_create_session">创建或获取终端会话时出错: %1$s</string>
     <string name="terminal_error_missing_command">缺少参数: command</string>
     <string name="terminal_error_missing_session_id">缺少参数: session_id</string>
@@ -8746,6 +8750,7 @@
     <string name="tool_repairs_proxy_timeout">将终端超时时长移入工具参数</string>
     <string name="tool_repairs_params_tool_name">去掉参数里重复的 tool_name</string>
     <string name="tool_repairs_write_file_new">把 write_file 的 new 改成 content</string>
+    <string name="tool_repairs_legacy_terminal">把旧的 super_admin 终端工具名改成内置终端工具</string>
     <string name="tool_repairs_package">移除与目标工具包一致的重复 package_name</string>
     <string name="tool_repairs_flattened_proxy">从 params 文本中还原出被并入的 tool_name</string>
     <string name="tool_repairs_memory_argument">将记忆工具误写的 new_text 参数改为 content</string>

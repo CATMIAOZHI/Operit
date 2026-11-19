@@ -353,7 +353,8 @@ class AIToolHandler private constructor(private val context: Context) {
      * @return The tool executor or null if not found
      */
     fun getToolExecutor(toolName: String): ToolExecutor? {
-        return availableTools[toolName]
+        // The terminal's old package names ("super_admin:terminal") reach the built-in terminal.
+        return availableTools[toolName] ?: availableTools[TerminalTools.canonical(toolName)]
     }
 
     private fun isMcpServiceActive(packageName: String): Boolean {
@@ -382,7 +383,9 @@ class AIToolHandler private constructor(private val context: Context) {
      * - Ensure default tools are registered (idempotent)
      * - Auto-activate a package when the name looks like 'packName:toolName'
      */
-    fun getToolExecutorOrActivate(toolName: String): ToolExecutor? {
+    fun getToolExecutorOrActivate(requestedName: String): ToolExecutor? {
+        // The terminal's old package names ("super_admin:terminal") reach the built-in terminal.
+        val toolName = TerminalTools.canonical(requestedName)
         var executor = availableTools[toolName]
 
         if (executor == null && !defaultToolsRegistered.get()) {

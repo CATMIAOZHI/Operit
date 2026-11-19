@@ -158,6 +158,9 @@ class ApiPreferences private constructor(private val context: Context) {
         // Key for Tools Enable/Disable
         val ENABLE_TOOLS = booleanPreferencesKey("enable_tools")
 
+        // The built-in Ubuntu terminal tools in the main app's chats (an Orbit always has them).
+        val ENABLE_TERMINAL_TOOLS = booleanPreferencesKey("enable_terminal_tools")
+
         // Key for per-tool prompt visibility
         val TOOL_PROMPT_VISIBILITY_JSON = stringPreferencesKey("tool_prompt_visibility_json")
 
@@ -205,6 +208,7 @@ class ApiPreferences private constructor(private val context: Context) {
 
         // Default value for Tools Enable/Disable
         const val DEFAULT_ENABLE_TOOLS = true
+        const val DEFAULT_ENABLE_TERMINAL_TOOLS = true
 
         // Default value for Disable Stream Output (default false, meaning stream is enabled by default)
         const val DEFAULT_DISABLE_STREAM_OUTPUT = false
@@ -356,6 +360,16 @@ class ApiPreferences private constructor(private val context: Context) {
         context.apiDataStore.data.map { preferences ->
             preferences[ENABLE_TOOLS] ?: DEFAULT_ENABLE_TOOLS
         }
+
+    val enableTerminalToolsFlow: Flow<Boolean> =
+        context.apiDataStore.data.map { preferences ->
+            preferences[ENABLE_TERMINAL_TOOLS] ?: DEFAULT_ENABLE_TERMINAL_TOOLS
+        }
+
+    suspend fun saveEnableTerminalTools(isEnabled: Boolean) {
+        context.apiDataStore.edit { preferences -> preferences[ENABLE_TERMINAL_TOOLS] = isEnabled }
+        LearningPromptSnapshotRepository.markChanged(context, "settings")
+    }
 
     // Flow for per-tool prompt visibility
     val toolPromptVisibilityFlow: Flow<Map<String, Boolean>> =

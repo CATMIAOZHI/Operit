@@ -4,12 +4,15 @@
 
 - `read_file` 出现 `start_line` 或 `end_line` 时，改为 `read_file_part`。
 - `super_admin` 命名空间下重复冒号的 `terminal`（如 `super_admin::terminal`、
-  `super_admin:::terminal`）精确修正为 `super_admin:terminal`；其他名字不动。
-- 代理调用 `super_admin:terminal` 时，将误放在外层的整数 `yieldMs`（0～30000）
+  `super_admin:::terminal`）精确修正为内置的 `terminal`；其他名字不动。
+- 代理调用 `terminal`（或旧名 `super_admin:terminal`）时，将误放在外层的整数 `yieldMs`（0～30000）
   移入 `params`；内层已有相同值时去掉外层重复参数，冲突或无效值不修复。
-- 仅对 `super_admin:terminal`，将有效整数毫秒 `timeout` 改名为 `timeoutMs`。
+- 仅对 `terminal`（或旧名 `super_admin:terminal`），将有效整数毫秒 `timeout` 改名为 `timeoutMs`。
   兼容约定：3～300 的整数按秒乘以 1000；3000 到 Int.MAX_VALUE 按毫秒保留；
   其余值不猜测。与 timeoutMs 换算后相等时移除别名，冲突时不改。正式参数仍为 timeoutMs。
+- Ubuntu 终端已内置到应用：最后一条规则把旧名 `super_admin:terminal`、`terminal_wait`、
+  `terminal_getscreen`、`terminal_input`、`terminal_cancel` 改成同名内置工具（`package_proxy`
+  里的会改为直接调用）。只命中这一条时不写修复日志，因为这不是模型写错。
 - `proxy` / `package_proxy` 外层的 `package_name` 与目标包名前缀完全相同时移除重复字段。
 - 代理调用没有声明 `tool_name`（缺失或空白）时，如果 `params` 末尾并入了目标名，
   且只可能是 `<对象>, {"tool_name":"x"}` 或 `<对象>, "tool_name":"x"}` 这两种形态之一，

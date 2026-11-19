@@ -41,8 +41,9 @@ object OrbitPackages {
     private const val FILE = "packages.json"
 
     /**
-     * Built-in packages every Orbit has on and cannot switch off or take out: its terminal, web
-     * search, memory tools, cards and browser, which Orbit's own prompt and routines rely on.
+     * Built-in packages every Orbit has on and cannot switch off or take out: its Android shell, web
+     * search, memory tools, cards and browser, which Orbit's own prompt and routines rely on. (The
+     * Ubuntu terminal is built into the app; see TerminalTools.)
      */
     val REQUIRED: Set<String> = linkedSetOf("super_admin", "various_search", "memory_review", "dynamic_ui", "browser")
 

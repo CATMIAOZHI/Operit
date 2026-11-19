@@ -85,7 +85,8 @@ private data class SettingsEntry(
 )
 
 private data class SettingsToggle(
-        val checked: Boolean,
+        /** Null while the value is still being read. */
+        val checked: Boolean?,
         val enabled: Boolean,
         val onCheckedChange: (Boolean) -> Unit
 )
@@ -142,6 +143,10 @@ fun SettingsScreen(
         val readLegacySkills = legacyStorage.readLegacySkillsFlow().collectAsState(initial = false).value
         val readLegacyMcp = legacyStorage.readLegacyMcpFlow().collectAsState(initial = false).value
         val readLegacyWorkflows = legacyStorage.readLegacyWorkflowsFlow().collectAsState(initial = false).value
+        val apiPreferences = remember { com.ai.assistance.operit.data.preferences.ApiPreferences.getInstance(context) }
+        // Null until read, so the switch cannot be flipped from a guessed value.
+        val terminalToolsOn = remember(apiPreferences) { apiPreferences.enableTerminalToolsFlow }
+                .collectAsState(initial = null as Boolean?).value
         val legacyStorageUpdateFailedMessage =
                 stringResource(R.string.settings_legacy_storage_update_failed)
         val clearCookiesSuccessMessage = stringResource(R.string.clear_cookies_success)
@@ -213,6 +218,14 @@ fun SettingsScreen(
                                 SettingsEntry(stringResource(R.string.components_title), stringResource(R.string.components_subtitle), Icons.Default.Extension, navigateToComponents),
                                 SettingsEntry(stringResource(R.string.storage_title), stringResource(R.string.storage_subtitle), Icons.Default.Storage, navigateToStorage),
                                 SettingsEntry(stringResource(R.string.settings_tool_permissions), stringResource(R.string.settings_tool_permissions_subtitle), Icons.Default.AdminPanelSettings, navigateToToolPermissions),
+                                SettingsEntry(
+                                        stringResource(R.string.settings_terminal_tools),
+                                        stringResource(R.string.settings_terminal_tools_subtitle),
+                                        Icons.Default.Terminal,
+                                        toggle = SettingsToggle(terminalToolsOn, true) { enabled ->
+                                                scope.launch { apiPreferences.saveEnableTerminalTools(enabled) }
+                                        }
+                                ),
                                 SettingsEntry(stringResource(R.string.settings_data_backup), stringResource(R.string.settings_data_backup_desc), Icons.Default.CloudUpload, navigateToChatBackupSettings),
                                 SettingsEntry(stringResource(R.string.settings_chat_history_management), stringResource(R.string.settings_chat_history_management_subtitle), Icons.Default.ManageHistory, navigateToChatHistorySettings),
                                 SettingsEntry(stringResource(R.string.settings_token_usage_stats), stringResource(R.string.settings_token_usage_subtitle), Icons.Default.Analytics, navigateToTokenUsageStatistics)
@@ -558,8 +571,9 @@ private fun SettingsEntriesCard(entries: List<SettingsEntry>, cardColor: android
                                 SettingsSwitchRow(
                                         title = entry.title,
                                         subtitle = entry.subtitle,
-                                        checked = toggle.checked,
+                                        checked = toggle.checked ?: false,
                                         enabled = toggle.enabled,
+                                        loading = toggle.checked == null,
                                         onCheckedChange = toggle.onCheckedChange,
                                         searchable = false
                                 )
