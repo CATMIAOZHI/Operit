@@ -307,7 +307,7 @@ const superAdmin = (function () {
         const yieldMs = params.yieldMs !== undefined ? waitMs(params.yieldMs)
             : legacyWait === undefined ? 10000 : Math.min(30000, legacyWait);
         const sessionId = params.sessionId ?? (params.runId ? undefined
-            : (await Tools.System.terminal.create(getDefaultTerminalSessionName())).sessionId);
+            : (await Tools.System.terminal.create(getDefaultTerminalSessionName(), { existingOnly: true })).sessionId);
         return Tools.System.terminal.poll({ runId: params.runId, sessionId, yieldMs });
     }
 
@@ -348,10 +348,11 @@ const superAdmin = (function () {
      */
     async function terminal_getscreen(params: { sessionId?: string } = {}): Promise<any> {
         try {
+            // Looking never starts a terminal: without sessionId only this chat's existing one is read.
             const session =
                 params.sessionId
                     ? { sessionId: params.sessionId }
-                    : await Tools.System.terminal.create(getDefaultTerminalSessionName());
+                    : await Tools.System.terminal.create(getDefaultTerminalSessionName(), { existingOnly: true });
             const sessionId = session.sessionId;
             const result = await Tools.System.terminal.screen(sessionId);
             return {

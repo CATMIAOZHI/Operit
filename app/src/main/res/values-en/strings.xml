@@ -5028,12 +5028,12 @@
 
     <!-- Tool Permission Settings -->
     <string name="tool_permissions_title">Tool Permissions</string>
-    <string name="tool_permissions_description">By default every tool goes through the automatic review: operations inside the workspace run directly and the rest are judged by the review agent. You can add exceptions below.</string>
+    <string name="tool_permissions_description">By default tools go through the automatic review: operations inside the workspace run directly and the rest are judged by the review agent (the Allowed group below lists the kinds of tools allowed by default). You can add exceptions below.</string>
     <string name="global_permission_switch">Global Permission Switch</string>
     <string name="global_permission_switch_description">This setting controls the default behavior. Per-tool exceptions such as “always allow/deny” take precedence.</string>
     <string name="permission_level_allow">Allowed</string>
     <string name="permission_level_allow_description">These tools will run automatically.</string>
-    <string name="permission_level_allow_default_hint">Subagent collaboration tools (spawn_agent and friends) are allowed by default, with no switch of their own. To give one a different level, add it in another group below.</string>
+    <string name="permission_level_allow_default_hint">Subagent collaboration tools (spawn_agent and friends) are allowed by default, with no switch of their own. To give one a different level, add it in another group below. Waiting on, looking at or cancelling this chat\'s own terminal and shell runs is allowed too, unless you set a level for that tool or set the global switch to Forbidden.</string>
     <string name="permission_level_auto_review">Auto review</string>
     <string name="permission_level_auto_review_description">Provably in-workspace operations run directly; other calls needing review go to an independent agent for approval or denial. Failed, timed-out, or invalid reviews leave the action unexecuted and return the reason to AI to retry or explain configuration issues to you. Per-tool rules take precedence. This is not an OS sandbox.</string>
     <string name="permission_level_forbid">Forbidden</string>
@@ -7387,6 +7387,7 @@
 
     <!-- StandardTerminalCommandExecutor -->
     <string name="terminal_error_missing_session_name">Missing parameter: session_name</string>
+    <string name="terminal_error_no_chat_session">This chat has no terminal session yet; run a command with terminal first.</string>
     <string name="terminal_error_create_session">Error creating or getting terminal session: %1$s</string>
     <string name="terminal_error_missing_command">Missing parameter: command</string>
     <string name="terminal_error_missing_session_id">Missing parameter: session_id</string>
@@ -9876,7 +9877,7 @@
     <string name="orbit_tools_row">Per-tool permissions</string>
     <string name="orbit_tools_row_desc">Orbit\'s own list, separate from the main app</string>
     <string name="orbit_tools_title">Tool permissions</string>
-    <string name="orbit_tools_help">Only for Orbit\'s chats and its background tasks; the main app\'s tool permissions stay as they are. Orbit\'s own tools and the built-in lookup-only tools (time, search, weather and the like) are allowed by default; tools that send messages out ask you with a card in the chat; other tools go through the fast automatic review.</string>
+    <string name="orbit_tools_help">Only for Orbit\'s chats and its background tasks; the main app\'s tool permissions stay as they are. Orbit\'s own tools and the built-in lookup-only tools (time, search, weather and the like) are allowed by default; tools that send messages out ask you with a card in the chat; waiting on, looking at or cancelling this chat\'s own terminal and shell runs is allowed unless you set a level for that tool; other tools go through the fast automatic review.</string>
     <string name="orbit_tools_search">Search tools</string>
     <string name="orbit_tools_empty">No tools found</string>
     <string name="orbit_tools_folder_internal">Orbit\'s own tools</string>
