@@ -3737,9 +3737,15 @@
     <string name="token_stats_pricing_catalog_revision">Active version %1$s · Generated %2$s</string>
     <string name="token_stats_pricing_catalog_checked">Last checked: %1$s</string>
     <string name="token_stats_pricing_catalog_not_checked">Cloud updates have not been checked yet</string>
-    <string name="token_stats_pricing_catalog_refresh">Update cloud catalog</string>
+    <string name="token_stats_pricing_catalog_refresh">Check now</string>
     <string name="token_stats_pricing_catalog_refresh_failed">Operation failed; current prices are unchanged: %1$s</string>
-    <string name="token_stats_pricing_catalog_hint">Matches official prices by model name, regardless of your API provider. Updates fetch models.dev first and use the repository cache on timeout. Tap Replace to apply. Manual prices take priority; historical costs stay unchanged.</string>
+    <string name="token_stats_pricing_catalog_hint">Matches official prices by model name, regardless of your API provider; names with a colon tag, a vendor prefix or without the date are recognized too, and free models cost 0. Updates fetch models.dev first and use the repository cache on timeout. Manual prices take priority; historical costs stay unchanged.</string>
+    <string name="token_stats_pricing_catalog_auto">Update prices automatically</string>
+    <string name="token_stats_pricing_catalog_auto_desc">On Wi-Fi, checks from time to time when you open the app or prices, and uses new prices right away</string>
+    <string name="token_stats_pricing_catalog_auto_not_saved">The switch was not saved; it may go back after the app restarts</string>
+    <string name="token_stats_pricing_catalog_result_up_to_date">Prices are up to date</string>
+    <string name="token_stats_pricing_catalog_result_updated">Updated to the latest prices</string>
+    <string name="token_stats_pricing_catalog_result_downloaded">New prices found; tap “Replace built-in prices” to use them</string>
     <string name="token_stats_pricing_catalog_details">Catalog details</string>
     <string name="token_stats_pricing_context_tiers">Official prices vary by input context length. Base prices are shown here; manual prices take priority.</string>
     <string name="token_stats_pricing_catalog_downloaded">Downloaded version %1$s · Generated %2$s</string>

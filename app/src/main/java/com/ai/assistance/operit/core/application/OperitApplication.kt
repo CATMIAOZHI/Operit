@@ -299,12 +299,18 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
         )
 
         // Local prices must be available before workers/plugins can freeze token costs.
-        // Initialization reads bundled/applied files only; cloud refresh remains manual.
+        // Initialization reads bundled/applied files only; the daily cloud check runs later, in the background.
         runCatching {
             runBlocking(Dispatchers.IO) {
                 ModelPricingCatalogRepository.getInstance(applicationContext)
             }
         }.onFailure { AppLogger.w(TAG, "Pricing catalog initialization failed", it) }
+        if (isMainAppProcess()) applicationScope.launch {
+            // Prices are checked once the app has settled, so startup is not slowed.
+            kotlinx.coroutines.delay(20_000)
+            runCatching { ModelPricingCatalogRepository.autoUpdateIfDue() }
+                .onFailure { AppLogger.w(TAG, "Automatic price check failed to start", it) }
+        }
 
         ensureWorkManagerInitialized()
 

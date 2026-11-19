@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -32,6 +33,9 @@ import java.util.concurrent.TimeUnit
 
 enum class PricingCatalogSource { BUNDLED, APPLIED_REMOTE }
 
+/** How the last check in this run ended, for the card to say so. */
+enum class PricingCheckOutcome { UP_TO_DATE, UPDATED, DOWNLOADED, FAILED }
+
 data class PricingCatalogState(
     val source: PricingCatalogSource,
     val revision: String,
@@ -42,9 +46,14 @@ data class PricingCatalogState(
     val downloadedRevision: String? = null,
     val downloadedGeneratedAt: String? = null,
     val applying: Boolean = false,
+    val lastOutcome: PricingCheckOutcome? = null,
 ) {
     val canApply: Boolean
-        get() = !refreshing && !applying && downloadedRevision != null &&
+        get() = !refreshing && !applying && hasNewDownload
+
+    /** A download differs from the prices in use, whatever is running now. */
+    val hasNewDownload: Boolean
+        get() = downloadedRevision != null &&
             (source != PricingCatalogSource.APPLIED_REMOTE || downloadedRevision != revision)
 }
 
@@ -62,6 +71,8 @@ class PricingCatalogRepository(
     private val cacheWriter: (File, ByteArray) -> Unit = ::writeAtomically,
     private val modelsUrl: String = ModelsDevPricingCatalog.MODELS_URL,
     private val pricesUrl: String = ModelsDevPricingCatalog.PRICES_URL,
+    /** Whether the network is unmetered (Wi-Fi); called off the main thread. */
+    private val unmeteredNetwork: () -> Boolean = { isUnmetered(context) },
 ) {
     companion object {
         const val MAIN_REMOTE_URL =
@@ -75,7 +86,12 @@ class PricingCatalogRepository(
         private const val CACHE_DIR = "operit/pricing"
         private const val CACHE_FILE = "official_model_pricing_v1.json"
         private const val APPLIED_FILE = "applied_official_model_pricing_v1.json"
+        private const val AUTO_FILE = "auto_update.properties"
         private const val BUNDLED_PATH = "pricing/official_model_pricing_v1.json"
+        /** An automatic check runs at most this often after a successful one. */
+        internal const val AUTO_INTERVAL_MS = 24 * 60 * 60_000L
+        /** And no sooner than this after an attempt that failed (offline, a timeout). */
+        internal const val AUTO_RETRY_MS = 60 * 60_000L
 
         private fun defaultHttpClient(): OkHttpClient = OkHttpClient.Builder()
             .connectTimeout(10, TimeUnit.SECONDS)
@@ -102,6 +118,12 @@ class PricingCatalogRepository(
                 throw error
             }
         }
+
+        /** True only on Wi-Fi or another unmetered network; anything unclear counts as metered. */
+        private fun isUnmetered(context: Context): Boolean = runCatching {
+            val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
+            manager != null && !manager.isActiveNetworkMetered
+        }.getOrDefault(false)
     }
 
     private val lock = Mutex()
@@ -111,6 +133,18 @@ class PricingCatalogRepository(
     @Volatile
     private var snapshotMutable: PricingCatalogDocument = currentDocument
     private var operationJob: Job? = null
+    // Read once here; afterwards the settings live in memory and are only written, in the background.
+    private val initialAuto = readAutoSettings()
+    private val autoUpdateMutable = MutableStateFlow(initialAuto.first)
+    @Volatile private var lastAttemptAt: Long? = initialAuto.second
+    /** When prices were last downloaded successfully; failed checks do not move it. */
+    @Volatile private var lastSuccessAt: Long? = stateMutable.value.lastCheckedAt
+        .takeIf { downloadedDocument != null }
+    /** Whether prices are checked daily and a new catalog applied on its own; on by default. */
+    val autoUpdate: StateFlow<Boolean> = autoUpdateMutable.asStateFlow()
+    private val settingSaveFailedMutable = MutableStateFlow(false)
+    /** The switch could not be saved, so after a restart it may be back where it was. */
+    val settingSaveFailed: StateFlow<Boolean> = settingSaveFailedMutable.asStateFlow()
 
     init {
         install(snapshotMutable)
@@ -119,18 +153,97 @@ class PricingCatalogRepository(
     val snapshot: PricingCatalogDocument
         get() = snapshotMutable
 
-    fun refresh(scope: CoroutineScope): Job = startOperation(scope, apply = false)
+    /** A check asked for by the user; with automatic updates on, a new catalog is applied too. */
+    fun refresh(scope: CoroutineScope): Job = startOperation(scope, Operation.REFRESH)
 
-    fun applyDownloaded(scope: CoroutineScope): Job = startOperation(scope, apply = true)
+    fun applyDownloaded(scope: CoroutineScope): Job = startOperation(scope, Operation.APPLY)
+
+    /**
+     * Checks for new prices in the background when automatic updates are on and a check is due
+     * (a day after the last one, an hour after a failed one), then applies what changed.
+     */
+    fun autoUpdateIfDue(scope: CoroutineScope): Job? {
+        if (!autoUpdateMutable.value) return null
+        // A download not applied yet (applying failed, or it came while the switch was off) is
+        // applied now; that is only a local file, so it does not wait for the daily check.
+        if (stateMutable.value.canApply) return startOperation(scope, Operation.AUTO_APPLY)
+        val now = nowMillis()
+        val lastChecked = lastSuccessAt
+        val lastAttempt = lastAttemptAt
+        // Measured either way, so a clock set back does not hold checks off for long.
+        val due = (lastChecked == null || kotlin.math.abs(now - lastChecked) >= AUTO_INTERVAL_MS) &&
+            (lastAttempt == null || kotlin.math.abs(now - lastAttempt) >= AUTO_RETRY_MS)
+        return if (due) startOperation(scope, Operation.AUTO) else null
+    }
+
+    fun setAutoUpdate(enabled: Boolean, scope: CoroutineScope) {
+        autoUpdateMutable.value = enabled
+        scope.launch(Dispatchers.IO) { writeAutoSettings() }
+        // Applies a catalog downloaded earlier but never applied, or runs a due check.
+        if (enabled) autoUpdateIfDue(scope)
+    }
+
+    private enum class Operation { REFRESH, APPLY, AUTO, AUTO_APPLY }
+
+    /**
+     * One automatic check: whether it ended without downloading (metered network, or switched
+     * off), and the single follow-up check that clicks made during it share.
+     */
+    private class AutoRun {
+        @Volatile var skipped = false
+        var handoff: Job? = null
+    }
+
+    /** The automatic check now running, if the running operation is one. */
+    private var autoRun: AutoRun? = null
 
     /** A click cannot apply a different download while an operation is still running. */
     @Synchronized
-    private fun startOperation(scope: CoroutineScope, apply: Boolean): Job {
-        operationJob?.takeIf { it.isActive }?.let { return it }
+    private fun startOperation(scope: CoroutineScope, operation: Operation): Job {
+        operationJob?.takeIf { it.isActive }?.let { active ->
+            val run = autoRun
+            if (operation != Operation.REFRESH || run == null) return active
+            // "Check now" while an automatic check is still deciding whether to download: if that
+            // one ends up skipping, the check asked for runs right after, on any network. Clicks
+            // during the same automatic check share that one follow-up.
+            run.handoff?.let { return it }
+            return scope.launch(Dispatchers.IO) {
+                active.join()
+                if (run.skipped) startOperation(scope, Operation.REFRESH).join()
+            }.also { run.handoff = it }
+        }
+        val run = if (operation == Operation.AUTO) AutoRun() else null
         val job = scope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
-            if (apply) applyNow() else refreshNow()
+            when (operation) {
+                Operation.APPLY -> applyNow(onlyIfAuto = false)
+                Operation.AUTO_APPLY -> applyNow(onlyIfAuto = true)
+                Operation.REFRESH, Operation.AUTO -> {
+                    if (operation == Operation.AUTO) {
+                        // The switch may have been turned off since this was asked for.
+                        // The two source files are large, so automatic checks wait for an unmetered
+                        // network (Wi-Fi). Asked here, off the main thread, and only once a check is due.
+                        if (!autoUpdateMutable.value || !unmeteredNetwork()) {
+                            run?.skipped = true
+                            return@launch
+                        }
+                        lastAttemptAt = nowMillis()
+                        writeAutoSettings()
+                    }
+                    // The card stays busy from the check through applying, so a switch turned on
+                    // meanwhile never flashes "replace" before the prices are applied.
+                    val ok = refreshNow()
+                    try {
+                        // The switch is read again here, so turning it off during the download keeps
+                        // the new prices waiting for "replace" instead.
+                        if (ok) applyNow(onlyIfAuto = true)
+                    } finally {
+                        stateMutable.update { it.copy(refreshing = false) }
+                    }
+                }
+            }
         }
         operationJob = job
+        autoRun = run
         job.invokeOnCompletion {
             synchronized(this) {
                 if (operationJob === job) operationJob = null
@@ -140,8 +253,9 @@ class PricingCatalogRepository(
         return job
     }
 
-    private suspend fun refreshNow() {
-        lock.withLock {
+    /** Downloads new prices; true when that worked. The card stays busy; the caller clears it. */
+    private suspend fun refreshNow(): Boolean {
+        return lock.withLock {
             val current = stateMutable.value
             stateMutable.value = current.copy(refreshing = true, lastError = null)
             try {
@@ -149,31 +263,41 @@ class PricingCatalogRepository(
                 kotlinx.coroutines.currentCoroutineContext().ensureActive()
                 writeCache(cacheFile(), document)
                 downloadedDocument = document
-                stateMutable.value = current.copy(
+                val checkedAt = nowMillis()
+                lastSuccessAt = checkedAt
+                val next = current.copy(
                     downloadedRevision = document.revision,
                     downloadedGeneratedAt = document.generatedAt,
-                    lastCheckedAt = nowMillis(),
-                    refreshing = false,
+                    lastCheckedAt = checkedAt,
+                    refreshing = true,
                     lastError = null,
                 )
+                stateMutable.value = next.copy(lastOutcome =
+                    if (next.hasNewDownload) PricingCheckOutcome.DOWNLOADED else PricingCheckOutcome.UP_TO_DATE)
+                true
             } catch (error: CancellationException) {
                 stateMutable.value = current.copy(refreshing = false)
                 throw error
             } catch (error: Exception) {
                 // Keep the last valid snapshot and only expose a diagnostic state transition.
                 stateMutable.value = current.copy(
-                    refreshing = false,
+                    refreshing = true,
                     lastCheckedAt = nowMillis(),
                     lastError = error.message ?: error.javaClass.simpleName,
+                    lastOutcome = PricingCheckOutcome.FAILED,
                 )
+                false
             }
         }
     }
 
-    private suspend fun applyNow() {
+    /** Applies the download; with [onlyIfAuto], only while automatic updates are still on. */
+    private suspend fun applyNow(onlyIfAuto: Boolean) {
         lock.withLock {
-            val current = stateMutable.value
-            if (!current.canApply) return
+            if (onlyIfAuto && !autoUpdateMutable.value) return
+            // Busy flags are ignored here: a check may still show as running while it hands over.
+            val current = stateMutable.value.copy(refreshing = false)
+            if (current.applying || !current.hasNewDownload) return
             val document = downloadedDocument ?: return
             stateMutable.value = current.copy(applying = true, lastError = null)
             try {
@@ -186,12 +310,14 @@ class PricingCatalogRepository(
                     generatedAt = document.generatedAt,
                     applying = false,
                     lastError = null,
+                    lastOutcome = PricingCheckOutcome.UPDATED,
                 )
             } catch (error: CancellationException) {
                 stateMutable.value = current.copy(applying = false)
                 throw error
             } catch (error: Exception) {
-                stateMutable.value = current.copy(applying = false, lastError = error.message ?: error.javaClass.simpleName)
+                stateMutable.value = current.copy(applying = false, lastError = error.message ?: error.javaClass.simpleName,
+                    lastOutcome = PricingCheckOutcome.FAILED)
             }
         }
     }
@@ -281,6 +407,42 @@ class PricingCatalogRepository(
         snapshotMutable = document
         DefaultModelPricingCollect.installCatalog(document)
     }
+
+    private fun autoFile(): File = File(context.noBackupFilesDir, "$CACHE_DIR/$AUTO_FILE")
+
+    /**
+     * Whether automatic updates are on (default yes) and when the last automatic check started.
+     * A settings file that exists but cannot be read counts as off, so a switch turned off is
+     * never quietly turned back on.
+     */
+    private fun readAutoSettings(): Pair<Boolean, Long?> {
+        val file = autoFile()
+        if (!file.exists()) return true to null
+        return runCatching {
+            val props = java.util.Properties().apply { file.inputStream().use { load(it) } }
+            (props.getProperty("enabled") != "false") to props.getProperty("lastAttemptAt")?.toLongOrNull()
+        }.getOrDefault(false to null)
+    }
+
+    private val settingsLock = Any()
+
+    /**
+     * Saves the switch and the last automatic attempt as they are now. Writes take turns and each
+     * writes the current values, so the last one always holds the latest switch position.
+     */
+    private fun writeAutoSettings() = synchronized(settingsLock) {
+        runCatching {
+            val props = java.util.Properties()
+            props.setProperty("enabled", autoUpdateMutable.value.toString())
+            lastAttemptAt?.let { props.setProperty("lastAttemptAt", it.toString()) }
+            val out = java.io.ByteArrayOutputStream()
+            props.store(out, null)
+            cacheWriter(autoFile(), out.toByteArray())
+        }.let { result ->
+            // The switch still works for this run; the card says it may not be kept after a restart.
+            settingSaveFailedMutable.value = result.isFailure
+        }
+    }
 }
 
 object PricingCatalogRuntime {
@@ -320,4 +482,20 @@ object ModelPricingCatalogRepository {
     fun refresh(): Job? = PricingCatalogRuntime.get()?.refresh(scope)
 
     fun applyDownloaded(): Job? = PricingCatalogRuntime.get()?.applyDownloaded(scope)
+
+    fun autoUpdateIfDue(): Job? = PricingCatalogRuntime.get()?.autoUpdateIfDue(scope)
+
+    fun setAutoUpdate(enabled: Boolean) {
+        PricingCatalogRuntime.get()?.setAutoUpdate(enabled, scope)
+    }
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val autoUpdate: StateFlow<Boolean> = instance
+        .flatMapLatest { repository -> repository?.autoUpdate ?: flowOf(true) }
+        .stateIn(scope, SharingStarted.Eagerly, true)
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val settingSaveFailed: StateFlow<Boolean> = instance
+        .flatMapLatest { repository -> repository?.settingSaveFailed ?: flowOf(false) }
+        .stateIn(scope, SharingStarted.Eagerly, false)
 }
