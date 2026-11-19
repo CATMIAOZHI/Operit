@@ -62,6 +62,14 @@ import kotlinx.coroutines.launch
 
 private const val DEEPSEEK_KEYS_URL = "https://platform.deepseek.com/api_keys"
 
+/** DeepSeek's API key page in the browser; nothing happens when no browser can open it. */
+internal fun openDeepSeekKeys(context: android.content.Context) {
+    runCatching {
+        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(DEEPSEEK_KEYS_URL))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+}
+
 /**
  * The first start of Orbit: pick a provider, type an API key, pick the two models, and Orbit is
  * ready to talk. [onSkip] leaves for the plain Orbit list, for users who set models up themselves.
@@ -321,12 +329,7 @@ internal fun OrbitSetupPage(onSkip: () -> Unit) {
                     })
                 if (provider == ApiProviderType.DEEPSEEK) {
                     TextButton(
-                        onClick = {
-                            runCatching {
-                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(DEEPSEEK_KEYS_URL))
-                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                            }
-                        },
+                        onClick = { openDeepSeekKeys(context) },
                         modifier = Modifier.align(Alignment.End),
                     ) { Text(stringResource(R.string.orbit_setup_get_key), style = MaterialTheme.typography.labelLarge) }
                 }

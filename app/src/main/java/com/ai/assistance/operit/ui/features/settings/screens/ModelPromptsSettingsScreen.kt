@@ -98,19 +98,35 @@ import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 import org.json.JSONObject
 import coil.compose.AsyncImage
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
 
+/** Tavern card imports read one file at a time, even across a rebuilt page; waiting for a turn can be cancelled. */
+private val tavernCardImportReadLock = kotlinx.coroutines.sync.Mutex()
+
+/** Tavern card imports save one at a time, even across a rebuilt page, so one file never makes two cards at once. */
+private val tavernCardImportSaveLock = kotlinx.coroutines.sync.Mutex()
+
+/**
+ * Role cards, tags and groups. A null link hides what leads to it: inside Orbit the tag market,
+ * AI creation and chat management are Operit pages, so they are left out there.
+ */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalAnimationApi::class, ExperimentalLayoutApi::class)
 @Composable
 fun ModelPromptsSettingsScreen(
         onBackPressed: () -> Unit = {},
-        onNavigateToMarket: () -> Unit = {},
-    onNavigateToPersonaGeneration: () -> Unit = {},
-    onNavigateToChatManagement: () -> Unit = {}
+        onNavigateToMarket: (() -> Unit)? = {},
+    onNavigateToPersonaGeneration: (() -> Unit)? = {},
+    onNavigateToChatManagement: (() -> Unit)? = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -303,75 +319,114 @@ fun ModelPromptsSettingsScreen(
         }
     }
 
-    suspend fun importTavernCharacterCardPng(fileUri: Uri): Result<String> {
-        val result = context.contentResolver.openInputStream(fileUri).use { inputStream ->
-            requireNotNull(inputStream) { context.getString(R.string.file_read_error_message) }
-            characterCardManager.createCharacterCardFromTavernPng(inputStream)
-        }
-
-        val characterCardId = result.getOrNull() ?: return result
-        runCatching {
-            val internalUri = FileUtils.copyFileToInternalStorage(context, fileUri, "avatar_${characterCardId}")
-                ?: throw IllegalStateException(context.getString(R.string.theme_copy_failed))
-            userPreferencesManager.saveAiAvatarForCharacterCard(characterCardId, internalUri.toString())
-        }.onFailure { error ->
+    /** The card saved from a Tavern PNG also gets the picture as its avatar, from the bytes already read. */
+    suspend fun saveTavernPngAvatar(characterCardId: String, bytes: ByteArray) {
+        try {
+            val file = java.io.File(context.filesDir, "avatar_${characterCardId}_${java.util.UUID.randomUUID()}.png")
+            file.writeBytes(bytes)
+            userPreferencesManager.saveAiAvatarForCharacterCard(characterCardId, Uri.fromFile(file).toString())
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
             AppLogger.w(
                 "ModelPromptsSettingsScreen",
-                "导入酒馆角色卡 PNG 后自动设置头像失败: characterCardId=$characterCardId, uri=$fileUri, error=${error.message}",
+                "导入酒馆角色卡 PNG 后自动设置头像失败: characterCardId=$characterCardId, error=${error.message}",
                 error
             )
         }
-
-        return result
     }
+
+    // 导入分两段：读文件、取出并检查角色卡时可以取消，什么都不会保存；开始保存后一定完成。
+    // 取消只是不再等：一个文件真正读完或停下前，下一个文件的读取先排队，所以不会叠在一起。
+    var characterCardImportJob by remember { mutableStateOf<Job?>(null) }
+    var characterCardImportShown by remember { mutableStateOf(false) }
+    var characterCardImportSaving by remember { mutableStateOf(false) }
 
     // 文件选择器
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri ->
-        uri?.let { fileUri ->
-            scope.launch {
-                try {
+        val fileUri = uri ?: return@rememberLauncherForActivityResult
+        if (characterCardImportShown) return@rememberLauncherForActivityResult
+        characterCardImportShown = true
+        characterCardImportSaving = false
+        characterCardImportJob = scope.launch {
+            try {
+                // Read the file and check the card off the main thread, a piece at a time, so a cancel
+                // stops it soon; nothing is saved until this is done. One file is read at a time: a
+                // cancelled read stuck in the file app keeps its turn until it really stops.
+                val parsed = tavernCardImportReadLock.withLock { withContext(Dispatchers.IO) {
                     val mimeType = context.contentResolver.getType(fileUri)
                     val fileName = fileUri.lastPathSegment ?: ""
-
-                    val result = when {
-                        mimeType == "image/png" || fileName.lowercase().endsWith(".png") -> {
-                            importTavernCharacterCardPng(fileUri)
+                    val bytes = context.contentResolver.openInputStream(fileUri).use { inputStream ->
+                        requireNotNull(inputStream) { context.getString(R.string.file_read_error_message) }
+                        val out = ByteArrayOutputStream()
+                        val buffer = ByteArray(64 * 1024)
+                        while (true) {
+                            ensureActive()
+                            val read = inputStream.read(buffer)
+                            if (read < 0) break
+                            out.write(buffer, 0, read)
                         }
-                        mimeType == "application/json" || fileName.lowercase().endsWith(".json") -> {
-                            context.contentResolver.openInputStream(fileUri).use { inputStream ->
-                                requireNotNull(inputStream) { context.getString(R.string.file_read_error_message) }
-                                val jsonContent = inputStream.bufferedReader().readText()
-                                characterCardManager.createCharacterCardFromTavernJson(jsonContent)
-                            }
-                        }
-                        else -> {
-                            // Fallback for unknown file types
-                            try {
-                                // Try JSON first
-                                context.contentResolver.openInputStream(fileUri).use { inputStream ->
-                                    requireNotNull(inputStream) { context.getString(R.string.file_read_error_message) }
-                                    val jsonContent = inputStream.bufferedReader().readText()
-                                    characterCardManager.createCharacterCardFromTavernJson(jsonContent)
-                                }
-                            } catch (e: Exception) {
-                                // If JSON fails, try PNG
-                                importTavernCharacterCardPng(fileUri)
-                            }
-                        }
+                        out.toByteArray()
                     }
-
-                    result.onSuccess {
-                        showImportSuccessMessage = true
-                        refreshTrigger++
-                    }.onFailure { exception ->
-                        importErrorMessage = exception.message ?: context.getString(R.string.unknown_error)
-                        showImportErrorMessage = true
+                    ensureActive()
+                    // A file that is not a card fails here with its own message, as the import always did.
+                    fun fromPng(): Result<Pair<String, ByteArray?>> = try {
+                        Result.success(characterCardManager.tavernJsonFromPng(bytes) to bytes)
+                    } catch (e: Exception) {
+                        Result.failure(Exception(context.getString(R.string.charactercard_png_parse_failed, e.message ?: "")))
                     }
-                } catch (e: Exception) {
-                    importErrorMessage = context.getString(R.string.file_read_error, e.message ?: "")
+                    val text: Result<Pair<String, ByteArray?>> = when {
+                        mimeType == "image/png" || fileName.lowercase().endsWith(".png") -> fromPng()
+                        mimeType == "application/json" || fileName.lowercase().endsWith(".json") ->
+                            Result.success(String(bytes, Charsets.UTF_8) to null)
+                        // Unknown type: a Tavern PNG if it is one, otherwise JSON text.
+                        else -> fromPng().takeIf { it.isSuccess } ?: Result.success(String(bytes, Charsets.UTF_8) to null)
+                    }
+                    text.fold(
+                        { (json, png) -> characterCardManager.parseTavernCard(json).map { it to png } },
+                        { Result.failure(it) },
+                    )
+                } }
+                val (tavernCard, pngBytes) = parsed.getOrElse { exception ->
+                    importErrorMessage = exception.message ?: context.getString(R.string.unknown_error)
                     showImportErrorMessage = true
+                    return@launch
+                }
+                // One save at a time in the whole app, and once it starts it finishes, so a card is never
+                // half made, even if this page is rebuilt meanwhile.
+                val result = tavernCardImportSaveLock.withLock {
+                    characterCardImportSaving = true
+                    withContext(NonCancellable + Dispatchers.IO) {
+                        characterCardManager.createCharacterCardFromTavernCard(tavernCard).also { saved ->
+                            val id = saved.getOrNull()
+                            if (id != null && pngBytes != null) saveTavernPngAvatar(id, pngBytes)
+                        }
+                    }
+                }
+                ensureActive()
+
+                result.onSuccess {
+                    showImportSuccessMessage = true
+                    refreshTrigger++
+                }.onFailure { exception ->
+                    importErrorMessage = exception.message ?: context.getString(R.string.unknown_error)
+                    showImportErrorMessage = true
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // A cancelled import shows nothing.
+                ensureActive()
+                importErrorMessage = context.getString(R.string.file_read_error, e.message ?: "")
+                showImportErrorMessage = true
+            } finally {
+                // Only the newest import clears the marks; an older one that ends late leaves them.
+                if (characterCardImportJob === coroutineContext[Job]) {
+                    characterCardImportJob = null
+                    characterCardImportShown = false
+                    characterCardImportSaving = false
                 }
             }
         }
@@ -622,9 +677,12 @@ fun ModelPromptsSettingsScreen(
     // 获取所有角色卡
     var allCharacterCards by remember { mutableStateOf(emptyList<CharacterCard>()) }
     LaunchedEffect(characterCardList, refreshTrigger) {
-        allCharacterCards = characterCardManager.getAllCharacterCards()
+        // Every card is read and decoded off the main thread, so opening the page stays smooth.
+        allCharacterCards = withContext(Dispatchers.Default) { characterCardManager.getAllCharacterCards() }
     }
-    val allCharacterGroups by characterGroupCardManager.allCharacterGroupCardsFlow.collectAsState(initial = emptyList())
+    val allCharacterGroups by remember(characterGroupCardManager) {
+        characterGroupCardManager.allCharacterGroupCardsFlow.flowOn(Dispatchers.Default)
+    }.collectAsState(initial = emptyList())
 
     // 保存角色卡
     fun saveCharacterCard() {
@@ -1450,8 +1508,36 @@ fun ModelPromptsSettingsScreen(
         )
     }
 
+    val runningCardImport = characterCardImportJob
+    if (characterCardImportShown && runningCardImport != null) {
+        // While reading, cancel (or back) drops the file and nothing is saved; while saving it waits.
+        val cancelImport = {
+            if (!characterCardImportSaving) {
+                runningCardImport.cancel()
+                characterCardImportShown = false
+            }
+        }
+        AlertDialog(
+            onDismissRequest = cancelImport,
+            confirmButton = {},
+            dismissButton = {
+                if (!characterCardImportSaving) {
+                    TextButton(onClick = cancelImport) { Text(stringResource(R.string.cancel)) }
+                }
+            },
+            text = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text(stringResource(if (characterCardImportSaving) R.string.config_saving else R.string.processing))
+                }
+            }
+        )
+    }
+
     // 角色卡变更提示
-    if (showChatManagementPrompt) {
+    val chatManagement = onNavigateToChatManagement
+    if (showChatManagementPrompt && chatManagement != null) {
         AlertDialog(
             onDismissRequest = { showChatManagementPrompt = false },
             title = { Text(stringResource(R.string.character_card_change_title)) },
@@ -1460,7 +1546,7 @@ fun ModelPromptsSettingsScreen(
                 Button(
                     onClick = {
                         showChatManagementPrompt = false
-                        onNavigateToChatManagement()
+                        chatManagement()
                     }
                 ) {
                     Text(stringResource(R.string.go_to_chat_management))
@@ -2056,7 +2142,7 @@ fun CharacterCardTab(
     onSetActiveCharacterCard: (String) -> Unit,
     onReorderCharacterCards: (List<String>) -> Unit,
     onToggleCharacterCardCollapsed: (String) -> Unit,
-    onNavigateToPersonaGeneration: () -> Unit,
+    onNavigateToPersonaGeneration: (() -> Unit)?,
     onImportTavernCard: () -> Unit,
     onImportColorQrCode: () -> Unit,
     onScanColorQrCode: () -> Unit,
@@ -2168,7 +2254,7 @@ fun CharacterCardTab(
                             )
                         }
 
-                        IconButton(
+                        if (onNavigateToPersonaGeneration != null) IconButton(
                             onClick = onNavigateToPersonaGeneration,
                             modifier = Modifier.size(32.dp)
                         ) {
@@ -2739,7 +2825,7 @@ fun TagTab(
     onExportTags: () -> Unit,
     isImporting: Boolean,
     isExporting: Boolean,
-    onNavigateToMarket: () -> Unit
+    onNavigateToMarket: (() -> Unit)?
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(12.dp),
@@ -2799,7 +2885,7 @@ fun TagTab(
                         Text(stringResource(R.string.export), fontSize = 12.sp)
                     }
 
-                    OutlinedButton(
+                    if (onNavigateToMarket != null) OutlinedButton(
                         onClick = onNavigateToMarket,
                         enabled = !isImporting && !isExporting,
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)

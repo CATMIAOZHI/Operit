@@ -138,7 +138,8 @@ fun AIChatScreen(
         onNavigateToSettings: () -> Unit = {},
         onNavigateToUserPreferences: () -> Unit = {},
         onNavigateToModelConfig: () -> Unit = {},
-        onNavigateToFunctionalConfig: () -> Unit = onNavigateToSettings,
+        // Null hides the notice about broken function bindings: Orbit sets its models on its own page.
+        onNavigateToFunctionalConfig: (() -> Unit)? = onNavigateToSettings,
         onNavigateToOnboardingModelConfig: () -> Unit = {},
         onNavigateToModelPrompts: () -> Unit = {},
         onNavigateToPackageManager: () -> Unit = {},
@@ -1068,7 +1069,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                                 headerContent = headerContent,
                                 configurationNotice = {
                                     if (!isFloatingMode && !isReadOnlyTranscript && !embedded) {
-                                        ModelConfigurationNotice(onNavigateToFunctionalConfig)
+                                        onNavigateToFunctionalConfig?.let { ModelConfigurationNotice(it) }
                                     }
                                 },
                                 paddingValues =
