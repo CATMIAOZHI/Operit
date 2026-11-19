@@ -54,6 +54,9 @@ class ChatModelSelections private constructor(context: Context) {
     /** Every chat's own choice, by chat ID. */
     val choices: StateFlow<Map<String, OrbitModelRef>> = _choices.asStateFlow()
 
+    /** Memory changes and their writes are queued together, so the disk ends as memory does. */
+    private val order = Any()
+
     /**
      * A choice made while no chat is open; the next chat created and opened takes it, and opening
      * an existing chat drops it. Kept in memory only: it belongs to that moment.
@@ -104,13 +107,26 @@ class ChatModelSelections private constructor(context: Context) {
         if (chatId.isNullOrBlank()) pending
         else choices.map { it[chatId] }.distinctUntilChanged()
 
-    /** Memory changes and their writes are queued together, so the disk ends as memory does. */
-    private val order = Any()
-
     fun select(chatId: String, ref: OrbitModelRef) {
         synchronized(order) {
             _choices.update { it + (chatId to ref) }
             scope.launch { store.edit { it[key(chatId)] = json.encodeToString(ref) } }
+        }
+    }
+
+    /**
+     * The chat goes back to its default model when [drop] says its own pick should go; its own
+     * thinking level stays. Waits for the saved picks first, so one read late cannot come back,
+     * and leaves a pick changed meanwhile alone.
+     */
+    suspend fun clearModelIf(chatId: String, drop: suspend (OrbitModelRef) -> Boolean) {
+        loaded.await()
+        val ref = _choices.value[chatId] ?: return
+        if (!drop(ref)) return
+        synchronized(order) {
+            if (_choices.value[chatId] != ref) return
+            _choices.update { it - chatId }
+            scope.launch { store.edit { it.remove(key(chatId)) } }
         }
     }
 

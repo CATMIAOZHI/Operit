@@ -774,21 +774,22 @@ sealed class Screen(
             com.ai.assistance.operit.ui.features.orbit.OrbitScreen(
                 hasBackgroundImage = hasBackgroundImage,
                 onOpenMemory = { navigateTo(MemoryBase) },
-                onManageRoleCards = { navigateTo(ModelPromptsSettings) },
-                chatContent = { chatId, header ->
+                // The chat's links open Orbit's own pages, so Orbit never drops into Operit's.
+                chatContent = { chatId, links, header ->
                     AIChatScreen(
                             padding = PaddingValues(0.dp),
                             viewModel = null,
                             isFloatingMode = false,
                             hasBackgroundImage = hasBackgroundImage,
-                            onNavigateToTokenConfig = { navigateTo(TokenConfig) },
+                            onNavigateToTokenConfig = links.openDeepSeekKeys,
                             onNavigateToSettings = { navigateTo(Settings) },
                             onNavigateToUserPreferences = { navigateTo(UserPreferencesSettings) },
-                            onNavigateToModelConfig = { navigateTo(ModelConfig) },
-                            onNavigateToFunctionalConfig = { navigateTo(FunctionalConfig) },
-                            onNavigateToOnboardingModelConfig = { navigateTo(ModelConfigOnboarding) },
-                            onNavigateToModelPrompts = { navigateTo(ModelPromptsSettings) },
-                            onNavigateToPackageManager = { navigateTo(Packages) },
+                            onNavigateToModelConfig = links.openModelConfig,
+                            // Orbit picks its models on its own page; Operit's function bindings are not its.
+                            onNavigateToFunctionalConfig = null,
+                            onNavigateToOnboardingModelConfig = { links.useOtherModel(chatId) },
+                            onNavigateToModelPrompts = links.openRoleCards,
+                            onNavigateToPackageManager = links.openPackages,
                             onNavigateBack = onGoBack,
                             onLoading = onLoading,
                             onError = onError,

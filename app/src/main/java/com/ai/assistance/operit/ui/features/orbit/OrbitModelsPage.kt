@@ -387,3 +387,25 @@ internal fun OrbitModelConfigPage(onBack: () -> Unit) {
         }
     }
 }
+
+/**
+ * The app's role card library, opened inside Orbit so back returns to where it was opened. Links
+ * that lead to Operit's pages (tag market, AI creation, chat management) are left out.
+ */
+@Composable
+internal fun OrbitRoleCardsPage(onBack: () -> Unit) {
+    OrbitPageBack(onBack = onBack)
+    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
+        .statusBarsPadding().navigationBarsPadding()) {
+        OrbitPageHeader(stringResource(R.string.orbit_page_card_roles_title), onBack,
+            Modifier.padding(horizontal = 20.dp).padding(top = 8.dp))
+        Box(Modifier.fillMaxWidth().weight(1f)) {
+            com.ai.assistance.operit.ui.features.settings.screens.ModelPromptsSettingsScreen(
+                onBackPressed = onBack,
+                onNavigateToMarket = null,
+                onNavigateToPersonaGeneration = null,
+                onNavigateToChatManagement = null,
+            )
+        }
+    }
+}
