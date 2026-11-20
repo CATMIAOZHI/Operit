@@ -268,7 +268,8 @@ internal fun OrbitFilePage(
                     // it longer is not taken. Other measured drafts are kept whole and only saving waits.
                     val next = when {
                         measure == null -> it.take(maxChars)
-                        holdAtLimit && length > maxChars && it.length > draft.length -> draft
+                        // Grows by the same measure the limit is in (bytes for a file), only counted once over it.
+                        holdAtLimit && length > maxChars && length > (measure?.invoke(draft) ?: 0) -> draft
                         else -> it
                     }
                     if (length > maxChars && !warnedTooLong) {
@@ -378,6 +379,7 @@ internal fun OrbitLessonsFilePage(orbitId: String, onBack: () -> Unit) {
 private fun OrbitCarriedNotebookPage(orbitId: String, path: String, title: Int, note: Int, onBack: () -> Unit) {
     val context = LocalContext.current
     val files = remember(orbitId) { com.ai.assistance.operit.features.orbit.OrbitFiles.of(context, orbitId) }
+    OrbitEditableOrReader(files, path, stringResource(title), onBack) {
     val editor = rememberOrbitFileEditor(files, path)
     OrbitFilePage(
         title = stringResource(title),
@@ -388,8 +390,9 @@ private fun OrbitCarriedNotebookPage(orbitId: String, path: String, title: Int, 
         onBack = onBack,
         maxChars = editor.maxChars,
         measure = editor.measure,
-        holdAtLimit = editor.measure != null,
+        holdAtLimit = editor.holdAtLimit,
     )
+    }
 }
 
 /**

@@ -84,6 +84,28 @@ class OrbitFilesTest {
         assertTrue(shown.contains("LESSONS.md is over"))
     }
 
+    @Test fun onlyRegisteredHookScriptsInFilesAreOrbitsOwn() = runBlocking {
+        val files = store()
+        files.write("files/hooks/watch.py", "print(1)")
+        files.write("files/hooks/draft.txt", "mine")
+        files.write("files/novel.txt", "mine")
+        val hooks = setOf("files/hooks/watch.py")
+        assertFalse(files.isUserDocument("files/hooks/watch.py", hooks))
+        assertTrue(files.isUserDocument("files/hooks/draft.txt", hooks))
+        assertTrue(files.isUserDocument("files/novel.txt", hooks))
+        assertFalse(files.isUserDocument("LESSONS.md", hooks))
+    }
+
+    @Test fun theEditorOpensOnlySmallUtf8TextAndNeverSavesOverAnotherEncoding() = runBlocking {
+        val files = store()
+        files.write("files/a.md", "笔记")
+        assertEquals("笔记", files.readForEditor("files/a.md"))
+        java.io.File(folder.root, "orbit/files/a.md").writeBytes("笔记".toByteArray(charset("GB18030")))
+        assertTrue(runCatching { files.readForEditor("files/a.md") }.isFailure)
+        assertTrue(runCatching { files.writeIfUnchanged("files/a.md", "笔记", "新的", strict = true) }.exceptionOrNull()
+            is OrbitFiles.ChangedMeanwhile)
+    }
+
     @Test fun personNotesKeepAnIndexThatCannotBeWritten() = runBlocking {
         val files = store()
         files.write("memory/people/Alex.md", "# Alex\n\nLikes tea")

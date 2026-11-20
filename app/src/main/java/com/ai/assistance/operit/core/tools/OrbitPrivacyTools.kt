@@ -31,7 +31,7 @@ internal object OrbitPrivacyTools {
 
     val forgetPrompt = ToolPrompt(
         name = FORGET,
-        description = "用户要你忘掉某件事时用：先找出这条信息在你这里的所有副本，给用户看清理范围，用户同意后一起清掉。",
+        description = "用户要你忘掉某件事时用：先找出这条信息在你这里的所有副本，给用户看清理范围，用户同意后清掉你自己存的那些；用户自己的文档只列出来。",
         parametersStructured = listOf(
             ToolParameterSchema("action", description = "plan/confirm/cancel", required = true),
             ToolParameterSchema("terms", description = "plan：能找到这条信息的关键词，每行一个，1-10个", required = false),
@@ -39,8 +39,8 @@ internal object OrbitPrivacyTools {
         ),
         details = """
   - 「忘掉」是把你存的这件事都清掉，不是改一条笔记。改错的事实、换个偏好，用记忆工具改就行。
-  - 先 plan（只读）：列出记忆、用户资料、文件、你学到的技能、目标、定时任务、动态和点子里有这件事的地方，以及怎么处理（edit 删掉那几行、delete 整条删掉、stop 停掉）。SOUL.md 和 IDENTITY.md 里的只列出来（user_review），请用户自己改。
-  - 用日常说法告诉用户范围，说清删了不能撤销，问一句是否确认。不要复述要忘掉的内容，用「那件事」指代。
+  - 先 plan（只读）：列出记忆、用户资料、文件、你学到的技能、目标、定时任务、动态和点子里有这件事的地方，以及怎么处理（edit 删掉那几行、delete 整条删掉、stop 停掉）。SOUL.md、IDENTITY.md 和 files/ 里用户自己的文档（documents）只列出来（user_review），由用户自己决定改不改；没能检查的文件标成 unchecked（reason：too_big 太大、changed 读的时候在变、unreadable 读不了），要按原因如实告诉用户这些没查。
+  - 用日常说法告诉用户范围，有能清理的内容时，说清删了不能撤销，问一句是否确认；只有用户文档或没能检查的文件时不用确认。不要复述要忘掉的内容，用「那件事」指代。
   - 用户明确同意后才 confirm；含糊或只同意一部分不算。完成后说清掉了哪些，remaining 里还剩的如实说。
   - 聊天原话不会删，用户想删可以在聊天列表里自己删那段聊天。
 """,
@@ -97,22 +97,33 @@ internal object OrbitPrivacyTools {
                     val terms = a["terms"].orEmpty().lines().map { it.trim() }.filter { it.isNotEmpty() }
                     val planned = OrbitForget.plan(context, orbit, chatId, terms)
                     val hits = planned.hits
+                    // Places marked user_review are only listed; only the others are cleaned on confirm.
+                    val cleanable = hits.any { it.action != "user_review" }
                     JSONObject().put("plan_id", planned.id)
                         .put("summary", JSONObject(hits.groupingBy { it.category }.eachCount()))
-                        .put("places", JSONArray(hits.take(OrbitForget.SHOWN).map { it.json() }))
+                        .put("places", JSONArray(OrbitForget.shown(hits).map { it.json() }))
+                        .put("places_omitted", (hits.size - OrbitForget.SHOWN).coerceAtLeast(0))
                         .put("scanned", JSONArray(OrbitForget.SCANNED))
-                        .put("next", if (hits.isEmpty()) "Nothing was found. Tell the user, or plan again with other terms."
-                            else "Tell the user the scope in everyday words, say it cannot be undone, and ask once for confirmation.")
+                        .put("next", when {
+                            hits.isEmpty() -> "Nothing was found. Tell the user, or plan again with other terms."
+                            !cleanable -> "Nothing here is cleaned by the app. Tell the user which of their own files " +
+                                "(by file name) mention it, and which could not be checked and why (reason), so they can decide; do not confirm."
+                            else -> "Tell the user the scope in everyday words, say it cannot be undone, and ask once for " +
+                                "confirmation. Also name the user's own files that mention it and any that could not be checked (with the reason): " +
+                                "these stay as they are, and the user decides."
+                        })
                 }
                 "confirm" -> {
                     val lastUser = ChatHistoryManager.getInstance(context).loadChatMessagesDesc(chatId, 30)
                         .firstOrNull { it.sender == "user" }?.timestamp ?: 0L
                     val outcome = OrbitForget.confirm(context, orbit, chatId, a["plan_id"]?.trim().orEmpty(), lastUser)
                     JSONObject().put("cleaned", JSONObject(outcome.cleaned as Map<*, *>))
-                        .put("remaining", JSONArray(outcome.remaining.take(OrbitForget.SHOWN).map { it.json() }))
+                        .put("remaining", JSONArray(OrbitForget.shown(outcome.remaining).map { it.json() }))
+                        .put("remaining_omitted", (outcome.remaining.size - OrbitForget.SHOWN).coerceAtLeast(0))
+                        .put("remaining_summary", JSONObject(outcome.remaining.groupingBy { it.category }.eachCount()))
                         .put("failed", JSONArray(outcome.failed))
-                        .put("note", "Chat messages are not deleted. Places marked user_review are for the user to edit. " +
-                            "Report categories only; never repeat the information. Your system prompt in open chats " +
+                        .put("note", "Chat messages are not deleted. Places marked user_review (SOUL.md, IDENTITY.md, the user's documents in files/, unchecked files) were not changed; the user decides. " +
+                            "Report what was cleaned by category; for the user's own files and unchecked ones, name the file, never its contents. Never repeat the information. Your system prompt in open chats " +
                             "may still show the old memory until it refreshes (daily or at the next summary); do not use it.")
                 }
                 "cancel" -> { OrbitForget.cancel(orbit.id); JSONObject().put("cancelled", true) }
