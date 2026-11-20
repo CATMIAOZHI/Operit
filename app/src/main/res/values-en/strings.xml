@@ -9410,7 +9410,7 @@
     <string name="orbit_file_read_only">Read only</string>
     <string name="orbit_prompt_layers">Prompt layers</string>
     <string name="orbit_prompt_layers_desc">See what Orbit reads before each reply</string>
-    <string name="orbit_prompt_layers_help">Each of these goes into Orbit\'s system prompt in this order and cannot be turned off; the alignment synthesis joins once the first review writes it. Tap one to see or edit it.</string>
+    <string name="orbit_prompt_layers_help">Each of these goes into Orbit\'s system prompt in this order and cannot be turned off; the alignment synthesis joins once the first review writes it, and the lessons once the first one is noted. Tap one to see or edit it.</string>
     <string name="orbit_layer_base">Base instructions</string>
     <string name="orbit_layer_base_desc">Initiative, reminders, memory, tone and safety</string>
     <string name="orbit_layer_soul">Personality</string>
@@ -9418,6 +9418,9 @@
     <string name="orbit_layer_alignment">Alignment synthesis</string>
     <string name="orbit_layer_alignment_desc">How to be with you, updated nightly</string>
     <string name="orbit_layer_alignment_empty">Not written yet</string>
+    <string name="orbit_layer_lessons">Lessons</string>
+    <string name="orbit_layer_lessons_desc">Ways of working it learned, up to 8000 characters</string>
+    <string name="orbit_layer_lessons_empty">None yet</string>
     <string name="orbit_layer_identity">Identity</string>
     <string name="orbit_layer_identity_desc">Name, character and vibe</string>
     <string name="orbit_layer_user">About you</string>
@@ -9526,7 +9529,7 @@
     <string name="orbit_files_title">Files</string>
     <string name="orbit_files_notebooks">Notebooks</string>
     <string name="orbit_file_lessons">Lessons</string>
-    <string name="orbit_file_lessons_note">Conventions and lessons %1$s picked up while working, for its future self. This note is not part of the file.</string>
+    <string name="orbit_file_lessons_note">Conventions and lessons %1$s picked up while working, for its future self. Every chat carries it in full, up to 8000 characters; once full, old ones are merged or removed first. A book over 8000 characters is carried only up to that point. Changes apply in a new chat or after refreshing the prompt. This note is not part of the file.</string>
     <string name="orbit_file_proactive">Proactive preferences</string>
     <string name="orbit_file_proactive_note">When, about what and how you want %1$s to reach out first: Tell me about, Never tell me about, When, How. %1$s reads it before deciding whether to interrupt you. This note is not part of the file.</string>
     <string name="orbit_file_timezones">Time zones</string>
@@ -9619,6 +9622,7 @@
     <string name="orbit_file_open_failed">Couldn\'t open this file</string>
     <string name="orbit_file_share_failed">Couldn\'t share</string>
     <string name="orbit_file_too_long">Reached the length limit; the extra text was not added</string>
+    <string name="orbit_file_over_limit">Over the length limit. Your draft is kept; shorten it, then save</string>
     <string name="orbit_files_help">These are %1$s\'s own files. Both of you can read them and edit most of them.</string>
     <string name="orbit_files_made">Files %1$s made</string>
     <string name="orbit_file_open_in_browser">Open in browser</string>

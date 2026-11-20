@@ -175,6 +175,15 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         f.readText()
     }
 
+    /**
+     * The start of the lessons book, enough for [lessonsForPrompt] to tell whether it is over the
+     * size every chat carries; a book of any size is read only this far, so it is never left out.
+     */
+    suspend fun lessonsHead(): String = io {
+        val f = inside(File(root, LESSONS))
+        if (f.isFile) readHead(f, LESSONS_HEAD_CHARS) else template(LESSONS).orEmpty()
+    }
+
     /** Library pins: files/ paths the user keeps at the top of the Library, newest pin first. */
     suspend fun pins(): List<String> = io { readPins() }
 
@@ -209,14 +218,11 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
     suspend fun write(path: String, text: String): Written = io {
         val p = writable(path)
         require(text.length <= MAX_TEXT) { "Text is longer than $MAX_TEXT characters" }
-        // Every chat carries the synthesis in full, so it must fit what the prompt takes.
-        require(p != ALIGNMENT || text.length <= MAX_ALIGNMENT_PROMPT) {
-            "$ALIGNMENT is longer than $MAX_ALIGNMENT_PROMPT characters; shorten it"
-        }
         val f = File(root, p)
         val existed = f.isFile
         // Only a text the size Orbit can write is read back to compare.
         val before = if (existed && inside(f).length() <= MAX_TEXT * 4L) f.readText() else null
+        checkPromptCap(p, before, text)
         atomic(f, text)
         afterChange(p)
         Written(p, before, text, existed = existed)
@@ -241,15 +247,13 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
     suspend fun writeIfUnchanged(path: String, before: String, after: String): Written = io {
         val p = writable(path)
         require(after.length <= MAX_TEXT) { "Text is longer than $MAX_TEXT characters" }
-        require(p != ALIGNMENT || after.length <= MAX_ALIGNMENT_PROMPT) {
-            "$ALIGNMENT is longer than $MAX_ALIGNMENT_PROMPT characters; shorten it"
-        }
         val f = File(root, p)
         val existed = f.isFile
         val current = if (existed) inside(f).readText() else ""
         // An apply interrupted after the write but before the index update finishes that here.
         if (current == after) return@io Written(p, current, after, existed = existed).also { afterChange(p) }
         if (current != before && !(!existed && before == template(p).orEmpty())) throw ChangedMeanwhile(p)
+        checkPromptCap(p, if (existed) current else null, after)
         atomic(f, after)
         afterChange(p)
         Written(p, if (existed) current else null, after, existed = existed)
@@ -288,10 +292,8 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         val old = if (existed) inside(f).readText() else template(p).orEmpty()
         val next = old.trimEnd() + "\n" + text.trim() + "\n"
         require(next.length <= MAX_TEXT) { "The file is full; tidy it up with write first" }
-        require(p != ALIGNMENT || next.length <= MAX_ALIGNMENT_PROMPT) {
-            "$ALIGNMENT would be longer than $MAX_ALIGNMENT_PROMPT characters; rewrite it shorter with write"
-        }
         val after = next.trimStart('\n')
+        checkPromptCap(p, if (existed) old else null, after)
         atomic(f, after)
         afterChange(p)
         val added = text.trim().let { if (it.isEmpty()) 0 else it.lines().size }
@@ -741,7 +743,37 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         )
         /** Longest synthesis put into the prompt; the review keeps it far shorter. */
         const val MAX_ALIGNMENT_PROMPT = 8000
+        /** Longest lessons book; every chat carries it in full, like the synthesis. */
+        const val MAX_LESSONS_PROMPT = 8000
+        /** How much of the lessons book [lessonsHead] reads: enough to cut a whole line and see there is more. */
+        private const val LESSONS_HEAD_CHARS = MAX_LESSONS_PROMPT * 2
         private const val INDEX_HEAD_CHARS = 4000
+
+        /** The size a notebook every chat carries in full may reach, or null for any other file. */
+        fun promptCap(p: String): Int? = when (p) {
+            ALIGNMENT -> MAX_ALIGNMENT_PROMPT
+            LESSONS -> MAX_LESSONS_PROMPT
+            else -> null
+        }
+
+        /**
+         * Why writing [after] over [before] would leave a notebook every chat carries bigger than the
+         * prompt takes, or null when it may. A book already over its size may still shrink toward it.
+         */
+        fun promptCapRefusal(p: String, before: String?, after: String): String? =
+            promptCapRefusal(p, before?.length ?: 0, after.length)
+
+        /** [promptCapRefusal] by length: [afterLength] may be Int.MAX_VALUE for a text too big to read. */
+        fun promptCapRefusal(p: String, beforeLength: Int, afterLength: Int): String? {
+            val cap = promptCap(p) ?: return null
+            if (afterLength <= cap || afterLength <= beforeLength) return null
+            return "$p would go over $cap characters, the most every chat carries in full. Nothing was written: " +
+                "merge duplicates and drop outdated entries first, then add."
+        }
+
+        private fun checkPromptCap(p: String, before: String?, after: String) {
+            promptCapRefusal(p, before, after)?.let { throw IllegalArgumentException(it) }
+        }
 
         /** The first [max] characters of [file], without reading the rest; empty when it is missing. */
         fun readHead(file: File, max: Int): String {
@@ -763,6 +795,37 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
             val said = text.lineSequence().map { it.trim() }
                 .any { it.isNotEmpty() && !it.startsWith("#") && it !in ALIGNMENT_FILLER }
             return if (said) text.trim().take(MAX_ALIGNMENT_PROMPT) else null
+        }
+
+        private val LESSONS_FILLER = setOf(
+            "做事时攒下的约定和教训，写给以后的自己。",
+            "Conventions and lessons you picked up while working, for your future self.",
+        )
+
+        /**
+         * The lessons book to put into every chat, or null while it holds no lesson. A book written
+         * before the size limit can be longer; it is cut at a line until the next review merges it.
+         */
+        fun lessonsForPrompt(text: String, english: Boolean): String? {
+            // A text as long as [lessonsHead] reads may be only the start of a longer book.
+            val more = text.length >= LESSONS_HEAD_CHARS
+            val said = text.lineSequence().map { it.trim() }
+                .any { it.isNotEmpty() && !it.startsWith("#") && it !in LESSONS_FILLER }
+            if (!said && !more) return null
+            // The limit counts the file as stored, as its writes do.
+            val book = text
+            if (book.length <= MAX_LESSONS_PROMPT && !more) return book.trim()
+            // Cut after the last whole line; a first line longer than the limit is cut where it reaches it.
+            var head = book.take(MAX_LESSONS_PROMPT)
+            if (head.isNotEmpty() && head.last().isHighSurrogate()) head = head.dropLast(1)
+            val wholeLine = book.length == head.length || book[head.length] == '\n' || book[head.length] == '\r'
+            val cut = if (wholeLine) head
+            else head.lastIndexOfAny(charArrayOf('\n', '\r')).let { if (it > 0) head.substring(0, it) else head }
+            val note = if (english)
+                "(LESSONS.md is over $MAX_LESSONS_PROMPT characters; the rest is not shown here. Read the file for all of it, " +
+                    "and merge or drop entries to bring it under the limit.)"
+            else "（LESSONS.md 超过 $MAX_LESSONS_PROMPT 字，后面的没有放进来。要看全文就读这个文件；合并重复、删掉过时的条目，把它压到上限以内。）"
+            return listOf(cut.trim(), note).filter { it.isNotEmpty() }.joinToString("\n\n")
         }
 
         /** The Library's kind of a file, by extension. */

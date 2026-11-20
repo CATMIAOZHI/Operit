@@ -134,14 +134,15 @@ internal object OrbitTools {
     /**
      * Orbit's parts of the system prompt, in its own chat; null in any other chat. They are placed
      * apart so the prompt runs from what rarely changes to what changes often: [handbook] (PROMPT.md)
-     * comes before the app's system prompt; [runtime], [identity], [soul] and [alignment] come after
-     * it, followed by memory.md and user.md. [alignment] is the alignment synthesis, read in full in
-     * every chat (Muse injects it rather than leaving it to a search); empty while it is a template.
+     * comes before the app's system prompt; [runtime], [identity], [soul], [alignment] and [lessons]
+     * come after it, followed by memory.md and user.md. [alignment] is the alignment synthesis, read in
+     * full in every chat (Muse injects it rather than leaving it to a search); empty while it is a
+     * template. [lessons] is LESSONS.md, carried the same way so a correction is not repeated.
      */
     class PromptParts(val handbook: String, val runtime: String, val identity: String, val soul: String,
-        val alignment: String = "") {
+        val alignment: String = "", val lessons: String = "") {
         /** All parts in prompt order, for a copy the user can read. */
-        val all: String get() = listOf(handbook, runtime, identity, soul, alignment).filter { it.isNotEmpty() }.joinToString("\n\n")
+        val all: String get() = listOf(handbook, runtime, identity, soul, alignment, lessons).filter { it.isNotEmpty() }.joinToString("\n\n")
     }
 
     suspend fun promptParts(context: Context, chatId: String?, useEnglish: Boolean, useToolCallApi: Boolean = false): PromptParts? {
@@ -191,6 +192,10 @@ internal object OrbitTools {
             .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
             .getOrNull()?.let { alignmentFile.alignmentForPrompt(it) }
             ?.let { "<orbit_alignment source=\"ALIGNMENT_SYNTHESIS.md\">\n${escape(it)}\n</orbit_alignment>" }.orEmpty()
+        val lessons = runCatching { alignmentFile.of(context, orbit.id).lessonsHead() }
+            .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
+            .getOrNull()?.let { alignmentFile.lessonsForPrompt(it, useEnglish) }
+            ?.let { "<orbit_lessons source=\"LESSONS.md\">\n${escape(it)}\n</orbit_lessons>" }.orEmpty()
         // A side chat is its own thread; work started here reports back here.
         val side = OrbitPreferences.getInstance(context).current().orbits.firstOrNull { it.id == orbit.id }
             ?.sideChats?.firstOrNull { it.chatId == chatId }
@@ -204,7 +209,7 @@ internal object OrbitTools {
             com.ai.assistance.operit.features.orbit.OrbitChatFork.prompt(context, it, useEnglish)
         }.orEmpty()
         val runtime = "<orbit>\n$body$sideNote\n${folderLine(context, orbit.id, useEnglish)}\n$controlPrompt\n</orbit>$forkReference"
-        return PromptParts(handbook, runtime, identity, soul, alignment)
+        return PromptParts(handbook, runtime, identity, soul, alignment, lessons)
     }
 
     /**

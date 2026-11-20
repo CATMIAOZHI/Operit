@@ -9386,7 +9386,7 @@
     <string name="orbit_file_read_only">只读</string>
     <string name="orbit_prompt_layers">提示词层</string>
     <string name="orbit_prompt_layers_desc">看看 Orbit 每次回复前读了什么</string>
-    <string name="orbit_prompt_layers_help">下面每一层都按顺序放进 Orbit 的系统提示词，不能关掉；对齐总结要等第一次复盘写好后才带上。点开可以查看或编辑。</string>
+    <string name="orbit_prompt_layers_help">下面每一层都按顺序放进 Orbit 的系统提示词，不能关掉；对齐总结要等第一次复盘写好后才带上，经验本要等记下第一条才带上。点开可以查看或编辑。</string>
     <string name="orbit_layer_base">基础指令</string>
     <string name="orbit_layer_base_desc">主动、提醒、记忆、说话方式和安全</string>
     <string name="orbit_layer_soul">个性</string>
@@ -9394,6 +9394,9 @@
     <string name="orbit_layer_alignment">对齐总结</string>
     <string name="orbit_layer_alignment_desc">和你怎么相处，每晚复盘更新</string>
     <string name="orbit_layer_alignment_empty">还没写</string>
+    <string name="orbit_layer_lessons">经验本</string>
+    <string name="orbit_layer_lessons_desc">做事的约定和教训，最多 8000 字</string>
+    <string name="orbit_layer_lessons_empty">还没记</string>
     <string name="orbit_layer_identity">身份</string>
     <string name="orbit_layer_identity_desc">名字、角色和气质</string>
     <string name="orbit_layer_user">用户资料</string>
@@ -9502,7 +9505,7 @@
     <string name="orbit_files_title">文件</string>
     <string name="orbit_files_notebooks">记事本</string>
     <string name="orbit_file_lessons">经验本</string>
-    <string name="orbit_file_lessons_note">%1$s 做事时攒下的约定和教训，写给以后的自己。这段说明不是文件内容。</string>
+    <string name="orbit_file_lessons_note">%1$s 做事时攒下的约定和教训，写给以后的自己。每次聊天都会全文带上，最多 8000 字，写满了要先合并或删掉旧的；超过 8000 字时只带前面一段。改动在新聊天或刷新提示词后生效。这段说明不是文件内容。</string>
     <string name="orbit_file_proactive">主动消息偏好</string>
     <string name="orbit_file_proactive_note">你希望 %1$s 什么时候、为了什么事、用什么方式主动找你：想听的、别跟我说、什么时候、怎么说。%1$s 决定要不要打扰你时会读它。这段说明不是文件内容。</string>
     <string name="orbit_file_timezones">时区</string>
@@ -9594,6 +9597,7 @@
     <string name="orbit_file_open_failed">打不开这个文件</string>
     <string name="orbit_file_share_failed">分享失败</string>
     <string name="orbit_file_too_long">已到字数上限，多出的部分没有加进来</string>
+    <string name="orbit_file_over_limit">超过字数上限了。草稿还在，缩短后再保存</string>
     <string name="orbit_files_help">这些是 %1$s 自己的文件，你和它都能看，大多数还能直接改。</string>
     <string name="orbit_files_made">%1$s 生成的文件</string>
     <string name="orbit_file_open_in_browser">用浏览器打开</string>

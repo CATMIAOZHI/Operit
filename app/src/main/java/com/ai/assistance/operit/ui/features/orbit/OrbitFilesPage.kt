@@ -186,7 +186,9 @@ internal fun OrbitFilesPage(orbitId: String, onBack: () -> Unit, onDraft: (Strin
                 editPath = null
                 reload++
             }),
-            maxChars = if (path == OrbitFiles.ALIGNMENT) OrbitFiles.MAX_ALIGNMENT_PROMPT else OrbitFiles.MAX_TEXT,
+            maxChars = editor.maxChars,
+            measure = editor.measure,
+            holdAtLimit = editor.measure != null,
             startEditing = editPath == path,
         )
         }
@@ -291,6 +293,13 @@ internal class OrbitFileEditor(
     val save: suspend (String) -> Unit,
     /** Pass to [OrbitFilePage]: the text a new draft starts from becomes the base its save checks. */
     val onEditStart: () -> Unit,
+    /** Pass to [OrbitFilePage] as its maxChars. */
+    val maxChars: Int,
+    /**
+     * Pass to [OrbitFilePage]: for a notebook every chat carries in full, a book written before its
+     * size limit is kept whole in the editor and may be saved as long as it does not grow.
+     */
+    val measure: ((String) -> Int)?,
 )
 
 @Composable
@@ -300,6 +309,7 @@ internal fun rememberOrbitFileEditor(files: OrbitFiles, path: String): OrbitFile
     val base = rememberSaveable(path) { mutableStateOf<String?>(null) }
     return remember(files, path) {
         var loaded: String? = null
+        val cap = OrbitFiles.promptCap(path)
         OrbitFileEditor(
             load = { files.read(path).also { loaded = it } },
             save = { text ->
@@ -307,6 +317,8 @@ internal fun rememberOrbitFileEditor(files: OrbitFiles, path: String): OrbitFile
                 base.value = text
             },
             onEditStart = { base.value = loaded },
+            maxChars = cap ?: OrbitFiles.MAX_TEXT,
+            measure = cap?.let { { text: String -> if (text.length <= (loaded?.length ?: 0)) 0 else text.length } },
         )
     }
 }

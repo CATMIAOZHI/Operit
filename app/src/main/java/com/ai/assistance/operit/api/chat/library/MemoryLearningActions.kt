@@ -212,7 +212,7 @@ class MemoryLearningActions(
                         .put("total_chars", book.length).put("staged_lessons", stagedLessons().size)
                         .put("staged", stagedOrbitFile(p) != null)
                         .put("next_offset", if (end < book.length) end else JSONObject.NULL)
-                        .put("max_chars", com.ai.assistance.operit.features.orbit.OrbitFiles.MAX_TEXT)
+                        .put("max_chars", com.ai.assistance.operit.features.orbit.OrbitFiles.MAX_LESSONS_PROMPT)
                 }
                 val disk = files.readStored(p)
                 val staged = stagedOrbitFile(p)
@@ -254,8 +254,11 @@ class MemoryLearningActions(
                 val book = lessonsBook(files)
                 if (book.lines().any { it.trim() == line }) return JSONObject().put("path", p).put("unchanged", true)
                     .put("message", "LESSONS.md already has this lesson; nothing staged")
-                require(book.trimEnd().length + line.length + 2 <= com.ai.assistance.operit.features.orbit.OrbitFiles.MAX_TEXT) {
-                    "LESSONS.md is full; read it with people_read and remove or replace outdated entries with lesson_change first"
+                // Every chat carries the book in full, so it stays within what the prompt takes.
+                require(book.trimEnd().length + line.length + 2 <= com.ai.assistance.operit.features.orbit.OrbitFiles.MAX_LESSONS_PROMPT) {
+                    "LESSONS.md is full (at most ${com.ai.assistance.operit.features.orbit.OrbitFiles.MAX_LESSONS_PROMPT} characters, " +
+                        "carried in every chat); read it with people_read and merge duplicates or remove outdated entries with " +
+                        "lesson_change first"
                 }
                 // The record keeps only the appended line; applying it appends that line once.
                 val change = if (stagedOrbitFile(p)?.addition?.isEmpty() == true)
@@ -278,7 +281,13 @@ class MemoryLearningActions(
                 require(operation in setOf("replace", "remove")) { "Use replace or remove; add a new lesson with lesson_add" }
                 val book = lessonsBook(files)
                 val after = editText(book, operation, stripInvisibleCharacters(arg("content")), arg("old_text"))
-                require(after.length <= com.ai.assistance.operit.features.orbit.OrbitFiles.MAX_TEXT) { "LESSONS.md is full" }
+                // Saving goes through the store, which takes no file longer than this.
+                require(after.length <= com.ai.assistance.operit.features.orbit.OrbitFiles.MAX_TEXT) {
+                    "LESSONS.md would still be longer than ${com.ai.assistance.operit.features.orbit.OrbitFiles.MAX_TEXT} " +
+                        "characters; remove more in one change"
+                }
+                com.ai.assistance.operit.features.orbit.OrbitFiles.promptCapRefusal(p, book, after)
+                    ?.let { throw IllegalArgumentException(it) }
                 val change = reviews.proposeOrbitFile(p, disk, after, sourceChatId = sourceChatId, onCreated = onCreated)
                 reviews.toModelJson(reviews.applyAutomaticDecision(context, change)).put("path", p)
                     .put("message", "Staged the corrected LESSONS.md; it is saved when this page is committed")

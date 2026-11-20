@@ -959,6 +959,7 @@ private fun OrbitChatPage(
             OrbitSubPage.MEMORY -> OrbitMemoryFilePage(orbit, onBack = back)
             OrbitSubPage.PROMPT -> OrbitPromptFilePage(orbit.id, onBack = back)
             OrbitSubPage.ALIGNMENT -> OrbitAlignmentFilePage(orbit.id, onBack = back)
+            OrbitSubPage.LESSONS -> OrbitLessonsFilePage(orbit.id, onBack = back)
             OrbitSubPage.PROMPTS -> OrbitPromptLayersPage(
                 orbit = orbit,
                 onBack = back,
@@ -966,6 +967,7 @@ private fun OrbitChatPage(
                 onOpenSoul = { push(OrbitSubPage.SOUL) },
                 onOpenIdentity = { push(OrbitSubPage.IDENTITY) },
                 onOpenAlignment = { push(OrbitSubPage.ALIGNMENT) },
+                onOpenLessons = { push(OrbitSubPage.LESSONS) },
                 onOpenMemory = { push(OrbitSubPage.MEMORY) },
                 onOpenUser = { push(OrbitSubPage.USER) },
             )
@@ -1583,7 +1585,7 @@ private fun OrbitChatPage(
     }
 }
 
-private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, ALIGNMENT, FILES, PACKAGES, TOOL_PERMISSIONS, TOOL_ACCESS, VAULT, VAULT_ENTRY, USAGE, USAGE_TRENDS, APPEARANCE, PET, MODELS, CONTEXT, MODEL_CONFIG, PHONE_PERMISSIONS, DEVICE_ACCESS, NOTIFICATION_SETTINGS, SPEECH_SETTINGS, CHANNELS, WEIXIN, TEXT_SETTINGS, AUTOMATION_SETTINGS, BACKUP, ABOUT, UPDATE_HISTORY, LANGUAGE, STORAGE, COMPONENTS, MCP_CONFIG, TERMINAL_STARTUP, HELP, AGREEMENT, APP_COSTS, APP_PRICING, APP_GROUPS, ROLE_CARDS }
+private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, ALIGNMENT, FILES, PACKAGES, TOOL_PERMISSIONS, TOOL_ACCESS, VAULT, VAULT_ENTRY, USAGE, USAGE_TRENDS, APPEARANCE, PET, MODELS, CONTEXT, MODEL_CONFIG, PHONE_PERMISSIONS, DEVICE_ACCESS, NOTIFICATION_SETTINGS, SPEECH_SETTINGS, CHANNELS, WEIXIN, TEXT_SETTINGS, AUTOMATION_SETTINGS, BACKUP, ABOUT, UPDATE_HISTORY, LANGUAGE, STORAGE, COMPONENTS, MCP_CONFIG, TERMINAL_STARTUP, HELP, AGREEMENT, APP_COSTS, APP_PRICING, APP_GROUPS, ROLE_CARDS, LESSONS }
 
 /** iOS-like timing: a quick start that settles softly (UIKit's default presentation curve). */
 internal object OrbitMotion {
