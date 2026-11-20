@@ -9206,14 +9206,13 @@
     <string name="orbit_usage_summary_line">This week %1$s / %2$s · extra %3$s / %4$s</string>
     <string name="orbit_usage_cost_title">Spending</string>
     <string name="orbit_usage_cost_about">About %1$s</string>
-    <string name="orbit_usage_cost_estimated_part">About %1$s is estimated at today\'s prices for %2$d call(s) with no recorded cost</string>
     <string name="orbit_usage_cost_cache">Cache hit rate</string>
     <string name="orbit_usage_cost_per_call">Per call</string>
     <string name="orbit_usage_cost_by_model">By model</string>
     <string name="orbit_usage_cost_model_line">%1$s tokens · %2$d calls</string>
     <string name="orbit_usage_cost_unknown_total">Cost unknown</string>
     <string name="orbit_usage_cost_unpriced">Another %1$d call(s) have an unknown cost and aren\'t in the total.</string>
-    <string name="orbit_usage_cost_note">Worked out from the prices set under Model pricing. Only a guide; your provider\'s bill is what counts. A price change leaves costs already worked out as they are and only changes amounts estimated at today\'s prices.</string>
+    <string name="orbit_usage_cost_note">Worked out from the prices under Model pricing; calls with no recorded cost are estimated at the latest prices where possible. Only a guide; your provider\'s bill is what counts.</string>
     <string name="orbit_usage_cost_rate">US dollars and yuan are converted at 1 : %1$s.</string>
     <string name="orbit_usage_cost_rate_default">US dollars and yuan are converted at 1 : %1$s (the default rate; change it on the all-app costs page).</string>
     <string name="orbit_usage_cost_set_prices">Set model prices</string>

@@ -866,9 +866,9 @@ internal fun OrbitUsagePage(
 }
 
 /**
- * What every Orbit's use in the range cost: the total (with the part estimated for calls from
- * before costs were kept), the cache hit rate and the cost per call, the cost by model, and what
- * is left out. [cost] is null until worked out.
+ * What every Orbit's use in the range cost: the total (marked "about" when it includes calls
+ * estimated at the latest prices), the cache hit rate and the cost per call, the cost by model,
+ * and what is left out. [cost] is null until worked out.
  */
 @Composable
 private fun UsageCostCard(
@@ -896,10 +896,6 @@ private fun UsageCostCard(
             },
             style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold,
         )
-        if (cost != null && cost.estimatedCalls > 0L) {
-            Text(stringResource(R.string.orbit_usage_cost_estimated_part, money(cost.estimated), cost.estimatedCalls),
-                style = MaterialTheme.typography.bodySmall, color = muted)
-        }
         Spacer(Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             UsageStat(stringResource(R.string.orbit_usage_cost_cache),
