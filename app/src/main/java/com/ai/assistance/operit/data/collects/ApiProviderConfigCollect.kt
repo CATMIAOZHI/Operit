@@ -232,39 +232,9 @@ object ApiProviderConfigs {
             defaultApiEndpoint = "https://integrate.api.nvidia.com/v1/chat/completions"
         ),
         ProviderApiConfig(
-            providerType = ApiProviderType.LMSTUDIO,
-            defaultModelName = "meta-llama-3.1-8b-instruct",
-            defaultApiEndpoint = "http://localhost:1234/v1/chat/completions",
-            requiresApiKey = false
-        ),
-        ProviderApiConfig(
-            providerType = ApiProviderType.OLLAMA,
-            defaultModelName = "",
-            defaultApiEndpoint = "http://localhost:11434/v1/chat/completions",
-            requiresApiKey = false
-        ),
-        ProviderApiConfig(
             providerType = ApiProviderType.OLLAMA_CLOUD,
             defaultModelName = "",
             defaultApiEndpoint = "https://ollama.com/v1/chat/completions"
-        ),
-        ProviderApiConfig(
-            providerType = ApiProviderType.OPENAI_LOCAL,
-            defaultModelName = "",
-            defaultApiEndpoint = "http://localhost:8000/v1/chat/completions",
-            requiresApiKey = false
-        ),
-        ProviderApiConfig(
-            providerType = ApiProviderType.MNN,
-            defaultModelName = "",
-            defaultApiEndpoint = "",
-            requiresApiKey = false
-        ),
-        ProviderApiConfig(
-            providerType = ApiProviderType.LLAMA_CPP,
-            defaultModelName = "",
-            defaultApiEndpoint = "",
-            requiresApiKey = false
         ),
         ProviderApiConfig(
             providerType = ApiProviderType.PPINFRA,
@@ -322,12 +292,21 @@ object ApiProviderConfigs {
         return requiresApiKey(providerType, apiEndpoint)
     }
 
+    // The defaults the retired local providers filled in. A configuration still holding one is
+    // switched to the new provider's own address and model, like any other untouched default.
+    private val retiredDefaultModelNames = setOf("meta-llama-3.1-8b-instruct")
+    private val retiredDefaultApiEndpoints = setOf(
+        "http://localhost:1234/v1/chat/completions",
+        "http://localhost:11434/v1/chat/completions",
+        "http://localhost:8000/v1/chat/completions",
+    )
+
     fun isDefaultModelName(modelName: String): Boolean {
-        return configs.values.any { it.defaultModelName == modelName }
+        return modelName in retiredDefaultModelNames || configs.values.any { it.defaultModelName == modelName }
     }
 
     fun isDefaultApiEndpoint(endpoint: String): Boolean {
-        return configs.values.any { it.defaultApiEndpoint == endpoint }
+        return endpoint in retiredDefaultApiEndpoints || configs.values.any { it.defaultApiEndpoint == endpoint }
     }
 
     fun isLoopbackEndpoint(apiEndpoint: String): Boolean {

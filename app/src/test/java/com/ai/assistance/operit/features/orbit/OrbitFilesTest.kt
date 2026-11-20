@@ -20,6 +20,92 @@ class OrbitFilesTest {
         assertFalse(OrbitFiles.allowed("files/a/b/c/d/report.pdf"))
     }
 
+    @Test fun hookScriptsInBothLanguagesCanBeWrittenAndEdited() = runBlocking {
+        // orbit_task writes a WATCH hook as files/hooks/<name>.sh or .py, in a folder that may not exist yet.
+        val files = store()
+        files.write("files/hooks/watch-1234abcd.py", "silent(\"probe\", {})")
+        files.write("files/hooks/watch-1234abcd.sh", "silent probe '{}'")
+        assertEquals("silent(\"probe\", {})", files.read("files/hooks/watch-1234abcd.py"))
+        assertEquals("silent probe '{}'", files.read("files/hooks/watch-1234abcd.sh"))
+        // Editing a hook goes through the same check.
+        files.writeIfUnchanged("files/hooks/watch-1234abcd.py", "silent(\"probe\", {})", "wake(\"probe\", {})")
+        assertEquals("wake(\"probe\", {})", files.read("files/hooks/watch-1234abcd.py"))
+        assertTrue(runCatching { files.write("files/hooks/run.exe", "x") }.isFailure)
+    }
+
+    @Test fun theLessonsBookStaysWithinWhatEveryChatCarries() = runBlocking {
+        val files = store()
+        val cap = OrbitFiles.MAX_LESSONS_PROMPT
+        files.write("LESSONS.md", "- a\n".repeat(cap / 4))
+        assertTrue(runCatching { files.append("LESSONS.md", "- one more lesson") }.isFailure)
+        assertTrue(runCatching { files.write("LESSONS.md", "x".repeat(cap + 1)) }.isFailure)
+        // A book written before the limit may only shrink toward it.
+        val old = "- " + "o".repeat(cap + 500)
+        java.io.File(folder.root, "orbit/LESSONS.md").writeText(old)
+        files.writeIfUnchanged("LESSONS.md", old, old.dropLast(100))
+        assertTrue(runCatching { files.writeIfUnchanged("LESSONS.md", old.dropLast(100), old.dropLast(100) + "more") }.isFailure)
+    }
+
+    @Test fun lessonsGoIntoThePromptOnceThereIsOneAndAnOldLongBookIsCutAtALine() {
+        assertNull(OrbitFiles.lessonsForPrompt("# 经验本\n\n做事时攒下的约定和教训，写给以后的自己。\n\n## 约定\n\n## 教训\n", false))
+        assertEquals("# Lessons\n\n- ask first", OrbitFiles.lessonsForPrompt("# Lessons\n\n- ask first\n", true))
+        val long = (1..800).joinToString("\n") { "- lesson number $it" }
+        val shown = OrbitFiles.lessonsForPrompt(long, true)!!
+        assertTrue(shown.contains("- lesson number 1\n"))
+        assertFalse(shown.contains("- lesson number 800"))
+        assertTrue(shown.contains("LESSONS.md is over"))
+        assertTrue(shown.substringBefore("\n\n(").lines().all { it.startsWith("- lesson number ") })
+        // A first line longer than the limit is cut where it reaches it, never dropped.
+        val oneLine = OrbitFiles.lessonsForPrompt("- " + "x".repeat(OrbitFiles.MAX_LESSONS_PROMPT * 2), true)!!
+        assertEquals(OrbitFiles.MAX_LESSONS_PROMPT, oneLine.substringBefore("\n\n(").length)
+        // A whole line ending just at the limit with CRLF is kept.
+        val crlf = "- " + "y".repeat(OrbitFiles.MAX_LESSONS_PROMPT - 2) + "\r\n- next"
+        assertTrue(OrbitFiles.lessonsForPrompt(crlf, true)!!.startsWith("- " + "y".repeat(OrbitFiles.MAX_LESSONS_PROMPT - 2) + "\n\n("))
+        // The limit counts the file as stored: a lesson past 8000 characters of blank lines is not carried.
+        val padded = OrbitFiles.lessonsForPrompt("\n".repeat(9000) + "- late lesson", true)!!
+        assertFalse(padded.contains("late lesson"))
+        assertTrue(padded.startsWith("(LESSONS.md is over"))
+    }
+
+    @Test fun aBookPaddedPastWhatIsReadStillSaysItIsCut() = runBlocking {
+        val files = store()
+        java.io.File(folder.root, "orbit/LESSONS.md").writeText("- ask first\n" + " ".repeat(OrbitFiles.MAX_LESSONS_PROMPT * 2) + "\n- then act")
+        val shown = OrbitFiles.lessonsForPrompt(files.lessonsHead(), true)!!
+        assertTrue(shown.startsWith("- ask first\n"))
+        assertTrue(shown.contains("LESSONS.md is over"))
+    }
+
+    @Test fun aHugeOldLessonsBookIsStillCarriedFromItsStart() = runBlocking {
+        val files = store()
+        val huge = (1..120_000).joinToString("\n") { "- lesson number $it" }
+        java.io.File(folder.root, "orbit/LESSONS.md").writeText(huge)
+        val shown = OrbitFiles.lessonsForPrompt(files.lessonsHead(), true)!!
+        assertTrue(shown.startsWith("- lesson number 1\n"))
+        assertTrue(shown.contains("LESSONS.md is over"))
+    }
+
+    @Test fun onlyRegisteredHookScriptsInFilesAreOrbitsOwn() = runBlocking {
+        val files = store()
+        files.write("files/hooks/watch.py", "print(1)")
+        files.write("files/hooks/draft.txt", "mine")
+        files.write("files/novel.txt", "mine")
+        val hooks = setOf("files/hooks/watch.py")
+        assertFalse(files.isUserDocument("files/hooks/watch.py", hooks))
+        assertTrue(files.isUserDocument("files/hooks/draft.txt", hooks))
+        assertTrue(files.isUserDocument("files/novel.txt", hooks))
+        assertFalse(files.isUserDocument("LESSONS.md", hooks))
+    }
+
+    @Test fun theEditorOpensOnlySmallUtf8TextAndNeverSavesOverAnotherEncoding() = runBlocking {
+        val files = store()
+        files.write("files/a.md", "笔记")
+        assertEquals("笔记", files.readForEditor("files/a.md"))
+        java.io.File(folder.root, "orbit/files/a.md").writeBytes("笔记".toByteArray(charset("GB18030")))
+        assertTrue(runCatching { files.readForEditor("files/a.md") }.isFailure)
+        assertTrue(runCatching { files.writeIfUnchanged("files/a.md", "笔记", "新的", strict = true) }.exceptionOrNull()
+            is OrbitFiles.ChangedMeanwhile)
+    }
+
     @Test fun personNotesKeepAnIndexThatCannotBeWritten() = runBlocking {
         val files = store()
         files.write("memory/people/Alex.md", "# Alex\n\nLikes tea")

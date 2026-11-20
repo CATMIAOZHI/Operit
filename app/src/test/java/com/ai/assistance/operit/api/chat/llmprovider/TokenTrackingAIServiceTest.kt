@@ -609,18 +609,16 @@ class TokenTrackingAIServiceTest {
     }
 
     @Test
-    fun `local provider fatal error emits user visible text then records failed`() = runBlocking {
-        // 与 Llama/MNN 修复后的契约一致：致命错误先保留用户可见错误文本，
-        // 再以异常终止 → 统计边界记为 FAILED，错误文本仍完整送达
+    fun `provider fatal error emits user visible text then records failed`() = runBlocking {
         val fake =
             FakeAiService { onUsage ->
                 stream {
-                    emit("[error] 模型文件不存在")
+                    emit("[error] 响应流中断")
                     onUsage?.invoke(
                         usage().copy(uncachedInputTokens = 300L, outputTokens = 12L),
                         1,
                     )
-                    throw IOException("llama_error_inference_failed")
+                    throw IOException("provider response stream ended unexpectedly")
                 }
             }
         val collected = StringBuilder()
@@ -628,12 +626,12 @@ class TokenTrackingAIServiceTest {
             tracked(fake).sendMessage(context = context).collect { collected.append(it) }
             fail("fatal error must propagate")
         } catch (e: IOException) {
-            assertEquals("llama_error_inference_failed", e.message)
+            assertEquals("provider response stream ended unexpectedly", e.message)
         }
-        assertEquals("[error] 模型文件不存在", collected.toString())
+        assertEquals("[error] 响应流中断", collected.toString())
         val event = database.tokenStatsDao().getAllEvents()[0]
         assertEquals(TokenStatStatus.FAILED.name, event.status)
-        // 失败前已实测的 usage 也要落账
+        // 保留失败前已上报的用量。
         assertEquals(300L, event.uncachedInputTokens)
         assertEquals(12L, event.outputTokens)
     }

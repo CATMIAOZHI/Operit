@@ -30,8 +30,8 @@ class SubagentResultExtractorTest {
         val content =
             """
             <think>private reasoning</think>
-            <tool name="search"></tool>
-            <tool_result name="search" status="success"><content>raw result</content></tool_result>
+            <tool name="grep_code"></tool>
+            <tool_result name="grep_code" status="success"><content>raw result</content></tool_result>
             <status type="complete">done</status>
             <meta provider="gemini:thought_signature">signature</meta>
             Final answer.
@@ -45,8 +45,8 @@ class SubagentResultExtractorTest {
         val content =
             """
             I will search first.
-            <tool name="search"></tool>
-            <tool_result name="search" status="success"><content>raw result</content></tool_result>
+            <tool name="grep_code"></tool>
+            <tool_result name="grep_code" status="success"><content>raw result</content></tool_result>
             """.trimIndent()
 
         assertEquals(
@@ -60,8 +60,8 @@ class SubagentResultExtractorTest {
         val content =
             """
             I will inspect the implementation first.
-            <tool name="search"></tool>
-            <tool_result name="search" status="success"><content>candidate</content></tool_result>
+            <tool name="grep_code"></tool>
+            <tool_result name="grep_code" status="success"><content>candidate</content></tool_result>
             The final conclusion is that the state is persisted in Room.
             <tool name="read_file"></tool>
             <tool_result name="read_file" status="success"><content>verified</content></tool_result>

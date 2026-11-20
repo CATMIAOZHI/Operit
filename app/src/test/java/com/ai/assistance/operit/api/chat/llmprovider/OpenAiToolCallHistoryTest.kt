@@ -147,23 +147,23 @@ class OpenAiToolCallHistoryTest {
     }
 
     @Test
-    fun `OpenAI local proxy results are paired through the target tool name`() {
+    fun `OpenAI package proxy results are paired through the repaired tool name`() {
         val messages =
             buildMessages(
                 listOf(
-                    PromptTurn(kind = PromptTurnKind.USER, content = "Read it."),
+                    PromptTurn(kind = PromptTurnKind.USER, content = "Run pwd."),
                     PromptTurn(
                         kind = PromptTurnKind.ASSISTANT,
                         content =
                             toolCall(
-                                "proxy",
-                                "tool_name" to "read_file",
-                                "params" to "{\"path\":\"a.txt\"}"
+                                "package_proxy",
+                                "tool_name" to "super_admin:terminal",
+                                "params" to """{"command":"pwd"}"""
                             )
                     ),
                     PromptTurn(
                         kind = PromptTurnKind.TOOL_RESULT,
-                        content = toolResult("read_file", "alpha")
+                        content = toolResult("terminal", "/tmp")
                     )
                 )
             )
@@ -171,9 +171,9 @@ class OpenAiToolCallHistoryTest {
         assertToolResultsFollowTheirCalls(messages)
         assertEquals(listOf("user", "assistant", "tool"), messages.roles())
         val proxyCall = messages.at(1).getJSONArray("tool_calls").getJSONObject(0)
-        assertEquals("proxy", proxyCall.getJSONObject("function").getString("name"))
+        assertEquals("package_proxy", proxyCall.getJSONObject("function").getString("name"))
         assertEquals(proxyCall.getString("id"), messages.at(2).getString("tool_call_id"))
-        assertEquals("alpha", messages.at(2).getString("content"))
+        assertEquals("/tmp", messages.at(2).getString("content"))
         assertFalse(messages.toString().contains("工具结果缺失"))
     }
 

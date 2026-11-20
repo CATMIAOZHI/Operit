@@ -192,14 +192,14 @@ private fun toast(context: android.content.Context, messageRes: Int) {
  * top; while every Orbit is paused it lists them and lets the user start one.
  *
  * [chatContent] draws the regular chat screen for a chat id with the given header, so this page
- * keeps the model, thinking, permission, attachment and voice controls of the main chat.
+ * keeps the model, thinking, permission, attachment and voice controls of the main chat. Its links
+ * to settings go through the given [OrbitChatLinks], so they open Orbit's own pages.
  */
 @Composable
 fun OrbitScreen(
     hasBackgroundImage: Boolean,
     onOpenMemory: () -> Unit,
-    onManageRoleCards: () -> Unit,
-    chatContent: @Composable (chatId: String, header: @Composable () -> Unit) -> Unit,
+    chatContent: @Composable (chatId: String, links: OrbitChatLinks, header: @Composable () -> Unit) -> Unit,
 ) {
     val context = LocalContext.current
     val preferences = remember { OrbitPreferences.getInstance(context) }
@@ -212,9 +212,27 @@ fun OrbitScreen(
     loadedSettings.activeOrbitId?.let { androidx.compose.runtime.key(it) { OrbitRestoresPreviousChat(it) } }
     // With the app lock on, nothing of Orbit draws until the system check is passed.
     OrbitAppLockGate(enabled = loadedSettings.appLock, orbit = loadedSettings.active) {
-        OrbitScreenContent(loadedSettings, hasBackgroundImage, onManageRoleCards, chatContent)
+        OrbitScreenContent(loadedSettings, hasBackgroundImage, chatContent)
     }
 }
+
+/** Where the chat screen's links to settings go inside Orbit: Orbit's pages over the chat. */
+@androidx.compose.runtime.Immutable
+class OrbitChatLinks(
+    /** The shared model configurations. */
+    val openModelConfig: () -> Unit,
+    /**
+     * From the page asking for a missing key: the chat drops its own pick if that model has no key,
+     * so it follows Orbit's main model again, and Orbit's models open to pick or add another.
+     */
+    val useOtherModel: (chatId: String) -> Unit,
+    /** The role card library. */
+    val openRoleCards: () -> Unit,
+    /** Orbit's packages. */
+    val openPackages: () -> Unit,
+    /** Where to get a DeepSeek API key, in the browser. */
+    val openDeepSeekKeys: () -> Unit,
+)
 
 /**
  * The chat screen follows the app-wide current chat. It shows this Orbit while the page is open;
@@ -247,8 +265,7 @@ private fun OrbitRestoresPreviousChat(orbitId: String) {
 private fun OrbitScreenContent(
     loadedSettings: OrbitSettings,
     hasBackgroundImage: Boolean,
-    onManageRoleCards: () -> Unit,
-    chatContent: @Composable (chatId: String, header: @Composable () -> Unit) -> Unit,
+    chatContent: @Composable (chatId: String, links: OrbitChatLinks, header: @Composable () -> Unit) -> Unit,
 ) {
     val context = LocalContext.current
     val activeOrbitId = loadedSettings.activeOrbitId
@@ -289,12 +306,28 @@ private fun OrbitScreenContent(
 
     if (activeOrbitId == null) {
         com.ai.assistance.operit.ui.main.MarkLaunchReadyAfterFrame()
-        OrbitHome(
-            settings = loadedSettings,
-            hasBackgroundImage = hasBackgroundImage,
-            onManageRoleCards = onManageRoleCards,
-            onOpenSetup = { showSetup = true },
-        )
+        // The role card library slides in over the list, like Orbit's other pages.
+        var showRoleCards by rememberSaveable { mutableStateOf(false) }
+        Box(Modifier.fillMaxSize()) {
+            // The covered list is not read out or reachable by a screen reader.
+            Box(Modifier.fillMaxSize().then(if (showRoleCards) Modifier.clearAndSetSemantics { } else Modifier)) {
+                OrbitHome(
+                    settings = loadedSettings,
+                    hasBackgroundImage = hasBackgroundImage,
+                    covered = showRoleCards,
+                    onManageRoleCards = { showRoleCards = true },
+                    onOpenSetup = { showSetup = true },
+                )
+            }
+            OrbitCoverPage(visible = showRoleCards, onDismiss = { showRoleCards = false }, dim = 0.1f) {
+                // As wide as Orbit's other pages on a tablet, with the list hidden at the sides.
+                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+                    Box(readableWidth.fillMaxHeight()) {
+                        OrbitRoleCardsPage(onBack = { showRoleCards = false })
+                    }
+                }
+            }
+        }
         return
     }
 
@@ -369,7 +402,6 @@ private fun OrbitScreenContent(
                         settings = loadedSettings,
                         hasBackgroundImage = false,
                         wide = wide,
-                        onManageRoleCards = onManageRoleCards,
                         chatContent = chatContent,
                     )
                 }
@@ -405,8 +437,7 @@ private fun OrbitChatPage(
     settings: OrbitSettings,
     hasBackgroundImage: Boolean,
     wide: Boolean,
-    onManageRoleCards: () -> Unit,
-    chatContent: @Composable (chatId: String, header: @Composable () -> Unit) -> Unit,
+    chatContent: @Composable (chatId: String, links: OrbitChatLinks, header: @Composable () -> Unit) -> Unit,
 ) {
     val context = LocalContext.current
     val resources = LocalResources.current
@@ -425,8 +456,14 @@ private fun OrbitChatPage(
     val subPage = stack.lastOrNull()
     fun push(page: OrbitSubPage) { stackNames = (stack + page).joinToString(",") { it.name } }
     fun pop() { stackNames = stack.dropLast(1).joinToString(",") { it.name } }
-    // Chat cards open pages over the chat; this reads the stack when tapped, so it can be kept.
-    val manageRoleCards by androidx.compose.runtime.rememberUpdatedState(onManageRoleCards)
+    // Chat cards and the chat's own links open pages over the chat; this reads the stack when
+    // tapped, so it can be kept. A page already on top is not opened twice.
+    val openOver: (OrbitSubPage) -> Unit = remember(orbit.id) {
+        { sub ->
+            val current = stackNames.split(',').filter { it.isNotEmpty() }
+            if (current.lastOrNull() != sub.name) stackNames = (current + sub.name).joinToString(",")
+        }
+    }
     val openCardPage: (OrbitCardPage) -> Unit = remember(orbit.id) {
         { page ->
             val sub = when (page) {
@@ -438,14 +475,48 @@ private fun OrbitChatPage(
                 OrbitCardPage.ORBIT_MODELS -> OrbitSubPage.MODELS
                 OrbitCardPage.NOTIFICATIONS -> OrbitSubPage.NOTIFICATION_SETTINGS
                 OrbitCardPage.MCP_CONFIG -> OrbitSubPage.MCP_CONFIG
-                // Role cards are managed in the app's role card page; back returns here.
-                OrbitCardPage.ROLE_CARDS -> null
+                OrbitCardPage.ROLE_CARDS -> OrbitSubPage.ROLE_CARDS
             }
-            if (sub == null) manageRoleCards() else {
-                val current = stackNames.split(',').filter { it.isNotEmpty() }
-                if (current.lastOrNull() != sub.name) stackNames = (current + sub.name).joinToString(",")
-            }
+            openOver(sub)
         }
+    }
+    val linkScope = rememberCoroutineScope()
+    val chatLinks = remember(orbit.id) {
+        OrbitChatLinks(
+            openModelConfig = { openOver(OrbitSubPage.MODEL_CONFIG) },
+            useOtherModel = { chatId ->
+                val app = context.applicationContext
+                linkScope.launch {
+                    runCatching {
+                        val configs = com.ai.assistance.operit.data.preferences.ModelConfigManager(app)
+                        com.ai.assistance.operit.data.preferences.ChatModelSelections.getInstance(app)
+                            .clearModelIf(chatId) { ref ->
+                                // Only the pick the page asks a key for, the same test the chat uses:
+                                // the app's chat model, still found, DeepSeek without a usable key.
+                                val config = configs.getModelConfig(ref.configId)
+                                val deepSeek = com.ai.assistance.operit.data.model.ApiProviderType.DEEPSEEK
+                                val appChatConfigId = com.ai.assistance.operit.data.preferences.FunctionalConfigManager(app)
+                                    .getConfigIdForFunction(com.ai.assistance.operit.data.model.FunctionType.CHAT)
+                                config != null &&
+                                    ref.configId == appChatConfigId &&
+                                    ref.resolveIndex(config.modelName, config.apiProviderTypeId) >= 0 &&
+                                    com.ai.assistance.operit.data.model.ApiProviderType
+                                        .fromProviderTypeId(config.apiProviderTypeId) == deepSeek &&
+                                    com.ai.assistance.operit.data.collects.ApiProviderConfigs
+                                        .requiresApiKey(deepSeek, config.apiEndpoint) &&
+                                    !com.ai.assistance.operit.data.model.ApiKeyFormatValidator.hasUsableKey(config)
+                            }
+                    }.exceptionOrNull()?.let {
+                        if (it is kotlinx.coroutines.CancellationException) throw it
+                        AppLogger.w(TAG, "Could not drop the chat's model without a key: ${it.message}")
+                    }
+                }
+                openOver(OrbitSubPage.MODELS)
+            },
+            openRoleCards = { openOver(OrbitSubPage.ROLE_CARDS) },
+            openPackages = { openOver(OrbitSubPage.PACKAGES) },
+            openDeepSeekKeys = { openDeepSeekKeys(context) },
+        )
     }
     // Answers the user gave while Orbit could not hear them (the app closed while it was busy).
     LaunchedEffect(orbit.id) {
@@ -851,6 +922,7 @@ private fun OrbitChatPage(
                 onOpenModelConfig = { push(OrbitSubPage.MODEL_CONFIG) })
             OrbitSubPage.CONTEXT -> OrbitContextPage(orbit, onBack = back)
             OrbitSubPage.MODEL_CONFIG -> OrbitModelConfigPage(onBack = back)
+            OrbitSubPage.ROLE_CARDS -> OrbitRoleCardsPage(onBack = back)
             OrbitSubPage.SPEECH_SETTINGS -> OrbitSpeechSettingsPage(orbit.id, onBack = back)
             OrbitSubPage.TEXT_SETTINGS -> OrbitTextSettingsPage(onBack = back)
             OrbitSubPage.AUTOMATION_SETTINGS -> OrbitAutomationSettingsPage(onBack = back)
@@ -878,7 +950,8 @@ private fun OrbitChatPage(
                 onOpenDelivery = { push(OrbitSubPage.NOTIFICATIONS) })
             OrbitSubPage.USAGE -> OrbitUsagePage(orbit, onBack = back,
                 onOpenTrends = { push(OrbitSubPage.USAGE_TRENDS) },
-                onOpenAppCosts = { push(OrbitSubPage.APP_COSTS) })
+                onOpenAppCosts = { push(OrbitSubPage.APP_COSTS) },
+                onOpenPricing = { push(OrbitSubPage.APP_PRICING) })
             OrbitSubPage.USAGE_TRENDS -> OrbitUsageTrendsPage(orbit, onBack = back)
             OrbitSubPage.SOUL -> OrbitSoulFilePage(orbit.id, onBack = back)
             OrbitSubPage.IDENTITY -> OrbitIdentityFilePage(orbit.id, onBack = back)
@@ -886,6 +959,7 @@ private fun OrbitChatPage(
             OrbitSubPage.MEMORY -> OrbitMemoryFilePage(orbit, onBack = back)
             OrbitSubPage.PROMPT -> OrbitPromptFilePage(orbit.id, onBack = back)
             OrbitSubPage.ALIGNMENT -> OrbitAlignmentFilePage(orbit.id, onBack = back)
+            OrbitSubPage.LESSONS -> OrbitLessonsFilePage(orbit.id, onBack = back)
             OrbitSubPage.PROMPTS -> OrbitPromptLayersPage(
                 orbit = orbit,
                 onBack = back,
@@ -893,6 +967,7 @@ private fun OrbitChatPage(
                 onOpenSoul = { push(OrbitSubPage.SOUL) },
                 onOpenIdentity = { push(OrbitSubPage.IDENTITY) },
                 onOpenAlignment = { push(OrbitSubPage.ALIGNMENT) },
+                onOpenLessons = { push(OrbitSubPage.LESSONS) },
                 onOpenMemory = { push(OrbitSubPage.MEMORY) },
                 onOpenUser = { push(OrbitSubPage.USER) },
             )
@@ -976,6 +1051,22 @@ private fun OrbitChatPage(
     // The chat's text box sits under the card: drop its focus so typing never goes there.
     val pageFocus = androidx.compose.ui.platform.LocalFocusManager.current
     LaunchedEffect(settingsModal) { if (settingsModal) pageFocus.clearFocus(force = true) }
+    // A review's details here point to Orbit's own per-tool rules, which its chats follow (Operit's
+    // do not apply); that page is in developer mode, so without it they say how to get there.
+    val toolPermissionsEntry = remember(orbit.id, settings.developerMode) {
+        com.ai.assistance.operit.ui.permissions.ToolPermissionsEntry(
+            orbit = true,
+            open = if (!settings.developerMode) null else ({
+                // Read when tapped, so the page goes over whatever is open then.
+                val now = stackNames.split(',').filter { it.isNotEmpty() }
+                stackNames = (now + OrbitSubPage.TOOL_PERMISSIONS.name).joinToString(",")
+            }),
+            hint = if (settings.developerMode) null else R.string.permission_review_orbit_tool_permissions_hint,
+        )
+    }
+    androidx.compose.runtime.CompositionLocalProvider(
+        com.ai.assistance.operit.ui.permissions.LocalToolPermissionsEntry provides toolPermissionsEntry,
+    ) {
     Box(Modifier.fillMaxSize()) {
     Box(
         Modifier.fillMaxSize()
@@ -1114,7 +1205,7 @@ private fun OrbitChatPage(
                             }
                         } else null,
                 ) {
-                    chatContent(if (devView) devSubChatId ?: currentChatId else currentChatId) {
+                    chatContent(if (devView) devSubChatId ?: currentChatId else currentChatId, chatLinks) {
                         if (devView) {
                             OrbitDevHeader(
                                 orbit = orbit, currentChatId = devSubChatId ?: currentChatId,
@@ -1152,8 +1243,8 @@ private fun OrbitChatPage(
                 // avatar is not loaded again and does not flash each time a tab is opened.
                 if (!devView) {
                     val onTab = tab != OrbitTab.CHAT
-                    val tabHeader: @Composable () -> Unit = remember(orbit) {
-                        {
+                    val tabHeader: @Composable ((@Composable () -> Unit)?) -> Unit = remember(orbit) {
+                        { trailing ->
                             OrbitHeader(
                                 orbit = orbit, sideTitle = null, hasUnread = hasUnreadState.value,
                                 activity = orbitActivity(),
@@ -1161,6 +1252,7 @@ private fun OrbitChatPage(
                                     stackNames.isEmpty() && editingFile == null && !showImport,
                                 onOpenProfile = { showProfile = true }, onOpenMenu = { openMenu() },
                                 onTabLayer = true,
+                                trailing = trailing,
                             )
                         }
                     }
@@ -1490,9 +1582,10 @@ private fun OrbitChatPage(
     // Orbit asked for a login or a key: the secure entry card, over every page of this Orbit.
     val vaultRequest by com.ai.assistance.operit.features.orbit.OrbitVault.request.collectAsState()
     vaultRequest?.takeIf { it.orbitId == orbit.id }?.let { OrbitVaultEntrySheet(orbit = orbit, request = it) }
+    }
 }
 
-private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, ALIGNMENT, FILES, PACKAGES, TOOL_PERMISSIONS, TOOL_ACCESS, VAULT, VAULT_ENTRY, USAGE, USAGE_TRENDS, APPEARANCE, PET, MODELS, CONTEXT, MODEL_CONFIG, PHONE_PERMISSIONS, DEVICE_ACCESS, NOTIFICATION_SETTINGS, SPEECH_SETTINGS, CHANNELS, WEIXIN, TEXT_SETTINGS, AUTOMATION_SETTINGS, BACKUP, ABOUT, UPDATE_HISTORY, LANGUAGE, STORAGE, COMPONENTS, MCP_CONFIG, TERMINAL_STARTUP, HELP, AGREEMENT, APP_COSTS, APP_PRICING, APP_GROUPS }
+private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, ALIGNMENT, FILES, PACKAGES, TOOL_PERMISSIONS, TOOL_ACCESS, VAULT, VAULT_ENTRY, USAGE, USAGE_TRENDS, APPEARANCE, PET, MODELS, CONTEXT, MODEL_CONFIG, PHONE_PERMISSIONS, DEVICE_ACCESS, NOTIFICATION_SETTINGS, SPEECH_SETTINGS, CHANNELS, WEIXIN, TEXT_SETTINGS, AUTOMATION_SETTINGS, BACKUP, ABOUT, UPDATE_HISTORY, LANGUAGE, STORAGE, COMPONENTS, MCP_CONFIG, TERMINAL_STARTUP, HELP, AGREEMENT, APP_COSTS, APP_PRICING, APP_GROUPS, ROLE_CARDS, LESSONS }
 
 /** iOS-like timing: a quick start that settles softly (UIKit's default presentation curve). */
 internal object OrbitMotion {
@@ -1524,6 +1617,8 @@ internal fun OrbitHeader(
     avatarAnimated: Boolean = true,
     /** The copy the other bottom tabs show, in the same place as the chat's. */
     onTabLayer: Boolean = false,
+    /** A page's own button at the top right, where the chat has its search; the Builds tab's order. */
+    trailing: (@Composable () -> Unit)? = null,
 ) {
     val pageColor = MaterialTheme.colorScheme.background
     val avatarSize = orbit.appearance.avatarSize.dp
@@ -1580,6 +1675,8 @@ internal fun OrbitHeader(
                 onClick = onOpenSearch,
                 modifier = Modifier.align(Alignment.TopEnd),
             )
+        } else if (trailing != null) {
+            Box(Modifier.align(Alignment.TopEnd)) { trailing() }
         }
         Box(
             modifier = Modifier.align(Alignment.TopCenter)
@@ -2651,6 +2748,8 @@ private fun orbitSettingsEntries(
 private fun OrbitHome(
     settings: OrbitSettings,
     hasBackgroundImage: Boolean,
+    /** True while a page covers the list: the app menu stays shut and names are read again after. */
+    covered: Boolean,
     onManageRoleCards: () -> Unit,
     onOpenSetup: () -> Unit,
 ) {
@@ -2663,19 +2762,24 @@ private fun OrbitHome(
     val cardManager = remember { CharacterCardManager.getInstance(context) }
     val cardIds by cardManager.characterCardListFlow.collectAsState(initial = emptyList())
     val cards by
-        produceState(initialValue = emptyList<CharacterCard>(), cardIds) {
-            value = cardManager.getAllCharacterCards()
+        // Read again when the role card page closes, since a card renamed there keeps its id.
+        produceState(initialValue = emptyList<CharacterCard>(), cardIds, covered) {
+            if (covered) return@produceState
+            value = withContext(Dispatchers.Default) { cardManager.getAllCharacterCards() }
         }
     val cardColor = settingsCardColor(hasBackgroundImage)
     var pendingDelete by remember { mutableStateOf<OrbitProfile?>(null) }
     var starting by remember { mutableStateOf(false) }
     var removingId by remember { mutableStateOf<String?>(null) }
     val openDrawer = com.ai.assistance.operit.ui.main.LocalOpenAppDrawer.current
-    // Only this list opens the app's menu inside Orbit; the tablet sidebar closes as soon as it goes.
+    // Only this list opens the app's menu inside Orbit; the tablet sidebar closes as soon as it goes
+    // or a page covers it, so nothing in the menu can be tapped next to that page.
     val reportHome = com.ai.assistance.operit.ui.main.LocalOrbitHomeShown.current
-    DisposableEffect(reportHome) {
-        reportHome(true)
-        onDispose { reportHome(false) }
+    DisposableEffect(reportHome, covered) {
+        if (covered) onDispose { } else {
+            reportHome(true)
+            onDispose { reportHome(false) }
+        }
     }
 
     fun start(action: suspend () -> Unit) {

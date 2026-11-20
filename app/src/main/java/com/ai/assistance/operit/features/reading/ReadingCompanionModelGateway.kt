@@ -587,19 +587,9 @@ class ReadingCompanionModelGateway(
                 modelConfig.contextLength
             }
         ).takeIf { value -> value.isFinite() && value > 0f } ?: MIN_CONTEXT_WINDOW_K
-        val configuredTokens = (configuredLengthK.toDouble() * 1000.0)
+        return (configuredLengthK.toDouble() * 1000.0)
             .coerceIn(MIN_CONTEXT_WINDOW_TOKENS.toDouble(), MAX_CONTEXT_WINDOW_TOKENS.toDouble())
             .toInt()
-        val providerType =
-            ApiProviderType.fromProviderTypeId(modelConfig.apiProviderTypeId)
-                ?: modelConfig.apiProviderType
-        return when (providerType) {
-            ApiProviderType.LLAMA_CPP ->
-                minOf(configuredTokens, modelConfig.llamaContextSize.coerceAtLeast(1))
-            ApiProviderType.MNN ->
-                minOf(configuredTokens, CONSERVATIVE_MNN_CONTEXT_WINDOW_TOKENS)
-            else -> configuredTokens
-        }
     }
 
     suspend fun resolveAutoCommentRole(roleCardId: String): ResolvedAutoCommentRole {
@@ -744,7 +734,6 @@ class ReadingCompanionModelGateway(
         const val INPUT_WINDOW_FRACTION = 0.88
         const val MIN_CONTEXT_WINDOW_K = 2f
         const val MIN_CONTEXT_WINDOW_TOKENS = 2_048
-        const val CONSERVATIVE_MNN_CONTEXT_WINDOW_TOKENS = 2_048
         const val MAX_CONTEXT_WINDOW_TOKENS = 2_000_000
         const val MODEL_SOURCE_CALLER_CHAT = "caller_chat"
         const val MODEL_SOURCE_CHARACTER_CARD = "character_card"

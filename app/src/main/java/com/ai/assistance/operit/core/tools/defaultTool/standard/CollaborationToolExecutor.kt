@@ -43,7 +43,7 @@ class CollaborationToolExecutor(context: Context) : ToolExecutor {
                 tool.name, tool.parameters.map { it.name },
             )
             val chatId = requireNotNull(runtime?.callerChatId?.takeIf { it.isNotBlank() }) { "Collaboration requires a caller chat" }
-            require(CollaborationToolPolicy.visibility(appContext, chatId, runtime.isSubagent)[tool.name] == true) {
+            require(CollaborationToolPolicy.collaborationVisibility(appContext, chatId, runtime.isSubagent)[tool.name] == true) {
                 "This tool is not available in the caller's subagent version"
             }
             val result = when (tool.name) {
@@ -75,16 +75,19 @@ class CollaborationToolExecutor(context: Context) : ToolExecutor {
                         manager.initializeIfNeeded()
                         CollaborationModels.resolve(model, manager.getAllConfigSummaries())
                     } else null
+                    // fork_turns only decides how much conversation the child gets. The model and the
+                    // profile prompt follow agent_type and model alone: without either the child runs
+                    // on the parent's model with no extra profile prompt, whatever fork_turns says.
+                    val agentType = optional("agent_type")
+                    val fork = AgentFork.parse(optional("fork_turns"))
                     val agent = coordinator.spawn(
-                        chatId, required("task_name"), required("message"), optional("agent_type") ?: "general",
-                        AgentFork.parse(optional("fork_turns")), selectedModel?.configId ?: runtime.parentModelConfigId,
+                        chatId, required("task_name"), required("message"), agentType ?: "general",
+                        fork, selectedModel?.configId ?: runtime.parentModelConfigId,
                         selectedModel?.modelIndex ?: runtime.parentModelIndex, runtime.callId,
-                        inheritModel = model != null ||
-                            (AgentFork.parse(optional("fork_turns")) == AgentFork.All && optional("agent_type") == null),
+                        inheritModel = model != null || agentType == null,
                         reasoningEffort = effort,
                         roleCardId = runtime.callerCardId,
-                        includeProfilePrompt = AgentFork.parse(optional("fork_turns")) != AgentFork.All ||
-                            optional("agent_type") != null,
+                        includeProfilePrompt = agentType != null,
                     )
                     buildJsonObject {
                         put("task_name", agent.path)

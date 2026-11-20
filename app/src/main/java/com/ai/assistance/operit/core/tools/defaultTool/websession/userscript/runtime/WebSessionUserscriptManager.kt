@@ -853,7 +853,7 @@ internal class WebSessionUserscriptManager(
         }
         val notification =
             NotificationCompat.Builder(context, NOTIFICATION_CHANNEL_ID)
-                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setSmallIcon(com.ai.assistance.operit.core.application.AppLauncherIdentity.notificationIcon(context))
                 .setContentTitle(title)
                 .setContentText(text)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(text))

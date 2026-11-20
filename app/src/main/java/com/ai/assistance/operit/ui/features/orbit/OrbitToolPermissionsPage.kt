@@ -57,6 +57,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.core.tools.AIToolHandler
+import com.ai.assistance.operit.ui.permissions.FOLLOW_UP_TOOLS
 import com.ai.assistance.operit.ui.permissions.PermissionLevel
 import com.ai.assistance.operit.core.tools.PermissionReviewInternalTools
 import com.ai.assistance.operit.ui.permissions.ToolPermissionSystem
@@ -96,8 +97,8 @@ internal fun OrbitToolPermissionsPage(onBack: () -> Unit) {
     val storedKeys = stored?.keys
     val folders = remember(storedKeys, internalTitle, builtinTitle) {
         val names = (toolHandler.getAllToolNames().filterNot {
-            it == "package_proxy" || it == "proxy" || it == "search" || it in PermissionReviewInternalTools.names
-        } + storedKeys.orEmpty()).distinct().sortedBy { it.lowercase() }
+            it == "package_proxy" || it in PermissionReviewInternalTools.names
+        } + storedKeys.orEmpty() + FOLLOW_UP_TOOLS).distinct().sortedBy { it.lowercase() }
         val internal = names.filter(::isOrbitInternalTool)
         val rest = names.filterNot(::isOrbitInternalTool)
         val byPackage = rest.filter { ':' in it }.groupBy { it.substringBefore(':') }.toSortedMap()
@@ -187,8 +188,12 @@ internal fun OrbitToolPermissionsPage(onBack: () -> Unit) {
             onPick = { level ->
                 picking = null
                 scope.launch {
-                    // Picking the default stores nothing, so the tool keeps following it.
-                    if (level == null || level == default) system.clearOrbitToolPermission(name)
+                    // Picking the default stores nothing, so the tool keeps following it. A follow-up
+                    // tool (wait, screen, cancel) runs free on its own run until a level is stored,
+                    // so any level picked for it is kept, the default one too.
+                    if (level == null || (level == default && name !in FOLLOW_UP_TOOLS)) {
+                        system.clearOrbitToolPermission(name)
+                    }
                     else system.saveOrbitToolPermission(name, level)
                 }
             },

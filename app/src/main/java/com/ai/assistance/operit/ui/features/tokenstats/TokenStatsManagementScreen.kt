@@ -14,8 +14,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AttachMoney
@@ -41,7 +43,9 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -52,6 +56,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -65,6 +73,7 @@ import com.ai.assistance.operit.data.model.TokenStatPriceOverrideEntity
 import com.ai.assistance.operit.data.pricing.ModelPricingCatalogRepository
 import com.ai.assistance.operit.data.pricing.PricingCatalogSource
 import com.ai.assistance.operit.data.pricing.PricingCatalogState
+import com.ai.assistance.operit.data.pricing.PricingCheckOutcome
 import com.ai.assistance.operit.data.stats.TokenStatsGroupModelInfo
 import com.ai.assistance.operit.data.stats.TokenStatsGroupMemberInfo
 import com.ai.assistance.operit.data.stats.LegacyPriceSettings
@@ -92,8 +101,14 @@ fun TokenStatsManagementScreen(initialPricingTab: Boolean = false) {
         viewModel(factory = TokenStatsManagementViewModel.Factory(context))
     val state by viewModel.state.collectAsState()
     val catalogState by ModelPricingCatalogRepository.status.collectAsState()
+    val autoUpdate by ModelPricingCatalogRepository.autoUpdate.collectAsState()
+    val autoSaveFailed by ModelPricingCatalogRepository.settingSaveFailed.collectAsState()
     var selectedTab by rememberSaveable {
         mutableStateOf(if (initialPricingTab) ManagementTab.PRICING else ManagementTab.GROUPS)
+    }
+    // Opening the prices runs the daily check if it is due, so they are rarely stale there.
+    LaunchedEffect(selectedTab) {
+        if (selectedTab == ManagementTab.PRICING) ModelPricingCatalogRepository.autoUpdateIfDue()
     }
 
     TokenStatsColorsProvider {
@@ -138,11 +153,14 @@ fun TokenStatsManagementScreen(initialPricingTab: Boolean = false) {
                     models = state.pricingModels,
                     overrides = state.overrides,
                     catalogState = catalogState,
+                    autoUpdate = autoUpdate,
+                    autoSaveFailed = autoSaveFailed,
                     onSave = viewModel::savePriceOverride,
                     onResetConfig = viewModel::resetPrice,
                     onRestoreBuiltIn = viewModel::restoreBuiltInPrice,
                     onRefreshCatalog = { ModelPricingCatalogRepository.refresh() },
                     onApplyCatalog = { ModelPricingCatalogRepository.applyDownloaded() },
+                    onAutoUpdate = ModelPricingCatalogRepository::setAutoUpdate,
                 )
             }
         }
@@ -406,11 +424,14 @@ private fun PricingManagementTab(
     models: List<TokenStatsPricingModelOption>,
     overrides: List<TokenStatPriceOverrideEntity>,
     catalogState: PricingCatalogState?,
+    autoUpdate: Boolean,
+    autoSaveFailed: Boolean,
     onSave: (TokenStatPriceOverrideEntity?, TokenStatsPriceOverrideDraft) -> Unit,
     onResetConfig: (TokenStatPriceOverrideEntity) -> Unit,
     onRestoreBuiltIn: (TokenStatPriceOverrideEntity?, String?) -> Unit,
     onRefreshCatalog: () -> Unit,
     onApplyCatalog: () -> Unit,
+    onAutoUpdate: (Boolean) -> Unit,
 ) {
     var query by rememberSaveable { mutableStateOf("") }
     var selectedProvider by rememberSaveable { mutableStateOf<String?>(null) }
@@ -451,7 +472,9 @@ private fun PricingManagementTab(
         contentPadding = PaddingValues(vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        item(key = "catalog") { PricingCatalogStatusCard(catalogState, onRefreshCatalog, onApplyCatalog) }
+        item(key = "catalog") {
+            PricingCatalogStatusCard(catalogState, autoUpdate, autoSaveFailed, onRefreshCatalog, onApplyCatalog, onAutoUpdate)
+        }
         item(key = "search") { SearchField(
             value = query,
             onValueChange = { query = it },
@@ -921,11 +944,15 @@ internal fun mergePricingDraft(
     }
 }
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun PricingCatalogStatusCard(
     state: PricingCatalogState?,
+    autoUpdate: Boolean,
+    autoSaveFailed: Boolean,
     onRefresh: () -> Unit,
     onApply: () -> Unit,
+    onAutoUpdate: (Boolean) -> Unit,
 ) {
     var expanded by rememberSaveable { mutableStateOf(false) }
     val busy = state == null || state.refreshing || state.applying
@@ -953,11 +980,51 @@ private fun PricingCatalogStatusCard(
                     )
                 }
             }
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                SettingsDialogTextButton(onClick = onRefresh, enabled = !busy) {
-                    Text(stringResource(R.string.token_stats_pricing_catalog_refresh))
+            Row(
+                modifier = Modifier.fillMaxWidth()
+                    .toggleable(value = autoUpdate, role = Role.Switch, onValueChange = onAutoUpdate),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(stringResource(R.string.token_stats_pricing_catalog_auto), style = MaterialTheme.typography.bodyMedium)
+                    Text(stringResource(R.string.token_stats_pricing_catalog_auto_desc),
+                        style = MaterialTheme.typography.bodySmall, color = TokenStatsCardMuted)
                 }
-                SettingsDialogTextButton(onClick = onApply, enabled = state?.canApply == true) {
+                Switch(checked = autoUpdate, onCheckedChange = null)
+            }
+            // What the last check found and anything that went wrong, in one area that is always
+            // there, so screen readers read it out whenever it changes.
+            val result = state?.takeIf { !busy }?.lastOutcome?.let {
+                when (it) {
+                    PricingCheckOutcome.UP_TO_DATE -> R.string.token_stats_pricing_catalog_result_up_to_date
+                    PricingCheckOutcome.UPDATED -> R.string.token_stats_pricing_catalog_result_updated
+                    PricingCheckOutcome.DOWNLOADED ->
+                        if (state.hasNewDownload) R.string.token_stats_pricing_catalog_result_downloaded else null
+                    PricingCheckOutcome.FAILED -> null // the error line says it
+                }
+            }
+            Column(
+                modifier = Modifier.fillMaxWidth()
+                    .semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite },
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                if (result != null) {
+                    Text(stringResource(result), style = MaterialTheme.typography.bodySmall, color = TokenStatsCardMuted)
+                }
+                state?.lastError?.let {
+                    Text(stringResource(R.string.token_stats_pricing_catalog_refresh_failed, it),
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                }
+                if (autoSaveFailed) {
+                    Text(stringResource(R.string.token_stats_pricing_catalog_auto_not_saved),
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                }
+            }
+            // Wraps onto a second line when the labels do not fit (narrow screens, large text).
+            FlowRow(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                // With automatic updates on, a check applies what it finds; "replace" only shows then
+                // when something is still waiting. "Check now" stays last, so it never moves.
+                if (!autoUpdate || state?.canApply == true) SettingsDialogTextButton(onClick = onApply, enabled = state?.canApply == true) {
                     // 下载到的目录与当前价格一致时没有可覆盖的更新：按钮置灰并直说“已是最新”，
                     // 否则“已覆盖”配上详情里的下载版本会让人以为还有更新没应用。
                     val catalogUpToDate = state?.downloadedRevision != null &&
@@ -969,6 +1036,9 @@ private fun PricingCatalogStatusCard(
                             else -> R.string.token_stats_pricing_catalog_apply
                         }
                     ))
+                }
+                SettingsDialogTextButton(onClick = onRefresh, enabled = !busy) {
+                    Text(stringResource(R.string.token_stats_pricing_catalog_refresh))
                 }
             }
             androidx.compose.animation.AnimatedVisibility(visible = expanded) {
@@ -989,10 +1059,6 @@ private fun PricingCatalogStatusCard(
                             style = MaterialTheme.typography.labelSmall)
                     }
                 }
-            }
-            state?.lastError?.let {
-                Text(stringResource(R.string.token_stats_pricing_catalog_refresh_failed, it),
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
             }
         }
     }

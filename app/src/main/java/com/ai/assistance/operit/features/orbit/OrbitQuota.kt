@@ -12,6 +12,7 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.data.collects.PricingCurrency
 import com.ai.assistance.operit.data.db.AppDatabase
 import com.ai.assistance.operit.data.model.FunctionType
 import com.ai.assistance.operit.data.preferences.OrbitPreferences
@@ -138,7 +139,15 @@ object OrbitQuota {
      */
     private const val NEW_WEEK_GAP_MS = 3 * 86_400_000L
 
-    /** One day's use by one Orbit for one purpose. */
+    /** More than any one call could really cost; a larger cost (a mistyped price) is kept as unknown. */
+    /** Above this one call's cost is taken as a mistyped price and kept as unknown. */
+    internal const val MAX_CALL_COST = 1_000_000_000.0
+
+    /**
+     * One day's use by one Orbit for one purpose. Calls counted since costs were kept
+     * ([trackedCalls], with [trackedTokens]) also carry their cache reads and what they cost;
+     * older calls have only their tokens.
+     */
     data class Usage(
         val day: String,
         val orbitId: String,
@@ -146,18 +155,60 @@ object OrbitQuota {
         val input: Long,
         val output: Long,
         val calls: Long,
+        val cached: Long = 0L,
+        /** What the priced calls cost, by the currency of their price. */
+        val costCny: Double = 0.0,
+        val costUsd: Double = 0.0,
+        /** Calls whose cost was known when they ended. */
+        val pricedCalls: Long = 0L,
+        val trackedCalls: Long = 0L,
+        val trackedTokens: Long = 0L,
+    ) {
+        val tokens: Long get() = input + output
+        /** Tokens and calls from before costs were kept: no cost is known for them. */
+        val legacyTokens: Long get() = (tokens - trackedTokens).coerceAtLeast(0L)
+        val legacyCalls: Long get() = (calls - trackedCalls).coerceAtLeast(0L)
+    }
+
+    /** One day's use by one Orbit on one model, for calls counted since costs were kept. */
+    data class ModelUsage(
+        val day: String,
+        val orbitId: String,
+        val model: String,
+        val input: Long,
+        val output: Long,
+        val calls: Long,
+        val cached: Long,
+        val costCny: Double,
+        val costUsd: Double,
+        val pricedCalls: Long,
+        /** Input of the calls whose provider said how much came from cache: what [cached] is out of. */
+        val cacheKnownInput: Long = 0L,
     ) {
         val tokens: Long get() = input + output
     }
+
+    /**
+     * What one call cost, as the app's own ledger priced it when the call ended: [cost] in
+     * [currency], or null when it could not be worked out (no price for the model, no usage
+     * reported, or the price could not be read). [cached] is null when the provider did not say.
+     */
+    class Bill(val model: String, val cached: Long?, val cost: Double?, val currency: PricingCurrency)
 
     /** One day's calls by one Orbit, by the hour of the day they were made in. */
     data class Hours(val day: String, val orbitId: String, val calls: List<Long>)
 
     /**
      * Everything the usage page shows: the use by day and purpose, the calls by hour, and the
-     * tokens of every Orbit by day for the last year ([totals], day to tokens).
+     * tokens of every Orbit by day for the last year ([totals], day to tokens), and the use by
+     * model of calls with a known cost ([models]).
      */
-    data class UsageData(val rows: List<Usage>, val hours: List<Hours>, val totals: Map<String, Long> = emptyMap())
+    data class UsageData(
+        val rows: List<Usage>,
+        val hours: List<Hours>,
+        val totals: Map<String, Long> = emptyMap(),
+        val models: List<ModelUsage> = emptyList(),
+    )
 
     private val WEEKLY_LIMIT = longPreferencesKey("weekly_limit")
     private val EXTRA_LIMIT = longPreferencesKey("extra_limit")
@@ -230,8 +281,8 @@ object OrbitQuota {
             app.orbitQuotaStore.data.map { p -> Triple(p[DAYS], p[HOURS], p[TOTALS]) }.distinctUntilChanged(),
             UsageFiles.version,
         ) { (days, hours, totals), _ ->
-            val (rows, byHour) = UsageFiles.readAll(app)
-            UsageData(rows, byHour, parseTotals(totals))
+            val (rows, byHour, models) = UsageFiles.readAll(app)
+            UsageData(rows, byHour, parseTotals(totals), models)
         }.flowOn(Dispatchers.IO)
     }
 
@@ -285,18 +336,29 @@ object OrbitQuota {
 
     /**
      * Counts one finished model call. The week's allowance is spent first and the rest comes out of
-     * the extra one, so the extra allowance only moves once the week's is gone.
+     * the extra one, so the extra allowance only moves once the week's is gone. [bill] is what the
+     * call cost, kept for the usage page; [at], when the call ended, picks its day and hour.
      */
-    suspend fun record(context: Context, tag: OrbitUsageTag, input: Long, output: Long) {
+    suspend fun record(
+        context: Context,
+        tag: OrbitUsageTag,
+        input: Long,
+        output: Long,
+        bill: Bill? = null,
+        at: Long = System.currentTimeMillis(),
+    ) {
         val app = context.applicationContext
         val inTokens = input.coerceAtLeast(0)
         val outTokens = output.coerceAtLeast(0)
         val total = inTokens + outTokens
         val now = System.currentTimeMillis()
-        val day = dayKey(now)
-        val hour = Calendar.getInstance().apply { timeInMillis = now }.get(Calendar.HOUR_OF_DAY)
+        val endedAt = at.takeIf { it in 1..now } ?: now
+        val day = dayKey(endedAt)
+        val hour = Calendar.getInstance().apply { timeInMillis = endedAt }.get(Calendar.HOUR_OF_DAY)
         var after = State()
         app.orbitQuotaStore.edit { p ->
+            // The allowances are spent at the moment of counting, as always; only the history's day
+            // and hour follow when the call ended (counting waits a moment for the call's price).
             val s = read(p).at(now)
             val toWeekly = minOf(total, s.weeklyLeft)
             p[WEEK_START] = s.weekStart
@@ -306,7 +368,7 @@ object OrbitQuota {
             // Queued in this same save, so the detail by day is never lost once the call is counted.
             val seq = (p[PENDING_SEQ] ?: 0L) + 1
             p[PENDING_SEQ] = seq
-            p[PENDING] = UsageFiles.enqueue(p[PENDING], seq, day, hour, tag, inTokens, outTokens)
+            p[PENDING] = UsageFiles.enqueue(p[PENDING], seq, day, hour, tag, inTokens, outTokens, bill)
             after = read(p)
         }
         // The use by day and by hour is kept for all time, so "all time" on the usage page is
@@ -616,8 +678,9 @@ object OrbitQuota {
 
     /**
      * The use by day and by hour, one file per month (`usage-yyyy-MM.json`: `days` and `hours` in the
-     * same day-keyed shape the single value had, and `seq`, the last call applied), so a call
-     * rewrites one small file and history never grows the cost of a call.
+     * same day-keyed shape the single value had, `models` with the use by model of calls counted
+     * since costs were kept, and `seq`, the last call applied), so a call rewrites one small file
+     * and history never grows the cost of a call.
      *
      * A call is first queued in the allowance's own save ([PENDING], with a number from
      * [PENDING_SEQ]) and then applied to its month's file, which keeps the highest number applied.
@@ -630,9 +693,9 @@ object OrbitQuota {
         /** Bumped after each write, so open usage pages read again. */
         val version = kotlinx.coroutines.flow.MutableStateFlow(0L)
         /** Parsed month files by name; a file's entry is dropped when it is written. */
-        private val parsed = java.util.concurrent.ConcurrentHashMap<String, Pair<List<Usage>, List<Hours>>>()
+        private val parsed = java.util.concurrent.ConcurrentHashMap<String, Triple<List<Usage>, List<Hours>, List<ModelUsage>>>()
         private class Pending(val seq: Long, val day: String, val hour: Int, val orbitId: String,
-            val purpose: String, val input: Long, val output: Long)
+            val purpose: String, val input: Long, val output: Long, val bill: Bill?)
 
         private fun dir(app: Context) = java.io.File(app.filesDir, "orbit_usage").apply { mkdirs() }
         private fun monthFile(app: Context, month: String) = java.io.File(dir(app), "usage-$month.json")
@@ -663,10 +726,18 @@ object OrbitQuota {
          * [raw] with one more call queued; called inside the allowance's save. Nothing queued is
          * ever dropped: each item is a call already counted in the allowance.
          */
-        fun enqueue(raw: String?, seq: Long, day: String, hour: Int, tag: OrbitUsageTag, input: Long, output: Long): String {
+        fun enqueue(raw: String?, seq: Long, day: String, hour: Int, tag: OrbitUsageTag, input: Long, output: Long,
+            bill: Bill?): String {
             val list = raw?.let { runCatching { JSONArray(it) }.getOrNull() } ?: JSONArray()
-            list.put(JSONObject().put("s", seq).put("d", day).put("h", hour).put("o", tag.orbitId)
-                .put("p", tag.purpose.name).put("i", input).put("u", output))
+            val item = JSONObject().put("s", seq).put("d", day).put("h", hour).put("o", tag.orbitId)
+                .put("p", tag.purpose.name).put("i", input).put("u", output)
+            if (bill != null) {
+                item.put("m", bill.model).put("y", bill.currency.name)
+                bill.cached?.let { item.put("c", it.coerceIn(0L, input)) }
+                // A cost past any real bill (a mistyped price) counts as unknown, so sums stay finite and writable.
+                bill.cost?.takeIf { it.isFinite() && it >= 0.0 && it <= MAX_CALL_COST }?.let { item.put("k", it) }
+            }
+            list.put(item)
             return list.toString()
         }
 
@@ -675,8 +746,14 @@ object OrbitQuota {
             return (0 until list.length()).mapNotNull { i ->
                 val o = list.optJSONObject(i) ?: return@mapNotNull null
                 val day = o.optString("d").takeIf { it.length >= 7 } ?: return@mapNotNull null
+                val bill = if (!o.has("m")) null else Bill(
+                    model = o.optString("m"),
+                    cached = if (o.has("c")) o.optLong("c") else null,
+                    cost = if (o.has("k")) o.optDouble("k").takeIf { it.isFinite() && it >= 0.0 && it <= MAX_CALL_COST } else null,
+                    currency = if (o.optString("y") == PricingCurrency.USD.name) PricingCurrency.USD else PricingCurrency.CNY,
+                )
                 Pending(o.optLong("s"), day, o.optInt("h"), o.optString("o"), o.optString("p"),
-                    o.optLong("i"), o.optLong("u"))
+                    o.optLong("i"), o.optLong("u"), bill)
             }
         }
 
@@ -702,12 +779,15 @@ object OrbitQuota {
                 // The month is parsed once and every call added in place, however many are waiting.
                 val days = json.optJSONObject("days") ?: JSONObject()
                 val hours = json.optJSONObject("hours") ?: JSONObject()
+                val models = json.optJSONObject("models") ?: JSONObject()
                 fresh.forEach { c ->
-                    addDay(days, c.day, OrbitUsageTag(c.orbitId, Purpose.of(c.purpose)), c.input, c.output)
+                    addDay(days, c.day, OrbitUsageTag(c.orbitId, Purpose.of(c.purpose)), c.input, c.output, c.bill)
                     addHour(hours, c.day, c.orbitId, c.hour)
+                    c.bill?.let { addModel(models, c.day, c.orbitId, it, c.input, c.output) }
                 }
-                // Days and hours are written together, with the last call they include.
-                writeText(file, JSONObject().put("seq", fresh.last().seq).put("days", days).put("hours", hours).toString())
+                // Days, hours and models are written together, with the last call they include.
+                writeText(file, JSONObject().put("seq", fresh.last().seq).put("days", days).put("hours", hours)
+                    .put("models", models).toString())
                 parsed.remove(file.name)
             }
             val done = pending.maxOf { it.seq }
@@ -757,7 +837,7 @@ object OrbitQuota {
          * detail still in the old single values fills in the days no month file has, so a day is
          * never counted twice. Read under the lock, so a write in progress is never half seen.
          */
-        suspend fun readAll(app: Context): Pair<List<Usage>, List<Hours>> = lock.withLockIo {
+        suspend fun readAll(app: Context): Triple<List<Usage>, List<Hours>, List<ModelUsage>> = lock.withLockIo {
             try {
                 flushLocked(app)
             } catch (e: CancellationException) {
@@ -767,39 +847,95 @@ object OrbitQuota {
             }
             val rows = ArrayList<Usage>()
             val hours = ArrayList<Hours>()
+            val models = ArrayList<ModelUsage>()
             // A write cut short on older Android can leave only "<name>.bak"; it still names the month.
             val names = dir(app).list().orEmpty().map { it.removeSuffix(".bak") }.distinct().sorted()
                 .filter { it.startsWith("usage-") && it.endsWith(".json") }
             names.forEach { name ->
-                val (r, h) = parsed.getOrPut(name) {
+                val (r, h, m) = parsed.getOrPut(name) {
                     val json = readJson(java.io.File(dir(app), name))
-                    parseDays(json.optJSONObject("days")?.toString()) to parseHours(json.optJSONObject("hours")?.toString())
+                    Triple(parseDays(json.optJSONObject("days")?.toString()),
+                        parseHours(json.optJSONObject("hours")?.toString()),
+                        parseModels(json.optJSONObject("models")))
                 }
                 rows += r
                 hours += h
+                models += m
             }
             val p = app.orbitQuotaStore.data.first()
             val fileDays = rows.mapTo(HashSet()) { it.day }
             val fileHourDays = hours.mapTo(HashSet()) { it.day }
             rows += parseDays(p[DAYS]).filter { it.day !in fileDays }
             hours += parseHours(p[HOURS]).filter { it.day !in fileHourDays }
-            rows to hours
+            Triple(rows, hours, models)
         }
 
         private suspend fun <T> kotlinx.coroutines.sync.Mutex.withLockIo(block: suspend () -> T): T =
             withContext(Dispatchers.IO) { lock(); try { block() } finally { unlock() } }
     }
 
-    /** Adds one call to [days] (day to Orbit to purpose to [input, output, calls]) in place. */
-    private fun addDay(days: JSONObject, day: String, tag: OrbitUsageTag, input: Long, output: Long) {
+    /**
+     * Adds one call to [days] in place: day to Orbit to purpose to [input, output, calls, cached,
+     * cost in CNY, cost in USD, priced calls, tracked calls, tracked tokens]. Older versions wrote
+     * only the first three; a call with no [bill] adds only to those.
+     */
+    private fun addDay(days: JSONObject, day: String, tag: OrbitUsageTag, input: Long, output: Long, bill: Bill?) {
         val byOrbit = days.optJSONObject(day) ?: JSONObject().also { days.put(day, it) }
         val byPurpose = byOrbit.optJSONObject(tag.orbitId) ?: JSONObject().also { byOrbit.put(tag.orbitId, it) }
         val old = byPurpose.optJSONArray(tag.purpose.name)
+        val cost = bill?.cost
+        val currency = bill?.currency
         byPurpose.put(tag.purpose.name, JSONArray()
             .put((old?.optLong(0) ?: 0L) + input)
             .put((old?.optLong(1) ?: 0L) + output)
-            .put((old?.optLong(2) ?: 0L) + 1))
+            .put((old?.optLong(2) ?: 0L) + 1)
+            .put((old?.optLong(3) ?: 0L) + (bill?.cached ?: 0L))
+            .put((old?.optDouble(4, 0.0) ?: 0.0) + if (cost != null && currency == PricingCurrency.CNY) cost else 0.0)
+            .put((old?.optDouble(5, 0.0) ?: 0.0) + if (cost != null && currency == PricingCurrency.USD) cost else 0.0)
+            .put((old?.optLong(6) ?: 0L) + if (cost != null) 1 else 0)
+            .put((old?.optLong(7) ?: 0L) + if (bill != null) 1 else 0)
+            .put((old?.optLong(8) ?: 0L) + if (bill != null) input + output else 0L))
     }
+
+    /**
+     * Adds one call to [models] in place: day to Orbit to model to [input, output, calls, cached,
+     * cost in CNY, cost in USD, priced calls, input of calls whose cache reads are known].
+     */
+    private fun addModel(models: JSONObject, day: String, orbitId: String, bill: Bill, input: Long, output: Long) {
+        val byOrbit = models.optJSONObject(day) ?: JSONObject().also { models.put(day, it) }
+        val byModel = byOrbit.optJSONObject(orbitId) ?: JSONObject().also { byOrbit.put(orbitId, it) }
+        val name = bill.model.trim().ifEmpty { "?" }
+        val old = byModel.optJSONArray(name)
+        val cost = bill.cost
+        byModel.put(name, JSONArray()
+            .put((old?.optLong(0) ?: 0L) + input)
+            .put((old?.optLong(1) ?: 0L) + output)
+            .put((old?.optLong(2) ?: 0L) + 1)
+            .put((old?.optLong(3) ?: 0L) + (bill.cached ?: 0L))
+            .put((old?.optDouble(4, 0.0) ?: 0.0) + if (cost != null && bill.currency == PricingCurrency.CNY) cost else 0.0)
+            .put((old?.optDouble(5, 0.0) ?: 0.0) + if (cost != null && bill.currency == PricingCurrency.USD) cost else 0.0)
+            .put((old?.optLong(6) ?: 0L) + if (cost != null) 1 else 0)
+            .put((old?.optLong(7) ?: 0L) + if (bill.cached != null) input else 0L))
+    }
+
+    private fun parseModels(models: JSONObject?): List<ModelUsage> {
+        models ?: return emptyList()
+        val out = ArrayList<ModelUsage>()
+        for (day in models.keys()) {
+            val byOrbit = models.optJSONObject(day) ?: continue
+            for (orbitId in byOrbit.keys()) {
+                val byModel = byOrbit.optJSONObject(orbitId) ?: continue
+                for (model in byModel.keys()) {
+                    val v = byModel.optJSONArray(model) ?: continue
+                    out += ModelUsage(day, orbitId, model, v.optLong(0), v.optLong(1), v.optLong(2), v.optLong(3),
+                        v.optDouble(4, 0.0).finiteOrZero(), v.optDouble(5, 0.0).finiteOrZero(), v.optLong(6), v.optLong(7))
+                }
+            }
+        }
+        return out
+    }
+
+    private fun Double.finiteOrZero() = if (isFinite() && this >= 0.0) this else 0.0
 
     private fun parseDays(raw: String?): List<Usage> {
         val days = raw?.let { runCatching { JSONObject(it) }.getOrNull() } ?: return emptyList()
@@ -810,7 +946,10 @@ object OrbitQuota {
                 val byPurpose = byOrbit.optJSONObject(orbitId) ?: continue
                 for (purpose in byPurpose.keys()) {
                     val v = byPurpose.optJSONArray(purpose) ?: continue
-                    out += Usage(day, orbitId, Purpose.of(purpose), v.optLong(0), v.optLong(1), v.optLong(2))
+                    out += Usage(day, orbitId, Purpose.of(purpose), v.optLong(0), v.optLong(1), v.optLong(2),
+                        cached = v.optLong(3), costCny = v.optDouble(4, 0.0).finiteOrZero(),
+                        costUsd = v.optDouble(5, 0.0).finiteOrZero(), pricedCalls = v.optLong(6),
+                        trackedCalls = v.optLong(7), trackedTokens = v.optLong(8))
                 }
             }
         }

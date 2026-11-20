@@ -369,7 +369,7 @@ class TokenStatsQueryServiceRoomTest {
 
         val statements = recordingDriver.executed.toList()
         fun countWhere(predicate: (RecordedSql) -> Boolean): Int = statements.count(predicate)
-        // 历史口径：事件/identity/display model 各恰好一次；价格覆盖与 baseline 不读
+        // 历史口径：事件/identity/display model/价格覆盖各恰好一次（覆盖用于给当时没价格的调用按现价补算）；baseline 不读
         assertEquals(
             1,
             countWhere { it.sql.contains("FROM token_stat_events") && it.sql.contains("WHERE startedAtMs") },
@@ -380,12 +380,13 @@ class TokenStatsQueryServiceRoomTest {
             countWhere { it.sql.contains("FROM token_stat_identities") },
         )
         assertEquals(1, countWhere { it.sql.contains("FROM token_stat_display_models") })
-        assertEquals(0, countWhere { it.sql.contains("FROM token_stat_price_overrides") })
+        assertEquals(1, countWhere { it.sql.contains("FROM token_stat_price_overrides") })
         assertEquals(0, countWhere { it.sql.contains("FROM token_stat_baselines") })
         // 绝不整表读取事件（getAllEvents）
         assertEquals(0, countWhere { it.sql.trim() == "SELECT * FROM token_stat_events" })
 
-        // 重估口径：额外只读一次价格覆盖，其余不变
+        // 重估口径：同样只读一次价格覆盖
+        recordingDriver.clear()
         TokenStatsQueryService.rangeData(
             dao, range, TokenStatsQueryParams(mode = TokenStatsCostMode.REVALUED), shanghai,
             legacyPrices = emptyMap(),

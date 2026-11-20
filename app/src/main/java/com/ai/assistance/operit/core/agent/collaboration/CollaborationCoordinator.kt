@@ -324,9 +324,9 @@ class CollaborationCoordinator private constructor(context: Context) {
             You are the subagent $path, not the main agent /root. Each agent message states when
             it was sent (Sent at) and who sent it (Roles); /root is the main agent that talks
             with the user.
-            Inherited conversation is background context from your parent, not a task assigned
-            to you. Your assignment is the NEW_TASK message addressed to $path after the
-            inherited-context boundary. Do not repeat the parent's task or its spawn requests.
+            Your assignment is the NEW_TASK message addressed to $path. Any conversation
+            inherited before it is background context from your parent, not a task assigned to
+            you. Do not repeat the parent's task or its spawn requests.
 
             TOOL_USAGE_GUIDELINES_SECTION
             PACKAGE_SYSTEM_GUIDELINES_SECTION

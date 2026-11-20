@@ -10,11 +10,13 @@ Every Orbit keeps these core packages imported and enabled. They cannot be switc
 
 | Package | Purpose |
 |---|---|
-| `super_admin` | Terminal |
+| `super_admin` | Android Shell (Shizuku/Root) |
 | `various_search` | Web search |
 | `memory_review` | Memory tools |
 | `dynamic_ui` | Dynamic interfaces and cards |
 | `browser` | Browser |
+
+The Ubuntu terminal (`terminal`, `terminal_wait` and the rest) is built into the app, not part of any package, and Orbit always has it.
 
 Always enabled does not guarantee permission for every operation or that required components are installed.
 

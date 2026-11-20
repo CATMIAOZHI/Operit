@@ -55,17 +55,26 @@ enum class ApiProviderType {
         ALIPAY_BAILING, // 支付宝百灵大模型
         DOUBAO, // 豆包（火山模型）
         NVIDIA, // NVIDIA API Catalog / NIM
-        LMSTUDIO, // LM Studio本地模型服务
-        OLLAMA, // Ollama 本地/私有部署服务（OpenAI兼容）
+        LMSTUDIO, // Retired (local model server): kept only to read existing configurations/backups.
+        OLLAMA, // Retired (local Ollama): kept only to read existing configurations/backups.
         OLLAMA_CLOUD, // Ollama 云端服务（OpenAI兼容，需要 API Key）
-        OPENAI_LOCAL, // OpenAI兼容本地模型服务
-        MNN, // Retired: retained only to deserialize existing configurations/backups.
-        LLAMA_CPP, // Retired: retained only to deserialize existing configurations/backups.
+        OPENAI_LOCAL, // Retired (local model server): kept only to read existing configurations/backups.
+        MNN, // Retired (on-device engine): kept only to read existing configurations/backups.
+        LLAMA_CPP, // Retired (on-device engine): kept only to read existing configurations/backups.
         PPINFRA, // 派欧云
         NOVITA, // Novita AI
         OTHER; // 其他提供商（自定义端点）
 
+        /** No longer offered or run; a configuration that still names one is asked to switch. */
+        val isRetired: Boolean get() = this in RETIRED
+
         companion object {
+                /** Local model support that was removed: the on-device engines and the local model servers. */
+                val RETIRED: Set<ApiProviderType> = setOf(LMSTUDIO, OLLAMA, OPENAI_LOCAL, MNN, LLAMA_CPP)
+
+                /** True for a retired provider id, whatever its case (a plugin cannot take one over). */
+                fun isRetiredId(providerTypeId: String): Boolean = fromProviderTypeId(providerTypeId)?.isRetired == true
+
                 fun fromProviderTypeId(providerTypeId: String): ApiProviderType? {
                         val normalized = providerTypeId.trim()
                         if (normalized.isEmpty()) {
@@ -190,28 +199,20 @@ data class ModelConfigData(
         val enableSummaryDialogueReview: Boolean = true,
         val summaryDialogueReviewTitle: String = "",
 
-        // MNN特定配置
-        // 注意：MNN模型路径会根据modelName自动构建，不需要单独存储
-        val mnnForwardType: Int = 0, // 前向计算类型 (CPU/GPU等)
-        val mnnThreadCount: Int = 4, // 推理线程数
-
-        // llama.cpp 特定配置
-        val llamaThreadCount: Int = 4, // 推理线程数
-        val llamaContextSize: Int = 2048, // n_ctx
-        val llamaBatchSize: Int = 512, // n_batch
-        val llamaUBatchSize: Int = 512, // n_ubatch
-        val llamaGpuLayers: Int = 0, // n_gpu_layers
-        val llamaUseMmap: Boolean = false, // Android上默认关闭，减少mmap导致的兼容性问题
-        val llamaFlashAttention: Boolean = false, // Android上默认关闭，更接近PocketPal安全值
-        val llamaKvUnified: Boolean = true, // 单并发聊天默认开启统一KV缓存
-        val llamaOffloadKqv: Boolean = false, // 仅在启用GPU层时有意义
-
         // 旧版配置级多模态开关；没有单模型配置时继续作为兼容回退值
         val enableDirectImageProcessing: Boolean = false, // 是否启用直接图片处理
         val enableDirectAudioProcessing: Boolean = false, // 是否启用直接音频处理
         val enableDirectVideoProcessing: Boolean = false, // 是否启用直接视频处理
         val modelMultimodalCapabilities: Map<String, ModelMultimodalCapabilities> = emptyMap(),
         val modelProtocolSettings: Map<String, ModelProtocolSettings> = emptyMap(),
+        /** Each model's context window and longest reply; see [ModelLimits]. */
+        val modelLimits: Map<String, ModelLimits> = emptyMap(),
+        /**
+         * Models whose picture, audio and video switches are settled, by the catalog or by hand;
+         * automatic matching leaves them alone. Null for a configuration saved before this was
+         * kept; see [settledModels].
+         */
+        val settledCapabilityModels: Set<String>? = null,
 
         // Gemini特定配置
         val enableGoogleSearch: Boolean = false, // 是否启用Google Search Grounding (仅Gemini支持)
@@ -239,6 +240,10 @@ data class ModelConfigSummary(
         val modelIndex: Int = 0, // 当modelName包含多个模型（逗号分隔）时，选择第几个模型（从0开始）
         val modelProtocolSettings: Map<String, ModelProtocolSettings> = emptyMap(),
 )
+
+/** Configs that can still serve requests; retired local providers stay listed only for editing. */
+fun List<ModelConfigSummary>.selectableForBinding(): List<ModelConfigSummary> =
+    filterNot { ApiProviderType.isRetiredId(it.apiProviderTypeId) }
 
 /** 从逗号分隔的模型名称字符串中根据索引获取具体模型 */
 fun getModelByIndex(modelName: String, index: Int): String {
@@ -322,8 +327,10 @@ fun ModelConfigData.forSelectedModel(modelIndex: Int): ModelConfigData {
 /** 更新模型列表，并让新增模型的图片、音频、视频能力默认关闭。 */
 fun ModelConfigData.withModelNames(updatedModelNames: String): ModelConfigData {
     val existingModelNames = getModelList(modelName).toSet()
+    val updatedList = getModelList(updatedModelNames)
+    val updatedSet = updatedList.toSet()
     val updatedCapabilities =
-        getModelList(updatedModelNames).associateWith { updatedModelName ->
+        updatedList.associateWith { updatedModelName ->
             if (updatedModelName in existingModelNames) {
                 multimodalCapabilitiesForModel(updatedModelName)
             } else {
@@ -333,9 +340,24 @@ fun ModelConfigData.withModelNames(updatedModelNames: String): ModelConfigData {
     return copy(
         modelName = updatedModelNames,
         modelMultimodalCapabilities = updatedCapabilities,
-        modelProtocolSettings = modelProtocolSettings.filterKeys { it in getModelList(updatedModelNames) },
+        modelProtocolSettings = modelProtocolSettings.filterKeys { it in updatedSet },
+        modelLimits = modelLimits.filterKeys { it in updatedSet },
+        settledCapabilityModels = settledModels().filterTo(mutableSetOf()) { it in updatedSet },
     )
 }
+
+/**
+ * The models whose inputs automatic matching leaves alone; see
+ * [ModelConfigData.settledCapabilityModels]. A configuration saved before these were kept counts
+ * every model with its own inputs as settled, or all of them while it only has the old
+ * configuration-wide switches.
+ */
+fun ModelConfigData.settledModels(): Set<String> =
+    settledCapabilityModels
+        ?: if (modelMultimodalCapabilities.isEmpty()) getModelList(modelName).toSet()
+        else modelMultimodalCapabilities.keys
+
+fun ModelConfigData.capabilitiesSettled(model: String): Boolean = model.trim() in settledModels()
 
 private fun ModelConfigData.updateAllModelMultimodalCapabilities(
     transform: (ModelMultimodalCapabilities) -> ModelMultimodalCapabilities,
@@ -352,6 +374,8 @@ fun ModelConfigData.withDirectImageProcessingForAllModels(enabled: Boolean): Mod
         enableDirectImageProcessing = enabled,
         modelMultimodalCapabilities =
             updateAllModelMultimodalCapabilities { it.copy(image = enabled) },
+        // Set by hand for every model, so automatic matching leaves them alone.
+        settledCapabilityModels = getModelList(modelName).toSet(),
     )
 
 /** 兼容旧调用方：把配置级音频开关应用到当前配置内的全部模型。 */
@@ -360,6 +384,8 @@ fun ModelConfigData.withDirectAudioProcessingForAllModels(enabled: Boolean): Mod
         enableDirectAudioProcessing = enabled,
         modelMultimodalCapabilities =
             updateAllModelMultimodalCapabilities { it.copy(audio = enabled) },
+        // Set by hand for every model, so automatic matching leaves them alone.
+        settledCapabilityModels = getModelList(modelName).toSet(),
     )
 
 /** 兼容旧调用方：把配置级视频开关应用到当前配置内的全部模型。 */
@@ -368,6 +394,8 @@ fun ModelConfigData.withDirectVideoProcessingForAllModels(enabled: Boolean): Mod
         enableDirectVideoProcessing = enabled,
         modelMultimodalCapabilities =
             updateAllModelMultimodalCapabilities { it.copy(video = enabled) },
+        // Set by hand for every model, so automatic matching leaves them alone.
+        settledCapabilityModels = getModelList(modelName).toSet(),
     )
 
 /** 规范化 provider ID：trim + 小写 */

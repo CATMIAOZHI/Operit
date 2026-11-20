@@ -5,8 +5,6 @@ import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
 import com.ai.assistance.operit.features.reading.ReadingCompanionSubagentTools
 import com.ai.assistance.operit.ui.permissions.ToolPermissionDecision
-import com.ai.assistance.operit.core.tools.climode.CliToolModeSupport
-import com.ai.assistance.operit.core.tools.climode.ToolExposureMode
 import com.ai.assistance.operit.core.tools.defaultTool.ToolGetter
 import com.ai.assistance.operit.core.tools.defaultTool.standard.TaskToolExecutor
 import com.ai.assistance.operit.core.tools.defaultTool.standard.StandardWebVisitTool
@@ -226,7 +224,6 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
 
     fun parseProxyInvocation(
         tool: AITool,
-        requireQualifiedTarget: Boolean
     ): Pair<ParsedProxyInvocation?, ToolResult?> {
         val allowedParamNames = setOf("tool_name", "params") + packageContextParamNames
         val unknownParamNames = tool.parameters.map { it.name }.filter { it !in allowedParamNames }
@@ -252,7 +249,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
             )
         }
 
-        if (requireQualifiedTarget && !targetToolName.contains(':')) {
+        if (!targetToolName.contains(':')) {
             return null to buildToolErrorResult(
                 tool,
                 "tool_name must use packageName:toolName format"
@@ -306,122 +303,21 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
         ) to null
     }
 
-    fun resolveCurrentRoleCardToolAccess(): ResolvedCharacterCardToolAccess {
-        val runtimeContext = ToolExecutionManager.currentToolRuntimeContext()
-        return runBlocking {
-            CharacterCardToolAccessResolver
-                .getInstance(context)
-                .resolve(
-                    roleCardId = runtimeContext?.callerCardId,
-                    packageManager = handler.getOrCreatePackageManager()
-                )
+    // A follow-up let through unreviewed as the app's own package tool runs only on that package's
+    // executor: the one the proxy has just picked, which is the one it runs.
+    fun proxiedSourceChanged(targetToolName: String, executor: ToolExecutor): ToolResult? {
+        val runtime = ToolExecutionManager.currentToolRuntimeContext() ?: return null
+        val targetId = runtime.callId ?: "${runtime.timingScopeId}:${runtime.invocationIndex ?: -1}"
+        if (handler.getToolPermissionSystem().orbitDefaultAllowStillHolds(targetToolName, targetId, executor)) {
+            return null
         }
-    }
-
-    fun isProxyTargetAllowedForRoleCard(
-        targetToolName: String,
-        forwardedParameters: List<ToolParameter>,
-        roleCardToolAccess: ResolvedCharacterCardToolAccess
-    ): Boolean {
-        val usePackageSourceName =
-            if (targetToolName == "use_package") {
-                forwardedParameters
-                    .firstOrNull { it.name == "package_name" }
-                    ?.value
-                    ?.trim()
-                    .orEmpty()
-                    .ifBlank { null }
-            } else {
-                null
-            }
-
-        return CliToolModeSupport.isToolNameAllowedForRoleCard(
-            toolName = targetToolName,
-            usePackageSourceName = usePackageSourceName,
-            roleCardToolAccess = roleCardToolAccess
-        )
-    }
-
-    suspend fun executeProxyTargetWithPermissionCheck(
-        targetToolName: String,
-        forwardedParameters: List<ToolParameter>,
-        useEnglish: Boolean,
-        conversationLabel: String? = null
-    ): ToolResult {
-        val executor = handler.getToolExecutorOrActivate(targetToolName)
-        if (executor == null) {
-            return ToolResult(
-                toolName = targetToolName,
-                success = false,
-                result = StringResultData(""),
-                error = CliToolModeSupport.buildProxyTargetUnavailableMessage(targetToolName, useEnglish)
-            )
-        }
-
-        // The binding-time classification can go stale within a batch: an earlier invocation may
-        // have disabled the JavaScript package, and auto-activation may then select an MCP
-        // executor for the same qualified name. Reserved host context must never reach anything
-        // but a marked JavaScript package executor, so strip it once more after the final
-        // executor is chosen.
-        val finalForwardedParameters =
-            if (executor is JsPackageToolExecutorMarker) {
-                forwardedParameters
-            } else {
-                forwardedParameters.filterNot { it.name in packageContextParamNames }
-            }
-        val proxiedTool = AITool(
-            name = targetToolName,
-            parameters = finalForwardedParameters
-        )
-
-        val runtimeContext = ToolExecutionManager.currentToolRuntimeContext()
-        val permissionDecision =
-            if (runtimeContext?.permissionCheckedToolName == targetToolName) {
-                ToolPermissionDecision.Allowed
-            } else {
-                handler.getToolPermissionSystem().checkToolPermission(
-                tool = proxiedTool,
-                conversationLabel = conversationLabel ?: runtimeContext?.conversationLabel,
-                workspacePath = runtimeContext?.workspacePath,
-                workspaceEnv = runtimeContext?.workspaceEnv,
-                callerChatId = runtimeContext?.callerChatId,
-                parentModelConfigId = runtimeContext?.parentModelConfigId,
-                parentModelIndex = runtimeContext?.parentModelIndex,
-                timingScopeId = runtimeContext?.timingScopeId,
-                targetId = runtimeContext?.callId,
-                invocationIndex = runtimeContext?.invocationIndex ?: -1,
-                batchPosition = runtimeContext?.batchPosition ?: 1,
-                batchSize = runtimeContext?.batchSize ?: 1,
-                )
-            }
-        if (permissionDecision is ToolPermissionDecision.Denied) {
-            val errorMessage = permissionDecision.rejection
-            handler.notifyToolPermissionChecked(
-                proxiedTool,
-                granted = false,
-                reason = errorMessage
-            )
-            return ToolResult(
-                toolName = targetToolName,
-                success = false,
-                result = StringResultData(""),
-                error = errorMessage,
-                interruptTurn = permissionDecision.interruptTurn,
-            )
-        }
-
-        handler.notifyToolPermissionChecked(proxiedTool, granted = true)
-        // Execute the already-resolved executor instead of re-resolving: the marker
-        // classification above is only valid for the exact executor instance it was made
-        // against, and a re-resolution could replace it with an MCP executor between the
-        // classification and the invocation.
-        val proxiedResult = handler.executeToolWithExecutorSuspending(proxiedTool, executor)
         return ToolResult(
             toolName = targetToolName,
-            success = proxiedResult.success,
-            result = proxiedResult.result,
-            error = proxiedResult.error,
-            interruptTurn = proxiedResult.interruptTurn,
+            success = false,
+            result = StringResultData(""),
+            error = "Not run: $targetToolName was allowed as the app's built-in package tool, " +
+                "but it now resolves to another source with the same name (such as an MCP server). " +
+                "Call it again; that call goes through permission review.",
         )
     }
 
@@ -590,6 +486,9 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 terminalTool.getSessionScreen(tool)
             }
     )
+
+    // The Ubuntu terminal the model uses (once the super_admin package's terminal tools).
+    TerminalTools.register(handler, context)
 
     // 音乐播放工具
     val musicPlaybackTools = ToolGetter.getMusicPlaybackTools(context)
@@ -1138,146 +1037,6 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
             }
     )
 
-    handler.registerTool(
-            name = CliToolModeSupport.SEARCH_TOOL_NAME,
-            descriptionGenerator = { tool ->
-                val query = tool.parameters.find { it.name == "query" }?.value ?: ""
-                "Search hidden tool catalog: $query"
-            },
-            executor = { tool ->
-                val useEnglish = isEnglishLanguage()
-                val runtimeContext = ToolExecutionManager.currentToolRuntimeContext()
-                if (runtimeContext?.toolExposureMode != ToolExposureMode.CLI) {
-                    return@registerTool ToolResult(
-                        toolName = tool.name,
-                        success = false,
-                        result = StringResultData(""),
-                        error = CliToolModeSupport.buildCliModeUnavailableMessage(useEnglish)
-                    )
-                }
-
-                val query = tool.parameters
-                    .firstOrNull { it.name == "query" }
-                    ?.value
-                    ?.trim()
-                    .orEmpty()
-                if (query.isBlank()) {
-                    return@registerTool buildToolErrorResult(tool, "Missing required parameter: query")
-                }
-
-                val limit = tool.parameters
-                    .firstOrNull { it.name == "limit" }
-                    ?.value
-                    ?.trim()
-                    ?.takeIf { it.isNotEmpty() }
-                    ?.toIntOrNull()
-                    ?: CliToolModeSupport.defaultSearchLimit()
-
-                val roleCardToolAccess = resolveCurrentRoleCardToolAccess()
-                val hiddenCatalog = runBlocking {
-                    CliToolModeSupport.buildHiddenToolCatalog(
-                        context = context,
-                        packageManager = handler.getOrCreatePackageManager(),
-                        roleCardToolAccess = roleCardToolAccess,
-                        useEnglish = useEnglish,
-                        includeSubagentTools = runtimeContext?.isSubagent != true ||
-                            com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(context).isAgent(runtimeContext?.callerChatId),
-                        collaborationVisibility =
-                            com.ai.assistance.operit.core.agent.collaboration.CollaborationToolPolicy.visibility(context, runtimeContext?.callerChatId, runtimeContext?.isSubagent == true),
-                    )
-                }
-                val results = CliToolModeSupport.searchHiddenToolCatalog(
-                    catalog = hiddenCatalog,
-                    query = query,
-                    limit = limit
-                )
-                val searchText = CliToolModeSupport.formatSearchResults(query, results, useEnglish)
-                // Orbit does not use the main app's attached repositories.
-                val inOrbit = runBlocking {
-                    try {
-                        com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context, runtimeContext?.callerChatId) != null
-                    } catch (e: kotlinx.coroutines.CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        true
-                    }
-                }
-                ToolResult(
-                    toolName = tool.name,
-                    success = true,
-                    result = StringResultData(
-                        if (inOrbit) com.ai.assistance.operit.core.config.SystemToolPrompts.withoutRepoEnvironment(searchText) else searchText
-                    )
-                )
-            }
-    )
-
-    handler.registerSuspendTool(
-            name = CliToolModeSupport.PROXY_TOOL_NAME,
-            descriptionGenerator = { tool ->
-                val targetToolName = tool.parameters.find { it.name == "tool_name" }?.value ?: ""
-                "Proxy call to hidden tool: $targetToolName"
-            },
-            executor = { tool ->
-                val useEnglish = isEnglishLanguage()
-                val runtimeContext = ToolExecutionManager.currentToolRuntimeContext()
-                if (runtimeContext?.toolExposureMode != ToolExposureMode.CLI) {
-                    return@registerSuspendTool ToolResult(
-                        toolName = tool.name,
-                        success = false,
-                        result = StringResultData(""),
-                        error = CliToolModeSupport.buildCliModeUnavailableMessage(useEnglish)
-                    )
-                }
-
-                val (parsedInvocation, parseError) = parseProxyInvocation(
-                    tool = tool,
-                    requireQualifiedTarget = false
-                )
-                if (parseError != null) {
-                    return@registerSuspendTool parseError
-                }
-                val resolvedInvocation = parsedInvocation ?: return@registerSuspendTool buildToolErrorResult(
-                    tool,
-                    "Missing required parameter: tool_name"
-                )
-
-                if (CliToolModeSupport.isReservedProxyTarget(resolvedInvocation.targetToolName)) {
-                    return@registerSuspendTool ToolResult(
-                        toolName = tool.name,
-                        success = false,
-                        result = StringResultData(""),
-                        error = CliToolModeSupport.buildReservedProxyTargetMessage(
-                            resolvedInvocation.targetToolName,
-                            useEnglish
-                        )
-                    )
-                }
-
-                val roleCardToolAccess = resolveCurrentRoleCardToolAccess()
-                if (!isProxyTargetAllowedForRoleCard(
-                        targetToolName = resolvedInvocation.targetToolName,
-                        forwardedParameters = resolvedInvocation.forwardedParameters,
-                        roleCardToolAccess = roleCardToolAccess
-                    )
-                ) {
-                    return@registerSuspendTool ToolResult(
-                        toolName = resolvedInvocation.targetToolName,
-                        success = false,
-                        result = StringResultData(""),
-                        error = CliToolModeSupport.buildRoleAccessDeniedMessage(useEnglish)
-                    )
-                }
-
-                executeProxyTargetWithPermissionCheck(
-                    targetToolName = resolvedInvocation.targetToolName,
-                    forwardedParameters = resolvedInvocation.forwardedParameters,
-                    useEnglish = useEnglish,
-                    conversationLabel = runtimeContext.conversationLabel
-                )
-            }
-    )
-
     handler.registerSuspendTool(
             name = "package_proxy",
             descriptionGenerator = { tool ->
@@ -1285,10 +1044,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 "Proxy call to package tool: $targetToolName"
             },
             executor = { tool ->
-                val (parsedInvocation, parseError) = parseProxyInvocation(
-                    tool = tool,
-                    requireQualifiedTarget = true
-                )
+                val (parsedInvocation, parseError) = parseProxyInvocation(tool)
                 if (parseError != null) {
                     return@registerSuspendTool parseError
                 }
@@ -1296,7 +1052,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                     tool,
                     "Missing required parameter: tool_name"
                 )
-                if (resolvedInvocation.targetToolName == CliToolModeSupport.PACKAGE_PROXY_TOOL_NAME) {
+                if (resolvedInvocation.targetToolName == "package_proxy") {
                     return@registerSuspendTool buildToolErrorResult(tool, "tool_name cannot be package_proxy")
                 }
 
@@ -1304,11 +1060,9 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 if (targetExecutor == null) {
                     return@registerSuspendTool buildToolErrorResult(
                         tool,
-                        CliToolModeSupport.buildProxyTargetUnavailableMessage(
-                            resolvedInvocation.targetToolName,
-                            isEnglishLanguage(),
-                            cliMode = ToolExecutionManager.currentToolRuntimeContext()?.toolExposureMode == ToolExposureMode.CLI,
-                        )
+                        "No package tool '${resolvedInvocation.targetToolName}'. package_proxy only calls package tools " +
+                            "(packageName:toolName) of a package in use. Built-in tools from your tool list are called " +
+                            "directly by their own name, with options such as action as parameters."
                     )
                 }
 
@@ -1329,6 +1083,8 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                     name = resolvedInvocation.targetToolName,
                     parameters = finalForwardedParameters
                 )
+                proxiedSourceChanged(resolvedInvocation.targetToolName, targetExecutor)
+                    ?.let { return@registerSuspendTool it }
                 // Execute the already-resolved executor instead of re-resolving: the marker
                 // classification above is only valid for the exact executor instance it was made
                 // against, and a re-resolution could replace it with an MCP executor between the

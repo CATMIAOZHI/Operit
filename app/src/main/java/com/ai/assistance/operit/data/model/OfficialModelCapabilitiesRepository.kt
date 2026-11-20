@@ -6,6 +6,7 @@ import com.ai.assistance.operit.BuildConfig
 import java.io.File
 import java.io.IOException
 import java.io.InterruptedIOException
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -25,22 +26,34 @@ class OfficialModelCapabilitiesRepository(
     private val cacheWriter: (File, ByteArray) -> Unit = ::writeAtomically,
     private val fallbackUrl: String = defaultRemoteUrl(),
 ) {
-    private val lock = Mutex()
-    private val updatedAtMutable = MutableStateFlow<Long?>(null)
-    val updatedAt = updatedAtMutable.asStateFlow()
-    @Volatile
-    private var inMemoryCatalog: OfficialModelCapabilitiesCatalog? = null
+    // Shared by every instance on the same cache file, so a refresh in the background reaches an
+    // open settings page and the catalog is parsed once per process.
+    private val shared = sharedStates.getOrPut(cacheFile().absolutePath) { SharedState() }
+    private val lock get() = shared.lock
+    private val updatedAtMutable get() = shared.updatedAt
+    val updatedAt = shared.updatedAt.asStateFlow()
+    private var inMemoryCatalog: OfficialModelCapabilitiesCatalog?
+        get() = shared.catalog
+        set(value) { shared.catalog = value }
 
-    suspend fun loadCatalog(): OfficialModelCapabilitiesCatalog =
-        withContext(Dispatchers.IO) {
-            inMemoryCatalog ?: lock.withLock {
+    suspend fun loadCatalog(): OfficialModelCapabilitiesCatalog {
+        inMemoryCatalog?.let { return it }
+        return withContext(Dispatchers.IO) {
+            lock.withLock {
                 inMemoryCatalog ?: loadLocalCatalog().also { inMemoryCatalog = it }
             }
         }
+    }
 
+    /**
+     * Downloads the newest catalog. Local reads are not held up by the download; refreshes run one
+     * at a time, and one that waited for another to finish takes that one's result.
+     */
     suspend fun refreshCatalog(): OfficialModelCapabilitiesCatalog =
         withContext(Dispatchers.IO) {
-            lock.withLock {
+            val seen = shared.refreshes
+            shared.refreshLock.withLock {
+                if (shared.refreshes != seen) inMemoryCatalog?.let { return@withLock it }
                 val bytes = try {
                     fetchRemoteBytes(sourceUrl)
                 } catch (error: InterruptedIOException) {
@@ -51,10 +64,15 @@ class OfficialModelCapabilitiesRepository(
                     OfficialModelCapabilitiesCatalog.parse(
                         bytes.toString(Charsets.UTF_8)
                     )
+                // A copy from before limits were kept would leave every model without them.
+                require(catalog.hasLimits) { "Official model catalog has no model limits" }
                 currentCoroutineContext().ensureActive()
-                writeCache(bytes)
-                inMemoryCatalog = catalog
-                updatedAtMutable.value = cacheFile().lastModified()
+                lock.withLock {
+                    writeCache(bytes)
+                    inMemoryCatalog = catalog
+                    updatedAtMutable.value = cacheFile().lastModified()
+                }
+                shared.refreshes++
                 catalog
             }
         }
@@ -69,6 +87,8 @@ class OfficialModelCapabilitiesRepository(
                 }
                 OfficialModelCapabilitiesCatalog.parse(file.readText(Charsets.UTF_8))
             }.getOrNull()
+                // A cache from before limits were kept loses to the bundled copy, which has them.
+                ?.takeIf { it.hasLimits }
         updatedAtMutable.value = if (cached != null) cacheFile().lastModified() else null
         return cached ?: context.assets.open(BUNDLED_PATH).use { input ->
             OfficialModelCapabilitiesCatalog.parse(
@@ -110,10 +130,25 @@ class OfficialModelCapabilitiesRepository(
         cacheWriter(file, bytes)
     }
 
+    /** When the refreshed copy was written, or null with none; read without parsing it. */
+    fun localVersion(): Long? = cacheFile().takeIf { it.isFile }?.lastModified()
+
     private fun cacheFile(): File =
         File(context.noBackupFilesDir, "$CACHE_DIR/$CACHE_FILE")
 
     companion object {
+        private class SharedState {
+            val lock = Mutex()
+            val refreshLock = Mutex()
+            @Volatile
+            var refreshes = 0
+            val updatedAt = MutableStateFlow<Long?>(null)
+            @Volatile
+            var catalog: OfficialModelCapabilitiesCatalog? = null
+        }
+
+        private val sharedStates = ConcurrentHashMap<String, SharedState>()
+
         const val LIVE_URL = "https://models.dev/models.json"
         const val MAIN_REMOTE_URL =
             "https://raw.githubusercontent.com/CATMIAOZHI/orbit/main/" +

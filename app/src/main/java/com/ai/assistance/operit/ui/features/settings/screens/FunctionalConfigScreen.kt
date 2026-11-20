@@ -31,6 +31,7 @@ import com.ai.assistance.operit.core.chat.hooks.PromptTurn
 import com.ai.assistance.operit.core.chat.hooks.PromptTurnKind
 import com.ai.assistance.operit.core.chat.hooks.toPromptTurns
 import com.ai.assistance.operit.data.model.FunctionType
+import com.ai.assistance.operit.data.model.selectableForBinding
 import com.ai.assistance.operit.data.model.ModelConfigSummary
 import com.ai.assistance.operit.data.model.forSelectedModel
 import com.ai.assistance.operit.data.model.getModelByIndex
@@ -84,6 +85,8 @@ fun FunctionalConfigScreen(
 
     // 配置摘要列表
     val configSummaries by modelConfigManager.configSummariesFlow.collectAsState(initial = emptyList())
+    // Retired local providers stay editable in config management but can't be bound.
+    val selectableConfigs = remember(configSummaries) { configSummaries.selectableForBinding() }
 
     // UI状态
     var isLoading by remember { mutableStateOf(true) }
@@ -151,7 +154,7 @@ fun FunctionalConfigScreen(
                             selectedModelName = currentConfigMapping.modelName,
                             currentThinkingQualityLevel =
                                 currentConfigMapping.thinkingQualityLevel,
-                            availableConfigs = configSummaries,
+                            availableConfigs = selectableConfigs,
                             onConfigSelected = { configId, modelIndex ->
                                 scope.launch {
                                     functionalConfigManager.setConfigForFunction(
@@ -546,7 +549,7 @@ fun FunctionConfigCard(
                                                             append(context.getString(R.string.conversation_analyze_image_prompt))
                                                         }
                                                     val parameters =
-                                                        modelConfigManager.getModelParametersForConfig(configWithSelectedModel.id)
+                                                        modelConfigManager.getModelParametersForConfigSnapshot(configWithSelectedModel)
                                                     val buffer = StringBuilder()
                                                     service.sendMessage(
                                                         context,
@@ -576,7 +579,7 @@ fun FunctionConfigCard(
                                                             append(context.getString(R.string.conversation_analyze_audio_prompt))
                                                         }
                                                     val parameters =
-                                                        modelConfigManager.getModelParametersForConfig(configWithSelectedModel.id)
+                                                        modelConfigManager.getModelParametersForConfigSnapshot(configWithSelectedModel)
                                                     val buffer = StringBuilder()
                                                     service.sendMessage(
                                                         context,
@@ -606,7 +609,7 @@ fun FunctionConfigCard(
                                                             append(context.getString(R.string.conversation_analyze_video_prompt))
                                                         }
                                                     val parameters =
-                                                        modelConfigManager.getModelParametersForConfig(configWithSelectedModel.id)
+                                                        modelConfigManager.getModelParametersForConfigSnapshot(configWithSelectedModel)
                                                     val buffer = StringBuilder()
                                                     service.sendMessage(
                                                         context,
@@ -624,7 +627,7 @@ fun FunctionConfigCard(
                                                     val userPrompt =
                                                         context.getString(R.string.functional_config_test_ui_controller_prompt)
                                                     val parameters =
-                                                        modelConfigManager.getModelParametersForConfig(configWithSelectedModel.id)
+                                                        modelConfigManager.getModelParametersForConfigSnapshot(configWithSelectedModel)
                                                     val buffer = StringBuilder()
                                                     service.sendMessage(
                                                         context,
@@ -654,7 +657,7 @@ fun FunctionConfigCard(
                                                     val userPrompt =
                                                         context.getString(R.string.functional_config_test_memory_prompt)
                                                     val parameters =
-                                                        modelConfigManager.getModelParametersForConfig(configWithSelectedModel.id)
+                                                        modelConfigManager.getModelParametersForConfigSnapshot(configWithSelectedModel)
                                                     val buffer = StringBuilder()
                                                     service.sendMessage(
                                                         context,
@@ -671,7 +674,7 @@ fun FunctionConfigCard(
                                                 }
                                                 FunctionType.CHAT -> {
                                                     val parameters =
-                                                        modelConfigManager.getModelParametersForConfig(configWithSelectedModel.id)
+                                                        modelConfigManager.getModelParametersForConfigSnapshot(configWithSelectedModel)
                                                     val buffer = StringBuilder()
                                                     service.sendMessage(
                                                         context,
@@ -686,7 +689,7 @@ fun FunctionConfigCard(
                                                 }
                                                 FunctionType.ROLE_RESPONSE_PLANNER -> {
                                                     val parameters =
-                                                        modelConfigManager.getModelParametersForConfig(configWithSelectedModel.id)
+                                                        modelConfigManager.getModelParametersForConfigSnapshot(configWithSelectedModel)
                                                     val prompt =
                                                         "Connection test: return {\"order\":[{\"id\":\"test\",\"speak\":true}]} only."
                                                     val buffer = StringBuilder()
@@ -703,7 +706,7 @@ fun FunctionConfigCard(
                                                 }
                                                 FunctionType.PERMISSION_REVIEWER -> {
                                                     val parameters =
-                                                        modelConfigManager.getModelParametersForConfig(configWithSelectedModel.id)
+                                                        modelConfigManager.getModelParametersForConfigSnapshot(configWithSelectedModel)
                                                     val compatibilityReviewId = "compat-test-review-id"
                                                     val prompt =
                                                         "Compatibility test: call ${PermissionReviewSubmissionTool.NAME} " +
@@ -740,7 +743,7 @@ fun FunctionConfigCard(
                                                 }
                                                 FunctionType.PERMISSION_RISK_SCORER -> {
                                                     val parameters =
-                                                        modelConfigManager.getModelParametersForConfig(configWithSelectedModel.id)
+                                                        modelConfigManager.getModelParametersForConfigSnapshot(configWithSelectedModel)
                                                     val buffer = StringBuilder()
                                                     service.sendMessage(
                                                         context,

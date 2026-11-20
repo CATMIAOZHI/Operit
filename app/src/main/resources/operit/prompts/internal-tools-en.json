@@ -3250,7 +3250,7 @@
           {
             "name": "api_provider_type",
             "type": "string",
-            "description": "optional, provider enum name (e.g. OPENAI_GENERIC/OPENAI_LOCAL/OPENAI_RESPONSES_GENERIC/DEEPSEEK/MIMO/GEMINI_GENERIC/LMSTUDIO/OLLAMA/MNN/LLAMA_CPP)",
+            "description": "optional, provider enum name (e.g. OPENAI_GENERIC/OPENAI_RESPONSES_GENERIC/DEEPSEEK/MIMO/GEMINI_GENERIC/OLLAMA_CLOUD)",
             "required": false,
             "default": null
           },
@@ -3603,41 +3603,6 @@
             "name": "enable_tool_call",
             "type": "boolean",
             "description": "optional, enable provider-native tool call",
-            "required": false,
-            "default": null
-          },
-          {
-            "name": "mnn_forward_type",
-            "type": "integer",
-            "description": "optional, MNN forward type",
-            "required": false,
-            "default": null
-          },
-          {
-            "name": "mnn_thread_count",
-            "type": "integer",
-            "description": "optional, MNN thread count",
-            "required": false,
-            "default": null
-          },
-          {
-            "name": "llama_thread_count",
-            "type": "integer",
-            "description": "optional, llama.cpp thread count",
-            "required": false,
-            "default": null
-          },
-          {
-            "name": "llama_context_size",
-            "type": "integer",
-            "description": "optional, llama.cpp context size",
-            "required": false,
-            "default": null
-          },
-          {
-            "name": "llama_gpu_layers",
-            "type": "integer",
-            "description": "optional, llama.cpp GPU layer count",
             "required": false,
             "default": null
           },

@@ -262,13 +262,35 @@ class OfficialModelCapabilitiesRepositoryTest {
         }
     }
 
+    @Test
+    fun `cache from before limits were kept loses to the bundled catalog`() = runBlocking {
+        val temp = Files.createTempDirectory("capability-old-cache").toFile()
+        val file = temp.resolve("operit/model_catalog/model_capabilities_v1.json")
+        file.parentFile?.mkdirs()
+        file.writeText("""{"vendor/old": {"name": "Old", "modalities": {"input": ["text"]}}}""")
+        val context = mock<Context>()
+        val assets = mock<AssetManager>()
+        whenever(context.noBackupFilesDir).thenReturn(temp)
+        whenever(context.assets).thenReturn(assets)
+        whenever(assets.open("model_catalog/model_capabilities_v1.json"))
+            .thenAnswer { ByteArrayInputStream(bundledCatalog.toByteArray()) }
+        try {
+            val repository = OfficialModelCapabilitiesRepository(context, OkHttpClient())
+            assertEquals("vendor/bundled", repository.loadCatalog().models.single().officialModelId)
+            assertEquals(null, repository.updatedAt.value)
+        } finally {
+            temp.deleteRecursively()
+        }
+    }
+
     private val bundledCatalog =
         """
         {
           "vendor/bundled": {
             "name": "Bundled",
             "family": "test",
-            "modalities": {"input": ["text"]}
+            "modalities": {"input": ["text"]},
+            "limit": {"context": 128000, "output": 8192}
           }
         }
         """.trimIndent()
@@ -279,7 +301,8 @@ class OfficialModelCapabilitiesRepositoryTest {
           "vendor/refreshed": {
             "name": "Refreshed",
             "family": "test",
-            "modalities": {"input": ["text", "image"]}
+            "modalities": {"input": ["text", "image"]},
+            "limit": {"context": 200000, "output": 64000}
           }
         }
         """.trimIndent()

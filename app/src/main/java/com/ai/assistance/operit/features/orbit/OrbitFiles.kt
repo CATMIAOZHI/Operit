@@ -44,6 +44,34 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
     }
 
     /**
+     * Whether [path] is one of the user's own documents: anything under files/, or reached through a
+     * link into it, whether the link is the file or a folder above it (a delete or rewrite changes the
+     * entry in that real folder). Of files/ only the [hooks] scripts tasks registered are Orbit's own,
+     * and only as the very file at that place. Unknown counts as a document, so it is left alone.
+     */
+    fun isUserDocument(path: String, hooks: Set<String> = emptySet()): Boolean = runCatching {
+        val p = normalize(path)
+        val documents = File(root, "files").canonicalFile.toPath()
+        val file = File(root, p)
+        val target = file.canonicalFile.toPath()
+        val folder = file.parentFile.canonicalFile.toPath()
+        if (p in hooks && target == documents.resolve(p.removePrefix("files/"))) return@runCatching false
+        p.startsWith("files/") || target.startsWith(documents) || folder.startsWith(documents)
+    }.getOrDefault(true)
+
+    /**
+     * The text the editor opens, read once under the lock: a file not there yet opens as its template;
+     * one too big or not UTF-8 fails, so text decoded wrongly can never be saved back over it.
+     */
+    suspend fun readForEditor(path: String): String = io {
+        val p = normalize(path)
+        require(allowed(p)) { notOrbitFile(path, p) }
+        val f = inside(File(root, p))
+        if (!f.isFile) return@io template(p) ?: error("No such file: $p")
+        OrbitTextFiles.readEditable(f) ?: throw java.io.IOException("$p is too big or not UTF-8 to edit here")
+    }
+
+    /**
      * Refuses a file that a link would take outside Orbit's folder: checks the file if it exists,
      * otherwise the nearest folder above it that does, so a linked folder is caught too.
      * Sent chat copies (sent/) are only reachable with [sent], and only through a real sent/ folder,
@@ -175,6 +203,15 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         f.readText()
     }
 
+    /**
+     * The start of the lessons book, enough for [lessonsForPrompt] to tell whether it is over the
+     * size every chat carries; a book of any size is read only this far, so it is never left out.
+     */
+    suspend fun lessonsHead(): String = io {
+        val f = inside(File(root, LESSONS))
+        if (f.isFile) readHead(f, LESSONS_HEAD_CHARS) else template(LESSONS).orEmpty()
+    }
+
     /** Library pins: files/ paths the user keeps at the top of the Library, newest pin first. */
     suspend fun pins(): List<String> = io { readPins() }
 
@@ -206,20 +243,45 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         val existed: Boolean = before != null,
     )
 
-    suspend fun write(path: String, text: String): Written = io {
+    suspend fun write(path: String, text: String): Written = io { writeNow(path, text) }
+
+    private fun writeNow(path: String, text: String): Written {
         val p = writable(path)
         require(text.length <= MAX_TEXT) { "Text is longer than $MAX_TEXT characters" }
-        // Every chat carries the synthesis in full, so it must fit what the prompt takes.
-        require(p != ALIGNMENT || text.length <= MAX_ALIGNMENT_PROMPT) {
-            "$ALIGNMENT is longer than $MAX_ALIGNMENT_PROMPT characters; shorten it"
-        }
         val f = File(root, p)
         val existed = f.isFile
         // Only a text the size Orbit can write is read back to compare.
         val before = if (existed && inside(f).length() <= MAX_TEXT * 4L) f.readText() else null
+        checkPromptCap(p, before, text)
         atomic(f, text)
         afterChange(p)
-        Written(p, before, text, existed = existed)
+        return Written(p, before, text, existed = existed)
+    }
+
+    /**
+     * For forgetting: deletes [path], or rewrites it with [clean], only while it is still Orbit's own,
+     * checked under the lock together with the change: never a user document, and a hook script in
+     * files/ only while its bytes still read as what its task registered ([hooks]: path to hash).
+     * False when it was left alone.
+     */
+    suspend fun cleanOwned(path: String, hooks: Map<String, String>, delete: Boolean, clean: (String) -> String): Boolean = io {
+        val p = normalize(path)
+        val owned = hooks[p]?.let { registered ->
+            runCatching {
+                val f = inside(File(root, p))
+                f.isFile && f.length() <= MAX_TEXT * 4L &&
+                    OrbitTextFiles.readStrictUtf8(f)?.let(OrbitWatchSources::hash) == registered
+            }.getOrDefault(false)
+        } == true
+        if (isUserDocument(p, if (owned) setOf(p) else emptySet())) return@io false
+        // Gone since the scan (or never written, only its template): nothing here to clean.
+        val f = inside(File(root, p))
+        if (!f.isFile) return@io false
+        if (delete) deleteNow(path) else {
+            require(f.length() <= MAX_TEXT * 4L) { "File is too large to read" }
+            writeNow(p, clean(f.readText()))
+        }
+        true
     }
 
     /** The newest nightly review, dreams/YYYY-MM-DD.md, or null before the first one. */
@@ -238,18 +300,25 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
      * template or empty), so a background review never overwrites an edit made after it read the file.
      * Already holding [after] counts as done, which lets an interrupted apply be retried.
      */
-    suspend fun writeIfUnchanged(path: String, before: String, after: String): Written = io {
+    suspend fun writeIfUnchanged(path: String, before: String, after: String, strict: Boolean = false): Written = io {
         val p = writable(path)
         require(after.length <= MAX_TEXT) { "Text is longer than $MAX_TEXT characters" }
-        require(p != ALIGNMENT || after.length <= MAX_ALIGNMENT_PROMPT) {
-            "$ALIGNMENT is longer than $MAX_ALIGNMENT_PROMPT characters; shorten it"
+        // The editor saves only what it can open again.
+        require(!strict || after.toByteArray(Charsets.UTF_8).size <= OrbitTextFiles.EDIT_MAX_BYTES) {
+            "Text is bigger than ${OrbitTextFiles.EDIT_MAX_BYTES} bytes, the most the editor opens"
         }
         val f = File(root, p)
         val existed = f.isFile
-        val current = if (existed) inside(f).readText() else ""
+        // [strict] for the editor: a file no longer small UTF-8 counts as changed, never decoded loosely.
+        val current = when {
+            !existed -> ""
+            strict -> OrbitTextFiles.readEditable(inside(f)) ?: throw ChangedMeanwhile(p)
+            else -> inside(f).readText()
+        }
         // An apply interrupted after the write but before the index update finishes that here.
         if (current == after) return@io Written(p, current, after, existed = existed).also { afterChange(p) }
         if (current != before && !(!existed && before == template(p).orEmpty())) throw ChangedMeanwhile(p)
+        checkPromptCap(p, if (existed) current else null, after)
         atomic(f, after)
         afterChange(p)
         Written(p, if (existed) current else null, after, existed = existed)
@@ -288,10 +357,8 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         val old = if (existed) inside(f).readText() else template(p).orEmpty()
         val next = old.trimEnd() + "\n" + text.trim() + "\n"
         require(next.length <= MAX_TEXT) { "The file is full; tidy it up with write first" }
-        require(p != ALIGNMENT || next.length <= MAX_ALIGNMENT_PROMPT) {
-            "$ALIGNMENT would be longer than $MAX_ALIGNMENT_PROMPT characters; rewrite it shorter with write"
-        }
         val after = next.trimStart('\n')
+        checkPromptCap(p, if (existed) old else null, after)
         atomic(f, after)
         afterChange(p)
         val added = text.trim().let { if (it.isEmpty()) 0 else it.lines().size }
@@ -299,7 +366,9 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
     }
 
     /** Deletes a file for good. Returns its short path. */
-    suspend fun delete(path: String): String = io {
+    suspend fun delete(path: String): String = io { deleteNow(path) }
+
+    private fun deleteNow(path: String): String {
         val p = normalize(path)
         require((allowed(p) && !isIndex(p)) || isWorkspace(p)) { "This file cannot be deleted: $path" }
         val f = inside(File(root, p))
@@ -308,7 +377,7 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         require((allowed(real) && !isIndex(real)) || isWorkspace(real)) { "This file cannot be deleted: $path" }
         Files.delete(f.toPath())
         afterChange(real)
-        p
+        return p
     }
 
     /**
@@ -653,7 +722,8 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
                 "memory.md is changed only with memory_review notes."
             else -> "Not one of Orbit's files: $path"
         }
-        private val TEXT_EXTENSIONS = setOf("md", "txt", "yaml", "yml", "json", "csv", "html", "htm", "xml", "sh")
+        // Hooks are .sh or .py scripts the Orbit writes and edits as text.
+        private val TEXT_EXTENSIONS = setOf("md", "txt", "yaml", "yml", "json", "csv", "html", "htm", "xml", "sh", "py")
         private val locks = ConcurrentHashMap<String, Mutex>()
 
         // Orbit ids whose templates were written in this app run.
@@ -740,7 +810,37 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         )
         /** Longest synthesis put into the prompt; the review keeps it far shorter. */
         const val MAX_ALIGNMENT_PROMPT = 8000
+        /** Longest lessons book; every chat carries it in full, like the synthesis. */
+        const val MAX_LESSONS_PROMPT = 8000
+        /** How much of the lessons book [lessonsHead] reads: enough to cut a whole line and see there is more. */
+        private const val LESSONS_HEAD_CHARS = MAX_LESSONS_PROMPT * 2
         private const val INDEX_HEAD_CHARS = 4000
+
+        /** The size a notebook every chat carries in full may reach, or null for any other file. */
+        fun promptCap(p: String): Int? = when (p) {
+            ALIGNMENT -> MAX_ALIGNMENT_PROMPT
+            LESSONS -> MAX_LESSONS_PROMPT
+            else -> null
+        }
+
+        /**
+         * Why writing [after] over [before] would leave a notebook every chat carries bigger than the
+         * prompt takes, or null when it may. A book already over its size may still shrink toward it.
+         */
+        fun promptCapRefusal(p: String, before: String?, after: String): String? =
+            promptCapRefusal(p, before?.length ?: 0, after.length)
+
+        /** [promptCapRefusal] by length: [afterLength] may be Int.MAX_VALUE for a text too big to read. */
+        fun promptCapRefusal(p: String, beforeLength: Int, afterLength: Int): String? {
+            val cap = promptCap(p) ?: return null
+            if (afterLength <= cap || afterLength <= beforeLength) return null
+            return "$p would go over $cap characters, the most every chat carries in full. Nothing was written: " +
+                "merge duplicates and drop outdated entries first, then add."
+        }
+
+        private fun checkPromptCap(p: String, before: String?, after: String) {
+            promptCapRefusal(p, before, after)?.let { throw IllegalArgumentException(it) }
+        }
 
         /** The first [max] characters of [file], without reading the rest; empty when it is missing. */
         fun readHead(file: File, max: Int): String {
@@ -762,6 +862,37 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
             val said = text.lineSequence().map { it.trim() }
                 .any { it.isNotEmpty() && !it.startsWith("#") && it !in ALIGNMENT_FILLER }
             return if (said) text.trim().take(MAX_ALIGNMENT_PROMPT) else null
+        }
+
+        private val LESSONS_FILLER = setOf(
+            "做事时攒下的约定和教训，写给以后的自己。",
+            "Conventions and lessons you picked up while working, for your future self.",
+        )
+
+        /**
+         * The lessons book to put into every chat, or null while it holds no lesson. A book written
+         * before the size limit can be longer; it is cut at a line until the next review merges it.
+         */
+        fun lessonsForPrompt(text: String, english: Boolean): String? {
+            // A text as long as [lessonsHead] reads may be only the start of a longer book.
+            val more = text.length >= LESSONS_HEAD_CHARS
+            val said = text.lineSequence().map { it.trim() }
+                .any { it.isNotEmpty() && !it.startsWith("#") && it !in LESSONS_FILLER }
+            if (!said && !more) return null
+            // The limit counts the file as stored, as its writes do.
+            val book = text
+            if (book.length <= MAX_LESSONS_PROMPT && !more) return book.trim()
+            // Cut after the last whole line; a first line longer than the limit is cut where it reaches it.
+            var head = book.take(MAX_LESSONS_PROMPT)
+            if (head.isNotEmpty() && head.last().isHighSurrogate()) head = head.dropLast(1)
+            val wholeLine = book.length == head.length || book[head.length] == '\n' || book[head.length] == '\r'
+            val cut = if (wholeLine) head
+            else head.lastIndexOfAny(charArrayOf('\n', '\r')).let { if (it > 0) head.substring(0, it) else head }
+            val note = if (english)
+                "(LESSONS.md is over $MAX_LESSONS_PROMPT characters; the rest is not shown here. Read the file for all of it, " +
+                    "and merge or drop entries to bring it under the limit.)"
+            else "（LESSONS.md 超过 $MAX_LESSONS_PROMPT 字，后面的没有放进来。要看全文就读这个文件；合并重复、删掉过时的条目，把它压到上限以内。）"
+            return listOf(cut.trim(), note).filter { it.isNotEmpty() }.joinToString("\n\n")
         }
 
         /** The Library's kind of a file, by extension. */

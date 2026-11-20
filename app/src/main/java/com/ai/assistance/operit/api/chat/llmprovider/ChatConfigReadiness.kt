@@ -11,6 +11,8 @@ import java.net.URI
 enum class ChatConfigReadinessIssue {
     PROVIDER_MISSING,
     PROVIDER_UNAVAILABLE,
+    /** A provider that was removed (local model support); the configuration has to switch. */
+    PROVIDER_RETIRED,
     ENDPOINT_INVALID,
     MODEL_MISSING,
     CODEX_LOGIN_REQUIRED,
@@ -46,6 +48,10 @@ object ChatConfigReadiness {
         if (providerTypeId.isEmpty()) {
             return ChatConfigReadinessResult(ChatConfigReadinessIssue.PROVIDER_MISSING)
         }
+        // Before the model and plugin checks: no plugin of the same name brings a retired provider back.
+        if (ApiProviderType.isRetiredId(providerTypeId)) {
+            return ChatConfigReadinessResult(ChatConfigReadinessIssue.PROVIDER_RETIRED)
+        }
         if (modelIndex < 0 || (config.modelName.isNotBlank() &&
                 modelIndex !in getModelList(config.modelName).indices)) {
             return ChatConfigReadinessResult(ChatConfigReadinessIssue.MODEL_MISSING)
@@ -60,9 +66,6 @@ object ChatConfigReadiness {
 
         val providerType = ApiProviderType.fromProviderTypeId(providerTypeId)
             ?: return ChatConfigReadinessResult(ChatConfigReadinessIssue.PROVIDER_UNAVAILABLE)
-        if (providerType == ApiProviderType.MNN || providerType == ApiProviderType.LLAMA_CPP) {
-            return ChatConfigReadinessResult(ChatConfigReadinessIssue.PROVIDER_UNAVAILABLE)
-        }
         if (providerType in setOf(ApiProviderType.GROK_ACCOUNT, ApiProviderType.COMMAND_CODE, ApiProviderType.GOOGLE_ANTIGRAVITY, ApiProviderType.CLAUDE_ACCOUNT)
             && !accountAuthenticated) {
             return ChatConfigReadinessResult(ChatConfigReadinessIssue.ACCOUNT_LOGIN_REQUIRED)

@@ -97,10 +97,10 @@
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
-        android:icon="@mipmap/ic_launcher_simple"
-        android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher_orbit"
+        android:label="@string/orbit_launcher_name"
         android:resizeableActivity="true"
-        android:roundIcon="@mipmap/ic_launcher_simple_round"
+        android:roundIcon="@mipmap/ic_launcher_orbit_round"
         android:supportsRtl="true"
         android:localeConfig="@xml/locales_config"
         android:theme="@style/Theme.Operit"
@@ -110,7 +110,7 @@
         android:usesCleartextTraffic="true"
         android:largeHeap="true"
         tools:targetApi="31"
-        tools:replace="android:theme,android:icon,android:roundIcon">
+        tools:replace="android:theme,android:icon,android:roundIcon,android:label">
 
         <!-- OpenCL 库权限声明 (Android 10+ 命名空间隔离解决方案) -->
         <uses-native-library 
@@ -142,7 +142,7 @@
         <activity
             android:name=".core.tools.defaultTool.websession.browser.WebSessionBrowserActivity"
             android:exported="false"
-            android:label="@string/app_name"
+            android:label="@string/orbit_launcher_name"
             android:taskAffinity="${applicationId}.browser"
             android:launchMode="singleTask"
             android:autoRemoveFromRecents="true"
@@ -249,7 +249,7 @@
         <activity
             android:name=".ui.main.MainActivity"
             android:exported="true"
-            android:label="@string/app_name"
+            android:label="@string/orbit_launcher_name"
             android:configChanges="orientation|keyboardHidden|screenSize|screenLayout"
             android:windowSoftInputMode="adjustPan"
             android:theme="@style/Theme.Operit.Launch"
@@ -337,6 +337,7 @@
         <!-- Standard ASSIST entry for system assistant pickers -->
         <activity
             android:name=".services.assistant.OperitAssistActivity"
+            android:label="@string/app_name"
             android:excludeFromRecents="true"
             android:exported="true"
             android:finishOnTaskLaunch="true"

@@ -1166,9 +1166,12 @@ open class GeminiProvider(
                             val partsArray = JSONArray()
                             for (sourceResponse in responsesList) {
                                 val response = JSONObject(sourceResponse.toString())
-                                val resultName = response.optString("name", "").trim()
+                                // A result saved before the terminal was built in names its old tool.
+                                val resultName = com.ai.assistance.operit.core.tools.TerminalTools
+                                    .canonical(response.optString("name", "").trim())
                                 val callIndex = openFunctionCalls.indexOfFirst {
-                                    resultName.isNotBlank() && it.matchingName == resultName
+                                    resultName.isNotBlank() &&
+                                        com.ai.assistance.operit.core.tools.TerminalTools.canonical(it.matchingName) == resultName
                                 }
                                 if (callIndex < 0) {
                                     logDebug("忽略未匹配的Gemini functionResponse")
@@ -1746,8 +1749,7 @@ open class GeminiProvider(
 
         if (antigravity != null) {
             val selectedQuality = kotlinx.coroutines.runBlocking {
-                com.ai.assistance.operit.data.preferences.ApiPreferences.getInstance(context)
-                    .thinkingQualityLevelFlow.first()
+                requestThinkingQualityLevel(context)
             }
             generationConfig.put("thinkingConfig", JSONObject().put("thinkingLevel",
                 antigravityThinkingEffort(modelName, selectedQuality, enableThinking, modelParameters)))

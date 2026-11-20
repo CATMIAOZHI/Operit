@@ -59,6 +59,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -83,6 +84,7 @@ import com.ai.assistance.operit.data.stats.TokenStatsTokenAggregate
 import com.ai.assistance.operit.data.stats.TokenStatsTotals
 import com.ai.assistance.operit.data.stats.TokenStatsTrendBucket
 import com.ai.assistance.operit.features.orbit.OrbitQuota
+import com.ai.assistance.operit.features.orbit.OrbitUsageCost
 import com.ai.assistance.operit.ui.features.settings.components.SettingsCard
 import com.ai.assistance.operit.ui.features.settings.components.SettingsNavRow
 import com.ai.assistance.operit.ui.features.settings.components.SettingsRowDivider
@@ -101,6 +103,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -551,13 +556,16 @@ private fun usageView(
     zone: ZoneId,
 ): UsageView {
     val today = LocalDate.now(zone)
-    val first = when {
+    return usageViewBetween(context, data, rangeFirstDay(data, range, weekStart, today, zone), today, orbitId, otherLabel, zone)
+}
+
+/** The first day [range] covers, ending [today]. */
+private fun rangeFirstDay(data: OrbitQuota.UsageData, range: UsageRange, weekStart: Long, today: LocalDate, zone: ZoneId): LocalDate =
+    when {
         range.days != null -> today.minusDays((range.days - 1).toLong())
         range == UsageRange.ALL -> usageFirstDay(data)?.coerceAtMost(today) ?: today
         else -> usageWeekStart(weekStart, zone)
     }
-    return usageViewBetween(context, data, first, today, orbitId, otherLabel, zone)
-}
 
 /** The Monday of the allowance's week in [zone], the first day "this week" covers. */
 internal fun usageWeekStart(weekStart: Long, zone: ZoneId): LocalDate =
@@ -679,12 +687,18 @@ private fun chartBuckets(days: List<UsageDay>, zone: ZoneId): List<TokenStatsTre
 }
 
 /**
- * Orbit's own usage page: its picture and name, then activity insights like the main app's (total
- * requests, busiest hours), the main app's activity heatmap, a way into the trend charts, and what
- * the tokens went to.
+ * Orbit's own usage page: its picture and name, the range, then activity insights like the main
+ * app's (total requests, busiest hours), what the range cost, the main app's activity heatmap, a
+ * way into the trend charts, and what the tokens and money went to.
  */
 @Composable
-internal fun OrbitUsagePage(orbit: OrbitProfile, onBack: () -> Unit, onOpenTrends: () -> Unit, onOpenAppCosts: () -> Unit) {
+internal fun OrbitUsagePage(
+    orbit: OrbitProfile,
+    onBack: () -> Unit,
+    onOpenTrends: () -> Unit,
+    onOpenAppCosts: () -> Unit,
+    onOpenPricing: () -> Unit,
+) {
     OrbitPageBack(onBack = onBack)
     val context = LocalContext.current
     val loaded = rememberQuotaState()
@@ -694,9 +708,51 @@ internal fun OrbitUsagePage(orbit: OrbitProfile, onBack: () -> Unit, onOpenTrend
     val otherLabel = stringResource(R.string.orbit_usage_other_orbits)
     val today = rememberToday()
     val zone = today.zone
-    // Grouping is redone off the main thread, only when the usage, the range, the week, the day or the zone changes.
-    val computed = rememberUsageView(usage, range, state.weekStart, orbit.id, otherLabel, today)
-    val view = computed ?: remember(today) { emptyUsageView(today.date) }
+    // A change of display currency or rate (on the all-app costs page) redoes the money.
+    val moneySettings by remember(context) {
+        com.ai.assistance.operit.data.preferences.ApiPreferences.getInstance(context).statsMoneySettingsFlow
+            // Unreadable settings keep the last ones; the money itself falls back to the defaults.
+            .catch { }
+    }.collectAsState(initial = null)
+    // Calls without a cost follow today's prices: a new price list, or coming back from setting
+    // prices or models (the page stays underneath meanwhile), redoes the money too.
+    val catalogRevision by remember {
+        com.ai.assistance.operit.data.pricing.ModelPricingCatalogRepository.status
+            .map { it?.revision }.distinctUntilChanged()
+    }.collectAsState(initial = null)
+    var returns by remember { mutableStateOf(0) }
+    OrbitOnPageReturn { returns++ }
+    // The numbers and what they cost come together, for one range, worked out off the main thread
+    // only when the usage, the range, the week, the day, the zone, the money settings or prices change.
+    val snapshot by androidx.compose.runtime.produceState<UsageSnapshot?>(null, usage, range, state.weekStart,
+        orbit.id, otherLabel, today, moneySettings, catalogRevision, returns) {
+        val data = usage ?: return@produceState
+        val weekStart = state.weekStart
+        val forRange = range
+        value = withContext(Dispatchers.Default) {
+            val first = rangeFirstDay(data, forRange, weekStart, today.date, zone)
+            UsageSnapshot(forRange,
+                usageViewBetween(context, data, first, today.date, orbit.id, otherLabel, zone),
+                OrbitUsageCost.compute(context, data, first, today.date, orbit.id))
+        }
+    }
+    val view = snapshot?.view ?: remember(today) { emptyUsageView(today.date) }
+    val cost = snapshot?.cost
+    // Until the newly picked range is worked out, the last one's numbers stay, dimmed, and read
+    // out as updating; a small spinner shows if it takes a moment.
+    val stale = snapshot != null && snapshot?.range != range
+    val dim by androidx.compose.animation.core.animateFloatAsState(if (stale) 0.45f else 1f, label = "usage_range_dim")
+    val updatingLabel = stringResource(R.string.orbit_usage_updating)
+    val staleModifier = Modifier.alpha(dim).then(
+        if (stale) Modifier.clearAndSetSemantics { contentDescription = updatingLabel } else Modifier)
+    var slow by remember { mutableStateOf(false) }
+    LaunchedEffect(stale) {
+        slow = false
+        if (stale) {
+            delay(300)
+            slow = true
+        }
+    }
     var heatmapMode by rememberSaveable { mutableStateOf(TokenActivityViewMode.DAILY) }
     val heatmapData by androidx.compose.runtime.produceState<TokenActivityYearData?>(null, usage, today) {
         val data = usage ?: return@produceState
@@ -709,7 +765,7 @@ internal fun OrbitUsagePage(orbit: OrbitProfile, onBack: () -> Unit, onOpenTrend
         selectedYear = today.date.year,
         yearData = heatmapData,
     )
-    val ready = computed != null
+    val ready = snapshot != null
     val cardColor = rememberOrbitCardColor()
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Column(
@@ -735,23 +791,22 @@ internal fun OrbitUsagePage(orbit: OrbitProfile, onBack: () -> Unit, onOpenTrend
                     )
                 }
             }
-            UsageInsightsCard(view, ready, range, cardColor, onRange = { range = it })
-            // Everything spent since this week's Monday, the extra allowance's share included.
-            val weekTokens by androidx.compose.runtime.produceState<Long?>(null, usage, loaded?.weekStart, today) {
-                val data = usage ?: return@produceState
-                val weekStart = loaded?.weekStart ?: return@produceState
-                value = withContext(Dispatchers.Default) {
-                    val from = usageWeekStart(weekStart, zone).toString()
-                    val to = today.date.toString()
-                    data.totals.entries.sumOf { (day, tokens) -> if (day in from..to) tokens else 0L }
+            // One range for the numbers, the cost and what it all went to.
+            UsageRangeChips(range) { range = it }
+            Box {
+                Box(staleModifier) { UsageInsightsCard(view, ready, cardColor) }
+                if (stale && slow) {
+                    androidx.compose.material3.CircularProgressIndicator(
+                        Modifier.align(Alignment.TopEnd).padding(18.dp).size(18.dp), strokeWidth = 2.dp)
                 }
             }
-            UsageCostCard(weekTokens, cardColor)
+            Box(staleModifier) { UsageCostCard(cost, cardColor, onOpenPricing) }
             UsageHeatmapCard(heatmap, today.zone, cardColor, onMode = { heatmapMode = it })
             UsageTrendsRow(cardColor, onOpenTrends, onOpenAppCosts)
             Text(stringResource(R.string.orbit_usage_by_purpose), style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp))
-            SettingsCard(backgroundColor = cardColor, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)) {
+            SettingsCard(backgroundColor = cardColor, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                modifier = staleModifier) {
                 val lines = view.lines
                 // Nothing is said before the usage is read, so "no usage yet" never flashes.
                 if (lines.isEmpty() && ready) {
@@ -759,6 +814,7 @@ internal fun OrbitUsagePage(orbit: OrbitProfile, onBack: () -> Unit, onOpenTrend
                         color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 12.dp))
                 }
                 val top = lines.maxOfOrNull { it.tokens }?.coerceAtLeast(1L) ?: 1L
+                val lineCost = cost
                 lines.forEachIndexed { index, line ->
                     if (index > 0) SettingsRowDivider(inset = false)
                     Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -781,8 +837,24 @@ internal fun OrbitUsagePage(orbit: OrbitProfile, onBack: () -> Unit, onOpenTrend
                                 gapSize = 0.dp,
                                 drawStopIndicator = {},
                             )
-                            Text(stringResource(R.string.orbit_usage_calls, line.calls), style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(stringResource(R.string.orbit_usage_calls, line.calls), style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                                // The money only shows once worked out, so no made-up 0 flashes.
+                                if (lineCost != null) {
+                                    val amount = OrbitUsageCost.format(lineCost.byLine[line.key] ?: 0.0, lineCost.money.currency)
+                                    Text(
+                                        when {
+                                            // None of this line's calls has a known or estimated cost.
+                                            line.key !in lineCost.coveredLines -> "–"
+                                            line.key in lineCost.estimatedLines -> stringResource(R.string.orbit_usage_cost_about, amount)
+                                            else -> amount
+                                        },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -794,81 +866,144 @@ internal fun OrbitUsagePage(orbit: OrbitProfile, onBack: () -> Unit, onOpenTrend
 }
 
 /**
- * About what this week's tokens would cost on DeepSeek Flash, at its average price with most of
- * the input read from cache: some 3 US dollars (about 20 yuan) per 500 million tokens. Only a
- * guide for what running Orbit costs; [weekTokens] is null until the allowances are read.
+ * What every Orbit's use in the range cost: the total (marked "about" when it includes calls
+ * estimated at the latest prices), the cache hit rate and the cost per call, the cost by model,
+ * and what is left out. [cost] is null until worked out.
  */
 @Composable
-private fun UsageCostCard(weekTokens: Long?, cardColor: androidx.compose.ui.graphics.Color) {
+private fun UsageCostCard(
+    cost: OrbitUsageCost.View?,
+    cardColor: androidx.compose.ui.graphics.Color,
+    onOpenPricing: () -> Unit,
+) {
+    val context = LocalContext.current
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     SettingsCard(backgroundColor = cardColor, contentPadding = PaddingValues(16.dp)) {
-        Text(stringResource(R.string.orbit_usage_cost_title), style = MaterialTheme.typography.titleSmall,
+        Text(stringResource(R.string.orbit_usage_cost_title), style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(6.dp))
+        val currency = cost?.money?.currency
+        fun money(amount: Double) = OrbitUsageCost.format(amount, currency ?: PricingCurrency.CNY)
         Text(
-            // Blank (keeping its line) until read, so no made-up cost shows.
-            weekTokens?.let { tokens ->
-                val usd = tokens * USD_PER_REFERENCE / REFERENCE_TOKENS
-                val cny = tokens * CNY_PER_REFERENCE / REFERENCE_TOKENS
-                if (usd < 0.01) stringResource(R.string.orbit_usage_cost_week_tiny)
-                else stringResource(R.string.orbit_usage_cost_week, String.format(java.util.Locale.US, "%.2f", usd),
-                    String.format(java.util.Locale.US, "%.1f", cny))
-            } ?: " ",
+            // A dash (keeping its line) until worked out, so no made-up cost shows.
+            when {
+                cost == null -> "–"
+                cost.calls == 0L -> money(0.0)
+                // Used, but nothing with a known or estimated cost: unknown, which is not free.
+                cost.coveredCalls == 0L -> stringResource(R.string.orbit_usage_cost_unknown_total)
+                cost.approximate -> stringResource(R.string.orbit_usage_cost_about, money(cost.total))
+                else -> money(cost.total)
+            },
             style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold,
         )
-        Spacer(Modifier.height(6.dp))
-        Text(stringResource(R.string.orbit_usage_cost_note), style = MaterialTheme.typography.bodySmall, color = muted)
+        Spacer(Modifier.height(12.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            UsageStat(stringResource(R.string.orbit_usage_cost_cache),
+                cost?.cacheRate?.let { String.format(java.util.Locale.US, "%.0f%%", it * 100) } ?: "–", Modifier.weight(1f))
+            UsageStat(stringResource(R.string.orbit_usage_cost_per_call),
+                cost?.takeIf { it.coveredCalls > 0 }?.let {
+                    val each = money(it.total / it.coveredCalls)
+                    if (it.approximate) stringResource(R.string.orbit_usage_cost_about, each) else each
+                } ?: "–", Modifier.weight(1f))
+        }
+        // What is left out of the total comes first, next to the way to set prices.
+        if (cost != null && cost.unpricedCalls > 0) {
+            Spacer(Modifier.height(10.dp))
+            Text(stringResource(R.string.orbit_usage_cost_unpriced, cost.unpricedCalls),
+                style = MaterialTheme.typography.bodySmall, color = muted)
+            TextButton(onClick = onOpenPricing, contentPadding = PaddingValues(horizontal = 0.dp)) {
+                Text(stringResource(R.string.orbit_usage_cost_set_prices))
+            }
+        }
+        if (cost != null && cost.models.isNotEmpty()) {
+            Spacer(Modifier.height(14.dp))
+            Text(stringResource(R.string.orbit_usage_cost_by_model), style = MaterialTheme.typography.bodyMedium, color = muted)
+            val top = (cost.models.maxOfOrNull { it.cost } ?: 0.0).coerceAtLeast(1e-9)
+            cost.models.forEach { model ->
+                CostModelRow(
+                    name = model.model,
+                    amount = if (model.calls > 0 && model.unpricedCalls == model.calls) stringResource(R.string.orbit_usage_cost_unknown_total)
+                        else if (model.estimatedCalls > 0L) stringResource(R.string.orbit_usage_cost_about, money(model.cost))
+                        else money(model.cost),
+                    detail = stringResource(R.string.orbit_usage_cost_model_line,
+                        OrbitQuota.amount(context, model.tokens), model.calls),
+                    share = (model.cost / top).toFloat(),
+                )
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        val notes = buildList {
+            add(stringResource(R.string.orbit_usage_cost_note))
+            if (cost != null && cost.converted) {
+                // Four significant digits, so a small or odd rate never reads as 0.
+                val rate = java.math.BigDecimal(cost.money.rate).round(java.math.MathContext(4)).stripTrailingZeros().toPlainString()
+                add(stringResource(if (cost.money.rateEstimated) R.string.orbit_usage_cost_rate_default else R.string.orbit_usage_cost_rate, rate))
+            }
+        }
+        notes.forEach { note ->
+            Text(note, style = MaterialTheme.typography.bodySmall, color = muted)
+        }
+        if (cost == null || cost.unpricedCalls == 0L) {
+            TextButton(onClick = onOpenPricing, contentPadding = PaddingValues(horizontal = 0.dp)) {
+                Text(stringResource(R.string.orbit_usage_cost_set_prices))
+            }
+        }
     }
 }
 
-/** The reference price behind [UsageCostCard]: 500 million tokens on DeepSeek Flash. */
-private const val REFERENCE_TOKENS = 500_000_000.0
-private const val USD_PER_REFERENCE = 3.0
-private const val CNY_PER_REFERENCE = 20.0
+/** One model's line in the cost card: its name and cost, a bar for its share, then its tokens and calls. */
+@Composable
+private fun CostModelRow(name: String, amount: String, detail: String, share: Float) {
+    Column(Modifier.fillMaxWidth().padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(name, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f),
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.width(8.dp))
+            Text(amount, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+        }
+        LinearProgressIndicator(
+            progress = { share.coerceIn(0f, 1f) },
+            modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+            trackColor = MaterialTheme.colorScheme.surfaceVariant,
+            gapSize = 0.dp,
+            drawStopIndicator = {},
+        )
+        Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 2, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+/** The usage ranges as chips, wrapping onto a second line when the screen or the text is too wide. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun UsageRangeChips(range: UsageRange, onRange: (UsageRange) -> Unit) {
+    FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        UsageRange.entries.forEach { option ->
+            FilterChip(selected = range == option, onClick = { onRange(option) },
+                label = { Text(stringResource(option.label), maxLines = 1) })
+        }
+    }
+}
+
+/** One range's numbers and what they cost, worked out together so the page never mixes two ranges. */
+private class UsageSnapshot(val range: UsageRange, val view: UsageView, val cost: OrbitUsageCost.View)
 
 /**
  * The main app's activity insights for the chosen range: total requests, the busiest hours, then
- * tokens in all, the busiest day, active days and the current streak. The range is picked here.
+ * tokens in all, the busiest day, active days and the current streak.
  */
 @Composable
 private fun UsageInsightsCard(
     view: UsageView,
     ready: Boolean,
-    range: UsageRange,
     cardColor: androidx.compose.ui.graphics.Color,
-    onRange: (UsageRange) -> Unit,
 ) {
     val context = LocalContext.current
-    var menu by remember { mutableStateOf(false) }
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     SettingsCard(backgroundColor = cardColor, contentPadding = PaddingValues(16.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(stringResource(R.string.token_activity_insights), style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-            Box {
-                Text(
-                    stringResource(range.label) + " ▾",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(role = Role.DropdownList) { menu = true }
-                        .padding(horizontal = 8.dp, vertical = 6.dp),
-                )
-                OrbitDropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                    UsageRange.entries.forEach { option ->
-                        DropdownMenuItem(
-                            text = {
-                                Text(stringResource(option.label),
-                                    fontWeight = if (option == range) FontWeight.Bold else FontWeight.Normal)
-                            },
-                            onClick = {
-                                menu = false
-                                onRange(option)
-                            },
-                        )
-                    }
-                }
-            }
-        }
+        Text(stringResource(R.string.token_activity_insights), style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(10.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(stringResource(R.string.token_activity_total_requests), style = MaterialTheme.typography.bodyMedium,
@@ -1104,12 +1239,7 @@ internal fun OrbitUsageTrendsPage(orbit: OrbitProfile, onBack: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             OrbitPageHeader(stringResource(R.string.orbit_usage_trends), onBack, Modifier.padding(start = 4.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                UsageRange.entries.forEach { option ->
-                    FilterChip(selected = range == option, onClick = { range = option },
-                        label = { Text(stringResource(option.label)) })
-                }
-            }
+            UsageRangeChips(range) { range = it }
             OrbitTokenStatsColors {
                 val colors = LocalTokenStatsColors.current
                 val inputLabel = stringResource(R.string.orbit_usage_input)

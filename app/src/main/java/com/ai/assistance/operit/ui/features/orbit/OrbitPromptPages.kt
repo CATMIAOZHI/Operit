@@ -98,6 +98,8 @@ internal fun OrbitFilePage(
      * With it a long draft is kept whole and only its saving is refused, so nothing is cut off.
      */
     measure: ((String) -> Int)? = null,
+    /** With [measure]: refuse an edit that would make an over-limit draft longer, so it stays bounded. */
+    holdAtLimit: Boolean = false,
 ) {
     val context = LocalContext.current
     val resources = LocalResources.current
@@ -196,7 +198,7 @@ internal fun OrbitFilePage(
                     if (editing) {
                         IconButton(enabled = !busy, onClick = {
                             val body = draft
-                            if (measure != null && measure(body) > maxChars) toast(R.string.orbit_file_too_long)
+                            if (measure != null && measure(body) > maxChars) toast(R.string.orbit_file_over_limit)
                             else run {
                                 checkNotNull(save)(body)
                                 content = load()
@@ -262,11 +264,19 @@ internal fun OrbitFilePage(
                 value = draft,
                 onValueChange = {
                     val length = measure?.invoke(it) ?: it.length
+                    // A book held at its limit may shrink but not grow past it: an edit that would make
+                    // it longer is not taken. Other measured drafts are kept whole and only saving waits.
+                    val next = when {
+                        measure == null -> it.take(maxChars)
+                        // Grows by the same measure the limit is in (bytes for a file), only counted once over it.
+                        holdAtLimit && length > maxChars && length > (measure?.invoke(draft) ?: 0) -> draft
+                        else -> it
+                    }
                     if (length > maxChars && !warnedTooLong) {
                         warnedTooLong = true
-                        toast(R.string.orbit_file_too_long)
+                        toast(if (next != it) R.string.orbit_file_too_long else R.string.orbit_file_over_limit)
                     }
-                    draft = if (measure != null) it else it.take(maxChars)
+                    draft = next
                 },
                 textStyle = MaterialTheme.typography.bodyLarge,
                 modifier = Modifier.fillMaxSize().imePadding().padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 20.dp),
@@ -354,19 +364,35 @@ internal fun OrbitPromptFilePage(orbitId: String, onBack: () -> Unit) {
 /** The alignment synthesis, opened from the prompt layers; the nightly review rewrites it. */
 @Composable
 internal fun OrbitAlignmentFilePage(orbitId: String, onBack: () -> Unit) {
+    OrbitCarriedNotebookPage(orbitId, com.ai.assistance.operit.features.orbit.OrbitFiles.ALIGNMENT,
+        R.string.orbit_file_alignment, R.string.orbit_file_alignment_note, onBack)
+}
+
+/** The lessons book, opened from the prompt layers: every chat carries it in full. */
+@Composable
+internal fun OrbitLessonsFilePage(orbitId: String, onBack: () -> Unit) {
+    OrbitCarriedNotebookPage(orbitId, com.ai.assistance.operit.features.orbit.OrbitFiles.LESSONS,
+        R.string.orbit_file_lessons, R.string.orbit_file_lessons_note, onBack)
+}
+
+@Composable
+private fun OrbitCarriedNotebookPage(orbitId: String, path: String, title: Int, note: Int, onBack: () -> Unit) {
     val context = LocalContext.current
-    val resources = LocalResources.current
     val files = remember(orbitId) { com.ai.assistance.operit.features.orbit.OrbitFiles.of(context, orbitId) }
-    val editor = rememberOrbitFileEditor(files, com.ai.assistance.operit.features.orbit.OrbitFiles.ALIGNMENT)
+    OrbitEditableOrReader(files, path, stringResource(title), onBack) {
+    val editor = rememberOrbitFileEditor(files, path)
     OrbitFilePage(
-        title = stringResource(R.string.orbit_file_alignment),
-        note = stringResource(R.string.orbit_file_alignment_note, rememberOrbitName(orbitId)),
+        title = stringResource(title),
+        note = stringResource(note, rememberOrbitName(orbitId)),
         load = editor.load,
         save = editor.save,
         onEditStart = editor.onEditStart,
         onBack = onBack,
-        maxChars = com.ai.assistance.operit.features.orbit.OrbitFiles.MAX_ALIGNMENT_PROMPT,
+        maxChars = editor.maxChars,
+        measure = editor.measure,
+        holdAtLimit = editor.holdAtLimit,
     )
+    }
 }
 
 /**

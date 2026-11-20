@@ -1049,7 +1049,7 @@ open class OpenAIProvider(
     protected open fun resolveOpenAiChatReasoningEffort(context: Context): String? {
         val qualityLevel = runCatching {
             runBlocking {
-                ApiPreferences.getInstance(context).thinkingQualityLevelFlow.first()
+                requestThinkingQualityLevel(context)
             }
         }.getOrElse {
             AppLogger.w(

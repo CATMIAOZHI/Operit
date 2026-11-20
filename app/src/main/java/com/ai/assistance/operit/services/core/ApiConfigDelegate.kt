@@ -209,8 +209,9 @@ class ApiConfigDelegate(
     private val configSummaries = modelConfigManager.configSummariesFlow
         .shareIn(configScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(), replay = 1)
 
+    /** The main app's chat model: the role card's, else the chat function's. */
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    val effectiveChatConfigTarget: StateFlow<EffectiveChatConfigTarget> =
+    private val mainChatConfigTarget: kotlinx.coroutines.flow.Flow<EffectiveChatConfigTarget> =
             activePromptManager.activePromptFlow
                 .flatMapLatest { prompt ->
                     val globalMapping = functionalConfigManager.functionConfigMappingWithIndexFlow.map {
@@ -225,24 +226,40 @@ class ApiConfigDelegate(
                         }
                     }
                 }
-                .combine(combine(contextChatId,
-                    com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context).settingsFlow
-                ) { chatId, settings -> settings.ownerForChat(chatId)?.id }) { main, orbitId -> main to orbitId }
-                .flatMapLatest { (main, orbitId) ->
-                    if (orbitId == null) kotlinx.coroutines.flow.flowOf(main)
-                    else {
-                        val orbitModels = com.ai.assistance.operit.data.preferences.OrbitModelPreferences(context)
-                        flow {
-                            emit(orbitModels.current(orbitId))
-                            emitAll(orbitModels.observe(orbitId).filterNotNull())
-                        }.combine(configSummaries) { settings, configs ->
-                            val ref = settings.main
-                            val config = configs.firstOrNull { it.id == ref?.configId }
-                            val index = if (ref != null && config != null)
-                                ref.resolveIndex(config.modelName, config.apiProviderTypeId) else -1
-                            EffectiveChatConfigTarget(ref?.configId.orEmpty(), index >= 0, index)
-                        }
-                    }
+
+    /**
+     * An Orbit chat's model: the one its task's role names in a task chat (as its turns use),
+     * else the Orbit's main model. Followed as the task's role or the Orbit's models change.
+     */
+    private fun orbitChatConfigTarget(chatId: String?, orbitId: String): kotlinx.coroutines.flow.Flow<EffectiveChatConfigTarget> {
+        val orbitModels = com.ai.assistance.operit.data.preferences.OrbitModelPreferences(context)
+        val role = if (chatId == null) kotlinx.coroutines.flow.flowOf(null)
+            else com.ai.assistance.operit.features.orbit.OrbitModels.observeChatTaskRole(context, chatId)
+        val settings = flow {
+            emit(orbitModels.current(orbitId))
+            emitAll(orbitModels.observe(orbitId).filterNotNull())
+        }
+        return combine(role, settings, configSummaries) { taskRole, orbit, configs ->
+            val ref = if (taskRole == com.ai.assistance.operit.features.orbit.OrbitModels.ASSISTANT) orbit.assistant
+                else orbit.main
+            val config = configs.firstOrNull { it.id == ref?.configId }
+            val index = if (ref != null && config != null)
+                ref.resolveIndex(config.modelName, config.apiProviderTypeId) else -1
+            EffectiveChatConfigTarget(ref?.configId.orEmpty(), index >= 0, index)
+        }
+    }
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val effectiveChatConfigTarget: StateFlow<EffectiveChatConfigTarget> =
+            combine(contextChatId,
+                com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context).settingsFlow
+            ) { chatId, settings -> settings.ownerForChat(chatId)?.id?.let { chatId to it } }
+                // Every other chat shares the main app's target, so switching between them keeps it.
+                .distinctUntilChanged()
+                // An Orbit chat does not follow the main app's model choice at all.
+                .flatMapLatest { orbitChat ->
+                    if (orbitChat == null) mainChatConfigTarget
+                    else orbitChatConfigTarget(orbitChat.first, orbitChat.second)
                 }
                 // The chat's own quick switch wins over the role card and the configured main model.
                 .combine(chatModelChoiceRef.combine(configSummaries) { ref, configs ->
@@ -304,11 +321,19 @@ class ApiConfigDelegate(
             com.ai.assistance.operit.features.orbit.OrbitContextSettings.fixed(policy)
         else policy
 
-    val effectiveResolvedContext = combine(effectiveChatConfig, conversationPolicy) { config, (policy, orbit) ->
+    val effectiveResolvedContext = combine(effectiveChatConfig, conversationPolicy, effectiveChatConfigTarget) { config, (policy, orbit), target ->
         val base = policy ?: ChatContextPolicy.fromLegacy(config)
-        resolveChatContext(if (orbit) com.ai.assistance.operit.features.orbit.OrbitContextSettings.fixed(base) else base, config)
+        val model = target.takeIf { it.isResolved && it.configId == config.id }
+            ?.let { selectedModel(config, it.modelIndex) }
+        resolveChatContext(if (orbit) com.ai.assistance.operit.features.orbit.OrbitContextSettings.fixed(base) else base, config, model)
     }.stateIn(configScope, kotlinx.coroutines.flow.SharingStarted.Eagerly,
         resolveChatContext(ChatContextPolicy(), ModelConfigData(id = "", name = "")))
+
+    private fun selectedModel(config: ModelConfigData, index: Int?): String? = index?.let {
+        com.ai.assistance.operit.data.model.getModelByIndex(
+            config.modelName, com.ai.assistance.operit.data.model.getValidModelIndex(config.modelName, it),
+        ).takeIf { model -> model.isNotBlank() }
+    }
 
     private fun <T> contextValue(initial: T, read: (com.ai.assistance.operit.data.model.ResolvedChatContext) -> T) =
         effectiveResolvedContext.map(read).stateIn(configScope,
@@ -406,13 +431,31 @@ class ApiConfigDelegate(
         _summaryMessageCountThreshold.value = config.summaryMessageCountThreshold
     }
 
-    suspend fun resolveChatContextSettings(configIdOverride: String? = null, chatId: String? = contextChatId.value): ChatContextSettings {
+    /**
+     * [modelIndexOverride] is the model in [configIdOverride] the turn sends to; without an
+     * override the chat's own routing (its Orbit's model, else the chat function's) names it.
+     */
+    suspend fun resolveChatContextSettings(
+        configIdOverride: String? = null,
+        chatId: String? = contextChatId.value,
+        modelIndexOverride: Int? = null,
+    ): ChatContextSettings {
         modelConfigManager.initializeIfNeeded()
-        val configId = configIdOverride?.trim()?.takeIf { it.isNotEmpty() }
-            ?: com.ai.assistance.operit.features.orbit.OrbitModels.mapping(context, FunctionType.CHAT, chatId)?.configId
-            ?: functionalConfigManager.getConfigIdForFunction(FunctionType.CHAT)
-        val config = requireNotNull(modelConfigManager.getModelConfig(configId)) { "Model config not found: $configId" }
-        val resolved = resolveChatContext(forChat(chatId, contextPreferences.resolve(chatId, config)), config)
+        val override = configIdOverride?.trim()?.takeIf { it.isNotEmpty() }
+        // The configuration read while routing, so it is not read twice.
+        var read: ModelConfigData? = null
+        val routed = if (override != null) null
+            else com.ai.assistance.operit.features.orbit.OrbitModels.mapping(context, FunctionType.CHAT, chatId)
+                ?: functionalConfigManager.getConfigMappingForFunction(FunctionType.CHAT) { id ->
+                    modelConfigManager.getModelConfig(id).also { read = it }?.modelName
+                }
+        val configId = override ?: checkNotNull(routed).configId
+        val modelIndex = if (override != null) modelIndexOverride else routed?.modelIndex
+        val config = requireNotNull(read?.takeIf { it.id == configId } ?: modelConfigManager.getModelConfig(configId)) {
+            "Model config not found: $configId"
+        }
+        val resolved = resolveChatContext(forChat(chatId, contextPreferences.resolve(chatId, config)), config,
+            selectedModel(config, modelIndex))
         return ChatContextSettings(configId, resolved.policy.windowK, resolved.capacityK,
             resolved.policy.maxMode, resolved.windowK, resolved.compactRatio,
             resolved.policy.autoCompact, resolved.policy.compactEveryUserTurns != null,
@@ -428,9 +471,10 @@ class ApiConfigDelegate(
         }
     }
 
-    suspend fun loadChatContext(chatId: String, configId: String): com.ai.assistance.operit.data.model.ResolvedChatContext {
+    suspend fun loadChatContext(chatId: String, configId: String, modelIndex: Int? = null): com.ai.assistance.operit.data.model.ResolvedChatContext {
         val config = requireNotNull(modelConfigManager.getModelConfig(configId))
-        return resolveChatContext(forChat(chatId, contextPreferences.resolve(chatId, config)), config)
+        return resolveChatContext(forChat(chatId, contextPreferences.resolve(chatId, config)), config,
+            selectedModel(config, modelIndex))
     }
 
     private fun updateCurrentPolicy(transform: (ChatContextPolicy) -> ChatContextPolicy) {

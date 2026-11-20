@@ -137,6 +137,7 @@ import com.ai.assistance.operit.data.model.getModelList
 import com.ai.assistance.operit.data.model.getValidModelIndex
 import com.ai.assistance.operit.data.model.resolveFavoriteModelIndex
 import com.ai.assistance.operit.data.model.resolveValidFavorites
+import com.ai.assistance.operit.data.model.selectableForBinding
 import com.ai.assistance.operit.data.model.partitionConfigsByCollapsedIds
 import com.ai.assistance.operit.data.preferences.CharacterCardManager
 import com.ai.assistance.operit.data.preferences.ActivePromptManager
@@ -152,6 +153,7 @@ import com.ai.assistance.operit.plugins.toolpkg.ToolPkgAiProviderRegistry
 import com.ai.assistance.operit.ui.common.icons.MaterialIconNameResolver
 import com.ai.assistance.operit.ui.common.animations.SimpleAnimatedVisibility
 import com.ai.assistance.operit.ui.features.chat.components.AttachmentChip
+import com.ai.assistance.operit.ui.features.chat.components.editAttachmentAt
 import com.ai.assistance.operit.ui.features.chat.components.AttachmentSelectorPopupPanel
 import com.ai.assistance.operit.ui.features.chat.components.FullscreenInputDialog
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.CharacterCardMemoryBindingSwitchConfirmDialog
@@ -198,6 +200,8 @@ fun AgentChatInputSection(
     attachments: List<AttachmentInfo> = emptyList(),
     onRemoveAttachment: (String) -> Unit = {},
     onInsertAttachment: (AttachmentInfo) -> Unit = {},
+    /** Swaps a picture in the box for an edited copy (old path, new file, name to show); null: pictures only open to look at. */
+    onEditAttachment: (suspend (String, java.io.File, String) -> Unit)? = null,
     onAttachScreenContent: () -> Unit = {},
     onAttachNotifications: () -> Unit = {},
     onAttachLocation: () -> Unit = {},
@@ -361,6 +365,8 @@ fun AgentChatInputSection(
         functionalConfigManager.functionConfigMappingWithIndexFlow.collectAsState(initial = emptyMap())
     val configSummaries by
             modelConfigManager.configSummariesFlow.collectAsState(initial = emptyList())
+    // Retired local providers can't serve a chat, so they are not offered.
+    val selectableConfigs = remember(configSummaries) { configSummaries.selectableForBinding() }
     var currentModelParameters by remember {
         mutableStateOf<List<ModelParameter<*>>>(emptyList())
     }
@@ -368,7 +374,7 @@ fun AgentChatInputSection(
     val favoriteModels by modelConfigManager.favoriteModelsFlow.collectAsState(initial = emptyList())
     val collapsedConfigIds by modelConfigManager.collapsedConfigIdsFlow.collectAsState(initial = emptySet())
     val validFavorites = remember(favoriteModels, configSummaries) {
-        resolveValidFavorites(configSummaries, favoriteModels)
+        resolveValidFavorites(selectableConfigs, favoriteModels)
     }
     val activeProfileId by userPreferencesManager.activeMemorySpaceIdFlow.collectAsState(initial = "default")
     var preferenceProfiles by remember { mutableStateOf<List<MemorySpace>>(emptyList()) }
@@ -599,7 +605,7 @@ fun AgentChatInputSection(
 
     val onSelectModel: (String, Int) -> Unit = { selectedId, modelIndex ->
         // Only this chat switches; the configured main model and any role card stay as they are.
-        val name = configSummaries.firstOrNull { it.id == selectedId }?.let {
+        val name = selectableConfigs.firstOrNull { it.id == selectedId }?.let {
             com.ai.assistance.operit.data.preferences.OrbitModelRef.fromSelection(it, modelIndex)?.modelName
         }
         if (name != null) {
@@ -790,6 +796,9 @@ fun AgentChatInputSection(
                             attachmentInfo = attachment,
                             onRemove = { onRemoveAttachment(attachment.filePath) },
                             onInsert = { onInsertAttachment(attachment) },
+                            onEdited = onEditAttachment?.takeIf { !isPreparingModel }?.let { edit -> editAttachmentAt(attachment.filePath, edit) },
+                            // While a message with these attachments is being got ready, they stay as they are.
+                            openable = !isPreparingModel,
                         )
                     }
                 }
@@ -2280,7 +2289,7 @@ private fun AgentModelSelectorItem(
                     Spacer(modifier = Modifier.height(6.dp))
                 }
 
-                val (normalConfigs, collapsedConfigs) = partitionConfigsByCollapsedIds(configSummaries, collapsedConfigIds)
+                val (normalConfigs, collapsedConfigs) = partitionConfigsByCollapsedIds(remember(configSummaries) { configSummaries.selectableForBinding() }, collapsedConfigIds)
                 var collapsedExpanded by remember { mutableStateOf(false) }
 
                 // 配置项 Composable（供正常区和折叠区复用）

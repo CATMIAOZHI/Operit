@@ -458,18 +458,22 @@
     <!-- Agreement Screen -->
     <string name="agreement_subtitle">Por favor lea cuidadosamente y acepte los siguientes términos antes de usar.</string>
     <string name="agreement_version">Versión del acuerdo: %1$s</string>
+    <string name="personal_branch_disclaimer_title">Aviso de proyecto de código abierto</string>
+    <string name="personal_branch_disclaimer_content">Orbit es una rama personal de código abierto de AAswordman / Operit, mantenida y publicada por CATMIAOZHI. No es una versión oficial del proyecto original. Todo su código fuente es público en https://github.com/CATMIAOZHI/orbit , así que cualquiera puede leerlo, auditarlo y compilarlo por su cuenta. Es software libre y gratuito, no un servicio comercial, y lo usas bajo tu propio riesgo; el proyecto original y sus mantenedores no responden por esta rama. Informa de los problemas en las Issues del repositorio.</string>
     <string name="agreement_human_readable_title">Acuerdo en lenguaje simple (versión no legal)</string>
-    <string name="agreement_human_readable_content">Límite del servicio: Operit no proporciona servicios públicos de interacción emocional antropomórfica. Operit es un cliente de código abierto que se ejecuta localmente en el dispositivo del usuario. No opera servicios de inferencia de modelos, no aloja sesiones de chat ni datos de interacción, y no distribuye credenciales de modelo compartidas. Las solicitudes a modelos en la nube se envían directamente desde su dispositivo al proveedor de modelos que configure con sus propias credenciales; los datos relacionados se rigen por las reglas de ese proveedor. Los modelos locales infieren en su dispositivo.\n\nEsta aplicación puede llamar archivos, terminales, automatización, Root, ADB, extensiones y capacidades similares. Revise las operaciones antes de ejecutarlas, haga copias de seguridad de los datos importantes y otorgue permisos con cuidado. Las pérdidas relacionadas con dispositivos, datos, cuentas u otros intereses causadas por acciones del usuario, configuración del usuario, servicios de terceros o extensiones de terceros deben ser gestionadas por el operador real según la ley aplicable.\n\nLos plugins, scripts, Skills, kits de herramientas y otros contenidos de terceros del mercado pertenecen a sus autores o titulares de derechos indicados, junto con la responsabilidad correspondiente. La publicación o instalación desde el mercado no significa que Operit garantice, respalde u obtenga derechos sobre ese contenido. Confirme la licencia y el estado de los derechos antes de usarlo, modificarlo, publicarlo o redistribuirlo.</string>
+    <string name="agreement_human_readable_content">• Código abierto: Orbit es un proyecto de código abierto. Todo su código fuente es público en GitHub (CATMIAOZHI/orbit), así que puedes comprobar lo que hace o compilarlo tú mismo.\n\n• Datos: los chats, recuerdos y ajustes se guardan por defecto en tu teléfono y no alojamos tus datos. Si usas modelos en la nube, WeChat, la búsqueda u otras funciones en línea, lo necesario se envía a ese servicio; si la copia de seguridad del sistema está activada, los datos de la app también pueden copiarse.\n\n• Costes: si el modelo o servicio en línea que eliges es de pago, lo pagas tú, según las reglas del proveedor. Cuando Orbit llama a un modelo o servicio de pago en segundo plano, eso también cuesta dinero.\n\n• Orbit hace cosas reales: con tu permiso puede usar una terminal, leer y escribir archivos, manejar apps y el navegador en segundo plano, leer SMS, contactos, calendario, notificaciones y ubicación, usar claves de la bóveda y actuar automáticamente sin preguntarte cada vez. Piénsalo antes de darlo y haz copia de los datos importantes.\n\n• Tú eres responsable: si lo usas y cómo, qué permisos concedes y lo que Orbit haga con ellos depende de ti, igual que sus consecuencias. Cumple la ley local allí donde uses la app. Usa la app y sus funciones solo en la medida en que la ley local lo permita. La IA se equivoca; lo que dice no es consejo médico, legal, financiero ni de otro tipo profesional.\n\n• Los plugins y paquetes de terceros pertenecen a sus autores; no damos ninguna garantía sobre ellos.</string>
     <string name="agreement_serious_title">Acuerdo legal riguroso</string>
     <string name="agreement_serious_content"><![CDATA[
-        <p><b>Acuerdo de usuario y política de privacidad de Operit</b><br>Versión: 2026-07-15; fecha efectiva prevista: 15 de julio de 2026.</p>
-        <p><b>1. Alcance y versión del acuerdo</b><br>Este acuerdo se aplica al cliente Android publicado oficialmente por Operit y a sus funciones en línea opcionales. Al usar esta aplicación, confirma que ha leído y aceptado la versión actual. La aplicación registra al iniciar la versión del acuerdo que usted ha aceptado; cuando el acuerdo tenga una actualización sustancial, la aplicación le pedirá confirmar la nueva versión antes de continuar. El código abierto del repositorio se licencia bajo la Licencia Pública General Menor de GNU versión 3 (LGPLv3) indicada en el archivo raíz <code>LICENSE</code>. Este acuerdo no excluye ni reduce los derechos otorgados por la ley aplicable o por licencias de código abierto.</p>
-        <p><b>2. Posición del producto y servicios de terceros</b><br>Operit es software cliente de código abierto. No proporciona inferencia de modelos de lenguaje grandes, API Keys compartidas, retransmisión de solicitudes de chat ni alojamiento en la nube de historiales de chat. Los modelos en la nube, voz en la nube, búsqueda, generación de imágenes, MCP y otras funciones de red son elegidos, configurados y habilitados por usted. Cuando usa esos servicios, los datos se envían directamente al proveedor correspondiente y se rigen por sus términos de servicio y política de privacidad. Usted debe evaluar la seguridad, legalidad e idoneidad de proveedores, modelos, endpoints y extensiones, y proteger sus credenciales.</p>
-        <p><b>3. Tratamiento de datos y privacidad</b><br>Los historiales de chat, tarjetas de personaje, memorias, configuración de modelos y API Keys normalmente se almacenan en los datos de la aplicación en su dispositivo. Cuando exporta, hace copias de seguridad, carga archivos, usa funciones de red de terceros o envía solicitudes a un servicio HTTP externo, los datos relacionados se copiarán, transmitirán o divulgarán según sus acciones. El mercado, anuncios, comprobaciones de actualización, inicio de sesión de GitHub y funciones de publicación pueden acceder a recursos de Operit, GitHub o terceros relacionados; estas funciones no retransmiten solicitudes de modelos de chat. Gestione sus datos y credenciales junto con la configuración de seguridad del dispositivo, los términos de terceros y este acuerdo.</p>
-        <p><b>4. Despliegue externo y responsabilidad del operador</b><br>Los servicios HTTP externos, QQ Bot, respuestas automáticas y capacidades similares se habilitan a su elección. Si los pone a disposición de otras personas o del público, actúa como desplegador u operador real y es responsable del control de acceso, autorización de usuarios, seguridad del contenido, protección de datos, protección de menores, avisos necesarios y otras obligaciones aplicables. Si proporciona de forma continua al público en China continental servicios de interacción emocional que simulan rasgos de personalidad, patrones de pensamiento o estilos de comunicación de personas naturales, debe evaluar y cumplir las Medidas provisionales para la administración de servicios de interacción antropomórfica de inteligencia artificial (《人工智能拟人化互动服务管理暂行办法》) y otras normas aplicables. No debe usar esta aplicación para ofrecer a menores familiares virtuales, compañeros virtuales u otros servicios de relación íntima virtual, inducir dependencia emocional o adicción, realizar manipulación emocional ni infringir de otro modo derechos e intereses legítimos de terceros.</p>
-        <p><b>5. Uso legal y responsabilidad por el contenido</b><br>Debe cumplir las leyes y regulaciones aplicables, las reglas de servicios de terceros y las reglas de plataforma. No debe usar esta aplicación, extensiones o configuración para realizar actividades ilegales, infringir derechos de terceros, acceder sin autorización a sistemas o datos, o difundir contenido ilegal o dañino. Usted es responsable del contenido y la conducta que introduzca, configure, genere, publique, reenvíe u opere. Las salidas de IA pueden contener errores, omisiones o sesgos y no constituyen asesoramiento médico, de crisis de salud mental, legal, financiero ni otro asesoramiento profesional. En situaciones urgentes de peligro, contacte de inmediato con los servicios de emergencia locales, instituciones médicas o personas de confianza.</p>
-        <p><b>6. Software proporcionado tal como está</b><br>En la medida permitida por la ley aplicable, este software se proporciona "tal como está" y "según disponibilidad". Los contribuyentes no ofrecen garantías expresas o implícitas sobre la disponibilidad continua, exactitud, seguridad, comerciabilidad, idoneidad para un propósito particular o no infracción del software o de servicios de terceros. Las pérdidas causadas por el uso de este software, servicios de terceros, extensiones, configuración del usuario o modificaciones propias deben gestionarse conforme a la ley aplicable y los acuerdos de servicio correspondientes.</p>
-        <p><b>7. Actualizaciones del acuerdo y contacto</b><br>Podemos actualizar este acuerdo por requisitos funcionales, legales o de seguridad, y proporcionar la versión actual dentro de la aplicación. Las actualizaciones que afecten sustancialmente los derechos de los usuarios entrarán en vigor aumentando la versión del acuerdo y solicitando confirmación nuevamente. Puede enviar preguntas y comentarios mediante el repositorio del proyecto, la entrada de comentarios de la aplicación o canales públicos de contacto.</p>
+        <p><b>Acuerdo de usuario y política de privacidad de Orbit (rama personal de Operit)</b><br>Versión: 2026-11-20; fecha de entrada en vigor: 20 de noviembre de 2026.</p>
+        <p><b>1. Proyecto de código abierto y alcance</b><br>Esta app es una rama personal de código abierto de AAswordman / Operit, mantenida y publicada por CATMIAOZHI, y no es una versión oficial del proyecto original. Todo su código fuente es público en https://github.com/CATMIAOZHI/orbit y se distribuye bajo la licencia del archivo <code>LICENSE</code> de la raíz del repositorio (basada en la Licencia Pública General Reducida de GNU versión 3, LGPLv3); cualquiera puede leerlo, auditarlo, compilarlo y modificarlo. Este acuerdo se aplica al cliente Android publicado desde ese repositorio y a sus funciones en línea opcionales, y no excluye ni reduce los derechos que te otorguen la ley aplicable o la licencia de código abierto.</p>
+        <p><b>2. Naturaleza del producto</b><br>Esta app es software cliente que se ejecuta en tu dispositivo y se ofrece gratis. Los mantenedores no operan servicios de inferencia de modelos, retransmisión de solicitudes ni almacenamiento en la nube, no proporcionan claves API compartidas y no ofrecen ningún servicio en línea al público. Puedes gestionar los ajustes y datos de Orbit; su nombre, personalidad y recuerdos pueden formarse o cambiar con el uso, a partir de vuestras conversaciones.</p>
+        <p><b>3. Servicios de terceros y costes</b><br>Los modelos en la nube, la voz, la búsqueda, la generación de imágenes, MCP, el canal de WeChat, los plugins y demás funciones en línea los eliges, configuras y activas tú; los datos que necesitan (incluida la conversación enviada al modelo y contenido del prompt como el perfil y los recuerdos de Orbit) se envían directamente desde tu dispositivo al proveedor y se rigen por sus términos y su política de privacidad. Los costes que se produzcan corren por tu cuenta, incluidos los de modelos o servicios de pago que Orbit llame en segundo plano según tu configuración. Las cifras de uso y coste de la app son solo orientativas; lo que cuenta es la factura del proveedor.</p>
+        <p><b>4. Datos y privacidad</b><br>Los chats, los recuerdos y el perfil de usuario de Orbit, las credenciales de la bóveda, la configuración de modelos y las claves API se guardan por defecto en los datos de la app en tu dispositivo; los mantenedores no pueden acceder a ellos ni los recopilan. Si la copia de seguridad del sistema o la transferencia entre dispositivos están activadas, el sistema puede copiar o transferir los datos de la app, salvo la bóveda. Cuando exportas, haces copias, subes, compartes o usas funciones en línea, los datos correspondientes se copian o envían según tus indicaciones. La búsqueda de actualizaciones, el catálogo de precios y funciones similares acceden a GitHub o a recursos de terceros relacionados; no envían tus chats.</p>
+        <p><b>5. Permisos y acciones automáticas</b><br>Con tu permiso, esta app puede usar la terminal, archivos, notificaciones, el micrófono, accesibilidad, ADB, Shizuku o Root, leer SMS, contactos, calendario, el contenido de las notificaciones y la ubicación, manejar apps en segundo plano, tomar el control del navegador integrado, usar credenciales de la bóveda y ejecutar tareas automáticamente en segundo plano según tu configuración; una vez permitido, estas acciones pueden ejecutarse sin preguntarte cada vez. La revisión automática la decide el modelo que configures y no se garantiza que acierte. Antes de conceder un permiso o activar acciones automáticas, debes entender qué hacen y sus riesgos, y hacer copia de los datos importantes.</p>
+        <p><b>6. Tu responsabilidad</b><br>Tú decides si descargas, instalas, configuras y usas esta app, y eres responsable de tu uso, configuración, permisos, contenido introducido y publicado, y de las acciones que Orbit realice con tu permiso y sus consecuencias. Debes cumplir las leyes y las normas de terceros aplicables y no puedes usar esta app para actividades ilegales, para vulnerar derechos ajenos, para acceder sin autorización a sistemas o datos, ni para difundir contenido ilegal o dañino. Debes comprobar y cumplir las leyes del país o región donde uses esta app, y usar la app y sus funciones solo en la medida en que la ley local lo permita. Si abres las capacidades de la app (como el servicio HTTP externo) a otras personas o al público, eres el operador real y debes encargarte tú del control de acceso, la seguridad del contenido, la protección de datos, la protección de menores y demás obligaciones, y cumplir normas aplicables como las Medidas Provisionales de China sobre servicios de interacción antropomórfica con IA; no puedes ofrecer servicios de relación íntima virtual a menores, inducir dependencia emocional o adicción, ni manipular emociones. La IA puede equivocarse y no constituye consejo médico, psicológico, legal, financiero ni profesional de otro tipo; en una emergencia, contacta con los servicios de emergencia locales o con alguien de confianza.</p>
+        <p><b>7. Contenido de terceros</b><br>Los plugins, scripts, Skills, paquetes de herramientas y demás contenido del mercado pertenecen a los autores o titulares indicados, junto con la responsabilidad correspondiente. Su presencia en el mercado o su instalación no implica garantía ni respaldo de los mantenedores. Comprueba la licencia antes de usarlos, modificarlos o redistribuirlos.</p>
+        <p><b>8. Se ofrece tal cual; limitación de responsabilidad</b><br>Este software es gratuito y de código abierto, y se ofrece tal cual y según disponibilidad, sin garantía expresa ni implícita de ningún tipo, incluidas las de disponibilidad, exactitud, seguridad, comerciabilidad, idoneidad para un fin concreto o no infracción. En la medida máxima permitida por la ley aplicable, los mantenedores, el proyecto original y los colaboradores no responden de ninguna pérdida directa o indirecta derivada del uso o la imposibilidad de uso de este software, servicios de terceros, extensiones, la configuración del usuario o acciones realizadas por la IA.</p>
+        <p><b>9. Actualizaciones y contacto</b><br>Este acuerdo puede actualizarse por motivos funcionales, legales o de seguridad. Las actualizaciones que afecten de forma sustancial a tus derechos entrarán en vigor al subir la versión del acuerdo y pedirte que lo aceptes de nuevo cuando abras la app. Envía tus dudas y comentarios a través de las Issues del repositorio del proyecto.</p>
     ]]></string>
     <string name="agreement_disclaimer">La versión en lenguaje simple solo facilita la comprensión. Si difiere de la versión formal china, prevalece la versión formal china.</string>
     <string name="agreement_accept">He leído y acepto</string>
@@ -3406,7 +3410,7 @@
     <string name="chat_start_ai_computer_failed">Error al iniciar la computadora AI: %1$s</string>
     <string name="chat_ai_computer_closed_due_to_workspace">Computadora AI cerrada (debido a la apertura del espacio de trabajo)</string>
     <string name="thinking_mode">Modo de pensamiento</string>
-    <string name="thinking_mode_desc">Actualmente compatible con Gemini, Qwen3, Claude, Doubao, NVIDIA, SiliconFlow y modelos locales MNN, que pueden habilitar el pensamiento integrado.</string>
+    <string name="thinking_mode_desc">Actualmente permite activar el razonamiento integrado en Gemini, Qwen3, Claude, Doubao, NVIDIA y SiliconFlow.</string>
     <string name="details">Detalles</string>
     <string name="model_selection">Selección de modelo</string>
     <string name="prompt_selection">Selección de prompt</string>
@@ -4054,32 +4058,6 @@
     <string name="custom">Personalizado</string>
     <string name="voice_assistant_widget_description">Inicio rápido del asistente de voz Operit</string>
     <string name="voice_assistant_widget_title">Asistente de voz</string>
-    <string name="screen_title_mnn_model_download">Descarga de modelo MNN</string>
-    <string name="mnn_model_download">Descargar modelo MNN</string>
-    <string name="mnn_model_management">Gestión de modelos</string>
-    <string name="mnn_download_from_modelscope">Descargar desde ModelScope</string>
-    <string name="mnn_model_size">Tamaño del modelo: %1$.2f GB</string>
-    <string name="mnn_downloading">Descargando</string>
-    <string name="mnn_download_speed">Velocidad: %1$s</string>
-    <string name="mnn_download_complete">Descarga completada</string>
-    <string name="mnn_download_failed">Error en la descarga: %1$s</string>
-    <string name="mnn_no_models_downloaded">No hay modelos descargados</string>
-    <string name="mnn_select_downloaded_model">Seleccionar modelo descargado</string>
-    <string name="mnn_model_name_only">Nombre del modelo</string>
-    <string name="mnn_download_progress">Progreso: %1$d%%</string>
-    <string name="mnn_pause_download">Pausar descarga</string>
-    <string name="mnn_resume_download">Reanudar descarga</string>
-    <string name="mnn_delete_model">Eliminar modelo</string>
-    <string name="mnn_confirm_delete">¿Confirmar eliminación de este modelo?</string>
-    <string name="mnn_loading_models">Cargando lista de modelos...</string>
-    <string name="mnn_connecting">Conectando...</string>
-    <string name="mnn_load_failed">Error al cargar</string>
-    <string name="mnn_retry">Reintentar</string>
-    <string name="mnn_start_download">Iniciar descarga</string>
-    <string name="mnn_no_local_models">Aún no se ha descargado ningún modelo</string>
-    <string name="mnn_go_download">Ir a descargar</string>
-    <string name="mnn_search_models">Buscar modelos...</string>
-    <string name="mnn_no_search_results">No se encontraron modelos coincidentes</string>
     <string name="persona_card_generation_title">Tarjeta de personaje a modificar</string>
     <string name="error_character_card_not_exist">La tarjeta de personaje no existe</string>
     <string name="error_unsupported_field">Campo no compatible: %1$s</string>
@@ -4520,33 +4498,6 @@
     <string name="show_message_token_stats">Mostrar resumen de tokens del mensaje</string>
     <string name="show_message_token_stats_description">Mostrar información concisa de tokens ascendentes/descendentes y caché en la parte inferior de los mensajes de IA</string>
 
-    <string name="mnn_local_model_tip">La capacidad de comprensión del modelo local es deficiente. Se recomienda desactivar el enlace de memoria y activar la desactivación de herramientas para conversar.</string>
-    <string name="mnn_model_path">Ruta del archivo del modelo</string>
-    <string name="mnn_model_path_placeholder">Introduce la ruta completa del archivo del modelo MNN</string>
-    <string name="mnn_forward_type">Tipo de cálculo</string>
-    <string name="mnn_thread_count">Número de hilos</string>
-    <string name="llama_local_model_tip">La capacidad de comprensión del modelo local es deficiente. Se recomienda desactivar el enlace de memoria y activar la desactivación de herramientas para conversar.</string>
-    <string name="llama_local_model_download_tip">El modelo llama.cpp debe descargarse por separado (.gguf). Coloca el archivo del modelo en la siguiente carpeta y luego escribe el nombre del archivo en "Nombre del modelo":</string>
-    <string name="llama_local_model_dir">Directorio de modelos predeterminado: %1$s</string>
-    <string name="llama_auto_config_tip">Parámetros compatibles con Android como tamaño de lote, mmap, Flash Attention, KV, etc., ya están integrados. Para uso normal, solo necesitas ajustar el número de hilos, el tamaño del contexto y el número de capas de GPU.</string>
-    <string name="llama_select_downloaded_model">Seleccionar modelo descargado</string>
-    <string name="llama_thread_count">Número de hilos</string>
-    <string name="llama_context_size">Longitud del contexto</string>
-    <string name="llama_context_size_subtitle">En Android, se recomienda empezar con 2048. Un tamaño demasiado grande puede provocar fallos de inicialización por presión de memoria.</string>
-    <string name="llama_batch_size">Tamaño de lote</string>
-    <string name="llama_batch_size_subtitle">Se recomienda no superar 512 y no ser mayor que la longitud del contexto.</string>
-    <string name="llama_ubatch_size">Tamaño de microlote</string>
-    <string name="llama_ubatch_size_subtitle">Se recomienda no superar el tamaño de lote. En Android, 512 suele ser más estable.</string>
-    <string name="llama_gpu_layers">Capas de GPU</string>
-    <string name="llama_gpu_layers_subtitle">Solo tiene efecto si la compilación actual incluye backend de GPU. 0 significa solo CPU.</string>
-    <string name="llama_use_mmap">Usar mmap</string>
-    <string name="llama_use_mmap_subtitle">En Android, se recomienda desactivarlo por defecto. En muchos dispositivos, desactivarlo facilita la carga de GGUF.</string>
-    <string name="llama_flash_attention">Activar Flash Attention</string>
-    <string name="llama_flash_attention_subtitle">En dispositivos móviles, se recomienda desactivarlo por defecto para evitar inestabilidad en algunos backends de Android.</string>
-    <string name="llama_kv_unified">Caché KV unificada</string>
-    <string name="llama_kv_unified_subtitle">Para chats de una sola sesión, se recomienda activarlo por defecto para reducir la sobrecarga de gestión de contexto en Android.</string>
-    <string name="llama_offload_kqv">Descargar KQV a GPU</string>
-    <string name="llama_offload_kqv_subtitle">Solo tiene sentido si el número de capas de GPU es mayor que 0. Se ignora automáticamente si no hay backend de GPU.</string>
     <string name="workflow_execution_running">Ejecutando…</string>
     <string name="workflow_execution_success">Ejecución exitosa</string>
     <string name="workflow_execution_failed">Ejecución fallida</string>
@@ -6025,14 +5976,6 @@
     <string name="html_export_group">Grupo</string>
     <string name="html_export_message_count">Mensajes</string>
     <string name="html_export_footer">Exportado desde Operit AI Assistant</string>
-    <string name="mnn_no_cache_data">Sin datos en caché</string>
-    <string name="mnn_response_empty">El cuerpo de la respuesta está vacío</string>
-    <string name="mnn_fetch_repo_files_failed">Error al obtener la lista de archivos del repositorio: %1$s</string>
-    <string name="mnn_download_failed_http">Error de descarga: HTTP %1$d %2$s</string>
-    <string name="mnn_rename_failed">Error al renombrar</string>
-    <string name="mnn_unknown_error">Error desconocido</string>
-    <string name="mnn_download_file_failed">Error al descargar el archivo: %1$s (HTTP %2$d)</string>
-    <string name="mnn_download_paused">Descarga pausada</string>
     <string name="mcp_send_command">Enviar comando del puente</string>
     <string name="mcp_service_label">Servicio</string>
     <string name="mcp_other_params">Otros parámetros</string>
@@ -6114,24 +6057,7 @@
     <string name="ai_message_dialogue_review">\n\nRevisión del diálogo:\n</string>
     <string name="ai_message_continue_task_if_complete">%1$s\n\nContinúa, si la tarea está completa, genera un resumen</string>
     <string name="ai_message_user_label">Usuario</string>
-    <string name="mnn_model_dir_not_exist">El directorio del modelo no existe: %1$s\nAsegúrate de que el modelo se haya descargado</string>
-    <string name="mnn_config_not_exist">El archivo de configuración no existe: %1$s\nAsegúrate de que el modelo se haya descargado completamente</string>
-    <string name="mnn_cannot_create_session">No se puede crear la sesión MNN LLM. Verifica el archivo del modelo y la configuración</string>
-    <string name="mnn_user_prompt">Usuario: %1$s\n</string>
-    <string name="mnn_assistant_prompt">Asistente: %1$s\n</string>
-    <string name="mnn_system_prompt">Sistema: %1$s\n</string>
-    <string name="mnn_message_format">Usuario: %1$s\n</string>
-    <string name="mnn_assistant">Asistente: </string>
 
-    <string name="mnn_error_with_message">Error: %1$s</string>
-    <string name="mnn_session_not_initialized">Error: Sesión LLM no inicializada</string>
-    <string name="mnn_reasoning_error">\n\n[Error en el proceso de razonamiento]</string>
-    <string name="mnn_generic_error">Error: %1$s</string>
-    <string name="mnn_model_not_configured">Nombre del modelo no configurado</string>
-    <string name="mnn_model_dir_missing">El directorio del modelo no existe: %1$s\nDescargue el modelo primero</string>
-    <string name="mnn_file_status">Estado del archivo:</string>
-    <string name="mnn_init_failed">Error al inicializar el modelo</string>
-    <string name="mnn_connection_success">¡Conexión con el modelo MNN LLM exitosa!\n\nModelo: %1$s\nDirectorio: %2$s\nTamaño total: %3$s\n\n%4$s</string>
     <string name="apk_unnamed_function">(Función sin nombre)</string>
     <string name="apk_unknown_error">Error desconocido</string>
     <string name="apk_extract_failed">Error al extraer APK: %1$s</string>
@@ -6612,13 +6538,6 @@
     <string name="conversation_analyze_image_prompt">Por favor, analiza esta imagen.</string>
     <string name="conversation_analyze_audio_prompt">Por favor, analiza este audio.</string>
     <string name="conversation_analyze_video_prompt">Por favor, analiza este video.</string>
-    <string name="llama_error_model_file_not_exist">El archivo del modelo no existe: %1$s</string>
-    <string name="llama_error_create_session_failed">Error al crear la sesión de llama.cpp (nativeCreateSession devolvió 0)</string>
-    <string name="llama_error_prefix">Error</string>
-    <string name="llama_error_session_create_failed">Error: No se pudo crear la sesión de llama.cpp (verifique el archivo del modelo y la compilación JNI)</string>
-    <string name="llama_error_chat_template_failed">Error: No se pudo aplicar la plantilla de chat del modelo (llama_model_chat_template/llama_chat_apply_template)</string>
-    <string name="llama_error_inference_failed">Ocurrió un error durante la inferencia de llama.cpp</string>
-    <string name="llama_error_inference_tag">[Ocurrió un error durante la inferencia]</string>
     <string name="task_error_execution_failed">Error al ejecutar la tarea: %1$s</string>
     <string name="task_context_original_request">Solicitud original del usuario: %1$s</string>
     <string name="task_context_current_task">Tarea actual: %1$s</string>

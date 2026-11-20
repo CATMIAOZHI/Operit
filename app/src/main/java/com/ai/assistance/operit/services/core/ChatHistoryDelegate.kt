@@ -974,34 +974,51 @@ class ChatHistoryDelegate(
                 setAsCurrentChat = false,
                 chatId = chatId,
             )
-            if (setAsCurrentChat) {
-                com.ai.assistance.operit.data.preferences.ChatModelSelections.getInstance(context)
-                    .adoptPending(newChat.id)
-            }
-            if (shouldSyncCurrentChatToGlobal) chatHistoryManager.setCurrentChatId(newChat.id)
-
-            if (withOpeningMessage) target.openingMessage?.let { chatHistoryManager.addMessage(newChat.id, it) }
-            
-            // 等待数据库Flow更新，确保新对话在列表中（最多等待500ms）
-            withTimeoutOrNull(500) {
-                _chatHistories.first { histories ->
-                    histories.any { it.id == newChat.id }
-                }
-            }
-            
-            if (setAsCurrentChat) {
-                if (selectionMode == ChatSelectionMode.FOLLOW_GLOBAL) {
-                    // FOLLOW_GLOBAL 由 currentChatId 的 collector 负责驱动切换与加载。
-                    chatHistoryManager.setCurrentChatId(newChat.id)
+            val selections = com.ai.assistance.operit.data.preferences.ChatModelSelections.getInstance(context)
+            val pendingClaim =
+                if (setAsCurrentChat) {
+                    selections.adoptPending(newChat.id)
                 } else {
-                    // LOCAL_ONLY 不写回全局 currentChatId，只切换悬浮窗自己的本地会话。
-                    _currentChatId.value = newChat.id
-                    loadChatMessages(newChat.id)
+                    null
                 }
-                onTokenStatisticsLoaded(newChat.id, 0, 0, 0)
+            try {
+                if (shouldSyncCurrentChatToGlobal) chatHistoryManager.setCurrentChatId(newChat.id)
+
+                if (withOpeningMessage) target.openingMessage?.let { chatHistoryManager.addMessage(newChat.id, it) }
+
+                // 等待数据库Flow更新，确保新对话在列表中（最多等待500ms）
+                withTimeoutOrNull(500) {
+                    _chatHistories.first { histories ->
+                        histories.any { it.id == newChat.id }
+                    }
+                }
+
+                if (setAsCurrentChat) {
+                    if (selectionMode == ChatSelectionMode.FOLLOW_GLOBAL) {
+                        // FOLLOW_GLOBAL 由 currentChatId 的 collector 负责驱动切换与加载。
+                        chatHistoryManager.setCurrentChatId(newChat.id)
+                    } else {
+                        // LOCAL_ONLY 不写回全局 currentChatId，只切换悬浮窗自己的本地会话。
+                        _currentChatId.value = newChat.id
+                        loadChatMessages(newChat.id)
+                    }
+                    onTokenStatisticsLoaded(newChat.id, 0, 0, 0)
+                }
+                if (pendingClaim != null) awaitShown(newChat.id)
+            } finally {
+                // Shown now (or failed): the picks it took leave the no-chat composer.
+                pendingClaim?.let(selections::releasePending)
             }
             onCreated?.invoke(newChat.id)
         }
+    }
+
+    /**
+     * The picks made with no chat open stay on the composer until [chatId] is the chat shown, so it
+     * never shows the defaults for a moment; then they are let go, having gone to [chatId].
+     */
+    private suspend fun awaitShown(chatId: String) {
+        withTimeoutOrNull(500) { _currentChatId.first { it == chatId } }
     }
 
     fun createFolderWithInitialChat(
@@ -1037,8 +1054,8 @@ class ChatHistoryDelegate(
             // 整个创建报告为失败，否则对话框保持打开并邀请重试，导致重复创建。
             creationResult.onSuccess { newChatId ->
                 // As for a plain new chat: the model picked with none open goes to the chat opened now.
-                com.ai.assistance.operit.data.preferences.ChatModelSelections.getInstance(context)
-                    .adoptPending(newChatId)
+                val selections = com.ai.assistance.operit.data.preferences.ChatModelSelections.getInstance(context)
+                val pendingClaim = selections.adoptPending(newChatId)
                 runCatching {
                     withTimeoutOrNull(500) {
                         _chatHistories.first { histories ->
@@ -1056,6 +1073,13 @@ class ChatHistoryDelegate(
                 }.onFailure { selectionError ->
                     AppLogger.e(TAG, "Failed to select newly created chat $newChatId", selectionError)
                 }
+                if (pendingClaim != null) {
+                    try {
+                        awaitShown(newChatId)
+                    } finally {
+                        selections.releasePending(pendingClaim)
+                    }
+                }
             }
 
             creationResult.exceptionOrNull()?.let { error ->
@@ -1070,14 +1094,18 @@ class ChatHistoryDelegate(
         chatId: String,
         syncToGlobal: Boolean = true,
         scrollToBottom: Boolean = true,
+        pendingMark: com.ai.assistance.operit.data.preferences.ChatModelSelections.PendingMark? = null,
     ) {
+        // The picks made with no chat open up to now (or up to [pendingMark], taken by a caller that
+        // made this chat and let it take them); only these are dropped once the chat opens.
+        val selections = com.ai.assistance.operit.data.preferences.ChatModelSelections.getInstance(context)
+        val dropMark = pendingMark ?: selections.pendingMark()
         coroutineScope.launch {
             // 切换对话时，禁止添加消息
             allowAddMessage.set(false)
             AppLogger.d(TAG, "切换对话到 $chatId (syncToGlobal=$syncToGlobal)，已禁止添加消息")
 
             try {
-                com.ai.assistance.operit.data.preferences.ChatModelSelections.getInstance(context).dropPending()
                 val (inputTokens, outputTokens, windowSize) = getChatStatistics()
                 saveCurrentChat(inputTokens, outputTokens, windowSize) // 切换前使用正确的窗口大小保存
 
@@ -1102,6 +1130,9 @@ class ChatHistoryDelegate(
                     onScrollToBottom()
                 }
             } finally {
+                // An existing chat was opened: picks made with none open do not carry over to it.
+                // Let go only now, so the composer shows them, not the defaults, until it switches.
+                selections.dropPending(dropMark)
                 if (!allowAddMessage.get()) {
                     allowAddMessage.set(true)
                     AppLogger.w(

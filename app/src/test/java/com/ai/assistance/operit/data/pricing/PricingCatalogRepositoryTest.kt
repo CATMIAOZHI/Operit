@@ -52,6 +52,7 @@ class PricingCatalogRepositoryTest {
         val assets = mock<AssetManager>()
         whenever(context.assets).thenReturn(assets)
         whenever(context.noBackupFilesDir).thenReturn(tempDir)
+        manualOnly(tempDir)
         whenever(assets.open("pricing/official_model_pricing_v1.json"))
             .thenAnswer { ByteArrayInputStream(validDocument.toByteArray()) }
 
@@ -198,6 +199,78 @@ class PricingCatalogRepositoryTest {
     private fun currentInput() =
         DefaultModelPricingCollect.getDefaultPricing("provider-a:model-a").inputPricePerMillion
 
+    /** The tests above check the manual download-then-apply flow, so automatic updates are off. */
+    private fun manualOnly(directory: File) =
+        writeTestCache(File(directory, "operit/pricing/auto_update.properties"), "enabled=false\n".toByteArray())
+
+    @Test
+    fun `with automatic updates on a check applies new prices by itself`() = withFixture { fixture ->
+        fixture.auto = true
+        val repository = fixture.repository()
+        assertTrue(repository.autoUpdate.value)
+        repository.refresh(fixture.scope).join()
+        assertEquals("remote-1", repository.snapshot.revision)
+        assertEquals(4.0, currentInput(), 0.0)
+        assertEquals("remote-1", fixture.repository().snapshot.revision)
+    }
+
+    @Test
+    fun `automatic check runs only when due and only when switched on`() = withFixture { fixture ->
+        fixture.auto = true
+        val repository = fixture.repository()
+        repository.autoUpdateIfDue(fixture.scope)!!.join()
+        assertEquals(1, fixture.requests.get())
+        // Checked just now: not due again, here or after a restart.
+        assertNull(repository.autoUpdateIfDue(fixture.scope))
+        assertNull(fixture.repository().autoUpdateIfDue(fixture.scope))
+        fixture.now += PricingCatalogRepository.AUTO_INTERVAL_MS
+        val later = fixture.repository()
+        later.setAutoUpdate(false, fixture.scope)
+        assertNull(later.autoUpdateIfDue(fixture.scope))
+        // The switch is saved in the background; wait for that before reading it back.
+        val settings = File(fixture.directory, "operit/pricing/auto_update.properties")
+        val deadline = System.currentTimeMillis() + 5_000
+        while ("enabled=false" !in settings.readText() && System.currentTimeMillis() < deadline) {
+            kotlinx.coroutines.delay(10)
+        }
+        assertFalse(fixture.repository().autoUpdate.value)
+        assertEquals(1, fixture.requests.get())
+    }
+
+    @Test
+    fun `automatic checks wait for an unmetered network and an unreadable setting counts as off`() =
+        withFixture { fixture ->
+            fixture.auto = true
+            fixture.unmetered = false
+            val repository = fixture.repository()
+            repository.autoUpdateIfDue(fixture.scope)?.join()
+            assertEquals(0, fixture.requests.get())
+            fixture.unmetered = true
+            repository.autoUpdateIfDue(fixture.scope)!!.join()
+            assertEquals(1, fixture.requests.get())
+            // A settings path that cannot be read as a file (here a folder) leaves the switch off.
+            val settings = File(fixture.directory, "operit/pricing/auto_update.properties")
+            settings.delete()
+            settings.mkdirs()
+            assertFalse(fixture.repository().autoUpdate.value)
+        }
+
+    @Test
+    fun `check now during an automatic check that skips still downloads`() = withFixture { fixture ->
+        fixture.auto = true
+        fixture.unmetered = false
+        val gate = java.util.concurrent.CountDownLatch(1)
+        fixture.networkGate = gate
+        val repository = fixture.repository()
+        val automatic = repository.autoUpdateIfDue(fixture.scope)!!
+        val manual = repository.refresh(fixture.scope)
+        gate.countDown()
+        automatic.join()
+        manual.join()
+        assertEquals(1, fixture.requests.get())
+        assertEquals("remote-1", repository.snapshot.revision)
+    }
+
     @Test
     fun `live sources are preferred without applying downloaded prices`() = withFixture { fixture ->
         fixture.live = true
@@ -209,6 +282,37 @@ class PricingCatalogRepositoryTest {
         assertEquals("test", repository.snapshot.revision)
         repository.applyDownloaded(fixture.scope).join()
         assertEquals(9.0, currentInput(), 0.0)
+    }
+
+    @Test
+    fun `automatic prices that failed to apply are retried at the next chance without a new download`() =
+        withFixture { fixture ->
+            fixture.auto = true
+            fixture.failApplication = true
+            val repository = fixture.repository()
+            repository.autoUpdateIfDue(fixture.scope)!!.join()
+            assertEquals("test", repository.snapshot.revision)
+            assertTrue(repository.state.value.canApply)
+            fixture.failApplication = false
+            repository.autoUpdateIfDue(fixture.scope)!!.join()
+            assertEquals("remote-1", repository.snapshot.revision)
+            assertEquals(1, fixture.requests.get())
+        }
+
+    @Test
+    fun `turning automatic updates off during a download leaves the new prices waiting`() = withFixture { fixture ->
+        fixture.auto = true
+        val gate = java.util.concurrent.CountDownLatch(1)
+        fixture.gate = gate
+        val repository = fixture.repository()
+        val job = repository.refresh(fixture.scope)
+        while (fixture.requests.get() == 0) kotlinx.coroutines.delay(10)
+        repository.setAutoUpdate(false, fixture.scope)
+        gate.countDown()
+        job.join()
+        assertEquals("test", repository.snapshot.revision)
+        assertTrue(repository.state.value.canApply)
+        assertEquals(PricingCheckOutcome.DOWNLOADED, repository.state.value.lastOutcome)
     }
 
     @Test
@@ -251,6 +355,14 @@ class PricingCatalogRepositoryTest {
         var failApplication = false
         var live = false
         var timeoutPrices = false
+        /** Automatic updates; off unless a test turns them on before making a repository. */
+        var auto = false
+        /** Holds the repository download until released. */
+        var gate: java.util.concurrent.CountDownLatch? = null
+        var unmetered = true
+        /** Holds the network check until released. */
+        var networkGate: java.util.concurrent.CountDownLatch? = null
+        var now = System.currentTimeMillis()
         private val context = mock<Context>()
         private val assets = mock<AssetManager>()
         private val client = OkHttpClient.Builder().addInterceptor { chain ->
@@ -265,6 +377,7 @@ class PricingCatalogRepositoryTest {
                 }
             } else {
                 requests.incrementAndGet()
+                gate?.await(5, java.util.concurrent.TimeUnit.SECONDS)
                 remote
             }
             Response.Builder()
@@ -281,15 +394,23 @@ class PricingCatalogRepositoryTest {
                 .thenAnswer { ByteArrayInputStream("""{"provider-a":"provider-a"}""".toByteArray()) }
         }
 
-        fun repository() = PricingCatalogRepository(
-            context = context,
-            httpClient = client,
-            remoteUrl = "https://example.test/pricing.json",
-            cacheWriter = { file, bytes ->
-                if (failApplication && file.name.startsWith("applied_")) throw IOException("disk full")
-                writeTestCache(file, bytes)
-            },
-        )
+        fun repository(): PricingCatalogRepository {
+            if (!auto) manualOnly(directory)
+            return PricingCatalogRepository(
+                context = context,
+                httpClient = client,
+                nowMillis = { now },
+                remoteUrl = "https://example.test/pricing.json",
+                cacheWriter = { file, bytes ->
+                    if (failApplication && file.name.startsWith("applied_")) throw IOException("disk full")
+                    writeTestCache(file, bytes)
+                },
+                unmeteredNetwork = {
+                    networkGate?.await(5, java.util.concurrent.TimeUnit.SECONDS)
+                    unmetered
+                },
+            )
+        }
     }
 
     private val validDocument = """

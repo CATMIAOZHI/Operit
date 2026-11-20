@@ -14,6 +14,9 @@ import com.ai.assistance.operit.data.preferences.OrbitModelRef
 import com.ai.assistance.operit.data.preferences.OrbitPreferences
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 
 /** All Orbit function routes converge here; accounting still uses the existing OrbitUsageTag. */
 object OrbitModels {
@@ -33,9 +36,11 @@ object OrbitModels {
     class Route(val mapping: FunctionConfigMapping, val backgroundReasoningLevel: Int?,
         val fromChatChoice: Boolean = false)
 
-    fun taskRole(task: OrbitTaskEntity): String = when (task.modelRole) {
-        MAIN, ASSISTANT -> task.modelRole
-        else -> if (task.source != OrbitRoutines.ALIGNMENT_SOURCE && !task.useSubagent) MAIN else ASSISTANT
+    fun taskRole(task: OrbitTaskEntity): String = taskRole(task.modelRole, task.source, task.useSubagent)
+
+    private fun taskRole(modelRole: String, source: String, useSubagent: Boolean): String = when (modelRole) {
+        MAIN, ASSISTANT -> modelRole
+        else -> if (source != OrbitRoutines.ALIGNMENT_SOURCE && !useSubagent) MAIN else ASSISTANT
     }
 
     fun checkedRole(value: String): String = value.trim().uppercase(java.util.Locale.ROOT).also {
@@ -64,6 +69,24 @@ object OrbitModels {
         return orbitId
     }
 
+    /** The model role of the task [chatId] runs, or null when it is not a task's chat. */
+    suspend fun chatTaskRole(context: Context, chatId: String): String? {
+        val dao = AppDatabase.getDatabase(context).orbitTaskDao()
+        return dao.binding(chatId)?.let { dao.run(it.runId) }?.let { dao.task(it.taskId) }?.let(::taskRole)
+    }
+
+    /**
+     * [chatTaskRole] kept up to date: a chat's task never changes, but the task's role can be
+     * edited. Emits null for a chat that is not a task's.
+     */
+    fun observeChatTaskRole(context: Context, chatId: String): kotlinx.coroutines.flow.Flow<String?> =
+        kotlinx.coroutines.flow.flow {
+            val dao = AppDatabase.getDatabase(context).orbitTaskDao()
+            val taskId = dao.binding(chatId)?.let { dao.run(it.runId) }?.taskId
+            if (taskId == null) emit(null)
+            else emitAll(dao.observeTaskModelFields(taskId).map { it?.let { f -> taskRole(f.modelRole, f.source, f.useSubagent) } })
+        }.distinctUntilChanged()
+
     suspend fun mapping(context: Context, function: FunctionType, chatId: String? = null,
         role: String? = null): FunctionConfigMapping? = route(context, function, chatId, role)?.mapping
 
@@ -72,17 +95,17 @@ object OrbitModels {
         val orbitId = ownerId(context, chatId) ?: return null
         var chatRole = role
         if (function == FunctionType.CHAT && chatRole == null && chatId != null) {
-            val dao = AppDatabase.getDatabase(context).orbitTaskDao()
-            chatRole = dao.binding(chatId)?.let { dao.run(it.runId) }?.let { dao.task(it.taskId) }?.let(::taskRole)
+            chatRole = chatTaskRole(context, chatId)
         }
         // The chat's own quick switch counts for turns the user starts there. A task turn that
         // names its model role keeps the model the Orbit's settings give that role.
-        val chatChoice = if (function == FunctionType.CHAT && role == null) {
-            com.ai.assistance.operit.data.preferences.ChatModelSelections.getInstance(context).mapping(chatId)
-        } else null
+        val selections = com.ai.assistance.operit.data.preferences.ChatModelSelections.getInstance(context)
+        val chatChoice = if (function == FunctionType.CHAT && role == null) selections.mapping(chatId) else null
+        // So does the thinking level the chat set in its composer.
+        val chatLevel = if (function == FunctionType.CHAT && role == null) chatId?.let { selections.level(it) } else null
         val mapping = chatChoice ?: mappingForOrbit(context, orbitId, function, chatRole)
         return Route(mapping, mapping.thinkingQualityLevel.takeIf {
-            function == FunctionType.CHAT && chatRole == ASSISTANT && chatChoice == null
+            function == FunctionType.CHAT && chatRole == ASSISTANT && chatChoice == null && chatLevel == null
         }, fromChatChoice = chatChoice != null)
     }
 

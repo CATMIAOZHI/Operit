@@ -60,11 +60,11 @@ internal object OrbitModelTools {
   - request_create for an API-key provider: look up the provider's endpoint in its official docs first. Leave models out unless you are sure of the names: on the card the user types the API key, the app fetches the provider's model list, and the user ticks the models. For a sign-in account see below. It returns at once; end the turn with one short line. You get a hidden note with what was added.
   - A new key: prefer a new configuration. Use request_create with a name that tells it apart (e.g. "DeepSeek new key"), then request_use to move to it once it works; the old configuration stays as a fallback.
   - request_key replaces the key of one existing configuration (config = its select from list, e.g. "DeepSeek#2" when several share a name). Use it only when the user wants that configuration's key replaced, e.g. the old key was revoked. If several configurations could be meant, ask the user which one first. The user types the new key on the card; you never see it. The app first tests the new key on each model of that configuration you use (or its first model) and replaces the old key only if all pass; otherwise the new key is not saved and the hidden note says why. End the turn with one short line.
-  - open_settings puts a card that opens the model settings page. Only for what the chat cannot do: a configuration that uses several keys, or models that run on the phone. End the turn with one short line.
+  - open_settings puts a card that opens the model settings page. Only for what the chat cannot do: a configuration that uses several keys, or one of a removed provider that has to be switched. End the turn with one short line.
   - request_use switches the model you use for main (your replies), assistant (titles, memory, background work) or multimodal (reading pictures), and can set the assistant's thinking strength. multimodal requires picture support enabled for that model in its configuration. A model that is not in the configuration yet but is in discover's list is added to it. It puts an approval card in the chat; end the turn with one short line.
   - Never ask for the key in chat. If the user sends one anyway, do not repeat it or store it anywhere.
   - Sign-in accounts (OPENAI_CODEX, GROK_ACCOUNT, CLAUDE_ACCOUNT, GOOGLE_ANTIGRAVITY, COMMAND_CODE) use no key. list's accounts shows which are signed in. Not signed in: put a sign-in card first with orbit_vault request_chatgpt_login (ChatGPT/Codex) or request_account_login (Claude, Grok, Antigravity, Command Code). Signed in: add it yourself with request_create provider=<that id> (leave endpoint and models out); the user picks the models from the account's list on the card. discover with that provider also lists the account's models.
-  - Models that run on the phone (MNN, LLAMA_CPP) are set up in the app's model settings; use open_settings for those.
+  - Local model providers (LMSTUDIO, OLLAMA, OPENAI_LOCAL, MNN, LLAMA_CPP) were removed. A configuration still on one does not run; put an open_settings card so the user switches it. OLLAMA_CLOUD still works.
   - 模型名别靠猜：已有配置用 discover 查；新建时让用户在卡片里填密钥（账号登录型不用填）后从服务商列表里勾。用户在卡片里填密钥，你看不到。
 """,
     )
@@ -148,6 +148,10 @@ internal object OrbitModelTools {
                 "request_use" -> {
                     inChat()
                     val config = named(arg("config"))
+                    require(!ApiProviderType.isRetiredId(config.apiProviderTypeId)) {
+                        "\"${config.name}\" uses a provider that was removed from the app (local model support). No approval card was created; " +
+                            "pick another configuration, or put a card with action=open_settings so the user switches its provider"
+                    }
                     val model = arg("model")
                     require(model.isNotEmpty() && model.length <= 120) { "Give model: a model name from the configuration or from discover" }
                     val role = arg("use_as").lowercase()
@@ -239,8 +243,8 @@ internal object OrbitModelTools {
                         "\"${config.name}\" uses a signed-in account, not a key. If it stopped working, put a sign-in card with " +
                             "${OrbitApprovalActions.signInWith(provider)} relogin=true"
                     }
-                    require(provider !in OrbitApprovalActions.LOCAL_PROVIDERS) {
-                        "\"${config.name}\" runs a model on the phone and has no key"
+                    require(!provider.isRetired) {
+                        "\"${config.name}\" uses ${provider.name}, which was removed from the app (local model support); switch the configuration to another provider in the model settings"
                     }
                     require(!full.useMultipleApiKeys) {
                         "\"${config.name}\" uses several keys; put a card with action=open_settings so the user changes them there"
@@ -324,8 +328,8 @@ internal object OrbitModelTools {
 
     private fun provider(id: String): ApiProviderType =
         ApiProviderType.fromProviderTypeId(id)?.also {
-            require(it !in OrbitApprovalActions.LOCAL_PROVIDERS) {
-                "${it.name} runs a model on the phone and is set up in the app's model settings; put a card with action=open_settings"
+            require(!it.isRetired) {
+                "${it.name} was removed from the app (local model support); pick another of list's providers"
             }
         } ?: error("provider must be one of list's providers")
 
@@ -349,8 +353,8 @@ internal object OrbitModelTools {
     /** The provider's models for a saved configuration; the saved key is used here and never returned. */
     private suspend fun remoteModels(context: Context, full: ModelConfigData): List<String> {
         val provider = ApiProviderType.fromProviderTypeId(full.apiProviderTypeId) ?: full.apiProviderType
-        require(provider !in OrbitApprovalActions.LOCAL_PROVIDERS) {
-            "\"${full.name}\" runs a model on the phone; its models are set up in the app's model settings"
+        require(!provider.isRetired) {
+            "\"${full.name}\" uses ${provider.name}, which was removed from the app (local model support); switch the configuration to another provider in the model settings"
         }
         if (provider in OrbitApprovalActions.SIGN_IN_PROVIDERS) {
             signedInFor(context, provider)

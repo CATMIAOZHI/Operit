@@ -66,7 +66,8 @@ object TokenStatsQueryService {
         val accumulator = TokenStatsAggregator.TokenStatsEventTotalsAccumulator(legacyPrices, params)
         val read =
             dao.loadLifetimeSnapshot(
-                includeOverrides = params.mode == TokenStatsCostMode.REVALUED,
+                // Both views need today's prices: the historical one fills in calls that had none.
+                includeOverrides = true,
                 pageSize = lifetimeEventPageSize,
                 onEventsPage = { page, identities, overrides ->
                     accumulator.addPage(page, identities, overrides)
@@ -97,7 +98,7 @@ object TokenStatsQueryService {
             startMs = range.startMs,
             endMs = range.endMs,
             displayModelIds = params.displayModelIds?.toList(),
-            includeOverrides = params.mode == TokenStatsCostMode.REVALUED,
+            includeOverrides = true,
             pageSize = rangeEventPageSize,
             onEventsPage = { page, identities, displayModels, overrides ->
                 val current = accumulator
@@ -241,14 +242,14 @@ object TokenStatsQueryService {
     }
 
     /**
-     * 重估口径的旧系统价格：**单次快照读取**整表（不逐 identity 反复读 DataStore）。
+     * 旧系统价格（重估口径，以及按当时口径为当时没价格的调用补算）：**单次快照读取**整表
+     * （不逐 identity 反复读 DataStore）。
      * 顺序契约：必须在 Room 快照事务之前读取（见 [withDatabaseAndLegacyPrices]）。
      */
     private suspend fun readLegacyPrices(
         context: Context,
         params: TokenStatsQueryParams,
     ): Map<String, LegacyPriceSettings?> {
-        if (params.mode != TokenStatsCostMode.REVALUED) return emptyMap()
         val injected = legacyPricesProvider
         return if (injected != null) {
             injected(context)

@@ -1,20 +1,28 @@
-# Model capability catalog
+# Model catalogs
 
-`model_capabilities_v1.json` is the repository-hosted snapshot used by the
-manual multimodal capability sync in Operit.
+Operit ships two snapshots of models.dev under `app/src/main/assets/model_catalog/`:
 
-Regenerate it from the official models.dev catalog:
+- `model_capabilities_v1.json`: each official model's inputs (picture, audio,
+  video) and its context window and longest reply, matched by model name.
+- `model_protocols_v1.json`: each provider's models with the SDK, reasoning
+  fields and thinking levels, matched by the account's API address.
+
+Regenerate both from models.dev:
 
 ```powershell
 python tools/model_catalog/generate_model_capabilities_catalog.py
 python tools/model_catalog/generate_model_capabilities_catalog.py --check
+python tools/model_catalog/generate_model_protocols_catalog.py
+python tools/model_catalog/generate_model_protocols_catalog.py --check
 ```
 
-Normal reads use the bundled or previously cached local copy. The explicit
-“refresh local catalog” action first downloads `https://models.dev/models.json`.
-On timeout it falls back to this file from the matching `dev` or
-`main` branch. Other failures preserve the previous local catalog.
-The settings page displays the last successful local update time (also restored
-after restart), or indicates that it is using the bundled copy. Refreshing the
-directory does not itself overwrite the user's configured model capabilities;
-the separate sync action applies matching entries.
+Matching only reads the bundled or previously cached local copy. The app
+downloads new copies once a week in the background and when the user taps
+“Re-match” in the model settings. The capability catalog comes from
+`https://models.dev/models.json`, falling back on timeout to this repository's
+copy on the matching `dev` or `main` branch; the protocol catalog comes from
+`https://models.dev/api.json`. A failed download keeps the previous local copy.
+
+The protocol generator keeps providers listed without an `api` address only for
+the official providers the app gives a default address to
+(`ModelProtocolCatalog.OFFICIAL_ENDPOINTS`); change both together.

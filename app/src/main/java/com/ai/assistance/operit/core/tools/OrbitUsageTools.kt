@@ -10,6 +10,7 @@ import com.ai.assistance.operit.data.model.ToolPrompt
 import com.ai.assistance.operit.data.model.ToolResult
 import com.ai.assistance.operit.features.orbit.OrbitMemoryScope
 import com.ai.assistance.operit.features.orbit.OrbitQuota
+import com.ai.assistance.operit.features.orbit.OrbitUsageCost
 import com.ai.assistance.operit.ui.features.orbit.usageFirstDay
 import com.ai.assistance.operit.ui.features.orbit.usageViewBetween
 import com.ai.assistance.operit.ui.features.orbit.usageWeekStart
@@ -26,8 +27,8 @@ import org.json.JSONObject
 
 /**
  * Reads the numbers of Orbit's usage page: the allowances, and for a range the requests, tokens,
- * busiest hours, busiest day, active days, streak, use by purpose and, if asked, each day's use.
- * It only reads; it is worked out by the same code as the page, so both always agree.
+ * busiest hours, busiest day, active days, streak, use by purpose, what it cost and, if asked,
+ * each day's use. It only reads; it is worked out by the same code as the page, so both always agree.
  */
 internal object OrbitUsageTools {
     const val NAME = "orbit_usage"
@@ -36,11 +37,13 @@ internal object OrbitUsageTools {
     private const val MAX_RANGE_DAYS = 3660L
     /** At most this many days are listed with daily=true; the newest are kept. */
     private const val MAX_DAILY_ROWS = 400
+    /** At most this many models are listed in cost.by_model; the rest are added up. */
+    private const val MAX_MODEL_ROWS = 10
 
     val prompt = ToolPrompt(
         name = NAME,
         description = "Read your own token usage, the same numbers as the usage page in settings. " +
-            "查看你自己用了多少 token：每周/额外额度，以及某段时间的请求次数、累计 token、请求高峰时段、峰值那天、活跃天数、连续天数、各用途用量和每天用量。只读。",
+            "查看你自己用了多少 token 和花了多少钱：每周/额外额度，以及某段时间的请求次数、累计 token、花费（按模型）、缓存命中率、请求高峰时段、峰值那天、活跃天数、连续天数、各用途用量和每天用量。只读。",
         parametersStructured = listOf(
             ToolParameterSchema("range", description =
                 "today / yesterday / week (this allowance week, from Monday) / 30d / 90d / all / a day YYYY-MM-DD / a span YYYY-MM-DD..YYYY-MM-DD. Default week",
@@ -52,6 +55,7 @@ internal object OrbitUsageTools {
   - allowance is always the current week: weekly_used/limit/left, extra_used/limit/left, resets_at (local time) and paused. Token amounts are raw tokens.
   - peak_hours are the busiest hours of the day in the range, busiest first (at most 3), with their request counts. peak_day is the day with the most tokens in the range. streak_days counts days in a row with use up to today, whatever the range.
   - by_purpose lists what the tokens went to, most first; "other_orbits" is use by Orbits other than you.
+  - cost is what the range cost, in the currency the app's usage page shows: calls carry the price set for their model when they ended (Model pricing in settings). Every call without a cost (no price for the model then, no usage reported, or from before costs were kept) is estimated at today's price when it can be told (estimated_at_today_price, estimated_requests); calls from before costs were kept use the model the Orbit that made them uses now for that kind of work. unpriced_requests still have no cost and are not in the total, so when there are requests and covered_requests is 0 the cost is unknown, not free. by_model lists the top $MAX_MODEL_ROWS. Only a guide; the provider's bill is what counts.
   - For one day's use, pass range=YYYY-MM-DD. Days before the first record or after today have no use.
 """,
     )
@@ -112,6 +116,10 @@ internal object OrbitUsageTools {
             val span = span(args["range"].orEmpty(), today, usageWeekStart(state.weekStart, zone), firstRecord)
             val view = usageViewBetween(text, data, span.first, span.last, orbit.id,
                 text.getString(R.string.orbit_usage_other_orbits), zone)
+            val cost = OrbitUsageCost.compute(context, data, span.first, span.last, orbit.id)
+            // Six significant digits: tiny real costs stay above zero, without long float tails.
+            fun money(amount: Double): Double = if (!amount.isFinite() || amount <= 0.0) 0.0
+                else java.math.BigDecimal(amount).round(java.math.MathContext(6)).toDouble()
             val input = view.days.sumOf { it.input }
             val output = view.days.sumOf { it.output }
             val peak = view.days.filter { it.input + it.output > 0 }.maxByOrNull { it.input + it.output }
@@ -139,9 +147,38 @@ internal object OrbitUsageTools {
                 .put("by_purpose", JSONArray().apply {
                     view.lines.forEach { line ->
                         put(JSONObject().put("purpose", if (line.key == "others") "other_orbits" else line.key.lowercase(Locale.ROOT))
-                            .put("label", line.label).put("tokens", line.tokens).put("requests", line.calls))
+                            .put("label", line.label).put("tokens", line.tokens).put("requests", line.calls)
+                            .put("cost", money(cost.byLine[line.key] ?: 0.0))
+                            .put("cost_known", line.key in cost.coveredLines)
+                            .put("cost_estimated", line.key in cost.estimatedLines))
                     }
                 })
+                .put("cost", JSONObject()
+                    .put("currency", cost.money.currency.name)
+                    .put("total", money(cost.total))
+                    .put("known", money(cost.known))
+                    .put("estimated_at_today_price", money(cost.estimated))
+                    .put("covered_requests", cost.coveredCalls)
+                    .put("priced_requests", cost.pricedCalls)
+                    .put("estimated_requests", cost.estimatedCalls)
+                    .put("unpriced_requests", cost.unpricedCalls)
+                    .put("cache_hit_rate", cost.cacheRate?.let { Math.round(it * 1000.0) / 1000.0 } ?: JSONObject.NULL)
+                    .put("usd_to_cny_rate", cost.money.rate)
+                    .put("by_model", JSONArray().apply {
+                        cost.models.take(MAX_MODEL_ROWS).forEach { m ->
+                            put(JSONObject().put("model", m.model).put("cost", money(m.cost)).put("tokens", m.tokens)
+                                .put("requests", m.calls).put("unpriced_requests", m.unpricedCalls)
+                                .put("estimated_requests", m.estimatedCalls))
+                        }
+                    })
+                    .apply {
+                        val rest = cost.models.drop(MAX_MODEL_ROWS)
+                        if (rest.isNotEmpty()) put("other_models", JSONObject().put("models", rest.size)
+                            .put("cost", money(rest.sumOf { it.cost })).put("tokens", rest.sumOf { it.tokens })
+                            .put("requests", rest.sumOf { it.calls })
+                            .put("unpriced_requests", rest.sumOf { it.unpricedCalls })
+                            .put("estimated_requests", rest.sumOf { it.estimatedCalls }))
+                    })
             if (daily) {
                 val used = view.days.filter { it.calls > 0 || it.input + it.output > 0 }
                 val kept = used.takeLast(MAX_DAILY_ROWS)

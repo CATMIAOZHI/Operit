@@ -1409,17 +1409,6 @@ export interface ModelConfigResultItem {
     enableSummary: boolean;
     enableSummaryByMessageCount: boolean;
     summaryMessageCountThreshold: number;
-    mnnForwardType: number;
-    mnnThreadCount: number;
-    llamaThreadCount: number;
-    llamaContextSize: number;
-    llamaBatchSize: number;
-    llamaUBatchSize: number;
-    llamaGpuLayers: number;
-    llamaUseMmap: boolean;
-    llamaFlashAttention: boolean;
-    llamaKvUnified: boolean;
-    llamaOffloadKqv: boolean;
     enableDirectImageProcessing: boolean;
     enableDirectAudioProcessing: boolean;
     enableDirectVideoProcessing: boolean;

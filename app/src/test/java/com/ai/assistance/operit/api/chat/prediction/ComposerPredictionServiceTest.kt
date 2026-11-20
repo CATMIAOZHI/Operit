@@ -201,8 +201,11 @@ class ComposerPredictionServiceTest {
 
     @Test fun explicitlyRejectsUnknownAndRetiredProviders() {
         assertFalse(ComposerPredictionService.supports(config.copy(apiProviderTypeId = "plugin-provider")))
-        assertFalse(ComposerPredictionService.supports(config.copy(apiProviderTypeId = "MNN")))
+        listOf("LMSTUDIO", "OLLAMA", "OPENAI_LOCAL", "MNN", "LLAMA_CPP").forEach { providerId ->
+            assertFalse(providerId, ComposerPredictionService.supports(config.copy(apiProviderTypeId = providerId)))
+        }
         assertFalse(ComposerPredictionService.supports(config.copy(modelName = "gemini-3.1-flash-image")))
+        assertTrue(ComposerPredictionService.supports(config.copy(apiProviderTypeId = "OLLAMA_CLOUD")))
         assertTrue(ComposerPredictionService.supports(config.copy(apiProviderTypeId = "OPENCODE_ZEN_FREE", modelName = "mimo-v2.5-free")))
         assertTrue(ComposerPredictionService.supports(config.copy(apiProviderTypeId = "OPENCODE_ZEN_FREE", modelName = "muse-spark-1.3-contributor-free")))
         assertTrue(ComposerPredictionService.supports(config.copy(apiProviderTypeId = "OPENAI_CODEX", modelName = "gpt-6-astra")))

@@ -430,8 +430,11 @@ class MemoryLearningBatchTest {
     @Test fun notesOverCapacityTellTheReviewerToFreeSpaceFirst() = runBlocking {
         val context=context()
         // A document one add away from its cap: the capacity is checked on the staged result, so an
-        // add-first attempt is rejected and the message has to say what to do instead.
-        val lines=(1..272).map { "note-%03d-%s".format(Locale.ROOT,it,"a".repeat(12)) }
+        // add-first attempt is rejected and the message has to say what to do instead. The saved
+        // document is 22 chars per line minus one and the add costs 52, so the count leaves 10..31
+        // chars free: too little for the add, but enough once two lines (42 chars) are removed.
+        val lineCount=(MemoryNotesRepository.MAX_CHARS-9)/22
+        val lines=(1..lineCount).map { "note-%03d-%s".format(Locale.ROOT,it,"a".repeat(12)) }
         val notes=MemoryNotesRepository(context,"space")
         notes.save(lines.joinToString("\n"),notes.load().version)
         val staged=mutableListOf<MemoryReviewChange>()

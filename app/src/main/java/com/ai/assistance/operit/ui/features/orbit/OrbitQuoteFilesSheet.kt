@@ -41,8 +41,8 @@ private data class QuoteItem(
     val time: Long,
     val size: Long,
     val directory: String = "",
-    val work: Boolean = false,
-    val seed: String = name,
+    /** A task's result with its versions, marked like in the Builds tab. */
+    val versioned: Boolean = false,
 )
 
 /** The three kinds of file, in the order of the switch: works and made files, the Library, notes. */
@@ -156,7 +156,7 @@ private suspend fun loadQuoteLists(context: android.content.Context, orbitId: St
         .mapNotNull { v ->
             val file = runCatching { File(root, v.relativePath).canonicalFile }.getOrNull()
                 ?.takeIf { it.toPath().startsWith(root.toPath()) && it.isFile } ?: return@mapNotNull null
-            QuoteItem("work:" + v.artifactId, v.name, file, v.createdAt, file.length(), work = true, seed = v.artifactId)
+            QuoteItem("work:" + v.artifactId, v.name, file, v.createdAt, file.length(), versioned = true)
         }
     val orbitFiles = OrbitFiles.of(context, orbitId)
     // Names only: the picker shows file names, so no file is opened to find its title.
@@ -210,17 +210,24 @@ private fun QuoteSections(selected: Int, onSelect: (Int) -> Unit) {
 @Composable
 private fun QuoteRow(item: QuoteItem, picked: Boolean, onToggle: () -> Unit) {
     val context = LocalContext.current
-    val isImage = !item.work && OrbitFiles.kindOf(item.name) == OrbitFiles.Kind.IMAGE
+    val isImage = OrbitFiles.kindOf(item.name) == OrbitFiles.Kind.IMAGE
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
             .toggleable(value = picked, role = Role.Checkbox, onValueChange = { onToggle() })
             .padding(horizontal = 4.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        FileTile(item.name, image = item.file.takeIf { isImage }, imageExpected = isImage, work = item.work, seed = item.seed)
+        FileTile(item.name, image = item.file.takeIf { isImage }, imageExpected = isImage)
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
-            Text(item.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(item.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false))
+                if (item.versioned) {
+                    Icon(orbitIcon("history"), stringResource(R.string.orbit_builds_has_versions),
+                        Modifier.padding(start = 6.dp).size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
             if (item.directory.isNotEmpty()) {
                 Text(
                     item.directory,
@@ -229,7 +236,7 @@ private fun QuoteRow(item: QuoteItem, picked: Boolean, onToggle: () -> Unit) {
                 )
             }
             Text(
-                (if (item.work) stringResource(R.string.orbit_builds_work) else typeLabel(item.name)) + " · " +
+                typeLabel(item.name) + " · " +
                     android.text.format.Formatter.formatShortFileSize(context, item.size) + " · " + shortDate(item.time),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),

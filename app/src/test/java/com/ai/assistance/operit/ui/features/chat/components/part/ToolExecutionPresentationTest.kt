@@ -324,7 +324,24 @@ class ToolExecutionPresentationTest {
     }
 
     @Test
-    fun proxyTaskPresentation_usesForwardedSubagentMetadata() {
+    fun packageProxyPresentation_usesTargetAndForwardedParameters() {
+        val resolved =
+            resolveToolRequestPresentation(
+                rawToolName = "package_proxy",
+                params =
+                    mapOf(
+                        "tool_name" to "files_pkg:edit",
+                        "params" to
+                            """{&quot;path&quot;:&quot;a.txt&quot;,&quot;append&quot;:true}""",
+                    ),
+            )
+
+        assertEquals("files_pkg:edit", resolved.toolName)
+        assertEquals(mapOf("path" to "a.txt", "append" to "true"), resolved.forwardedParams)
+    }
+
+    @Test
+    fun oldCliModeProxyTask_stillShowsForwardedSubagentMetadata() {
         val resolved =
             resolveToolRequestPresentation(
                 rawToolName = "proxy",
@@ -343,14 +360,16 @@ class ToolExecutionPresentationTest {
     }
 
     @Test
-    fun proxyFileEditPresentation_usesResolvedToolName() {
-        val resolved =
+    fun oldTerminalCallsShowTheBuiltInName() {
+        assertEquals("terminal", resolveToolRequestPresentation("super_admin:terminal", emptyMap()).toolName)
+        assertEquals(
+            "terminal_wait",
             resolveToolRequestPresentation(
-                rawToolName = "proxy",
-                params = mapOf("tool_name" to "edit_file", "params" to "{}"),
-            )
-
-        assertEquals("edit_file", resolved.toolName)
+                "package_proxy",
+                mapOf("tool_name" to "super_admin:terminal_wait", "params" to "{}"),
+            ).toolName,
+        )
+        assertEquals("super_admin:shell", resolveToolRequestPresentation("super_admin:shell", emptyMap()).toolName)
     }
 
     @Test
@@ -467,9 +486,6 @@ class ToolExecutionPresentationTest {
 
         assertTrue(shouldAllowUnmatchedTaskExecution("task", live))
         assertFalse(shouldAllowUnmatchedTaskExecution("read_file", live))
-
-        val proxyWrappedTask = live.copy(toolName = "proxy")
-        assertTrue(shouldAllowUnmatchedTaskExecution("task", proxyWrappedTask))
     }
 
     @Test

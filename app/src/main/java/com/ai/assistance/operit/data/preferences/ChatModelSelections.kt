@@ -3,6 +3,7 @@ package com.ai.assistance.operit.data.preferences
 import android.content.Context
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.ai.assistance.operit.data.model.ModelConfigSummary
@@ -18,7 +19,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.getAndUpdate
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -34,6 +34,9 @@ private val Context.chatModelSelectionStore by preferencesDataStore(name = "chat
  *
  * The choices live in memory and are written to disk behind it, so a switch counts for the very
  * next send and every composer shows it at once.
+ *
+ * A chat's thinking level is kept the same way: set from one chat's composer it stays with that
+ * chat, and a chat that never set one follows the saved composer level.
  */
 class ChatModelSelections private constructor(context: Context) {
     private val app = context.applicationContext
@@ -51,6 +54,9 @@ class ChatModelSelections private constructor(context: Context) {
     /** Every chat's own choice, by chat ID. */
     val choices: StateFlow<Map<String, OrbitModelRef>> = _choices.asStateFlow()
 
+    /** Memory changes and their writes are queued together, so the disk ends as memory does. */
+    private val order = Any()
+
     /**
      * A choice made while no chat is open; the next chat created and opened takes it, and opening
      * an existing chat drops it. Kept in memory only: it belongs to that moment.
@@ -58,18 +64,31 @@ class ChatModelSelections private constructor(context: Context) {
     private val _pending = MutableStateFlow<OrbitModelRef?>(null)
     val pending: StateFlow<OrbitModelRef?> = _pending.asStateFlow()
 
+    private val _levels = MutableStateFlow<Map<String, Int>>(emptyMap())
+
+    /** Every chat's own thinking level, by chat ID. */
+    val levels: StateFlow<Map<String, Int>> = _levels.asStateFlow()
+
+    /** A thinking level set while no chat is open; it goes with the model choice in [pending]. */
+    private val _pendingLevel = MutableStateFlow<Int?>(null)
+    val pendingLevel: StateFlow<Int?> = _pendingLevel.asStateFlow()
+
     init {
         scope.launch {
-            val saved = runCatching { decode(store.data.first()) }
+            val prefs = runCatching { store.data.first() }
                 .onFailure { AppLogger.w(TAG, "Failed to read chat model choices", it) }
-                .getOrDefault(emptyMap())
+                .getOrNull()
+            val saved = prefs?.let(::decode).orEmpty()
+            val savedLevels = prefs?.let(::decodeLevels).orEmpty()
             // A switch made while reading wins over what was on disk.
             _choices.update { saved + it }
+            _levels.update { savedLevels + it }
             loaded.complete(Unit)
         }
     }
 
     private fun key(chatId: String) = stringPreferencesKey(PREFIX + chatId)
+    private fun levelKey(chatId: String) = intPreferencesKey(LEVEL_PREFIX + chatId)
 
     private fun decode(prefs: Preferences): Map<String, OrbitModelRef> =
         prefs.asMap().mapNotNull { (key, value) ->
@@ -78,12 +97,15 @@ class ChatModelSelections private constructor(context: Context) {
                 ?.let { key.name.removePrefix(PREFIX) to it }
         }.toMap()
 
+    private fun decodeLevels(prefs: Preferences): Map<String, Int> =
+        prefs.asMap().mapNotNull { (key, value) ->
+            if (!key.name.startsWith(LEVEL_PREFIX) || value !is Int) null
+            else key.name.removePrefix(LEVEL_PREFIX) to value
+        }.toMap()
+
     fun observe(chatId: String?): Flow<OrbitModelRef?> =
         if (chatId.isNullOrBlank()) pending
         else choices.map { it[chatId] }.distinctUntilChanged()
-
-    /** Memory changes and their writes are queued together, so the disk ends as memory does. */
-    private val order = Any()
 
     fun select(chatId: String, ref: OrbitModelRef) {
         synchronized(order) {
@@ -92,19 +114,115 @@ class ChatModelSelections private constructor(context: Context) {
         }
     }
 
+    /**
+     * The chat goes back to its default model when [drop] says its own pick should go; its own
+     * thinking level stays. Waits for the saved picks first, so one read late cannot come back,
+     * and leaves a pick changed meanwhile alone.
+     */
+    suspend fun clearModelIf(chatId: String, drop: suspend (OrbitModelRef) -> Boolean) {
+        loaded.await()
+        val ref = _choices.value[chatId] ?: return
+        if (!drop(ref)) return
+        synchronized(order) {
+            if (_choices.value[chatId] != ref) return
+            _choices.update { it - chatId }
+            scope.launch { store.edit { it.remove(key(chatId)) } }
+        }
+    }
+
+    /**
+     * Each pick made with no chat open counts up its own generation, so the model and the level
+     * picked go to one chat each, and a pick made later is never taken or cleared for an earlier one.
+     */
+    private var modelGeneration = 0L
+    private var levelGeneration = 0L
+    private var claimedModelGeneration = -1L
+    private var claimedLevelGeneration = -1L
+
     fun selectForNextChat(ref: OrbitModelRef) {
-        _pending.value = ref
+        synchronized(order) {
+            _pending.value = ref
+            modelGeneration++
+        }
     }
 
-    /** [chatId] was just created and opened: it takes the choice made while no chat was open. */
-    fun adoptPending(chatId: String) {
-        val ref = _pending.getAndUpdate { null } ?: return
-        select(chatId, ref)
+    fun selectLevel(chatId: String, level: Int) {
+        val clamped = level.coerceIn(ApiPreferences.MIN_THINKING_QUALITY_LEVEL, ApiPreferences.MAX_THINKING_QUALITY_LEVEL)
+        synchronized(order) {
+            _levels.update { it + (chatId to clamped) }
+            scope.launch { store.edit { it[levelKey(chatId)] = clamped } }
+        }
     }
 
-    /** An existing chat was opened: a choice made with none open does not carry over to it. */
-    fun dropPending() {
-        _pending.value = null
+    fun selectLevelForNextChat(level: Int) {
+        synchronized(order) {
+            _pendingLevel.value =
+                level.coerceIn(ApiPreferences.MIN_THINKING_QUALITY_LEVEL, ApiPreferences.MAX_THINKING_QUALITY_LEVEL)
+            levelGeneration++
+        }
+    }
+
+    /** What one chat took from the no-chat picks: each one's generation, or null if not taken. */
+    class PendingClaim internal constructor(
+        internal val modelGeneration: Long?,
+        internal val levelGeneration: Long?,
+    )
+
+    /** The no-chat picks standing at one moment, so only those are dropped later. */
+    class PendingMark internal constructor(
+        internal val modelGeneration: Long,
+        internal val levelGeneration: Long,
+    )
+
+    /**
+     * [chatId] was just created and is being opened: it takes the picks made while no chat was open
+     * that no other chat took. They stay shown for the no-chat composer until [releasePending] with
+     * the returned claim, called once [chatId] is on screen, so the composer never shows the
+     * defaults in between. Null when there was nothing to take.
+     */
+    fun adoptPending(chatId: String): PendingClaim? = synchronized(order) {
+        val model = _pending.value?.takeIf { claimedModelGeneration != modelGeneration }
+        val level = _pendingLevel.value?.takeIf { claimedLevelGeneration != levelGeneration }
+        if (model == null && level == null) return null
+        model?.let {
+            claimedModelGeneration = modelGeneration
+            select(chatId, it)
+        }
+        level?.let {
+            claimedLevelGeneration = levelGeneration
+            selectLevel(chatId, it)
+        }
+        PendingClaim(
+            modelGeneration = modelGeneration.takeIf { model != null },
+            levelGeneration = levelGeneration.takeIf { level != null },
+        )
+    }
+
+    /** Lets go of the picks [adoptPending] took with [claim]; any made since stay. */
+    fun releasePending(claim: PendingClaim) {
+        synchronized(order) {
+            if (claim.modelGeneration == modelGeneration) _pending.value = null
+            if (claim.levelGeneration == levelGeneration) _pendingLevel.value = null
+        }
+    }
+
+    fun pendingMark(): PendingMark = synchronized(order) { PendingMark(modelGeneration, levelGeneration) }
+
+    /**
+     * A chat was opened: the picks made with none open before [mark], taken when the opening began,
+     * do not carry over to it (a chat just made has taken them already). Picks made since stay.
+     */
+    fun dropPending(mark: PendingMark) {
+        synchronized(order) {
+            if (mark.modelGeneration == modelGeneration) {
+                _pending.value = null
+                modelGeneration++
+            }
+            if (mark.levelGeneration == levelGeneration) {
+                _pendingLevel.value = null
+                levelGeneration++
+            }
+        }
     }
 
     suspend fun forget(chatIds: Collection<String>) {
@@ -113,10 +231,26 @@ class ChatModelSelections private constructor(context: Context) {
         // Queued after any switch still being saved; a failure reaches the caller.
         val write = synchronized(order) {
             _choices.update { it - chatIds.toSet() }
-            scope.async { store.edit { prefs -> chatIds.forEach { prefs.remove(key(it)) } } }
+            _levels.update { it - chatIds.toSet() }
+            scope.async {
+                store.edit { prefs ->
+                    chatIds.forEach {
+                        prefs.remove(key(it))
+                        prefs.remove(levelKey(it))
+                    }
+                }
+            }
         }
         write.await()
     }
+
+    /** The chat's own thinking level, or null when it follows the saved composer level. */
+    suspend fun level(chatId: String?): Int? =
+        if (chatId.isNullOrBlank()) _pendingLevel.value
+        else {
+            loaded.await()
+            _levels.value[chatId]
+        }
 
     /** The chat's own choice as it stands now, or null when it has none or the model is gone. */
     suspend fun mapping(chatId: String?): FunctionConfigMapping? {
@@ -137,6 +271,7 @@ class ChatModelSelections private constructor(context: Context) {
     companion object {
         private const val TAG = "ChatModelSelections"
         private const val PREFIX = "chat_"
+        private const val LEVEL_PREFIX = "level_"
 
         @Volatile private var instance: ChatModelSelections? = null
 

@@ -115,18 +115,28 @@ class ChatConfigReadinessTest {
 
     @Test
     fun retiredLocalProviderIsUnavailableWithoutDestroyingItsConfig() {
-        assertIssue(
-            ChatConfigReadinessIssue.PROVIDER_UNAVAILABLE,
-            ModelConfigData(
-                id = "mnn",
-                name = "MNN",
+        for (retired in ApiProviderType.RETIRED) {
+            val config = ModelConfigData(
+                id = "local",
+                name = "Local",
                 modelName = "local-model",
-                apiProviderType = ApiProviderType.MNN,
-                apiProviderTypeId = ApiProviderType.MNN.name,
+                apiProviderType = retired,
+                apiProviderTypeId = " ${retired.name.lowercase()} ",
                 apiKey = "中文",
                 useMultipleApiKeys = true
             )
-        )
+            assertIssue(ChatConfigReadinessIssue.PROVIDER_RETIRED, config)
+            // A plugin registered under the same name does not bring it back.
+            assertEquals(
+                ChatConfigReadinessIssue.PROVIDER_RETIRED,
+                ChatConfigReadiness.evaluate(
+                    config = config,
+                    modelIndex = 0,
+                    registeredPluginProviderIds = setOf(retired.name)
+                ).issue
+            )
+        }
+        assertReady(remoteConfig(ApiProviderType.OLLAMA_CLOUD))
     }
 
     @Test

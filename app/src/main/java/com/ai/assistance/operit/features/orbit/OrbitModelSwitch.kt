@@ -3,6 +3,7 @@ package com.ai.assistance.operit.features.orbit
 import android.content.Context
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.model.ModelConfigData
+import com.ai.assistance.operit.data.model.withModelNames
 import com.ai.assistance.operit.data.model.getModelList
 import com.ai.assistance.operit.data.model.multimodalCapabilitiesForModel
 import com.ai.assistance.operit.data.preferences.ApiPreferences
@@ -108,21 +109,38 @@ internal object OrbitModelSwitch {
             if (english) "The model configuration \"$name\" no longer exists; nothing was switched. Check orbit_models list."
             else "模型配置「$name」已经不在了，什么都没换。用 orbit_models list 重新看看。"
         }
+        // A card approved before the update may still point at a removed provider: nothing is switched.
+        com.ai.assistance.operit.data.model.ApiProviderType.fromProviderTypeId(config.apiProviderTypeId)
+            ?.takeIf { it.isRetired }
+            ?.let { error(com.ai.assistance.operit.api.chat.llmprovider.AIServiceFactory.retiredProviderMessage(context, it)) }
         if (r.role == ROLE_MULTIMODAL &&
             !supportsPictures(checkNotNull(configs.getModelConfig(config.id)), r.model)) {
             return context.getString(R.string.orbit_model_switch_image_unsupported, name, r.model)
         }
         var added = false
+        // The added model's fields as this edit wrote them; a rollback leaves the model alone when
+        // anything else changed it since.
+        var addedFields: com.ai.assistance.operit.data.model.ModelAutoFields? = null
         var auto = com.ai.assistance.operit.data.model.ModelAutoConfig.Result(emptyList(), emptyList())
         if (r.model !in getModelList(config.modelName)) {
             check(r.adds) {
                 if (english) "\"${r.model}\" is no longer in \"$name\"; nothing was switched. Check orbit_models list."
                 else "「$name」里已经没有 ${r.model} 了，什么都没换。用 orbit_models list 重新看看。"
             }
-            val full = checkNotNull(configs.getModelConfig(config.id))
-            configs.saveModelConfig(full.copy(modelName = (getModelList(full.modelName) + r.model).joinToString(",")))
-            auto = com.ai.assistance.operit.data.model.ModelAutoConfig.fill(context, config.id, listOf(r.model))
-            added = true
+            // Added and filled in from the catalogs in one edit of the stored value. Only a model
+            // this edit adds counts as added: one someone else added meanwhile is theirs.
+            val autoConfig = com.ai.assistance.operit.data.model.ModelAutoConfig
+            val catalogs = autoConfig.loadCatalogs(context)
+            configs.editModelConfig(config.id) { now ->
+                val models = getModelList(now.modelName)
+                added = r.model !in models
+                if (!added) return@editModelConfig now
+                val withModel = now.withModelNames((models + r.model).joinToString(","))
+                val plan = autoConfig.plan(withModel, listOf(r.model), catalogs, force = false)
+                auto = com.ai.assistance.operit.data.model.ModelAutoConfig.Result(plan.protocols.keys.toList(), plan.images.toList())
+                with(autoConfig) { withModel.withPlan(plan) }
+                    .also { addedFields = com.ai.assistance.operit.data.model.ModelAutoFields.of(it) }
+            }
         }
         val prefs = OrbitModelPreferences(context)
         val before = prefs.current(orbit.id)
@@ -139,10 +157,14 @@ internal object OrbitModelSwitch {
                 e
             }
             if (failure != null) {
-                if (added) runCatching {
-                    val now = checkNotNull(configs.getModelConfig(config.id))
-                    configs.saveModelConfig(now.copy(modelName = getModelList(now.modelName).filter { it != r.model }.joinToString(",")))
-                }
+                // Taken out the same way, with everything filled in for it.
+                if (added) addedFields?.let { mine -> runCatching {
+                    configs.editModelConfig(config.id) { now ->
+                        val models = getModelList(now.modelName)
+                        if (r.model !in models || !com.ai.assistance.operit.data.model.ModelAutoFields.of(now).sameFor(r.model, mine)) now
+                        else now.withModelNames(models.filter { it != r.model }.joinToString(","))
+                    }
+                } }
                 val why = OrbitSetup.describe(context, failure.problem)
                 // Settled as answered: the user and Orbit both see why nothing changed, and nothing is retried.
                 return if (english) "$name / ${r.model} did not answer a test message, so nothing was switched; you still use $old. $why"

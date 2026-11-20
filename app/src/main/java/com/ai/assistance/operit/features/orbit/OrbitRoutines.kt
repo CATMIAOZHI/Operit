@@ -496,7 +496,7 @@ internal object OrbitRoutines {
            「## 细节去哪找」：指向 dreams/、LESSONS.md、memory.md 等。
            除红线外用叙述体，不要堆条目。每个判断都要有聊天里的依据。它会全文放进每次聊天，整篇控制在 1500 字以内。没有新证据的节保持原样。
         7. 更新 alignment/ALIGNMENT_STATE.yaml（schema_version: 1；relationship_contract 是你对用户的承诺，user_facets、working_alliance、observed_fit、proactivity_policies 何时主动何时安静，repair_threads 只放摩擦 id）。在 alignment/PROGRESSION_HISTORY.yaml 的 outcomes 末尾追加一条 {observed_at, correction_free_rate, eligible_evidence（= user_turns）, open_repair_threads, classification}（文件里的键如果还叫 observations，改名为 outcomes）：user_turns 少于 10 时 classification 写 insufficient，也不要据此下「关系变好/变差」的结论；够了就和前几条比，写 improving、steady 或 declining。只保留最近 90 条。
-        8. 用户纠正过的具体做法，顺手记到 LESSONS.md 末尾。
+        8. 用户纠正过的具体做法，顺手记到 LESSONS.md 末尾，写成一句以后照做的规则，不写消息编号和经过。LESSONS.md 最多 8000 字，接近上限时先合并相近的、删掉过时的，再加新的。
         时间不够读完也没关系：commit 过的不会丢。快到时限时把读过的页 commit 掉，调用 orbit_submit_monitor_result，decision 写「还没读完」，下一轮会从记到的地方接着读。没读完时不要写 dream，也不要改对齐总结、摩擦清单和那几个 yaml。
         不要给用户发消息：userMessage 留空，decision 写一句这次复盘的结论。
     """.trimIndent()
@@ -556,7 +556,9 @@ internal object OrbitRoutines {
            (= user_turns), open_repair_threads, classification} (if the key is still named observations, rename it
            to outcomes): under 10 user turns write insufficient and draw no
            conclusion; otherwise compare with the last few: improving, steady or declining. Keep the latest 90.
-        8. Append specific ways of working the user corrected to LESSONS.md.
+        8. Append specific ways of working the user corrected to LESSONS.md, each as one rule to follow next time,
+           without message ids or the story. LESSONS.md holds at most 8000 characters: near that, first merge similar
+           lessons and drop outdated ones, then add.
         Running out of time is fine: what you committed is kept. Near the limit, commit the pages you read and call
         orbit_submit_monitor_result with the decision "not finished"; the next run reads on from there. Until the
         reading is done, write no dream and leave the synthesis, the repair list and the yaml files alone.
@@ -567,7 +569,7 @@ internal object OrbitRoutines {
         夜间自我整理（只在有新对话时运行）。SOURCE 里是最近的对话。用它做下面几件事，都在后台安静完成：
         1. 记忆：把值得长期保留的新事实、偏好、决定和承诺整理进 memory.md 和 user.md（memory_review 工具包）。memory.md 分四类，新增时用 section=facts/preferences/decisions/commitments 指定；新的说法替换旧的，不留互相矛盾的内容；「未分类（旧内容）」里的条目顺手归类。没有值得保留的变化就不动。
         2. 人物和圈子：对话里提到的人和现实里的人际圈（家人、同事、朋友，不是聊天群），更新 memory/people/、memory/groups/ 里对应的文件（edit_file 改，write_file 新建，path 填完整路径），只记用户亲口说的关系。
-        3. 反思：用户纠正过的做法、踩过的坑、工具用法追加到 LESSONS.md，不写进 memory.md。对齐总结由夜间对齐复盘负责，这里不改它。
+        3. 反思：用户纠正过的做法、踩过的坑、工具用法追加到 LESSONS.md，不写进 memory.md。每条写成一句以后照做的规则，不写消息编号和经过。LESSONS.md 每次聊天都全文带上，最多 8000 字：接近或超过时，先合并相近的、删掉过时的、去掉旧条目里的消息编号和经过，再加新的。对齐总结由夜间对齐复盘负责，这里不改它。
         4. 技能：用 orbit_skills 看已有技能。同一套做法出现了两次以上，就用 memory_review 的 manage（action=skill_create）整理成技能；已有技能和最近的实际做法不符时改好它。
         不要给用户发消息：userMessage 留空，decision 写一句这次整理了什么。
     """.trimIndent()
@@ -583,8 +585,11 @@ internal object OrbitRoutines {
            to create, full path) for people and
            real social circles (family, coworkers, friends; not chat groups) mentioned. Record only relationships the
            user stated.
-        3. Reflection: append corrected habits, mistakes and tool usage to LESSONS.md, never to memory.md. The nightly
-           alignment review owns ALIGNMENT_SYNTHESIS.md; leave it alone.
+        3. Reflection: append corrected habits, mistakes and tool usage to LESSONS.md, never to memory.md, each as one
+           rule to follow next time, without message ids or the story. Every chat carries LESSONS.md in full and it
+           holds at most 8000 characters: when it is near or over that, first merge similar lessons, drop outdated ones
+           and strip message ids and stories from old entries, then add. The nightly alignment review owns
+           ALIGNMENT_SYNTHESIS.md; leave it alone.
         4. Skills: check existing skills with orbit_skills. When the same workflow came up twice or more, make it a skill
            with memory_review manage (action=skill_create); fix a skill that no longer matches how the work was done.
         Do not message the user: leave userMessage empty and say in decision what you tidied.

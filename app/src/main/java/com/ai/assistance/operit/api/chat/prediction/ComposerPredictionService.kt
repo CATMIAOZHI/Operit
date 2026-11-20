@@ -2,6 +2,7 @@ package com.ai.assistance.operit.api.chat.prediction
 
 import android.content.Context
 import com.ai.assistance.operit.api.chat.enhance.MultiServiceManager
+import com.ai.assistance.operit.api.chat.llmprovider.withChatThinkingLevel
 import com.ai.assistance.operit.api.chat.llmprovider.OpenCodeSessionContext
 import com.ai.assistance.operit.api.chat.llmprovider.providerSessionIdForScope
 import com.ai.assistance.operit.core.chat.hooks.PromptTurn
@@ -71,7 +72,8 @@ class ComposerPredictionService internal constructor(
                             val output = StringBuilder()
                             var providerFailed = false
                             lease.service.sendMessage(
-                                context = context,
+                                // At the chat's own thinking level, like the request it reuses.
+                                context = context.withChatThinkingLevel(snapshot.thinkingQualityLevel),
                                 chatHistory = predictionHistory(snapshot.history),
                                 modelParameters = parameters,
                                 // Closing thinking costs quality and shifts the request shape some
@@ -128,12 +130,12 @@ class ComposerPredictionService internal constructor(
         /** Plugin adapters have no isolation/tool-free contract; retired local modes cannot run. */
         fun supports(config: ModelConfigData): Boolean {
             val sourceProvider = ApiProviderType.fromProviderTypeId(config.apiProviderTypeId) ?: return false
+            if (sourceProvider.isRetired) return false
             val resolvedProvider = ApiProviderType.fromProviderTypeId(config.withModelProtocol().apiProviderTypeId)
                 ?: return false
             // Account-specific adapters apply the same request transformations to both calls.
             // Codex OAuth and Zen Free can use the isolated path just like other text providers.
-            val unsupported = setOf(ApiProviderType.MNN, ApiProviderType.LLAMA_CPP)
-            if (sourceProvider in unsupported || resolvedProvider in unsupported) return false
+            if (resolvedProvider.isRetired) return false
             // Media/embedding-only modes cannot promise a short text completion.
             return !Regex("(?:^|[-_/])(?:image|audio|realtime|tts|whisper|veo|embedding|transcription)(?:$|[-_/])", RegexOption.IGNORE_CASE)
                 .containsMatchIn(config.modelName)

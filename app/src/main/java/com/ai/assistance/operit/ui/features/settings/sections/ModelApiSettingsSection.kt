@@ -55,7 +55,6 @@ import com.ai.assistance.operit.api.chat.llmprovider.EndpointCompleter
 import com.ai.assistance.operit.api.chat.EnhancedAIService
 import com.ai.assistance.operit.api.chat.llmprovider.AIServiceFactory
 import com.ai.assistance.operit.api.chat.llmprovider.CodexModelListFetcher
-import com.ai.assistance.operit.api.chat.llmprovider.OpenCodeZenFree
 import com.ai.assistance.operit.api.chat.llmprovider.ModelListFetcher
 import com.ai.assistance.operit.api.chat.llmprovider.parseProviderCustomHeaders
 import com.ai.assistance.operit.data.api.CodexAuthManager
@@ -73,6 +72,11 @@ import com.ai.assistance.operit.data.collects.ApiProviderConfigs
 import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.ModelConfigData
 import com.ai.assistance.operit.data.model.ModelProtocolCatalogRepository
+import com.ai.assistance.operit.data.model.ModelAutoConfig
+import com.ai.assistance.operit.data.model.ModelAutoFields
+import com.ai.assistance.operit.data.model.settledModels
+import com.ai.assistance.operit.data.model.withAutoFields
+import com.ai.assistance.operit.data.model.ModelLimits
 import com.ai.assistance.operit.data.model.ModelProtocolSettings
 import com.ai.assistance.operit.data.model.supportsModelProtocolOverrides
 import com.ai.assistance.operit.data.model.ModelMultimodalCapabilities
@@ -95,6 +99,12 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -105,6 +115,88 @@ import kotlinx.coroutines.sync.withLock
 val TAG = "ModelApiSettings"
 
 private val modelApiSettingsSaveMutex = Mutex()
+
+/** Re-matching keeps going when the settings page scrolls away or closes. */
+private val modelReadaptScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+/** The configurations being re-matched, for a page shown again meanwhile. */
+private val modelsReadapting = MutableStateFlow(emptySet<String>())
+
+/**
+ * One settings page's models with edits not saved yet. While the page shows it reads the page; once
+ * the page closes it holds just the names, until the page's last save is done.
+ */
+private class PendingEdits {
+    @Volatile var read: () -> Set<String> = { emptySet() }
+    @Volatile var closed = false
+}
+
+/** Per configuration, every page's [PendingEdits]; re-matching leaves all their models alone. */
+private val modelsWithPendingEdits =
+    java.util.concurrent.ConcurrentHashMap<String, MutableSet<PendingEdits>>()
+
+private fun pendingEditsOf(configId: String): Set<String> =
+    modelsWithPendingEdits[configId]?.flatMapTo(mutableSetOf()) { it.read() }.orEmpty()
+
+private fun forgetPendingEdits(configId: String, entry: PendingEdits) {
+    modelsWithPendingEdits.computeIfPresent(configId) { _, entries ->
+        entries.remove(entry)
+        entries.takeIf { it.isNotEmpty() }
+    }
+}
+
+/** One check of which models the catalogs know, with what it was asked under. */
+private data class CatalogCheck(val key: List<Any?>, val names: Set<String>, val matched: Set<String>)
+
+/** What the API section of the settings page saves, as shown or as last saved. */
+private data class ApiAutoSaveState(
+    val apiEndpoint: String,
+    val apiKey: String,
+    val modelName: String,
+    val providerTypeId: String,
+    val provider: ApiProviderType,
+    val enableDirectImageProcessing: Boolean,
+    val enableDirectAudioProcessing: Boolean,
+    val enableDirectVideoProcessing: Boolean,
+    /** The per-model fields as shown. */
+    val autoFields: ModelAutoFields,
+    val enableGoogleSearch: Boolean,
+    val enableClaude1hPromptCache: Boolean,
+    val enableToolCall: Boolean,
+) {
+    companion object {
+        fun of(config: ModelConfigData) = ApiAutoSaveState(
+            apiEndpoint = config.apiEndpoint,
+            apiKey = config.apiKey,
+            modelName = config.modelName,
+            providerTypeId = config.apiProviderTypeId,
+            provider = config.apiProviderType,
+            enableDirectImageProcessing = config.enableDirectImageProcessing,
+            enableDirectAudioProcessing = config.enableDirectAudioProcessing,
+            enableDirectVideoProcessing = config.enableDirectVideoProcessing,
+            autoFields = ModelAutoFields.of(config),
+            enableGoogleSearch = config.enableGoogleSearch,
+            enableClaude1hPromptCache = config.enableClaude1hPromptCache,
+            enableToolCall = config.enableToolCall,
+        )
+    }
+}
+
+/**
+ * The model list after a save: [mine] in its order, minus models others removed since [base], plus
+ * models they added. A list this page did not change stays as stored.
+ */
+private fun mergedModelNames(stored: String, base: String, mine: String): String {
+    if (mine == base) return stored
+    if (stored == base) return mine
+    val storedList = getModelList(stored)
+    val baseSet = getModelList(base).toSet()
+    val mineList = getModelList(mine)
+    val removed = baseSet - storedList.toSet()
+    val mineSet = mineList.toSet()
+    val added = storedList.filter { it !in baseSet && it !in mineSet }
+    return (mineList.filter { it !in removed } + added).joinToString(",")
+}
 
 private data class ProviderSelectionOption(
     val id: String,
@@ -246,10 +338,6 @@ fun ModelApiSettingsSection(
         openCodeGoQuota = null
     }
 
-    // MNN特定配置状态
-
-    // llama.cpp 常用配置状态
-
     // 多模态处理配置状态
     var enableDirectImageProcessingInput by remember(config.id) { mutableStateOf(config.enableDirectImageProcessing) }
     var modelMultimodalCapabilitiesInput by remember(config.id) {
@@ -259,32 +347,21 @@ fun ModelApiSettingsSection(
             }
         )
     }
-    var automaticallyMatchedZenModels by remember(config.id) { mutableStateOf(emptySet<String>()) }
     var modelProtocolSettingsInput by remember(config.id) { mutableStateOf(config.modelProtocolSettings) }
-    var isConfiguringProtocols by remember(config.id) { mutableStateOf(false) }
-    var protocolSyncJob by remember(config.id) { mutableStateOf<Job?>(null) }
+    var modelLimitsInput by remember(config.id) { mutableStateOf(config.modelLimits) }
+    // Models whose inputs are set by hand or by the catalog; matching leaves those alone.
+    var settledModelsInput by remember(config.id) { mutableStateOf(config.settledModels()) }
+    // The section as last saved or taken in; saving writes only what changed here since, so a field
+    // not changed here keeps what is stored.
+    var savedPage by remember(config.id) { mutableStateOf(ApiAutoSaveState.of(config)) }
+    // What the store held when last taken in, so the same value is not taken in twice.
+    var lastStored by remember(config.id) { mutableStateOf<ApiAutoSaveState?>(null) }
+    // The last check of which models the catalogs know.
+    var catalogCheck by remember(config.id) { mutableStateOf<CatalogCheck?>(null) }
     val protocolCatalogRepository = remember(context.applicationContext) {
         ModelProtocolCatalogRepository(context.applicationContext)
     }
     val protocolCatalogUpdatedAt by protocolCatalogRepository.updatedAt.collectAsState()
-    LaunchedEffect(protocolCatalogRepository) {
-        protocolCatalogRepository.loadCatalog()
-    }
-    LaunchedEffect(selectedApiProvider, modelNameInput, protocolCatalogUpdatedAt) {
-        if (selectedApiProvider == ApiProviderType.OPENCODE_ZEN_FREE) {
-            val configuredModels = getModelList(modelNameInput)
-            if (configuredModels.isNotEmpty()) {
-                val matched = protocolCatalogRepository.loadCatalog()
-                    .matchAll(OpenCodeZenFree.CHAT_ENDPOINT, configuredModels)
-                if (matched.any { (model, settings) -> modelProtocolSettingsInput[model] != settings }) {
-                    modelProtocolSettingsInput = modelProtocolSettingsInput + matched
-                }
-            }
-        }
-    }
-    DisposableEffect(config.id) {
-        onDispose { protocolSyncJob?.cancel() }
-    }
     var showMultimodalModelPicker by remember { mutableStateOf(false) }
     var selectedMultimodalModel by remember(config.id) {
         mutableStateOf(getModelList(config.modelName).firstOrNull().orEmpty())
@@ -298,32 +375,28 @@ fun ModelApiSettingsSection(
             OfficialModelCapabilitiesRepository(context.applicationContext)
         }
     val multimodalCatalogUpdatedAt by officialModelCapabilitiesRepository.updatedAt.collectAsState()
-    LaunchedEffect(officialModelCapabilitiesRepository) {
-        officialModelCapabilitiesRepository.loadCatalog()
-    }
-    LaunchedEffect(selectedApiProvider, modelNameInput, multimodalCatalogUpdatedAt) {
-        if (selectedApiProvider == ApiProviderType.OPENCODE_ZEN_FREE) {
-            val missingModels = getModelList(modelNameInput).filter {
-                it !in config.modelMultimodalCapabilities && it !in automaticallyMatchedZenModels
-            }
-            if (missingModels.isNotEmpty()) {
-                val matched = OpenCodeZenFree.matchMultimodalCapabilities(
-                    officialModelCapabilitiesRepository.loadCatalog(),
-                    missingModels,
-                )
-                modelMultimodalCapabilitiesInput = modelMultimodalCapabilitiesInput + matched
-                automaticallyMatchedZenModels = automaticallyMatchedZenModels + matched.keys
-            }
-        }
-    }
-    var isSyncingMultimodalCapabilities by remember(config.id) { mutableStateOf(false) }
-    var isRefreshingModelCatalog by remember(config.id) { mutableStateOf(false) }
-    var multimodalSyncJob by remember(config.id) { mutableStateOf<Job?>(null) }
+    val readapting by modelsReadapting.collectAsState()
+    val isReadapting = config.id in readapting
 
-    DisposableEffect(config.id) {
-        onDispose {
-            multimodalSyncJob?.cancel()
+    // Only the models listed now: one removed and added back must not bring its old values along.
+    fun currentAutoFields() = ModelAutoFields(
+        protocols = modelProtocolSettingsInput,
+        capabilities = modelMultimodalCapabilitiesInput,
+        limits = modelLimitsInput,
+        settled = settledModelsInput,
+    ).only(getModelList(modelNameInput))
+
+    // Which models the catalogs know, for the note under a model; saving does the filling in. A
+    // check only counts for the provider, address and catalogs it was made under.
+    val catalogCheckKey = listOf(selectedProviderTypeId, apiEndpointInput, protocolCatalogUpdatedAt, multimodalCatalogUpdatedAt)
+    LaunchedEffect(catalogCheckKey, modelNameInput) {
+        val names = getModelList(modelNameInput)
+        val catalogs = ModelAutoConfig.loadCatalogs(context)
+        val key = catalogCheckKey
+        val matched = withContext(Dispatchers.Default) {
+            ModelAutoConfig.matched(key[0] as String, key[1] as String, names, catalogs)
         }
+        catalogCheck = CatalogCheck(key, names.toSet(), matched)
     }
     
     // Google Search Grounding 配置状态 (仅Gemini)
@@ -348,26 +421,113 @@ fun ModelApiSettingsSection(
         previousDefaultsProvider = selectedProviderTypeId
     }
 
-    data class ApiAutoSaveState(
-        val apiEndpoint: String,
-        val apiKey: String,
-        val modelName: String,
-        val providerTypeId: String,
-        val provider: ApiProviderType,
-        val enableDirectImageProcessing: Boolean,
-        val enableDirectAudioProcessing: Boolean,
-        val enableDirectVideoProcessing: Boolean,
-        val modelMultimodalCapabilities: Map<String, ModelMultimodalCapabilities>,
-        val modelProtocolSettings: Map<String, ModelProtocolSettings>,
-        val enableGoogleSearch: Boolean,
-        val enableClaude1hPromptCache: Boolean,
-        val enableToolCall: Boolean,
-    )
+    val pendingEdits = remember(config.id) { PendingEdits() }
+    // The per-model fields of a save on its way, until the page takes in its result.
+    var sendingAutoFields by remember(config.id) { mutableStateOf<ModelAutoFields?>(null) }
+
+    /** The models on the page with edits not saved yet, or in a save not done yet. */
+    fun pendingModels(): Set<String> {
+        val shown = currentAutoFields()
+        val saved = savedPage.autoFields
+        val sending = sendingAutoFields
+        return getModelList(modelNameInput).filterTo(mutableSetOf()) {
+            !shown.sameFor(it, saved) || (sending != null && !sending.sameFor(it, saved))
+        }
+    }
+
+    /**
+     * Shows [stored] (what the store now holds) in the fields; a field changed here since [sent]
+     * was saved or taken in keeps that change, which the next save writes.
+     */
+    fun adoptSaved(stored: ApiAutoSaveState, sent: ApiAutoSaveState) {
+        fun <T> take(current: T, sentValue: T, storedValue: T, set: (T) -> Unit) {
+            if (current == sentValue && current != storedValue) set(storedValue)
+        }
+        take(apiEndpointInput, sent.apiEndpoint, stored.apiEndpoint) { apiEndpointInput = it }
+        take(apiKeyInput, sent.apiKey, stored.apiKey) { apiKeyInput = it }
+        take(selectedProviderTypeId, sent.providerTypeId, stored.providerTypeId) {
+            // Taken in as stored: none of the defaults of choosing a provider here apply.
+            previousDefaultsProvider = it
+            previousProviderTypeId = it
+            selectedProviderTypeId = it
+        }
+        take(enableDirectImageProcessingInput, sent.enableDirectImageProcessing, stored.enableDirectImageProcessing) {
+            enableDirectImageProcessingInput = it
+        }
+        take(enableDirectAudioProcessingInput, sent.enableDirectAudioProcessing, stored.enableDirectAudioProcessing) {
+            enableDirectAudioProcessingInput = it
+        }
+        take(enableDirectVideoProcessingInput, sent.enableDirectVideoProcessing, stored.enableDirectVideoProcessing) {
+            enableDirectVideoProcessingInput = it
+        }
+        take(enableGoogleSearchInput, sent.enableGoogleSearch, stored.enableGoogleSearch) { enableGoogleSearchInput = it }
+        take(enableClaude1hPromptCacheInput, sent.enableClaude1hPromptCache, stored.enableClaude1hPromptCache) {
+            enableClaude1hPromptCacheInput = it
+        }
+        take(enableToolCallInput, sent.enableToolCall, stored.enableToolCall) { enableToolCallInput = it }
+        // The model list shows what is stored unless it was edited here since; then the next save
+        // merges the edit into the stored list, measured against the list it was made on.
+        val listKept = modelNameInput == sent.modelName
+        if (listKept) modelNameInput = stored.modelName
+        // Field edits count only for models on the page; others keep their stored values.
+        val names = getModelList(modelNameInput)
+        val shown = stored.autoFields.withEdits(sent.autoFields.only(names), currentAutoFields())
+        modelProtocolSettingsInput = shown.protocols
+        modelMultimodalCapabilitiesInput = shown.capabilities
+        modelLimitsInput = shown.limits
+        settledModelsInput = shown.settled
+        savedPage = if (listKept) stored else stored.copy(modelName = sent.modelName)
+        lastStored = stored
+    }
+
+    // Changes made elsewhere (re-matching, Orbit, tools, background matching) show here as they are
+    // stored, even ones made while this page was away. Taken in one at a time with saves, from
+    // the newest stored value, so neither a save's result nor an older value undoes an edit.
+    LaunchedEffect(config.id) {
+        configManager.observeStoredConfig(config.id)
+            .map { it?.let(ApiAutoSaveState::of) }
+            .distinctUntilChanged()
+            .flowOn(Dispatchers.Default)
+            .collect { seen ->
+                if (seen == null || seen == lastStored) return@collect
+                modelApiSettingsSaveMutex.withLock {
+                    val latest = withContext(Dispatchers.Default) {
+                        configManager.getModelConfig(config.id)?.let(ApiAutoSaveState::of)
+                    }
+                    if (latest != null && latest != lastStored) adoptSaved(latest, savedPage)
+                }
+            }
+    }
+
+    // A re-match, even one started on an earlier page, leaves models with unsaved edits here alone.
+    // A closing page keeps only the names of those still unsaved, until its last save is done.
+    DisposableEffect(config.id) {
+        val entry = pendingEdits
+        entry.read = ::pendingModels
+        modelsWithPendingEdits.computeIfAbsent(config.id) { java.util.concurrent.ConcurrentHashMap.newKeySet() }.add(entry)
+        onDispose {
+            val left = pendingModels()
+            entry.closed = true
+            if (left.isEmpty()) forgetPendingEdits(config.id, entry) else entry.read = { left }
+        }
+    }
 
     // 保存设置的通用函数
-    suspend fun persist(state: ApiAutoSaveState) {
+    // Always saves the page as it is when its turn comes, and only what changed here since the
+    // last save, so a save waiting behind another never writes an older edit and a change made
+    // elsewhere meanwhile is kept. Saving also fills in what the local catalogs know about models
+    // still missing it, so a model added here is matched even when the page closes right away.
+    // Once written, the page takes in the result even if the caller is cancelled.
+    suspend fun persist(currentState: () -> ApiAutoSaveState): ModelConfigData = try {
         modelApiSettingsSaveMutex.withLock {
-            withContext(Dispatchers.IO) {
+            val state = currentState()
+            val page = savedPage
+            sendingAutoFields = state.autoFields
+            withContext(NonCancellable) {
+            try {
+            var changed = true
+            val saved = withContext(Dispatchers.IO) {
+                val catalogs = ModelAutoConfig.loadCatalogs(context)
                 configManager.updateApiSettingsFull(
                     configId = config.id,
                     apiKey = state.apiKey,
@@ -378,28 +538,61 @@ fun ModelApiSettingsSection(
                     enableDirectImageProcessing = state.enableDirectImageProcessing,
                     enableDirectAudioProcessing = state.enableDirectAudioProcessing,
                     enableDirectVideoProcessing = state.enableDirectVideoProcessing,
-                    modelMultimodalCapabilities = state.modelMultimodalCapabilities,
-                    modelProtocolSettings = state.modelProtocolSettings,
+                    modelMultimodalCapabilities = state.autoFields.capabilities,
                     enableGoogleSearch = state.enableGoogleSearch,
                     enableClaude1hPromptCache = state.enableClaude1hPromptCache,
                     enableToolCall = state.enableToolCall,
-                    // Preserve retired fields when editing/importing an older configuration.
-                    mnnForwardType = config.mnnForwardType,
-                    mnnThreadCount = config.mnnThreadCount,
-                    llamaThreadCount = config.llamaThreadCount,
-                    llamaContextSize = config.llamaContextSize,
-                    llamaGpuLayers = config.llamaGpuLayers,
-                )
-
-                EnhancedAIService.refreshAllServices(
-                    configManager.appContext
+                    finish = { stored, updated ->
+                        fun <T> pick(mine: T, was: T, theirs: T) = if (mine != was) mine else theirs
+                        val providerEdited = state.providerTypeId != page.providerTypeId
+                        val merged = updated.copy(
+                            apiKey = pick(state.apiKey, page.apiKey, stored.apiKey),
+                            apiEndpoint = pick(state.apiEndpoint, page.apiEndpoint, stored.apiEndpoint),
+                            modelName = mergedModelNames(stored.modelName, page.modelName, state.modelName),
+                            apiProviderType = if (providerEdited) state.provider else stored.apiProviderType,
+                            apiProviderTypeId = if (providerEdited) state.providerTypeId else stored.apiProviderTypeId,
+                            enableDirectImageProcessing = pick(state.enableDirectImageProcessing,
+                                page.enableDirectImageProcessing, stored.enableDirectImageProcessing),
+                            enableDirectAudioProcessing = pick(state.enableDirectAudioProcessing,
+                                page.enableDirectAudioProcessing, stored.enableDirectAudioProcessing),
+                            enableDirectVideoProcessing = pick(state.enableDirectVideoProcessing,
+                                page.enableDirectVideoProcessing, stored.enableDirectVideoProcessing),
+                            enableGoogleSearch = pick(state.enableGoogleSearch, page.enableGoogleSearch, stored.enableGoogleSearch),
+                            enableClaude1hPromptCache = pick(state.enableClaude1hPromptCache,
+                                page.enableClaude1hPromptCache, stored.enableClaude1hPromptCache),
+                            enableToolCall = pick(state.enableToolCall, page.enableToolCall, stored.enableToolCall),
+                        )
+                        // Edits count only for models on the page; others keep their stored values.
+                        val fields = ModelAutoFields.of(stored)
+                            .withEdits(page.autoFields.only(getModelList(state.modelName)), state.autoFields)
+                        with(ModelAutoConfig) { merged.withAutoFields(fields).filled(catalogs) }
+                            .also { changed = it != stored }
+                    },
                 )
             }
+            // Taken in before the services restart, so a failing restart cannot lose it.
+            adoptSaved(ApiAutoSaveState.of(saved), state)
+            if (changed) {
+                withContext(Dispatchers.IO) {
+                    EnhancedAIService.refreshAllServices(configManager.appContext)
+                }
+            }
+            saved
+            } finally {
+                sendingAutoFields = null
+            }
+            }
+        }
+    } finally {
+        // On a closed page, a save that ends keeps guarding only the models still unsaved; the
+        // page stops guarding once its save on leaving is over (see RegisterModelConfigSaveAction).
+        if (pendingEdits.closed) {
+            val left = pendingModels()
+            pendingEdits.read = { left }
         }
     }
 
     fun buildAutoSaveState(): ApiAutoSaveState {
-        val configuredModelNames = getModelList(modelNameInput)
         return ApiAutoSaveState(
             apiEndpoint = apiEndpointInput,
             apiKey = apiKeyInput,
@@ -409,30 +602,22 @@ fun ModelApiSettingsSection(
             enableDirectImageProcessing = enableDirectImageProcessingInput,
             enableDirectAudioProcessing = enableDirectAudioProcessingInput,
             enableDirectVideoProcessing = enableDirectVideoProcessingInput,
-            modelMultimodalCapabilities =
-                configuredModelNames.associateWith { modelName ->
-                    modelMultimodalCapabilitiesInput[modelName]
-                        ?: ModelMultimodalCapabilities()
-                },
-            modelProtocolSettings = modelProtocolSettingsInput.filterKeys { it in configuredModelNames },
+            autoFields = currentAutoFields(),
             enableGoogleSearch = enableGoogleSearchInput,
             enableClaude1hPromptCache = enableClaude1hPromptCacheInput,
             enableToolCall = enableToolCallInput,
         )
     }
 
-    suspend fun flushSettings(showSuccess: Boolean) {
-        val state = buildAutoSaveState()
+    suspend fun flushSettings(showSuccess: Boolean): ModelConfigData {
         try {
-            AppLogger.d(
-                TAG,
-                "保存API设置: apiKey=${state.apiKey.take(5)}..., endpoint=${state.apiEndpoint}, model=${state.modelName}, providerType=${state.provider.name}"
-            )
-            persist(state)
+            AppLogger.d(TAG, "保存API设置: config=${config.id}")
+            val saved = persist(::buildAutoSaveState)
             AppLogger.d(TAG, "API设置保存完成并刷新服务")
             if (showSuccess) {
                 showNotification(context.getString(R.string.api_settings_saved))
             }
+            return saved
         } catch (e: Exception) {
             if (showSuccess) {
                 showNotification((e.message ?: context.getString(R.string.save_failed)))
@@ -446,13 +631,43 @@ fun ModelApiSettingsSection(
     RegisterModelConfigSaveAction(
         coordinator = saveCoordinator,
         key = "api:${config.id}",
-        action = { showSuccess -> flushSettings(showSuccess) }
+        // Saved or failed, the page's edits are over once its save on leaving is.
+        onLeftSaved = { forgetPendingEdits(config.id, pendingEdits) },
+        action = { showSuccess -> flushSettings(showSuccess); Unit }
     )
+
+    // Saves what is typed, downloads the newest catalogs and sets every model as they say. The
+    // result shows as a toast, since the page may have scrolled or closed by then.
+    fun readaptModels() {
+        val configId = config.id
+        if (configId in modelsReadapting.value) return
+        modelsReadapting.value = modelsReadapting.value + configId
+        val appContext = context.applicationContext
+        modelReadaptScope.launch {
+            val message = try {
+                // Measured against exactly what this save wrote: a model changed after it is kept.
+                val committed = flushSettings(false)
+                // So is one with edits on the page that are not saved yet.
+                val outcome = ModelAutoConfig.readapt(appContext, configId, ModelAutoFields.of(committed)) {
+                    pendingEditsOf(configId)
+                }
+                readaptMessage(appContext, outcome)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AppLogger.e(TAG, "Re-matching models failed", e)
+                appContext.getString(R.string.model_catalog_readapt_failed)
+            } finally {
+                modelsReadapting.value = modelsReadapting.value - configId
+            }
+            android.widget.Toast.makeText(appContext, message, android.widget.Toast.LENGTH_LONG).show()
+        }
+    }
 
     DebouncedModelConfigAutoSaveEffect(
         effectKey = config.id,
         valueProvider = { buildAutoSaveState() },
-        persist = { state -> persist(state) },
+        persist = { persist(::buildAutoSaveState) },
         onError = { e ->
             showNotification((e.message ?: context.getString(R.string.auto_save_failed)))
         }
@@ -528,6 +743,8 @@ fun ModelApiSettingsSection(
             previousProviderTypeId = selectedProviderTypeId
             return@LaunchedEffect
         }
+        // A provider taken in as stored keeps its stored address.
+        if (previousProviderTypeId == selectedProviderTypeId) return@LaunchedEffect
 
         val previousProvider = ApiProviderType.fromProviderTypeId(previousProviderTypeId)
         val previousDefaultEndpoint =
@@ -539,7 +756,10 @@ fun ModelApiSettingsSection(
                 isDefaultApiEndpoint(apiEndpointInput) ||
                 (previousDefaultEndpoint.isNotEmpty() && apiEndpointInput == previousDefaultEndpoint)
 
-        if (shouldApplyNewProviderDefault) {
+        // A removed local provider's address is the user's own server: a generic provider keeps it.
+        val keepsOwnServer = previousProvider?.isRetired == true &&
+            getDefaultApiEndpoint(selectedApiProvider).isBlank()
+        if (shouldApplyNewProviderDefault && !keepsOwnServer) {
             apiEndpointInput = getDefaultApiEndpoint(selectedApiProvider)
         }
         previousProviderTypeId = selectedProviderTypeId
@@ -571,18 +791,16 @@ fun ModelApiSettingsSection(
     val isUsingDefaultApiKey = apiKeyInput.isBlank()
     val providerRequiresApiKey =
         ApiProviderConfigs.requiresApiKey(selectedProviderTypeId, apiEndpointInput)
-    val isMnnProvider = selectedApiProvider == ApiProviderType.MNN
-    val isLlamaProvider = selectedApiProvider == ApiProviderType.LLAMA_CPP
+    // A configuration of a removed local provider only shows what to switch to.
+    val isRetiredProvider = selectedApiProvider?.isRetired == true
     val isToolPkgProvider = selectedApiProvider == null
     val canUseKeylessModelUi = isToolPkgProvider || !providerRequiresApiKey
     val canEditModelName =
-        !isMnnProvider &&
-            !isLlamaProvider &&
-            (canUseKeylessModelUi || !isUsingDefaultApiKey)
+        !isRetiredProvider && (canUseKeylessModelUi || !isUsingDefaultApiKey)
     val canRequestModelList = when {
         browserAccountType != null -> browserAccountState != null
         isCodexProvider -> codexAuthState != null && apiEndpointInput.isNotBlank()
-        isMnnProvider || isLlamaProvider -> false
+        isRetiredProvider -> false
         isToolPkgProvider -> true
         else ->
             apiEndpointInput.isNotBlank() &&
@@ -670,120 +888,6 @@ fun ModelApiSettingsSection(
         }
     }
 
-    fun configureModelProtocols() {
-        if (isConfiguringProtocols || isRefreshingModelCatalog) return
-        val names = getModelList(modelNameInput)
-        val endpoint = apiEndpointInput
-        val providerId = selectedProviderTypeId
-        val previous = modelProtocolSettingsInput
-        isConfiguringProtocols = true
-        protocolSyncJob = scope.launch {
-            try {
-                val catalog = protocolCatalogRepository.loadCatalog()
-                if (apiEndpointInput != endpoint || selectedProviderTypeId != providerId ||
-                    getModelList(modelNameInput) != names) {
-                    showNotification(context.getString(R.string.model_protocol_auto_changed))
-                    return@launch
-                }
-                val matched = catalog.matchAll(endpoint, names)
-                    .filter { (model, _) -> modelProtocolSettingsInput[model] == previous[model] }
-                    .mapValues { (model, settings) ->
-                        settings.copy(endpoint = previous[model]?.endpoint?.takeIf { it.isNotBlank() }
-                            ?: settings.endpoint)
-                    }
-                modelProtocolSettingsInput = modelProtocolSettingsInput + matched
-                showNotification(context.getString(
-                    R.string.model_protocol_auto_result,
-                    matched.size, names.size - matched.size,
-                ))
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                showNotification(context.getString(R.string.model_protocol_auto_failed))
-            } finally {
-                isConfiguringProtocols = false
-                protocolSyncJob = null
-            }
-        }
-    }
-
-    fun syncOfficialModelCapabilities() {
-        if (isSyncingMultimodalCapabilities || isRefreshingModelCatalog) return
-        val configuredModelNames = getModelList(modelNameInput)
-        if (configuredModelNames.isEmpty()) return
-        isSyncingMultimodalCapabilities = true
-        multimodalSyncJob = scope.launch {
-            try {
-                val catalog = officialModelCapabilitiesRepository.loadCatalog()
-                val matchedCapabilities =
-                    if (selectedApiProvider == ApiProviderType.OPENCODE_ZEN_FREE) {
-                        OpenCodeZenFree.matchMultimodalCapabilities(catalog, configuredModelNames)
-                    } else {
-                        catalog.matchAll(configuredModelNames)
-                    }
-                val unmatchedCount = configuredModelNames.size - matchedCapabilities.size
-
-                if (matchedCapabilities.isNotEmpty()) {
-                    modelMultimodalCapabilitiesInput =
-                        modelMultimodalCapabilitiesInput + matchedCapabilities
-                }
-                showNotification(
-                    when {
-                        matchedCapabilities.isEmpty() ->
-                            context.getString(R.string.model_multimodal_auto_sync_none_matched)
-                        unmatchedCount == 0 ->
-                            context.getString(
-                                R.string.model_multimodal_auto_sync_all_matched,
-                                matchedCapabilities.size,
-                            )
-                        else ->
-                            context.getString(
-                                R.string.model_multimodal_auto_sync_partially_matched,
-                                matchedCapabilities.size,
-                                unmatchedCount,
-                            )
-                    }
-                )
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                AppLogger.e(TAG, "同步官方模型多模态能力失败: ${e.message}", e)
-                showNotification(context.getString(R.string.model_multimodal_auto_sync_failed))
-            } finally {
-                isSyncingMultimodalCapabilities = false
-                multimodalSyncJob = null
-            }
-        }
-    }
-
-    fun refreshLocalModelCatalogs() {
-        if (isConfiguringProtocols || isSyncingMultimodalCapabilities || isRefreshingModelCatalog) return
-        isRefreshingModelCatalog = true
-        multimodalSyncJob = scope.launch {
-            suspend fun refresh(block: suspend () -> Unit): Boolean = try {
-                block()
-                true
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                AppLogger.e(TAG, "Local model catalog refresh failed", e)
-                false
-            }
-            try {
-                val capabilitiesUpdated = refresh { officialModelCapabilitiesRepository.refreshCatalog() }
-                val protocolsUpdated = refresh { protocolCatalogRepository.refreshCatalog() }
-                showNotification(context.getString(when {
-                    capabilitiesUpdated && protocolsUpdated -> R.string.model_catalog_refresh_success
-                    capabilitiesUpdated -> R.string.model_catalog_refresh_protocol_failed
-                    protocolsUpdated -> R.string.model_catalog_refresh_multimodal_failed
-                    else -> R.string.model_multimodal_catalog_refresh_failed
-                }))
-            } finally {
-                isRefreshingModelCatalog = false
-                multimodalSyncJob = null
-            }
-        }
-    }
     // 移除了强制锁定模型名称的逻辑，允许用户自由修改
 
     Card(
@@ -849,8 +953,12 @@ fun ModelApiSettingsSection(
                 SettingsInfoBanner(text = stringResource(R.string.provider_opencode_zen_free_warning))
             }
 
-            if (isMnnProvider || isLlamaProvider) {
-                SettingsInfoBanner(text = stringResource(R.string.local_llm_removed))
+            if (isRetiredProvider) {
+                SettingsInfoBanner(
+                    text = com.ai.assistance.operit.api.chat.llmprovider.AIServiceFactory.retiredProviderMessage(
+                        LocalContext.current, checkNotNull(selectedApiProvider)
+                    )
+                )
             } else if (browserAccountType != null) {
                 ProviderAccountSettings(browserAccountType) {
                     scope.launch { EnhancedAIService.refreshAllServices(configManager.appContext) }
@@ -1003,7 +1111,7 @@ fun ModelApiSettingsSection(
 
             }
             if (selectedApiProvider == ApiProviderType.OPENCODE_ZEN_FREE ||
-                (!isMnnProvider && !isLlamaProvider && browserAccountType == null && !isCodexProvider)) {
+                (!isRetiredProvider && browserAccountType == null && !isCodexProvider)) {
                 val apiKeyInteractionSource = remember { MutableInteractionSource() }
                 val isApiKeyFocused by apiKeyInteractionSource.collectIsFocusedAsState()
                 SettingsTextField(
@@ -1033,18 +1141,14 @@ fun ModelApiSettingsSection(
             }
             SettingsTextField(
                     title = stringResource(R.string.model_name),
-                    subtitle = when {
-                        isMnnProvider -> stringResource(R.string.mnn_select_downloaded_model)
-                        isLlamaProvider -> stringResource(R.string.llama_select_downloaded_model)
-                        else -> stringResource(R.string.model_name_placeholder) + stringResource(R.string.model_name_multiple_hint)
-                    },
+                    subtitle = stringResource(R.string.model_name_placeholder) + stringResource(R.string.model_name_multiple_hint),
                         value = modelNameInput,
                         onValueChange = {
                         if (canEditModelName) {
                                 modelNameInput = it.replace("\n", "").replace("\r", "")
                             }
                         },
-                    enabled = !isMnnProvider && !isLlamaProvider && canEditModelName,
+                    enabled = canEditModelName,
                     trailingContent = {
                 val fillEndpointKeyText = stringResource(R.string.fill_endpoint_and_key)
                 val modelsListSuccessText = stringResource(R.string.models_list_success)
@@ -1178,41 +1282,14 @@ fun ModelApiSettingsSection(
 
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 SettingsInfoBanner(
-                    text = stringResource(R.string.model_multimodal_capabilities_desc)
+                    text = stringResource(R.string.model_catalog_auto_desc)
                 )
-                if (supportsModelProtocolOverrides(selectedProviderTypeId)) {
-                    OutlinedButton(
-                        onClick = { configureModelProtocols() },
-                        enabled = configuredModels.isNotEmpty() &&
-                            !isConfiguringProtocols && !isRefreshingModelCatalog,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        if (isConfiguringProtocols) {
-                            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                            Spacer(Modifier.width(8.dp))
-                        }
-                        Text(stringResource(R.string.model_protocol_auto_configure))
-                    }
-                    Text(
-                        stringResource(
-                            if (selectedApiProvider == ApiProviderType.OPENCODE_GO)
-                                R.string.provider_opencode_go_protocol_hint
-                            else R.string.model_protocol_auto_desc
-                        ),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 12.dp),
-                    )
-                }
                 OutlinedButton(
-                    onClick = { syncOfficialModelCapabilities() },
-                    enabled =
-                        configuredModels.isNotEmpty() &&
-                            !isSyncingMultimodalCapabilities &&
-                            !isRefreshingModelCatalog,
+                    onClick = { readaptModels() },
+                    enabled = configuredModels.isNotEmpty() && !isReadapting,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    if (isSyncingMultimodalCapabilities) {
+                    if (isReadapting) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(16.dp),
                             strokeWidth = 2.dp,
@@ -1225,54 +1302,21 @@ fun ModelApiSettingsSection(
                         )
                     }
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text(stringResource(R.string.model_multimodal_auto_sync))
+                    Text(stringResource(R.string.model_catalog_readapt))
                 }
-                TextButton(
-                    onClick = { refreshLocalModelCatalogs() },
-                    enabled =
-                        !isConfiguringProtocols && !isSyncingMultimodalCapabilities &&
-                            !isRefreshingModelCatalog,
-                    modifier = Modifier.align(Alignment.End),
-                ) {
-                    if (isRefreshingModelCatalog) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
-                            strokeWidth = 2.dp,
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(stringResource(R.string.model_multimodal_catalog_refresh))
-                }
+                val catalogUpdatedAt = listOfNotNull(multimodalCatalogUpdatedAt, protocolCatalogUpdatedAt).maxOrNull()
                 Text(
-                    text = multimodalCatalogUpdatedAt?.let {
+                    text = catalogUpdatedAt?.let {
                         stringResource(
-                            R.string.model_multimodal_catalog_updated_at,
+                            R.string.model_catalog_updated_at,
                             android.text.format.DateFormat.getDateFormat(context).format(java.util.Date(it)) +
                                 " " + android.text.format.DateFormat.getTimeFormat(context).format(java.util.Date(it)),
                         )
-                    } ?: stringResource(R.string.model_multimodal_catalog_bundled),
+                    } ?: stringResource(R.string.model_catalog_bundled),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 12.dp),
                 )
-                if (supportsModelProtocolOverrides(selectedProviderTypeId)) {
-                    Text(
-                        text = protocolCatalogUpdatedAt?.let {
-                            stringResource(
-                                R.string.model_protocol_catalog_updated_at,
-                                android.text.format.DateFormat.getDateFormat(context).format(java.util.Date(it)) +
-                                    " " + android.text.format.DateFormat.getTimeFormat(context).format(java.util.Date(it)),
-                            )
-                        } ?: stringResource(R.string.model_protocol_catalog_bundled),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
                 if (configuredModels.isEmpty()) {
                     Text(
                         text = stringResource(R.string.model_multimodal_capabilities_no_models),
@@ -1294,6 +1338,15 @@ fun ModelApiSettingsSection(
                             modelMultimodalCapabilitiesInput[modelName]
                                 ?: ModelMultimodalCapabilities()
                         Column {
+                            val check = catalogCheck?.takeIf { it.key == catalogCheckKey }
+                            if (check != null && modelName in check.names && modelName !in check.matched) {
+                                Text(
+                                    text = stringResource(R.string.model_catalog_not_found),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                                )
+                            }
                             if (supportsModelProtocolOverrides(selectedProviderTypeId)) {
                                 ModelProtocolSettingsEditor(
                                     modelName = modelName,
@@ -1304,6 +1357,13 @@ fun ModelApiSettingsSection(
                                     },
                                 )
                             }
+                            ModelLimitsEditor(
+                                modelName = modelName,
+                                limits = modelLimitsInput[modelName],
+                                onChange = { change ->
+                                    modelLimitsInput = modelLimitsInput + (modelName to change(modelLimitsInput[modelName]))
+                                },
+                            )
                             SettingsSwitchRow(
                                 title = stringResource(R.string.enable_direct_image_processing),
                                 subtitle = stringResource(R.string.enable_direct_image_processing_desc),
@@ -1312,6 +1372,7 @@ fun ModelApiSettingsSection(
                                     modelMultimodalCapabilitiesInput =
                                         modelMultimodalCapabilitiesInput +
                                             (modelName to capabilities.copy(image = enabled))
+                                    settledModelsInput = settledModelsInput + modelName
                                 },
                             )
                             SettingsSwitchRow(
@@ -1322,6 +1383,7 @@ fun ModelApiSettingsSection(
                                     modelMultimodalCapabilitiesInput =
                                         modelMultimodalCapabilitiesInput +
                                             (modelName to capabilities.copy(audio = enabled))
+                                    settledModelsInput = settledModelsInput + modelName
                                 },
                             )
                             SettingsSwitchRow(
@@ -1332,6 +1394,7 @@ fun ModelApiSettingsSection(
                                     modelMultimodalCapabilitiesInput =
                                         modelMultimodalCapabilitiesInput +
                                             (modelName to capabilities.copy(video = enabled))
+                                    settledModelsInput = settledModelsInput + modelName
                                 },
                             )
                         }
@@ -1870,9 +1933,6 @@ fun ModelApiSettingsSection(
                                     val orderedSelection = modelsList.map { it.id }
                                         .filter { selectedModels.value.contains(it) }
                                     modelNameInput = orderedSelection.joinToString(",")
-                                    if (selectedApiProvider == ApiProviderType.MNN) {
-                                        AppLogger.d(TAG, "选择MNN模型: $modelNameInput")
-                                    }
                                     showModelsDialog = false
                                 },
                                 modifier = Modifier.height(36.dp),
@@ -2145,14 +2205,15 @@ private fun getProviderDisplayName(providerTypeId: String, context: android.cont
 
 private fun getProviderSelectionOptions(context: android.content.Context): List<ProviderSelectionOption> {
     val builtInProviders =
-        ApiProviderType.values().filterNot { it == ApiProviderType.MNN || it == ApiProviderType.LLAMA_CPP }.map { provider ->
+        ApiProviderType.values().filterNot { it.isRetired }.map { provider ->
             ProviderSelectionOption(
                 id = provider.name,
                 displayName = getBuiltInProviderDisplayName(provider, context)
             )
         }
     val toolPkgProviders =
-        ToolPkgAiProviderRegistry.list().map { provider ->
+        // A plugin cannot bring back a removed provider under its name.
+        ToolPkgAiProviderRegistry.list().filterNot { ApiProviderType.isRetiredId(it.providerId) }.map { provider ->
             ProviderSelectionOption(
                 id = provider.providerId,
                 displayName = provider.displayName
@@ -2733,14 +2794,34 @@ private fun getProviderColor(providerTypeId: String): androidx.compose.ui.graphi
         ApiProviderType.ALIPAY_BAILING -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.45f)
         ApiProviderType.DOUBAO -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.4f)
         ApiProviderType.NVIDIA -> MaterialTheme.colorScheme.primary.copy(alpha = 0.72f)
-        ApiProviderType.LMSTUDIO -> MaterialTheme.colorScheme.tertiary
-        ApiProviderType.OLLAMA -> MaterialTheme.colorScheme.primary.copy(alpha = 0.78f)
         ApiProviderType.OLLAMA_CLOUD -> MaterialTheme.colorScheme.primary.copy(alpha = 0.9f)
-        ApiProviderType.OPENAI_LOCAL -> MaterialTheme.colorScheme.primary.copy(alpha = 0.82f)
-        ApiProviderType.MNN -> MaterialTheme.colorScheme.secondary
-        ApiProviderType.LLAMA_CPP -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.9f)
         ApiProviderType.PPINFRA -> MaterialTheme.colorScheme.primaryContainer
         ApiProviderType.NOVITA -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.75f)
-        ApiProviderType.OTHER -> MaterialTheme.colorScheme.surfaceVariant
+        ApiProviderType.OTHER,
+        ApiProviderType.LMSTUDIO, ApiProviderType.OLLAMA, ApiProviderType.OPENAI_LOCAL,
+        ApiProviderType.MNN, ApiProviderType.LLAMA_CPP -> MaterialTheme.colorScheme.surfaceVariant
     }
+}
+
+/**
+ * One short line on a re-match: how many models were set, missing or kept as they were (changed
+ * meanwhile, here or elsewhere).
+ */
+private fun readaptMessage(context: android.content.Context, outcome: ModelAutoConfig.Readapt): String {
+    val all = getModelList(outcome.config.modelName)
+    val kept = all.filterTo(mutableSetOf()) { it in outcome.kept }
+    val names = all.filterNot { it in kept }
+    val matched = names.count { it in outcome.plan.matched }
+    val parts = listOfNotNull(
+        when {
+            outcome.refresh.capabilities || outcome.refresh.protocols ->
+                context.getString(R.string.model_catalog_readapt_partly_offline).takeUnless { outcome.refresh.all }
+            else -> context.getString(R.string.model_catalog_readapt_offline)
+        },
+        context.getString(R.string.model_catalog_readapt_matched, matched),
+        (names.size - matched).takeIf { it > 0 }?.let { context.getString(R.string.model_catalog_readapt_missing, it) },
+        kept.size.takeIf { it > 0 }?.let { context.getString(R.string.model_catalog_readapt_kept, it) },
+    )
+    return parts.joinToString(context.getString(R.string.model_catalog_readapt_separator)) +
+        context.getString(R.string.model_catalog_readapt_end)
 }

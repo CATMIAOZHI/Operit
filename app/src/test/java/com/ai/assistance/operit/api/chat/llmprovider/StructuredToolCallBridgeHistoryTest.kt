@@ -51,14 +51,40 @@ class StructuredToolCallBridgeHistoryTest {
             JSONObject().put("function", JSONObject().put("name", "read_file").put("arguments", args.toString())),
             JSONObject().put("name", "read_file").put("args", args),
             JSONObject().put("name", "read_file").put("input", args),
-            JSONObject().put("function", JSONObject().put("name", "proxy").put("arguments",
-                JSONObject().put("tool_name", "read_file").put("params", args).toString()))
         )
         shapes.forEach { assertEquals("read_file_part", StructuredToolCallBridge.toolCallName(it)) }
         assertEquals("read_file", StructuredToolCallBridge.toolCallName(
             JSONObject().put("name", "read_file").put("args", JSONObject().put("path", "file"))))
-        assertEquals("super_admin:terminal", StructuredToolCallBridge.toolCallName(
+        assertEquals("terminal", StructuredToolCallBridge.toolCallName(
             JSONObject().put("name", "super_admin::terminal").put("args", JSONObject().put("command", "pwd"))))
+        val proxyArguments = JSONObject()
+            .put("tool_name", "super_admin:terminal")
+            .put("params", JSONObject().put("command", "pwd"))
+        val proxyFunction = JSONObject()
+            .put("name", "package_proxy")
+            .put("arguments", proxyArguments.toString())
+        assertEquals("terminal", StructuredToolCallBridge.toolCallName(JSONObject().put("function", proxyFunction)))
+    }
+
+    @Test
+    fun `a terminal call saved under its old package name still gets its result`() {
+        for (resultName in listOf("super_admin:terminal_wait", "terminal_wait")) {
+            val messages =
+                buildMessages(
+                    listOf(
+                        PromptTurn(kind = PromptTurnKind.USER, content = "Wait for it."),
+                        PromptTurn(
+                            kind = PromptTurnKind.ASSISTANT,
+                            content = toolCall("super_admin:terminal_wait", "runId" to "r1")
+                        ),
+                        PromptTurn(kind = PromptTurnKind.TOOL_RESULT, content = toolResult(resultName, "DONE"))
+                    )
+                )
+            val call = messages.at(1).getJSONArray("tool_calls").getJSONObject(0)
+            assertEquals(call.getString("id"), messages.at(2).getString("tool_call_id"))
+            assertEquals("DONE", messages.at(2).getString("content"))
+            assertToolResultsFollowTheirCalls(messages)
+        }
     }
 
     @Test
@@ -206,18 +232,18 @@ class StructuredToolCallBridgeHistoryTest {
     }
 
     @Test
-    fun `OpenAI local proxy result matches concrete target from arguments`() {
+    fun `OpenAI package proxy result matches concrete target from arguments`() {
         val openAiProxyCall =
             JSONObject().apply {
-                put("id", "openai-local-proxy-id")
+                put("id", "openai-package-proxy-id")
                 put(
                     "function",
                     JSONObject().apply {
-                        put("name", "proxy")
+                        put("name", "package_proxy")
                         put(
                             "arguments",
                             JSONObject().apply {
-                                put("tool_name", "read_file")
+                                put("tool_name", "files_pkg:read")
                                 put("params", JSONObject().apply { put("path", "a.txt") }.toString())
                             }.toString()
                         )
@@ -235,12 +261,47 @@ class StructuredToolCallBridgeHistoryTest {
         val matched =
             StructuredToolCallBridge.consumeMatchingToolCalls(
                 openToolCalls,
-                listOf("read_file")
+                listOf("files_pkg:read")
             )
 
         assertEquals(1, matched.size)
-        assertEquals("openai-local-proxy-id", matched.single().call.id)
+        assertEquals("openai-package-proxy-id", matched.single().call.id)
         assertTrue(openToolCalls.isEmpty())
+    }
+
+    @Test
+    fun `old CLI mode proxy call still matches the result saved under its target`() {
+        val legacyProxyCall = JSONObject()
+            .put("id", "cli-proxy-id")
+            .put("function", JSONObject().put("name", "proxy").put("arguments",
+                JSONObject().put("tool_name", "list_files").put("params", JSONObject().put("path", "/sdcard").toString()).toString()))
+        val openToolCalls = mutableListOf(
+            StructuredToolCallBridge.OpenToolCall(
+                id = "cli-proxy-id",
+                matchingName = StructuredToolCallBridge.toolCallName(legacyProxyCall),
+            )
+        )
+
+        val matched = StructuredToolCallBridge.consumeMatchingToolCalls(openToolCalls, listOf("list_files"))
+
+        assertEquals("cli-proxy-id", matched.single().call.id)
+        assertTrue(openToolCalls.isEmpty())
+
+        // Execution repaired it to read_file_part and saved the result under that name.
+        val repaired = JSONObject().put("function", JSONObject().put("name", "proxy").put("arguments",
+            JSONObject().put("tool_name", "read_file")
+                .put("params", JSONObject().put("path", "a.txt").put("start_line", 3).toString()).toString()))
+        assertEquals("read_file_part", StructuredToolCallBridge.toolCallName(repaired))
+
+        // The target written at the end of params instead of as tool_name, which execution recovered.
+        val flattened = JSONObject().put("function", JSONObject().put("name", "proxy").put("arguments",
+            JSONObject().put("params", "{\"path\":\"a.txt\"}, {\"tool_name\":\"read_file\"}").toString()))
+        assertEquals("read_file", StructuredToolCallBridge.toolCallName(flattened))
+
+        // Loose params the old execution still accepted keep their declared target.
+        val loose = JSONObject().put("function", JSONObject().put("name", "proxy").put("arguments",
+            JSONObject().put("tool_name", "read_file").put("params", "{path:'a.txt'}").toString()))
+        assertEquals("read_file", StructuredToolCallBridge.toolCallName(loose))
     }
 
     @Test

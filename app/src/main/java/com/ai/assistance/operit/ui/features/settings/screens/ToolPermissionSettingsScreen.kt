@@ -80,9 +80,11 @@ fun ToolPermissionSettingsScreen(navigateBack: () -> Unit) {
     val storedOverrides by toolPermissionSystem.toolPermissionOverridesFlow.collectAsState(initial = emptyMap())
     val allTools = remember(storedOverrides.keys) {
         (toolHandler.getAllToolNames().filterNot {
-            it == "package_proxy" || it == "proxy" || it == "search" ||
+            it == "package_proxy" ||
                 it in PermissionReviewInternalTools.names
-        } + storedOverrides.keys).distinct()
+        } + storedOverrides.keys +
+            // Free follow-ups can be given a level before super_admin is first loaded.
+            com.ai.assistance.operit.ui.permissions.FOLLOW_UP_TOOLS).distinct()
     }
     val toolPermissions = remember { mutableStateMapOf<String, PermissionLevel>() }
     // The stored choice is read asynchronously, so the slider waits for it instead of starting on a

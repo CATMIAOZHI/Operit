@@ -296,9 +296,10 @@ export namespace System {
         /**
          * Create or get a terminal session.
          * @param sessionName The name for the session.
+         * @param options existingOnly: only find an existing session; fail instead of starting one.
          * @returns Promise resolving to the session creation result.
          */
-        function create(sessionName?: string): Promise<TerminalSessionCreationResultData>;
+        function create(sessionName?: string, options?: { existingOnly?: boolean }): Promise<TerminalSessionCreationResultData>;
 
         /**
          * Execute a command in a terminal session.

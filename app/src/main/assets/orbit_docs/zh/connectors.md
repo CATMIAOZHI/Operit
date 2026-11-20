@@ -10,11 +10,13 @@
 
 | 包名 | 用途 |
 |---|---|
-| `super_admin` | 终端 |
+| `super_admin` | Android Shell（Shizuku/Root） |
 | `various_search` | 网络搜索 |
 | `memory_review` | 记忆工具 |
 | `dynamic_ui` | 动态界面与卡片 |
 | `browser` | 浏览器 |
+
+Ubuntu 终端（`terminal`、`terminal_wait` 等）是应用内置工具，不属于任何包，Orbit 里一直可用。
 
 始终开启不保证每个操作都有权限或所需环境已经安装。
 

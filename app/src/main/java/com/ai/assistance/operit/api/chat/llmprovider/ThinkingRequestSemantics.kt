@@ -116,6 +116,9 @@ object ThinkingRequestSemantics {
         enableThinking: Boolean = true,
         isToolPkgProvider: Boolean = false,
     ): ThinkingRequestSummary {
+        if (ApiProviderType.isRetiredId(config.apiProviderTypeId)) {
+            return ThinkingRequestSummary.NotSent
+        }
         val runtime = ModelConfigData(
             id = config.id,
             name = config.name,
@@ -206,9 +209,13 @@ object ThinkingRequestSemantics {
         if (isToolPkgProvider) {
             return ThinkingRequestSummary.NotSent
         }
+        val effectiveProviderType = ApiProviderType.fromProviderTypeId(providerTypeId)
+        if (effectiveProviderType?.isRetired == true) {
+            return ThinkingRequestSummary.NotSent
+        }
         if (!enableThinking) {
             val preservedOverride =
-                when (ApiProviderType.fromProviderTypeId(providerTypeId)) {
+                when (effectiveProviderType) {
                     ApiProviderType.COMMAND_CODE ->
                         enabledRawTextParameter(modelParameters, "reasoning_effort")
                             ?.let { CommandCodePolicy.effort(modelName, it) }
@@ -223,9 +230,6 @@ object ThinkingRequestSemantics {
                     ApiProviderType.OPENCODE_GO ->
                         resolveOpenAiChatReasoningEffortOverride(modelParameters)
 
-                    ApiProviderType.OPENAI_LOCAL,
-                    ApiProviderType.LMSTUDIO,
-                    ApiProviderType.OLLAMA,
                     ApiProviderType.OLLAMA_CLOUD,
                     ApiProviderType.MISTRAL,
                     ApiProviderType.FOUR_ROUTER,
@@ -275,15 +279,11 @@ object ThinkingRequestSemantics {
                             resolveGeminiNativeThinkingConfigOverride(modelParameters)
                         }
 
-                    ApiProviderType.LLAMA_CPP -> ThinkingRequestSummary.NotSent
-
                     else -> null
                 }
             return preservedOverride ?: ThinkingRequestSummary.Disabled
         }
-        val effectiveProviderType =
-            ApiProviderType.fromProviderTypeId(providerTypeId)
-                ?: return ThinkingRequestSummary.NotSent
+        effectiveProviderType ?: return ThinkingRequestSummary.NotSent
         return when (effectiveProviderType) {
             ApiProviderType.COMMAND_CODE ->
                 CommandCodePolicy.effort(modelName,
@@ -423,10 +423,6 @@ object ThinkingRequestSemantics {
                     ?.let(::textSummary)
                     ?: ThinkingRequestSummary.Enabled
 
-            ApiProviderType.MNN -> ThinkingRequestSummary.Enabled
-
-            ApiProviderType.LLAMA_CPP -> ThinkingRequestSummary.NotSent
-
             else ->
                 enabledRawTextParameter(modelParameters, "reasoning_effort")
                     ?.let(::textSummary)
@@ -521,6 +517,10 @@ object ThinkingRequestSemantics {
             ApiProviderType.OPENCODE_ZEN_FREE,
             ApiProviderType.OPENCODE_GO,
         )
+
+    /** Whether [providerType]'s requests send a model's catalog thinking levels. */
+    fun readsCatalogEfforts(providerType: ApiProviderType?): Boolean =
+        providerType in effortCatalogProviderTypes
 
     fun normalizeDeepseekEffort(effort: String): String =
         when (effort) {

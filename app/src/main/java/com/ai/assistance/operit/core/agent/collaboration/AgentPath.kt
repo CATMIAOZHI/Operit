@@ -35,8 +35,9 @@ sealed interface AgentFork {
     data class LastTurns(val count: Int) : AgentFork
 
     companion object {
+        /** An omitted value starts the child without the parent's conversation; `all` must be asked for. */
         fun parse(value: String?): AgentFork =
-            when (val normalized = value?.trim()?.lowercase().orEmpty().ifEmpty { "all" }) {
+            when (val normalized = value?.trim()?.lowercase().orEmpty().ifEmpty { "none" }) {
                 "all" -> All
                 "none" -> None
                 else -> LastTurns(

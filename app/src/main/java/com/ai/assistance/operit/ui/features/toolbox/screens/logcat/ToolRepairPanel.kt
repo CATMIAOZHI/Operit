@@ -99,6 +99,7 @@ internal fun ToolRepairPanel(modifier: Modifier = Modifier) {
                                 ToolCallRepairRouter.TERMINAL_PROXY_TIMEOUT -> R.string.tool_repairs_proxy_timeout
                                 ToolCallRepairRouter.REDUNDANT_PARAMS_TOOL_NAME -> R.string.tool_repairs_params_tool_name
                                 ToolCallRepairRouter.WRITE_FILE_NEW_ALIAS -> R.string.tool_repairs_write_file_new
+                                ToolCallRepairRouter.LEGACY_TERMINAL_NAME -> R.string.tool_repairs_legacy_terminal
                                 else -> null
                             }
                             Text(if (label == null) rule else stringResource(label))

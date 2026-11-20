@@ -11,21 +11,23 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class TerminalTaskRegistryTest {
+    private companion object { const val CHAT = "chat" }
+
     @Test fun `new input yields wait without cancelling background command`() = runBlocking {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         try {
             val registry = TerminalTaskRegistry(scope)
             val finish = CompletableDeferred<Unit>()
             val input = CompletableDeferred<Unit>()
-            val id = registry.start("session", 10_000) { id -> flow {
+            val id = registry.start(CHAT, "session", 10_000) { id -> flow {
                 finish.await()
                 emit(event(id, "done", true))
             } }
-            val waiter = async { registry.poll(id, 30_000) { input.await() } }
+            val waiter = async { registry.poll(CHAT, id, 30_000) { input.await() } }
             input.complete(Unit)
             assertEquals("running", withTimeout(1_000) { waiter.await() }.status)
             finish.complete(Unit)
-            assertEquals("completed", registry.poll(id, 1_000).status)
+            assertEquals("completed", registry.poll(CHAT, id, 1_000).status)
         } finally { scope.cancel() }
     }
     private fun event(id: String, text: String, done: Boolean = false) =
@@ -44,13 +46,13 @@ class TerminalTaskRegistryTest {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         try {
             val registry = TerminalTaskRegistry(scope)
-            val id = registry.start("session", 1000) { id -> flow {
+            val id = registry.start(CHAT, "session", 1000) { id -> flow {
                 emit(event(id, "log"))
                 emit(event(id, "").copy(screen = "10%"))
                 emit(event(id, "").copy(screen = "20%"))
                 emit(event(id, "log", true).copy(exitCode = 2))
             } }
-            val result = registry.poll(id, 1000)
+            val result = registry.poll(CHAT, id, 1000)
             assertEquals("log", result.output)
             assertEquals("20%", result.screen)
             assertEquals("completed", result.status)
@@ -66,7 +68,7 @@ class TerminalTaskRegistryTest {
             val started = CompletableDeferred<Unit>()
             val finish = CompletableDeferred<Unit>()
             var collectorCancelled = false
-            val id = registry.start("session", 10_000) { id -> flow {
+            val id = registry.start(CHAT, "session", 10_000) { id -> flow {
                 try {
                     emit(event(id, "working"))
                     emit(event(id, "second line"))
@@ -76,17 +78,17 @@ class TerminalTaskRegistryTest {
                 } finally { collectorCancelled = true }
             } }
             started.await()
-            assertEquals("running", registry.poll(id, 5).status)
-            assertEquals("working\nsecond line", registry.poll(id, 0).output)
-            val poller = launch { registry.poll(id, 30_000) }
+            assertEquals("running", registry.poll(CHAT, id, 5).status)
+            assertEquals("working\nsecond line", registry.poll(CHAT, id, 0).output)
+            val poller = launch { registry.poll(CHAT, id, 30_000) }
             yield()
             poller.cancelAndJoin()
             assertFalse(collectorCancelled)
             finish.complete(Unit)
-            val result = registry.poll(id, 1_000)
+            val result = registry.poll(CHAT, id, 1_000)
             assertEquals("completed", result.status)
             assertEquals("finished", result.output)
-            assertEquals(result, registry.poll(id, 0))
+            assertEquals(result, registry.poll(CHAT, id, 0))
         } finally { scope.cancel() }
     }
 
@@ -96,15 +98,15 @@ class TerminalTaskRegistryTest {
             val registry = TerminalTaskRegistry(scope)
             val started = CompletableDeferred<Unit>()
             val cleaned = CompletableDeferred<Unit>()
-            val a = registry.start("session", 10_000) { flow {
+            val a = registry.start(CHAT, "session", 10_000) { flow {
                 try { started.complete(Unit); awaitCancellation() }
                 finally { withContext(NonCancellable) { delay(10); cleaned.complete(Unit) } }
             } }
-            val b = registry.start("session", 10_000) { flow { awaitCancellation() } }
+            val b = registry.start(CHAT, "session", 10_000) { flow { awaitCancellation() } }
             started.await()
-            assertEquals("cancelled", registry.cancel(a).status)
+            assertEquals("cancelled", registry.cancel(CHAT, a).status)
             assertTrue(cleaned.isCompleted)
-            assertEquals("running", registry.poll(b, 0).status)
+            assertEquals("running", registry.poll(CHAT, b, 0).status)
         } finally { scope.cancel() }
     }
 
@@ -112,8 +114,8 @@ class TerminalTaskRegistryTest {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         try {
             val registry = TerminalTaskRegistry(scope)
-            val id = registry.start("session", 30) { flow { awaitCancellation() } }
-            assertEquals("timed_out", registry.poll(id, 1_000).status)
+            val id = registry.start(CHAT, "session", 30) { flow { awaitCancellation() } }
+            assertEquals("timed_out", registry.poll(CHAT, id, 1_000).status)
         } finally { scope.cancel() }
     }
 
@@ -121,19 +123,19 @@ class TerminalTaskRegistryTest {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         try {
             val registry = TerminalTaskRegistry(scope, capacity = 1, outputLimit = 8)
-            val id = registry.start("session", 10_000) { id -> flow {
+            val id = registry.start(CHAT, "session", 10_000) { id -> flow {
                 emit(event(id, "0123456789", true))
             } }
-            val result = registry.poll(id, 1_000)
+            val result = registry.poll(CHAT, id, 1_000)
             assertEquals("23456789", result.output)
             assertTrue(result.outputTruncated)
-            val active = registry.start("session", 10_000) { flow { awaitCancellation() } }
-            assertEquals(active, registry.latest("session"))
+            val active = registry.start(CHAT, "session", 10_000) { flow { awaitCancellation() } }
+            assertEquals(active, registry.latest(CHAT, "session"))
             try {
-                registry.start("session", 10_000) { flow { awaitCancellation() } }
+                registry.start(CHAT, "session", 10_000) { flow { awaitCancellation() } }
                 fail("Must not evict active tasks")
             } catch (_: IllegalStateException) { }
-            assertEquals("running", registry.poll(active, 0).status)
+            assertEquals("running", registry.poll(CHAT, active, 0).status)
         } finally { scope.cancel() }
     }
 
@@ -141,7 +143,25 @@ class TerminalTaskRegistryTest {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         scope.cancel()
         val registry = TerminalTaskRegistry(scope)
-        val id = registry.start("session", 1000) { flow { awaitCancellation() } }
-        assertEquals("cancelled", registry.poll(id, 1000).status)
+        val id = registry.start(CHAT, "session", 1000) { flow { awaitCancellation() } }
+        assertEquals("cancelled", registry.poll(CHAT, id, 1000).status)
+    }
+
+    @Test fun `a run belongs to the chat that started it`() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val registry = TerminalTaskRegistry(scope)
+            val id = registry.start(CHAT, "session", 10_000) { flow { awaitCancellation() } }
+            assertNull(registry.latest("other", "session"))
+            try {
+                registry.poll("other", id, 0)
+                fail("Another chat must not see this run")
+            } catch (_: IllegalStateException) { }
+            try {
+                registry.cancel("other", id)
+                fail("Another chat must not cancel this run")
+            } catch (_: IllegalStateException) { }
+            assertEquals("running", registry.poll(CHAT, id, 0).status)
+        } finally { scope.cancel() }
     }
 }

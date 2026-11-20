@@ -29,6 +29,17 @@ data class ModelPricingDefaults(
     val hasPricePerRequest: Boolean = known || pricePerRequest > 0.0,
     val contextTiers: List<com.ai.assistance.operit.data.pricing.ContextPriceTier> = emptyList(),
 ) {
+    /**
+     * Which price [forContext] picks for [inputTokens], as a key: equal keys get the same price,
+     * so prices worked out for one call can be kept for others in the same tier.
+     */
+    fun contextTierKey(inputTokens: Long?): Long {
+        if (contextTiers.isEmpty() || billingMode != BillingMode.TOKEN) return BASE_TIER_KEY
+        if (inputTokens == null) return UNKNOWN_TIER_KEY
+        return contextTiers.filter { inputTokens > it.minInputTokens }
+            .maxByOrNull { it.minInputTokens }?.minInputTokens ?: BASE_TIER_KEY
+    }
+
     fun forContext(inputTokens: Long?): ModelPricingDefaults {
         if (contextTiers.isEmpty() || billingMode != BillingMode.TOKEN) return this
         if (inputTokens == null) return copy(
@@ -45,6 +56,11 @@ data class ModelPricingDefaults(
             hasInputPrice = true, hasOutputPrice = true, hasCachedInputPrice = true, known = true,
         )
     }
+
+    private companion object {
+        const val BASE_TIER_KEY = -1L
+        const val UNKNOWN_TIER_KEY = -2L
+    }
 }
 
 object DefaultModelPricingCollect {
@@ -57,14 +73,37 @@ object DefaultModelPricingCollect {
     }
 
     fun getDefaultPricing(providerModel: String): ModelPricingDefaults {
+        val provider = providerModel.substringBefore(':', "")
         val model = providerModel.substringAfter(':', providerModel)
-        return catalog.lookup(model) ?: ModelPricingDefaults(
+        // Free first: "name:free" must not fall back to the paid "name".
+        return freePricing(provider, model) ?: catalog.lookup(model) ?: ModelPricingDefaults(
             billingMode = BillingMode.TOKEN,
             inputPricePerMillion = 0.0,
             outputPricePerMillion = 0.0,
             cachedInputPricePerMillion = 0.0,
             pricePerRequest = 0.0,
             currency = PricingCurrency.USD,
+        )
+    }
+
+    /**
+     * A free service or free model costs nothing: OpenCode Zen's free service, or a model named as
+     * free (OpenRouter's ":free", "-free").
+     */
+    private fun freePricing(provider: String, model: String): ModelPricingDefaults? {
+        val name = model.trim().lowercase()
+        val free = provider.trim().equals("OPENCODE_ZEN_FREE", ignoreCase = true) ||
+            name.endsWith(":free") || name.endsWith("-free")
+        if (!free) return null
+        return ModelPricingDefaults(
+            billingMode = BillingMode.TOKEN,
+            inputPricePerMillion = 0.0,
+            outputPricePerMillion = 0.0,
+            cachedInputPricePerMillion = 0.0,
+            pricePerRequest = 0.0,
+            currency = PricingCurrency.USD,
+            known = true,
+            cacheWritePricePerMillion = 0.0,
         )
     }
 

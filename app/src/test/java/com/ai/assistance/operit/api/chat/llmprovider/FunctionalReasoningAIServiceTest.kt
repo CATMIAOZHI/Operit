@@ -1215,8 +1215,8 @@ class FunctionalReasoningAIServiceTest {
         val temperature = intParameter("temperature", 1)
         val request =
             buildFunctionalReasoningRequest(
-                ApiProviderType.OPENAI_LOCAL,
-                "local-model",
+                ApiProviderType.OLLAMA_CLOUD,
+                "ollama-cloud-model",
                 listOf(temperature),
                 5,
             )
@@ -1271,22 +1271,6 @@ class FunctionalReasoningAIServiceTest {
 
         assertTrue(consumed.suppressAutomaticReasoning)
         assertEquals(listOf("temperature", "reasoning_effort"), consumed.modelParameters.map { it.apiName })
-    }
-
-    @Test
-    fun localEnginesUseSafeThinkingToggleFallbackWithoutUnknownRequestFields() {
-        listOf(ApiProviderType.MNN, ApiProviderType.LLAMA_CPP).forEach { providerType ->
-            val request =
-                buildFunctionalReasoningRequest(
-                    providerType,
-                    "local-model",
-                    emptyList(),
-                    5,
-                )
-
-            assertTrue(request.enableThinking)
-            assertTrue(request.modelParameters.isEmpty())
-        }
     }
 
     private fun FunctionalReasoningRequest.parameterValue(apiName: String): Any? =

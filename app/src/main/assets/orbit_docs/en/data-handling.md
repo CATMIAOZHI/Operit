@@ -78,5 +78,5 @@ When the user wants to forget information, first use `orbit_forget action=plan` 
 Do not repeat the original text; explain the categories and that deletion cannot be undone. Only after the user agrees, run `confirm` with the returned `plan_id`, and say honestly what `remaining` still lists.
 
 Forgetting does not delete original chat messages, content already received by external services or the user's own backups.
-Matches in identity and personality need the user's manual attention.
+Matches in identity and personality and in the user's own documents in `files/` are only listed for the user to decide; files that could not be checked are marked `unchecked` with a reason, and the user should be told they were not checked. Ask for agreement only when something can be cleared.
 Deleting an entire Orbit is a separately confirmed app action for the user, not a substitute for forgetting one subject.

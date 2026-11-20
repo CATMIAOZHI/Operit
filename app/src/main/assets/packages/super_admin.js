@@ -7,156 +7,12 @@ METADATA
         "en": "Super Admin"
     },
     "description": {
-        "zh": "超级管理员工具集，提供终端命令和Shell操作的高级功能。terminal工具运行在Ubuntu环境中（已正确挂载sdcard和storage），shell工具通过Shizuku/Root直接执行Android系统命令。适合需要进行底层系统管理和命令行操作的场景。",
-        "en": "Super admin toolkit providing advanced terminal and shell capabilities. The terminal tool runs in an Ubuntu environment (with sdcard/storage mounted). The shell tool executes Android system commands directly via Shizuku/Root. Useful for low-level system administration and CLI operations."
+        "zh": "超级管理员工具集：shell 通过 Shizuku/Root 直接执行 Android 系统命令，适合底层系统管理。Ubuntu 终端已内置到应用（terminal 等工具），不在本包里。",
+        "en": "Super admin toolkit: shell runs Android system commands directly via Shizuku/Root, for low-level system administration. The Ubuntu terminal is built into the app (terminal and related tools) and is not part of this package."
     },
     "enabledByDefault": true,
     "category": "System",
     "tools": [
-        {
-            "name": "terminal",
-            "description": {
-                "zh": "在持久 Ubuntu 会话执行命令，保留目录、变量和函数。command、background、timeoutMs、yieldMs 四个参数每次都必须传，缺一个就报错，例如 background=\"false\"、timeoutMs=\"1800000\"、yieldMs=\"10000\"。yieldMs内未结束返回running和runId，用terminal_wait查询或terminal_cancel取消。yieldMs仅限制本次等待；timeoutMs是执行总上限。output为日志尾部快照；命令未结束、结束但没有output、或全屏程序仍占着画面时，另附screen当前终端画面（可能包含先前输出），不要重复拼接。completed仅表示结束；exitCode为0才表示命令成功，非0为失败，null为未知。sessionExitCode仅表示会话进程退出码，不能当作命令码。大日志请重定向到文件。不要在复用会话直接exit，需要时用子Shell。",
-                "en": "Run in a persistent Ubuntu shell, preserving cwd, variables and functions. Pass all four parameters on every call (command, background, timeoutMs, yieldMs); a missing one is an error. Typical values: background=\"false\", timeoutMs=\"1800000\", yieldMs=\"10000\". If it has not finished within yieldMs, running and runId mean it continues. Poll with terminal_wait or cancel with terminal_cancel. yieldMs bounds this wait; timeoutMs bounds execution. output is a log tail; while the command has not finished, finished without output, or a full-screen program still holds the display, screen adds the current terminal display, which may include earlier output. Do not concatenate snapshots. completed means ended; exitCode=0 means command success, nonzero means failure, null means unknown. sessionExitCode describes only the session process. Redirect large logs to a file. Use a subshell instead of exiting the persistent shell."
-            },
-            "parameters": [
-                {
-                    "name": "command",
-                    "description": {
-                        "zh": "要执行的 Ubuntu 命令；切换目录请在命令中使用 cd。本工具不接受 environment/path/timeout 参数，超时参数名为 timeoutMs。",
-                        "en": "Ubuntu command to execute; use cd inside the command to change directory. environment/path/timeout are unsupported; the timeout parameter is timeoutMs."
-                    },
-                    "type": "string",
-                    "required": true
-                },
-                {
-                    "name": "background",
-                    "description": {
-                        "zh": "必填，\"true\" 或 \"false\"。true：独立后台会话，立即返回可查询的runId（不等 yieldMs）；false：在本聊天的持久会话里执行。",
-                        "en": "Required, \"true\" or \"false\". true: use a separate background session and immediately return a queryable runId (yieldMs is not waited); false: run in this chat's persistent session."
-                    },
-                    "type": "string",
-                    "required": true
-                },
-                {
-                    "name": "timeoutMs",
-                    "description": {
-                        "zh": "必填，执行总上限（毫秒，至少3000），一般用1800000（30分钟）；与短等待yieldMs分开。",
-                        "en": "Required. Execution deadline in ms, minimum 3000; usually 1800000 (30 minutes). Independent of yieldMs."
-                    },
-                    "type": "string",
-                    "required": true
-                },
-                {
-                    "name": "yieldMs",
-                    "description": {
-                        "zh": "必填，本次等待毫秒数，0–30000，一般用10000；background为true时不等待。",
-                        "en": "Required. Wait for this call in ms, 0–30000; usually 10000. Not waited when background is true."
-                    },
-                    "type": "string",
-                    "required": true
-                }
-            ]
-        },
-        {
-            "name": "terminal_wait",
-            "description": {
-                "zh": "查询runId，返回日志尾部output；未结束、结束但没有output或全屏程序仍占着画面时另附动态画面screen快照；不要重复拼接。新消息到达时可能提前返回running，命令继续执行；稍后用同一runId查询，不要重跑。completed后检查exitCode，null不能视为成功。查询不会中断命令或排入检测命令。不传runId时查询指定sessionId或当前会话最近任务。ID失效时不要自动重跑命令。",
-                "en": "Poll runId for the output log tail, plus a dynamic screen snapshot while it has not finished, finished without output, or a full-screen program still holds the display; do not concatenate repeats. New input may return running early while the command continues; poll the same runId later instead of rerunning. After completed, inspect exitCode; null is not success. Polling never interrupts or queues a probe command. Without runId, polls the latest task in the specified/current session. Do not rerun automatically if an ID expires."
-            },
-            "parameters": [
-                {
-                    "name": "runId",
-                    "description": {
-                        "zh": "terminal 返回的任务ID，建议传入。",
-                        "en": "Task ID returned by terminal; recommended."
-                    },
-                    "type": "string",
-                    "required": false
-                },
-                {
-                    "name": "sessionId",
-                    "description": {
-                        "zh": "兼容：不传runId时查询此会话最近任务。",
-                        "en": "Compatibility: latest task in this session when runId is omitted."
-                    },
-                    "type": "string",
-                    "required": false
-                },
-                {
-                    "name": "yieldMs",
-                    "description": {
-                        "zh": "本次等待0–30000毫秒，默认10000。",
-                        "en": "Wait 0–30000 ms; default 10000."
-                    },
-                    "type": "string",
-                    "required": false
-                },
-                {
-                    "name": "timeoutMs",
-                    "description": {
-                        "zh": "旧参数，作为等待时间使用，最多30000毫秒，不取消任务。",
-                        "en": "Legacy wait alias, capped at 30000 ms; never cancels the task."
-                    },
-                    "type": "string",
-                    "required": false
-                }
-            ]
-        },
-        {
-            "name": "terminal_getscreen",
-            "description": {
-                "zh": "获取目标终端会话可见屏幕内容（仅一屏，不包含历史滚动缓冲）。可通过 sessionId 指定会话；不传则使用当前对话的默认会话。",
-                "en": "Get the visible screen content for the target terminal session (single screen only, no scrollback history). Pass sessionId to target a session; if omitted, uses the current chat's default session."
-            },
-            "parameters": [
-                {
-                    "name": "sessionId",
-                    "description": {
-                        "zh": "可选目标会话ID。不传则使用当前对话的默认会话；无 chatId 时为 super_admin_default_session。",
-                        "en": "Optional target session ID. If omitted, uses the current chat's default session; without chatId it is super_admin_default_session."
-                    },
-                    "type": "string",
-                    "required": false
-                }
-            ]
-        },
-        {
-            "name": "terminal_input",
-            "description": {
-                "zh": "向目标终端会话写入输入。可通过 sessionId 指定会话；不传则使用当前对话的默认会话。input 与 control 至少传一个。常见用法：先写 input，再写 control=enter 提交；control=ctrl 且 input=c 可发送 Ctrl+C。",
-                "en": "Write input to the target terminal session. Pass sessionId to target a session; if omitted, uses the current chat's default session. Provide at least one of input or control. Typical usage: send input first, then control=enter to submit; use control=ctrl with input=c for Ctrl+C."
-            },
-            "parameters": [
-                {
-                    "name": "sessionId",
-                    "description": {
-                        "zh": "可选目标会话ID。不传则使用当前对话的默认会话；无 chatId 时为 super_admin_default_session。",
-                        "en": "Optional target session ID. If omitted, uses the current chat's default session; without chatId it is super_admin_default_session."
-                    },
-                    "type": "string",
-                    "required": false
-                },
-                {
-                    "name": "input",
-                    "description": {
-                        "zh": "写入终端的文本",
-                        "en": "Text to write to terminal."
-                    },
-                    "type": "string",
-                    "required": false
-                },
-                {
-                    "name": "control",
-                    "description": {
-                        "zh": "控制键，例如 enter / tab / esc / ctrl",
-                        "en": "Control key, e.g. enter / tab / esc / ctrl."
-                    },
-                    "type": "string",
-                    "required": false
-                }
-            ]
-        },
         {
             "name": "shell",
             "description": {
@@ -201,55 +57,11 @@ METADATA
             "parameters": [
                 { "name": "runId", "description": { "zh": "shell返回的任务编号。", "en": "Task ID returned by shell." }, "type": "string", "required": true }
             ]
-        },
-        {
-            "name": "terminal_cancel",
-            "description": {
-                "zh": "取消指定runId。排队任务只取消自己；执行中任务先中断，无法恢复时关闭故障会话。",
-                "en": "Cancel a runId. Queued tasks only cancel themselves; running tasks are interrupted, and an unrecoverable session is closed."
-            },
-            "parameters": [
-                {
-                    "name": "runId",
-                    "description": {
-                        "zh": "terminal 返回的任务ID。",
-                        "en": "Task ID from terminal."
-                    },
-                    "type": "string",
-                    "required": true
-                }
-            ]
         }
     ]
 }
 */
 const superAdmin = (function () {
-    const DEFAULT_TERMINAL_SESSION_NAME = "super_admin_default_session";
-    const BACKGROUND_TERMINAL_SESSION_PREFIX = "super_admin_background";
-    function getCurrentChatSessionSuffix() {
-        const chatId = getChatId();
-        if (chatId === undefined) {
-            return "";
-        }
-        const normalizedChatId = chatId.trim();
-        if (!normalizedChatId) {
-            return "";
-        }
-        return normalizedChatId.replace(/[^a-zA-Z0-9._-]+/g, "_");
-    }
-    function getDefaultTerminalSessionName() {
-        const chatSuffix = getCurrentChatSessionSuffix();
-        return chatSuffix
-            ? `${DEFAULT_TERMINAL_SESSION_NAME}_${chatSuffix}`
-            : DEFAULT_TERMINAL_SESSION_NAME;
-    }
-    function getBackgroundTerminalSessionName() {
-        const chatSuffix = getCurrentChatSessionSuffix();
-        const prefix = chatSuffix
-            ? `${BACKGROUND_TERMINAL_SESSION_PREFIX}_${chatSuffix}`
-            : BACKGROUND_TERMINAL_SESSION_PREFIX;
-        return `${prefix}_${Date.now()}`;
-    }
     function waitMs(value, fallback = 10000) {
         if (value === undefined)
             return fallback;
@@ -258,54 +70,6 @@ const superAdmin = (function () {
             throw new Error("yieldMs must be an integer between 0 and 30000");
         }
         return parsed;
-    }
-    async function terminal(params) {
-        // Every parameter is required: a call never runs on values the model did not choose.
-        const missing = ["command", "background", "timeoutMs", "yieldMs"].filter(name => {
-            const value = params?.[name];
-            return value === undefined || value === null || String(value).trim() === "";
-        });
-        if (missing.length > 0) {
-            throw new Error(`terminal needs all of command, background, timeoutMs and yieldMs; missing: ${missing.join(", ")}. ` +
-                "For example background=\"false\", timeoutMs=\"1800000\", yieldMs=\"10000\".");
-        }
-        const backgroundText = String(params.background).trim().toLowerCase();
-        if (backgroundText !== "true" && backgroundText !== "false") {
-            throw new Error("background must be \"true\" or \"false\"");
-        }
-        const timeoutMs = Number(params.timeoutMs);
-        if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 3000) {
-            throw new Error("timeoutMs must be an integer of at least 3000");
-        }
-        const background = backgroundText === "true";
-        const requestedYieldMs = waitMs(String(params.yieldMs));
-        const yieldMs = background ? 0 : requestedYieldMs;
-        const session = await Tools.System.terminal.create(background ? getBackgroundTerminalSessionName() : getDefaultTerminalSessionName());
-        const result = await Tools.System.terminal.start(session.sessionId, params.command, { timeoutMs, yieldMs });
-        return { ...result, command: params.command, background, timeoutMsUsed: timeoutMs,
-            context_preserved: !session.isNewSession && result.status !== "failed" && !result.timedOut };
-    }
-    async function bash(params) {
-        return terminal(params);
-    }
-    async function terminal_wait(params = {}) {
-        if (Object.prototype.hasOwnProperty.call(params, "command")) {
-            throw new Error("terminal_wait does not execute commands; use terminal.");
-        }
-        const legacyWait = params.timeoutMs === undefined ? undefined : Number(params.timeoutMs);
-        if (legacyWait !== undefined && (!Number.isSafeInteger(legacyWait) || legacyWait < 0)) {
-            throw new Error("timeoutMs must be a non-negative integer");
-        }
-        const yieldMs = params.yieldMs !== undefined ? waitMs(params.yieldMs)
-            : legacyWait === undefined ? 10000 : Math.min(30000, legacyWait);
-        const sessionId = params.sessionId ?? (params.runId ? undefined
-            : (await Tools.System.terminal.create(getDefaultTerminalSessionName())).sessionId);
-        return Tools.System.terminal.poll({ runId: params.runId, sessionId, yieldMs });
-    }
-    async function terminal_cancel(params) {
-        if (!params.runId)
-            throw new Error("runId is required");
-        return Tools.System.terminal.cancel(params.runId);
     }
     /**
      * 通过Shizuku/Root权限在Android系统中执行Shell命令
@@ -333,81 +97,13 @@ const superAdmin = (function () {
             throw new Error("runId is required");
         return Tools.System.shellTask.cancel(params.runId);
     }
-    /**
-     * 获取目标终端会话可见屏幕内容（仅一屏，不包含历史）
-     * @param sessionId - 可选会话ID；不传时使用当前对话的默认会话，无 chatId 时为 super_admin_default_session
-     */
-    async function terminal_getscreen(params = {}) {
-        try {
-            const session = params.sessionId
-                ? { sessionId: params.sessionId }
-                : await Tools.System.terminal.create(getDefaultTerminalSessionName());
-            const sessionId = session.sessionId;
-            const result = await Tools.System.terminal.screen(sessionId);
-            return {
-                sessionId: result.sessionId ?? sessionId,
-                rows: result.rows,
-                cols: result.cols,
-                content: result.content
-            };
-        }
-        catch (error) {
-            console.error(`[terminal_getscreen] 错误: ${error.message}`);
-            console.error(error.stack);
-            throw error;
-        }
-    }
-    /**
-     * 向目标终端会话写入输入
-     * @param sessionId - 可选会话ID；不传时使用当前对话的默认会话，无 chatId 时为 super_admin_default_session
-     * @param input - 文本输入
-     * @param control - 控制键
-     */
-    async function terminal_input(params = {}) {
-        try {
-            if (params.input === undefined && params.control === undefined) {
-                throw new Error("input和control至少需要提供一个");
-            }
-            const session = params.sessionId
-                ? { sessionId: params.sessionId }
-                : await Tools.System.terminal.create(getDefaultTerminalSessionName());
-            const sessionId = session.sessionId;
-            const result = await Tools.System.terminal.input(sessionId, {
-                input: params.input,
-                control: params.control
-            });
-            return {
-                sessionId,
-                input: params.input,
-                control: params.control,
-                result
-            };
-        }
-        catch (error) {
-            console.error(`[terminal_input] 错误: ${error.message}`);
-            console.error(error.stack);
-            throw error;
-        }
-    }
     return {
-        terminal,
-        bash,
-        terminal_wait,
-        terminal_cancel,
-        terminal_getscreen,
-        terminal_input,
         shell,
         shell_wait,
         shell_cancel
     };
 })();
 // 逐个导出
-exports.terminal = superAdmin.terminal;
-exports.bash = superAdmin.bash;
-exports.terminal_wait = superAdmin.terminal_wait;
-exports.terminal_cancel = superAdmin.terminal_cancel;
-exports.terminal_getscreen = superAdmin.terminal_getscreen;
-exports.terminal_input = superAdmin.terminal_input;
 exports.shell = superAdmin.shell;
 exports.shell_wait = superAdmin.shell_wait;
 exports.shell_cancel = superAdmin.shell_cancel;

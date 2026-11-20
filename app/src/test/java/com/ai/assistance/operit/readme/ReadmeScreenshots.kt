@@ -273,9 +273,9 @@ abstract class ReadmeScreenshots internal constructor(private val demo: Demo, pr
         }
         compose.setContent {
             OrbitAppearanceTheme(orbit, updateAppAppearance = false) {
-                val header: @Composable () -> Unit = {
+                val header: @Composable ((@Composable () -> Unit)?) -> Unit = { trailing ->
                     OrbitHeader(orbit, sideTitle = null, hasUnread = false, onOpenProfile = {}, onOpenMenu = {},
-                        avatarAnimated = false, onTabLayer = true)
+                        avatarAnimated = false, onTabLayer = true, trailing = trailing)
                 }
                 CompositionLocalProvider(LocalOrbitTabHeader provides header) {
                     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {

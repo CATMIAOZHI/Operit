@@ -20,16 +20,15 @@
     <string name="logcat_export_dropped">%1$d records were dropped due to queue overload or thread interruption and cannot be recovered.</string>
     <string name="logcat_export_write_failed">A file write failed during this logging session.</string>
     <string name="logcat_export_interrupted">Waiting for log writes was interrupted.</string>
+    <string name="local_server_provider_removed">The built-in local server options (LM Studio, local Ollama, OpenAI-compatible local service) have been removed. Your own server still works: choose OpenAI (Generic) as the provider and keep its address; if the server needs no key, enter a placeholder such as none. You can also switch to a cloud provider. If you change the model name and an Orbit used this configuration, pick it again on the Orbit Models page.</string>
     <string name="local_llm_removed">On-device LLM inference has been removed. Select a cloud or remote provider. Existing files remain in Download/Operit/models and can be removed using a file manager.</string>
     <string name="openai_error_repetition_truncation">The server stopped repetitive model output. The response was discarded and its tools will not run.</string>
     <string name="openai_retry_repetition_truncation">Repetitive output was discarded. Retrying the request once.</string>
     <string name="memory_include_thinking">Allow looking up thinking</string>
     <string name="memory_include_thinking_desc">Reviews read visible replies and tool records only. When on, skill work can look up the thinking of a specific reply when it needs it. When off, thinking is never read. Chat display and context caching are unchanged.</string>
-    <string name="permission_review_always_allow">Always allow this tool</string>
-    <string name="permission_review_always_allowed">This tool is always allowed</string>
-    <string name="permission_review_always_allow_confirm">Always allow “%1$s”?\n\nThis applies to all conversations and all arguments for this tool, without permission prompts or automatic reviews. Other tools are unaffected.\n\nFinished calls will not be retried automatically. Revoke this in Settings → Tool permissions.</string>
-    <string name="permission_review_always_allow_confirm_button">Confirm always allow</string>
-    <string name="permission_review_always_allow_failed">Could not save. Please try again.</string>
+    <string name="permission_review_open_tool_permissions">Tool permission settings</string>
+    <string name="permission_review_tool_permissions_hint">To change this tool\'s permission, go to Settings → Tool Permission Settings.</string>
+    <string name="permission_review_orbit_tool_permissions_hint">Turn on Developer mode in Orbit\'s settings to change it under Per-tool permissions.</string>
     <string name="phone_control_observing">Acting</string>
     <string name="phone_control_waiting">Thinking</string>
     <string name="phone_control_acting">Acting</string>
@@ -1114,20 +1113,22 @@
     <string name="agreement_title">User Agreement and Privacy Policy</string>
     <string name="agreement_subtitle">Please read and agree to the following terms before use.</string>
     <string name="agreement_version">Agreement version: %1$s</string>
-    <string name="personal_branch_disclaimer_title">Personal Branch Disclaimer</string>
-    <string name="personal_branch_disclaimer_content">This app is a personal branch independently maintained and distributed by CATMIAOZHI based on AAswordman / Operit. It is not an official upstream release. Report issues arising from this branch\'s modifications, builds, distribution, or additional services through the CATMIAOZHI / Operit repository Issues page. Except for responsibility that applies to the upstream project\'s own code under applicable law or its license, the upstream project and its maintainers are not responsible for this personal branch\'s modifications, builds, distribution, or operation.</string>
+    <string name="personal_branch_disclaimer_title">Open-source project notice</string>
+    <string name="personal_branch_disclaimer_content">Orbit is an open-source personal branch of AAswordman / Operit, maintained and released by CATMIAOZHI. It is not an official upstream release. All of its source code is public at https://github.com/CATMIAOZHI/orbit , so anyone can read it, audit it and build it themselves. It is free open-source software, not a commercial service, and you use it at your own risk; the upstream project and its maintainers are not responsible for this branch. Please report problems through the repository\'s Issues.</string>
     <string name="agreement_human_readable_title">Plain Language Version (Not a legal document)</string>
-    <string name="agreement_human_readable_content">Service boundary: Operit does not provide publicly available anthropomorphic emotional interaction services. Operit is an open-source client that runs locally on your device. It does not operate model inference services, host chat sessions or interaction data, or distribute shared model credentials. Cloud model requests are sent directly from your device to the model provider you configure with your own credentials; related data is governed by the rules of that provider. Local models run inference on your device.\n\nThis app can call files, terminals, automation, Root, ADB, extensions, and similar capabilities. Check operations before running them, back up important data, and grant permissions carefully. Losses involving devices, data, accounts, or other interests caused by user actions, user configuration, third-party services, or third-party extensions should be handled by the actual operator under applicable law.\n\nThird-party plugins, scripts, Skills, toolkits, and other marketplace content belong to their labelled authors or right holders, together with related responsibility. Marketplace listing or installation does not mean Operit guarantees, endorses, or obtains rights to that content. Confirm the license and rights status before using, modifying, publishing, or redistributing it.</string>
+    <string name="agreement_human_readable_content">• Open source: Orbit is an open-source project. All of its source code is public on GitHub (CATMIAOZHI/orbit), so you can check what it does or build it yourself.\n\n• Data: chats, memories and settings are kept on your phone by default, and we do not host your data. When you use cloud models, WeChat, search or other online features, what they need is sent to that service; if your phone\'s system backup is on, app data may be backed up too.\n\n• Costs: if the model or online service you choose charges, you pay for it, under the provider\'s own rules. When Orbit calls a paid model or service in the background, that costs money too.\n\n• Orbit does real things: once you allow it, it can run a terminal, read and write files, operate apps and the browser in the background, read SMS, contacts, calendar, notifications and location, use keys from the vault, and act automatically without asking you each time. Think before you allow it, and back up important data first.\n\n• You are responsible: whether and how you use it, which permissions you grant, and what Orbit does with them are all up to you, and so are the consequences. Follow local law wherever you use the app. Use the app and its features only as local law allows. AI makes mistakes; what it says is not medical, legal, financial or other professional advice.\n\n• Third-party plugins and toolkits belong to their authors; we give no guarantee for them.</string>
     <string name="agreement_serious_title">Formal Legal Agreement</string>
     <string name="agreement_serious_content"><![CDATA[
-        <p><b>Operit User Agreement and Privacy Policy</b><br>Version: 2026-08-24; intended effective date: August 24, 2026.</p>
-        <p><b>1. Scope and Agreement Version</b><br>This agreement applies to the Operit personal-branch Android client and its optional online features distributed by the maintainers of the CATMIAOZHI / Operit repository. It is not the upstream project\'s official agreement or release. By using this app, you confirm that you have read and accepted the current version. The app records the agreement version you have accepted at startup; when the agreement is materially updated, the app will require you to confirm the new version before continuing. The open-source code in the repository is licensed under the GNU Lesser General Public License version 3 (LGPLv3) in the root <code>LICENSE</code> file. This agreement does not exclude or reduce rights granted by applicable law or open-source licenses.</p>
-        <p><b>2. Product Positioning and Third-Party Services</b><br>Operit is open-source client software. It does not provide large language model inference, shared API Keys, chat request relay, or cloud hosting of chat records. Cloud models, cloud voice, search, image generation, MCP, and other network features are selected, configured, and enabled by you. When you use those services, data is sent directly to the corresponding service provider and is governed by the terms and privacy policy of that provider. You should evaluate the safety, legality, and suitability of providers, models, endpoints, and extensions, and keep credentials secure.</p>
-        <p><b>3. Data Processing and Privacy</b><br>Chat records, character cards, memories, model configuration, and API Keys are usually stored in the app data on your device. When you actively export, back up, upload files, use third-party network features, or submit requests to an external HTTP service, related data will be copied, transmitted, or disclosed according to your actions. Marketplace, announcements, update checks, GitHub login, and publishing features may access Operit, GitHub, or related third-party resources; these features do not relay chat model requests. Manage your data and credentials together with device security settings, third-party service terms, and this agreement.</p>
-        <p><b>4. External Deployment and Operator Responsibility</b><br>External HTTP services, QQ Bot, auto-reply, and similar capabilities are enabled at your choice. If you make them available to others or to the public, you act as the actual deployer or operator and are responsible for access control, user authorization, content safety, data protection, minor protection, required notices, and other applicable obligations. If you continuously provide emotional interaction services to the public in mainland China that simulate natural-person personality traits, thinking patterns, or communication styles, you should evaluate and comply with the Interim Measures for the Administration of Artificial Intelligence Anthropomorphic Interaction Services (《人工智能拟人化互动服务管理暂行办法》) and other applicable rules. You must not use this app to provide virtual relatives, virtual companions, or other virtual intimate relationship services to minors, induce emotional dependence or addiction, conduct emotional manipulation, or otherwise infringe the lawful rights and interests of others.</p>
-        <p><b>5. Lawful Use and Content Responsibility</b><br>You must comply with applicable laws and regulations, third-party service rules, and platform rules. You must not use this app, extensions, or configuration to conduct unlawful activities, infringe others rights, access systems or data without authorization, or spread unlawful or harmful content. You are responsible for the content and conduct you input, configure, generate, publish, forward, or operate. AI outputs may contain errors, omissions, or bias and do not constitute medical, mental-health crisis, legal, financial, or other professional advice. In urgent dangerous situations, contact local emergency services, medical institutions, or trusted people promptly.</p>
-        <p><b>6. Software Provided As Is</b><br>To the extent permitted by applicable law, this software is provided on an "as is" and "as available" basis. Contributors make no express or implied warranties regarding the continued availability, accuracy, safety, merchantability, fitness for a particular purpose, or non-infringement of the software or third-party services. Losses caused by use of this software, third-party services, extensions, user configuration, or self-made modifications should be handled under applicable law and the relevant service agreements.</p>
-        <p><b>7. Agreement Updates and Contact</b><br>We may update this agreement due to feature, legal, or security requirements, and provide the current version in the app. Updates that materially affect user rights will take effect by increasing the agreement version and requiring confirmation again. You may raise questions and feedback through the project repository, in-app feedback entry, or public contact channels.</p>
+        <p><b>Orbit (Operit personal branch) User Agreement and Privacy Policy</b><br>Version: 2026-11-20; effective date: November 20, 2026.</p>
+        <p><b>1. Open-source project and scope</b><br>This app is an open-source personal branch of AAswordman / Operit, maintained and released by CATMIAOZHI, and is not an official upstream release. All of its source code is public at https://github.com/CATMIAOZHI/orbit and licensed under the license in the repository\'s root <code>LICENSE</code> file (based on the GNU Lesser General Public License version 3, LGPLv3); anyone may read, audit, build and modify it. This agreement covers the Android client released from that repository and its optional online features, and does not exclude or reduce any right given to you by applicable law or the open-source license.</p>
+        <p><b>2. What the product is</b><br>This app is client software that runs on your device and is provided free of charge. The maintainers run no model inference, request relay or cloud storage service, provide no shared API keys, and offer no online service to the public. You can manage Orbit\'s settings and data; Orbit\'s name, personality and memories may form or change during use, as Orbit picks them up from your conversations.</p>
+        <p><b>3. Third-party services and costs</b><br>Cloud models, voice, search, image generation, MCP, the WeChat channel, plugins and other online features are chosen, set up and turned on by you; the data they need (including the conversation sent to the model and prompt content such as Orbit\'s profile and memories) is sent directly from your device to the provider concerned and is governed by its terms and privacy policy. You bear any resulting costs, including those of paid models or services Orbit calls in the background under your settings. In-app usage and cost figures are only a guide; the provider\'s bill is what counts.</p>
+        <p><b>4. Data and privacy</b><br>Chats, Orbit\'s memories and user profile, credentials in the vault, model settings and API keys are stored by default in the app\'s data on your device; the maintainers can neither access nor collect them. If system backup or device transfer is on, app data other than the vault may be backed up or transferred by the system. When you export, back up, upload, share or use online features, the data concerned is copied or sent as you direct. Update checks, the price catalog and similar features access GitHub or related third-party resources; they do not send your chats.</p>
+        <p><b>5. Permissions and automatic actions</b><br>With your permission, this app can use the terminal, files, notifications, the microphone, accessibility, ADB, Shizuku or Root, read SMS, contacts, calendar, notification content and location, operate apps in the background, take over the built-in browser, use credentials from the vault, and run tasks automatically in the background as you set it up; once allowed, these actions may run without asking you each time. Auto review is decided by the model you configure and is not guaranteed to be right. Before granting any permission or turning on automatic actions, you should understand what it does and the risks, and back up important data.</p>
+        <p><b>6. Your responsibility</b><br>You decide whether to download, install, set up and use this app, and you are responsible for your use, settings, permissions, input and published content, and for the actions Orbit takes under your permission and their consequences. You must follow applicable laws and third-party rules and must not use this app for illegal activity, to infringe others\' rights, to access systems or data without authorization, or to spread illegal or harmful content. You must check and comply with the laws of the country or region where you use this app, and use the app and its features only as local law allows. If you open the app\'s capabilities (such as the external HTTP service) to others or the public, you are the actual operator and must handle access control, content safety, data protection, protection of minors and other duties yourself, and comply with applicable rules such as China\'s Interim Measures for the Administration of Anthropomorphic AI Interaction Services; you must not offer virtual intimate-relationship services to minors, induce emotional dependence or addiction, or manipulate emotions. AI output may be wrong and is not medical, psychological, legal, financial or other professional advice; in an emergency, contact local emergency services or someone you trust.</p>
+        <p><b>7. Third-party content</b><br>Plugins, scripts, Skills, toolkits and other content in the plugin market belong to their labelled authors or right holders, together with the related responsibility. Listing or installation does not mean the maintainers guarantee or endorse them. Check the license before using, modifying or redistributing them.</p>
+        <p><b>8. Provided as is; limitation of liability</b><br>This software is free and open source and is provided as is and as available, without any express or implied warranty, including of availability, accuracy, security, merchantability, fitness for a particular purpose or non-infringement. To the fullest extent permitted by applicable law, the maintainers, the upstream project and contributors are not liable for any direct or indirect loss arising from using or being unable to use this software, third-party services, extensions, user settings or actions carried out by AI.</p>
+        <p><b>9. Updates and contact</b><br>This agreement may be updated for feature, legal or security reasons. Updates that materially affect your rights take effect by raising the agreement version and asking you to accept again when you open the app. Please send questions and feedback through the project repository\'s Issues.</p>
     ]]></string>
     <string name="agreement_disclaimer">The plain language version is only for easier understanding. If it differs from the Chinese formal version, the Chinese formal version prevails.</string>
     <string name="agreement_accept">I have read and agree</string>
@@ -3436,7 +3437,7 @@
     <string name="chat_ai_computer_closed_due_to_workspace">AI computer closed (workspace opened)</string>
     <string name="ai_planning_desc">Will perform task decomposition and trigger multiple sub-agents to collect information, then summarize. Sub-agents have the same tool-calling capabilities as the chat agent. This can be very time-consuming, only recommended when collecting information.</string>
     <string name="thinking_mode">Thinking Mode</string>
-    <string name="thinking_mode_desc">Currently supports Gemini, Qwen3, Claude, Doubao, NVIDIA, SiliconFlow and MNN local models, enabling built-in thinking.</string>
+    <string name="thinking_mode_desc">Currently enables built-in thinking for Gemini, Qwen3, Claude, Doubao, NVIDIA, and SiliconFlow.</string>
     <string name="model_selection">Model Selection</string>
     <string name="prompt_selection">Prompt Selection</string>
     <string name="memory_selection">Memory Selection</string>
@@ -3554,6 +3555,8 @@
     
     <string name="settings_data_permissions">Data and Permissions</string>
     <string name="settings_tool_permissions_subtitle">Tool permissions and security settings</string>
+    <string name="settings_terminal_tools">Ubuntu terminal tools</string>
+    <string name="settings_terminal_tools_subtitle">Let the AI run commands in the built-in Ubuntu terminal. When off, main-app chats do not get it; Orbit always has it.</string>
     <string name="settings_privacy_data_cleanup">Privacy and Data Cleanup</string>
     <string name="settings_clear_cookies">Clear Cookies</string>
     <string name="settings_clear_cookies_subtitle">Clear cookies saved by search tools, the Browser package, and the built-in browser</string>
@@ -3627,6 +3630,8 @@
     <string name="token_stats_include_legacy">Include legacy data in totals</string>
     <string name="token_stats_baseline_rows">%1$d legacy rows (no time distribution; excluded from trends)</string>
     <string name="token_stats_unknown_cost">%1$d request(s) with unknown cost</string>
+    <string name="token_stats_estimated_cost">%1$d request(s) had no price at the time and are priced at today\'s price</string>
+    <string name="token_stats_approx_amount">About %1$s</string>
     <string name="token_stats_unknown_parts">%1$d request(s) with partially unknown data</string>
     <string name="token_stats_unknown_part_suffix">unknown %1$d</string>
     <string name="token_stats_token_uncached">Uncached input</string>
@@ -3662,7 +3667,7 @@
     <string name="token_stats_mode_historical">Price at request time</string>
     <string name="token_stats_mode_revalued">Recalculate now</string>
     <string name="token_stats_mode_help_title">Cost calculation</string>
-    <string name="token_stats_mode_historical_help">Price at request time: uses the price saved when each request occurred. Later pricing changes do not alter this cost.</string>
+    <string name="token_stats_mode_historical_help">Price at request time: uses the price saved when each request occurred. Later pricing changes do not alter this cost. Requests that had no price at the time are priced at today\'s price and marked “About”, so they follow price changes.</string>
     <string name="token_stats_mode_revalued_help">Recalculate now: recalculates the selected range with current built-in and custom prices. This is useful for estimates and is not a provider bill.</string>
     <string name="token_stats_mode_rate_help">Changing the exchange rate only changes converted display totals. It does not alter the original-currency cost saved with an event.</string>
     <string name="token_stats_help_got_it">Got it</string>
@@ -3736,9 +3741,15 @@
     <string name="token_stats_pricing_catalog_revision">Active version %1$s · Generated %2$s</string>
     <string name="token_stats_pricing_catalog_checked">Last checked: %1$s</string>
     <string name="token_stats_pricing_catalog_not_checked">Cloud updates have not been checked yet</string>
-    <string name="token_stats_pricing_catalog_refresh">Update cloud catalog</string>
+    <string name="token_stats_pricing_catalog_refresh">Check now</string>
     <string name="token_stats_pricing_catalog_refresh_failed">Operation failed; current prices are unchanged: %1$s</string>
-    <string name="token_stats_pricing_catalog_hint">Matches official prices by model name, regardless of your API provider. Updates fetch models.dev first and use the repository cache on timeout. Tap Replace to apply. Manual prices take priority; historical costs stay unchanged.</string>
+    <string name="token_stats_pricing_catalog_hint">Matches official prices by model name, regardless of your API provider; names with a colon tag, a vendor prefix or without the date are recognized too, and free models cost 0. Updates fetch models.dev first and use the repository cache on timeout. Manual prices take priority. Historical costs that had a price stay unchanged; those without one are priced at the new price.</string>
+    <string name="token_stats_pricing_catalog_auto">Update prices automatically</string>
+    <string name="token_stats_pricing_catalog_auto_desc">On Wi-Fi, checks from time to time when you open the app or prices, and uses new prices right away</string>
+    <string name="token_stats_pricing_catalog_auto_not_saved">The switch was not saved; it may go back after the app restarts</string>
+    <string name="token_stats_pricing_catalog_result_up_to_date">Prices are up to date</string>
+    <string name="token_stats_pricing_catalog_result_updated">Updated to the latest prices</string>
+    <string name="token_stats_pricing_catalog_result_downloaded">New prices found; tap “Replace built-in prices” to use them</string>
     <string name="token_stats_pricing_catalog_details">Catalog details</string>
     <string name="token_stats_pricing_context_tiers">Official prices vary by input context length. Base prices are shown here; manual prices take priority.</string>
     <string name="token_stats_pricing_catalog_downloaded">Downloaded version %1$s · Generated %2$s</string>
@@ -4105,22 +4116,11 @@
     <string name="default_config_model_restriction">When using default configuration, only deepseek-flash model can be used</string>
     <string name="enable_direct_image_processing">Model supports vision</string>
     <string name="enable_direct_image_processing_desc">When enabled, images requested through read_file are given to the current model; attaching an image does not send its contents automatically</string>
-    <string name="model_multimodal_capabilities_desc">Configure image, audio, and video input for each model. Sync reads the local catalog; manual refresh fetches models.dev first and falls back to the Operit repository snapshot on timeout.</string>
     <string name="model_multimodal_capabilities_no_models">Add a model to configure its image, audio, and video capabilities</string>
     <string name="model_multimodal_select_model">Select model</string>
     <string name="model_multimodal_select_model_title">Choose a model to configure</string>
     <string name="model_multimodal_search_models">Search models</string>
     <string name="model_multimodal_no_models_found">No models to configure</string>
-    <string name="model_multimodal_auto_sync">Sync this configuration</string>
-    <string name="model_multimodal_auto_sync_all_matched">Configured %1$d models from the official model catalog</string>
-    <string name="model_multimodal_auto_sync_partially_matched">Configured %1$d models; %2$d could not be matched uniquely and kept their existing settings</string>
-    <string name="model_multimodal_auto_sync_none_matched">No official models could be matched uniquely; existing settings were not changed</string>
-    <string name="model_multimodal_auto_sync_failed">Could not read the local model catalog; existing settings were not changed</string>
-    <string name="model_multimodal_catalog_refresh">Refresh local model catalog</string>
-    <string name="model_multimodal_catalog_refresh_success">Updated the local catalog with %1$d official models</string>
-    <string name="model_multimodal_catalog_refresh_failed">Update failed; the previous local catalog and update time were kept</string>
-    <string name="model_multimodal_catalog_updated_at">Local multimodal catalog updated: %1$s</string>
-    <string name="model_multimodal_catalog_bundled">Local multimodal catalog: bundled, not yet updated</string>
     <string name="enable_direct_audio_processing">Model supports audio</string>
     <string name="enable_direct_audio_processing_desc">When enabled, audio will be sent directly to the AI for processing instead of returning tool-based transcription/description</string>
     <string name="enable_direct_video_processing">Model supports video</string>
@@ -4174,7 +4174,6 @@
     <string name="provider_opencode_zen_free_key_optional">Optional: leave blank to try anonymous access, or enter your Zen API key</string>
     <string name="provider_opencode_zen_free_model_required">This provider only allows OpenCode Zen free models. Choose one from the model list.</string>
     <string name="provider_opencode_zen_free_anonymous_denied">Zen rejected anonymous access. Enter your own Zen API key and try again.</string>
-    <string name="provider_opencode_go_protocol_hint">OpenCode Go models use different APIs. Auto-configure protocols uses the local catalog. Refresh the catalog manually when needed, or configure each model yourself.</string>
     <string name="provider_4router">4Router</string>
     <string name="provider_nous_portal">Nous Portal</string>
     <string name="provider_infiniai">InfiniAI</string>
@@ -4194,29 +4193,6 @@
     <string name="select_api_provider_title">Select API Provider</string>
     <string name="search_providers">Search providers</string>
 
-    <!-- llama.cpp Local Inference -->
-    <string name="llama_local_model_tip">Local models are usually weaker. Consider disabling memory links and disabling tools for chat.</string>
-    <string name="llama_local_model_download_tip">llama.cpp models must be downloaded manually (.gguf). Put the model file in the folder below, then enter the file name in “Model name”:</string>
-    <string name="llama_local_model_dir">Default model folder: %1$s</string>
-    <string name="llama_auto_config_tip">Batch size, mmap, Flash Attention, KV, and other Android compatibility settings are built in. In normal use, you only need thread count, context size, and GPU layers.</string>
-    <string name="llama_select_downloaded_model">Select downloaded model</string>
-    <string name="llama_thread_count">Thread count</string>
-    <string name="llama_context_size">Context size</string>
-    <string name="llama_context_size_subtitle">On Android, start with 2048 first. Larger values are more likely to fail during initialization.</string>
-    <string name="llama_batch_size">Batch size</string>
-    <string name="llama_batch_size_subtitle">Keep this at or below 512, and never above the context size.</string>
-    <string name="llama_ubatch_size">Micro batch size</string>
-    <string name="llama_ubatch_size_subtitle">Keep this at or below the batch size. On Android, 512 is usually the safer choice.</string>
-    <string name="llama_gpu_layers">GPU layers</string>
-    <string name="llama_gpu_layers_subtitle">Only works when the current build has a GPU backend. Use 0 for CPU-only.</string>
-    <string name="llama_use_mmap">Use mmap</string>
-    <string name="llama_use_mmap_subtitle">Off is the safer default on Android. Disabling mmap helps many devices load GGUF successfully.</string>
-    <string name="llama_flash_attention">Enable Flash Attention</string>
-    <string name="llama_flash_attention_subtitle">Off is the safer default on mobile to avoid unstable Android backends.</string>
-    <string name="llama_kv_unified">Unified KV cache</string>
-    <string name="llama_kv_unified_subtitle">Recommended for single-session chat to reduce context management overhead on Android.</string>
-    <string name="llama_offload_kqv">Offload KQV to GPU</string>
-    <string name="llama_offload_kqv_subtitle">Only matters when GPU layers are above 0. It is ignored when no GPU backend is available.</string>
 
     <!-- ModelParametersSection strings -->
     <string name="max_tokens_name">Max Tokens</string>
@@ -4962,38 +4938,6 @@
     <string name="message_limit_reached_message">The current conversation has reached the limit of %1$d messages.\nTo maintain conversation quality and performance, please clear the history to continue.</string>
     <string name="go_clear">Clear Now</string>
     
-    <!-- MNN Local Inference -->
-    <string name="screen_title_mnn_model_download">MNN Model Download</string>
-    <string name="mnn_model_download">Download MNN Model</string>
-    <string name="mnn_model_management">Model Management</string>
-    <string name="mnn_download_from_modelscope">Download from ModelScope</string>
-    <string name="mnn_model_size">Model Size: %1$.2f GB</string>
-    <string name="mnn_downloading">Downloading</string>
-    <string name="mnn_download_speed">Speed: %1$s</string>
-    <string name="mnn_download_complete">Download Complete</string>
-    <string name="mnn_download_failed">Download Failed: %1$s</string>
-    <string name="mnn_no_models_downloaded">No models downloaded yet</string>
-    <string name="mnn_select_downloaded_model">Select downloaded model</string>
-    <string name="mnn_model_name_only">Model Name</string>
-    <string name="mnn_download_progress">Progress: %1$d%%</string>
-    <string name="mnn_pause_download">Pause Download</string>
-    <string name="mnn_resume_download">Resume Download</string>
-    <string name="mnn_delete_model">Delete Model</string>
-    <string name="mnn_confirm_delete">Confirm to delete this model?</string>
-    <string name="mnn_loading_models">Loading model list...</string>
-    <string name="mnn_connecting">Connecting...</string>
-    <string name="mnn_load_failed">Load Failed</string>
-    <string name="mnn_retry">Retry</string>
-    <string name="mnn_start_download">Start Download</string>
-    <string name="mnn_no_local_models">No models downloaded yet</string>
-    <string name="mnn_go_download">Go to Download</string>
-    <string name="mnn_search_models">Search models...</string>
-    <string name="mnn_no_search_results">No matching models found</string>
-    <string name="mnn_local_model_tip">Local models have limited understanding. It\'s recommended to disable memory links and enable tool restrictions for conversations</string>
-    <string name="mnn_model_path">Model File Path</string>
-    <string name="mnn_model_path_placeholder">Enter the full path to MNN model file</string>
-    <string name="mnn_forward_type">Forward Type</string>
-    <string name="mnn_thread_count">Thread Count</string>
 
     <!-- Default Assistant Setup Guide -->
     <string name="default_assistant_guide_title">Set Default Voice Assistant</string>
@@ -5042,12 +4986,12 @@
 
     <!-- Tool Permission Settings -->
     <string name="tool_permissions_title">Tool Permissions</string>
-    <string name="tool_permissions_description">By default every tool goes through the automatic review: operations inside the workspace run directly and the rest are judged by the review agent. You can add exceptions below.</string>
+    <string name="tool_permissions_description">By default tools go through the automatic review: operations inside the workspace run directly and the rest are judged by the review agent (the Allowed group below lists the kinds of tools allowed by default). You can add exceptions below.</string>
     <string name="global_permission_switch">Global Permission Switch</string>
     <string name="global_permission_switch_description">This setting controls the default behavior. Per-tool exceptions such as “always allow/deny” take precedence.</string>
     <string name="permission_level_allow">Allowed</string>
     <string name="permission_level_allow_description">These tools will run automatically.</string>
-    <string name="permission_level_allow_default_hint">Subagent collaboration tools (spawn_agent and friends) are allowed by default, with no switch of their own. To give one a different level, add it in another group below.</string>
+    <string name="permission_level_allow_default_hint">Subagent collaboration tools (spawn_agent and friends) are allowed by default, with no switch of their own. To give one a different level, add it in another group below. Waiting on, looking at or cancelling this chat\'s own terminal and shell runs is allowed too, unless you set a level for that tool or set the global switch to Forbidden.</string>
     <string name="permission_level_auto_review">Auto review</string>
     <string name="permission_level_auto_review_description">Provably in-workspace operations run directly; other calls needing review go to an independent agent for approval or denial. Failed, timed-out, or invalid reviews leave the action unexecuted and return the reason to AI to retry or explain configuration issues to you. Per-tool rules take precedence. This is not an OS sandbox.</string>
     <string name="permission_level_forbid">Forbidden</string>
@@ -7185,25 +7129,6 @@
     <string name="ai_message_continue_task_if_complete">%1$s\n\nPlease continue, if the task is complete, output a summary</string>
     <string name="ai_message_user_label">User</string>
 
-    <!-- MNN Provider -->
-    <string name="mnn_model_dir_not_exist">Model directory does not exist: %1$s\nPlease ensure the model is downloaded</string>
-    <string name="mnn_config_not_exist">Configuration file does not exist: %1$s\nPlease ensure the model is fully downloaded</string>
-    <string name="mnn_cannot_create_session">Unable to create MNN LLM session, please check model files and configuration</string>
-    <string name="mnn_user_prompt">User: %1$s\n</string>
-    <string name="mnn_assistant_prompt">Assistant: %1$s\n</string>
-    <string name="mnn_system_prompt">System: %1$s\n</string>
-    <string name="mnn_message_format">User: %1$s\n</string>
-    <string name="mnn_assistant">Assistant: </string>
-    <string name="mnn_error_with_message">Error: %1$s</string>
-    <string name="mnn_session_not_initialized">Error: LLM session not initialized</string>
-    <string name="mnn_reasoning_error">\n\n[Reasoning process error]</string>
-    <string name="mnn_error_request_cancelled">Request cancelled by user</string>
-    <string name="mnn_generic_error">Error: %1$s</string>
-    <string name="mnn_model_not_configured">Model name not configured</string>
-    <string name="mnn_model_dir_missing">Model directory does not exist: %1$s\nPlease download the model first</string>
-    <string name="mnn_file_status">File status:</string>
-    <string name="mnn_init_failed">Model initialization failed</string>
-    <string name="mnn_connection_success">MNN LLM model connected successfully!\n\nModel: %1$s\nDirectory: %2$s\nTotal size: %3$s\n\n%4$s</string>
 
     <!-- APK Reverse Engineer -->
     <string name="apk_unnamed_function">(Unnamed function)</string>
@@ -7287,14 +7212,21 @@
 
     <!-- AIForegroundService (新增) -->
     <string name="service_operit_running">Operit is running</string>
+    <string name="service_app_running">%1$s is running</string>
     <string name="service_chat_complete_reminder">Chat completion reminder</string>
     <string name="service_chat_complete_reminder_sound">Chat completion reminder (sound)</string>
     <string name="service_chat_complete_reminder_vibration">Chat completion reminder (vibration)</string>
     <string name="service_chat_complete_reminder_sound_vibration">Chat completion reminder (sound and vibration)</string>
     <string name="service_keep_background">Keep Operit running in the background.</string>
+    <string name="service_channel_description">Keeps the app running in the background.</string>
+    <string name="service_channel_name">Running in background</string>
+    <string name="screen_capture_notification_title">Reading the screen</string>
+    <string name="screen_capture_notification_text">Reading what is on the screen</string>
     <string name="service_notify_when_complete">Notify you when the conversation is complete.</string>
     <string name="service_running_wake_pause">Operit is running (wake paused)</string>
     <string name="service_running_wake_listening">Operit is running (wake listening)</string>
+    <string name="service_app_running_wake_pause">%1$s is running (wake paused)</string>
+    <string name="service_app_running_wake_listening">%1$s is running (wake listening)</string>
     <string name="service_running_stats">Conversations %1$d · Tools %2$d</string>
     <string name="service_running_http_listening">External HTTP listening on port %1$d</string>
     <string name="service_running_with_http">%1$s · HTTP %2$d</string>
@@ -7343,15 +7275,6 @@
     <string name="html_export_message_count">Message Count</string>
     <string name="html_export_footer">Exported from Operit Ry Assistant</string>
 
-    <!-- MnnModelDownloadManager -->
-    <string name="mnn_no_cache_data">No cache data</string>
-    <string name="mnn_response_empty">Response body is empty</string>
-    <string name="mnn_fetch_repo_files_failed">Failed to fetch repository file list: %1$s</string>
-    <string name="mnn_download_failed_http">Download failed: HTTP %1$d %2$s</string>
-    <string name="mnn_rename_failed">Rename failed</string>
-    <string name="mnn_unknown_error">Unknown error</string>
-    <string name="mnn_download_file_failed">Failed to download file: %1$s (HTTP %2$d)</string>
-    <string name="mnn_download_paused">Download paused</string>
 
     <!-- MCPBridge -->
     <string name="mcp_send_command">Send bridge command</string>
@@ -7394,6 +7317,9 @@
 
     <!-- StandardTerminalCommandExecutor -->
     <string name="terminal_error_missing_session_name">Missing parameter: session_name</string>
+    <string name="terminal_error_no_chat_session">This chat has no terminal session yet; run a command with terminal first.</string>
+    <string name="role_card_super_admin_terminal_note">Allowing this package also keeps the built-in Ubuntu terminal tools for the role card.</string>
+    <string name="terminal_tools_switched_off">Not run: the Ubuntu terminal tools are switched off in settings. If needed, the user can turn them on in Settings → Data and Permissions → Ubuntu terminal tools.</string>
     <string name="terminal_error_create_session">Error creating or getting terminal session: %1$s</string>
     <string name="terminal_error_missing_command">Missing parameter: command</string>
     <string name="terminal_error_missing_session_id">Missing parameter: session_id</string>
@@ -7463,15 +7389,6 @@
     <string name="conversation_analyze_audio_prompt">Please analyze this audio.</string>
     <string name="conversation_analyze_video_prompt">Please analyze this video.</string>
 
-    <!-- LlamaProvider -->
-    <string name="llama_error_model_file_not_exist">Model file does not exist: %1$s</string>
-    <string name="llama_error_create_session_failed">Failed to create llama.cpp session (nativeCreateSession returned 0)</string>
-    <string name="llama_error_prefix">Error</string>
-    <string name="llama_error_session_create_failed">Error: Failed to create llama.cpp session (please check model file and JNI compilation output)</string>
-    <string name="llama_error_chat_template_failed">Error: Cannot apply model chat template (llama_model_chat_template/llama_chat_apply_template)</string>
-    <string name="llama_error_inference_failed">llama.cpp inference process error</string>
-    <string name="llama_error_inference_tag">[Inference error occurred]</string>
-    <string name="llama_error_request_cancelled">Request cancelled by user</string>
 
     <!-- TaskExecutor -->
     <string name="task_error_execution_failed">Task execution failed: %1$s</string>
@@ -7497,8 +7414,6 @@
     <!-- GraphVisualizer -->
     <string name="graph_char_for_measurement">中</string>
 
-    <!-- MnnModelDownloadScreen -->
-    <!-- No strings needed here -->
 
     <!-- User profile document -->
     <string name="date_format_pattern">MMMM dd, yyyy</string>
@@ -8776,6 +8691,7 @@
     <string name="tool_repairs_proxy_timeout">Moved terminal timeoutMs into tool parameters</string>
     <string name="tool_repairs_params_tool_name">Removed a tool_name repeated inside params</string>
     <string name="tool_repairs_write_file_new">Renamed new to content in write_file</string>
+    <string name="tool_repairs_legacy_terminal">Renamed an old super_admin terminal tool to the built-in terminal tool</string>
     <string name="tool_repairs_package">Removed redundant package_name matching the target package</string>
     <string name="tool_repairs_flattened_proxy">Recovered the tool_name that was folded into the params text</string>
     <string name="tool_repairs_memory_argument">Renamed the memory tool\'s new_text argument to content</string>
@@ -8814,6 +8730,27 @@
     <string name="screen_ocr_hint">Circle the part you want to send</string>
     <string name="screen_ocr_reselect">Redo</string>
     <string name="screen_ocr_add">Add</string>
+    <string name="model_catalog_auto_desc">When you add models, their protocol, picture/audio/video input and context window are filled in from the model catalog, which updates itself every week. “Re-match” updates the catalog first, then resets every model from it.</string>
+    <string name="model_catalog_readapt">Re-match</string>
+    <string name="model_catalog_readapt_matched">Models matched: %1$d</string>
+    <string name="model_catalog_readapt_missing">not in catalog: %1$d</string>
+    <string name="model_catalog_readapt_partly_offline">One catalog not updated</string>
+    <string name="model_catalog_readapt_separator">", "</string>
+    <string name="model_catalog_readapt_end">.</string>
+    <string name="model_catalog_readapt_offline">Offline, used the local catalog</string>
+    <string name="model_catalog_updated_at">Model catalog updated %1$s</string>
+    <string name="model_catalog_bundled">Model catalog: built into the app, not updated yet</string>
+    <string name="model_catalog_not_found">This model is not in the model catalog; set the items below yourself</string>
+    <string name="model_limits_title">Context and reply limits</string>
+    <string name="model_limits_desc">Context stays within this, and replies too when max output is on; leave empty to follow the chat settings</string>
+    <string name="model_limits_value">%1$s / %2$s</string>
+    <string name="model_limits_unlimited">Not set</string>
+    <string name="model_limits_context">Context window</string>
+    <string name="model_limits_output">Longest reply</string>
+    <string name="model_limits_dialog_hint">1K = 1024 tokens. Leave empty to follow the chat settings.</string>
+    <string name="model_limits_invalid">Enter a number above 0</string>
+    <string name="model_catalog_readapt_kept">kept as set: %1$d</string>
+    <string name="model_catalog_readapt_failed">Re-matching failed</string>
     <string name="model_protocol_title">API Protocol</string>
     <string name="model_protocol_desc">Applies only to this model. Inherits the provider by default.</string>
     <string name="model_protocol_inherit">Inherit provider</string>
@@ -8827,16 +8764,6 @@
     <string name="model_protocol_mimo">MiMo (thinking controls and replay)</string>
     <string name="model_protocol_endpoint">API URL for This Model (Optional)</string>
     <string name="model_protocol_endpoint_desc">Leave blank to use the provider URL with the standard path adjusted for this protocol. Enter custom endpoints here.</string>
-    <string name="model_protocol_auto_configure">Auto-configure protocols</string>
-    <string name="model_protocol_auto_desc">Matches the provider and model in the local catalog without a network refresh. Updates matched protocols, keeps custom endpoints, and leaves unmatched settings unchanged.</string>
-    <string name="model_protocol_auto_changed">Configuration changed. Please run auto-configuration again.</string>
-    <string name="model_protocol_auto_result">Configured %1$d models from the local catalog; skipped %2$d.</string>
-    <string name="model_catalog_refresh_success">Local model catalog updated, including multimodal capabilities and protocols. Use the corresponding auto-configure button to apply it.</string>
-    <string name="model_catalog_refresh_protocol_failed">Multimodal catalog updated. Protocol update failed; its previous catalog and update time were kept.</string>
-    <string name="model_catalog_refresh_multimodal_failed">Protocol catalog updated. Multimodal update failed; its previous catalog and update time were kept.</string>
-    <string name="model_protocol_catalog_updated_at">Local protocol catalog updated: %1$s</string>
-    <string name="model_protocol_catalog_bundled">Local protocol catalog: bundled with the app, not yet updated</string>
-    <string name="model_protocol_auto_failed">Could not read the protocol catalog. Settings were not changed.</string>
     <string name="pet_floating_entry">Floating chat entry</string>
     <string name="pet_entry_pet">Pet</string>
     <string name="pet_entry_legacy">Classic ball</string>
@@ -9279,10 +9206,19 @@
     <string name="orbit_usage_other">Other</string>
     <string name="orbit_usage_other_orbits">Other Orbits</string>
     <string name="orbit_usage_summary_line">This week %1$s / %2$s · extra %3$s / %4$s</string>
-    <string name="orbit_usage_cost_title">About what this week cost</string>
-    <string name="orbit_usage_cost_week">About $%1$s (about ¥%2$s)</string>
-    <string name="orbit_usage_cost_week_tiny">Less than $0.01</string>
-    <string name="orbit_usage_cost_note">Estimated at DeepSeek Flash\'s average price: 500 million tokens a week is about 3 US dollars (around 20 yuan). Only a guide; your provider\'s bill is what counts, and other models cost differently.</string>
+    <string name="orbit_usage_cost_title">Spending</string>
+    <string name="orbit_usage_cost_about">About %1$s</string>
+    <string name="orbit_usage_cost_cache">Cache hit rate</string>
+    <string name="orbit_usage_cost_per_call">Per call</string>
+    <string name="orbit_usage_cost_by_model">By model</string>
+    <string name="orbit_usage_cost_model_line">%1$s tokens · %2$d calls</string>
+    <string name="orbit_usage_cost_unknown_total">Cost unknown</string>
+    <string name="orbit_usage_cost_unpriced">Another %1$d call(s) have an unknown cost and aren\'t in the total.</string>
+    <string name="orbit_usage_cost_note">Worked out from the prices under Model pricing; calls with no recorded cost are estimated at the latest prices where possible. Only a guide; your provider\'s bill is what counts.</string>
+    <string name="orbit_usage_cost_rate">US dollars and yuan are converted at 1 : %1$s.</string>
+    <string name="orbit_usage_cost_rate_default">US dollars and yuan are converted at 1 : %1$s (the default rate; change it on the all-app costs page).</string>
+    <string name="orbit_usage_cost_set_prices">Set model prices</string>
+    <string name="orbit_usage_updating">Updating</string>
     <string name="orbit_usage_input">Input</string>
     <string name="orbit_usage_active_days">Active days</string>
     <string name="orbit_usage_calls">%1$d calls</string>
@@ -9382,6 +9318,28 @@
     <string name="orbit_tracking_notes">Updates</string>
     <string name="orbit_goal_steps">Steps</string>
     <string name="orbit_builds_versions">%1$d versions</string>
+    <string name="orbit_builds_has_versions">Has version history</string>
+    <string name="attachment_edit_rotate">Rotate</string>
+    <string name="attachment_edit_open">View and edit</string>
+    <string name="attachment_edit_crop">Crop</string>
+    <string name="attachment_edit_mark">Mark up</string>
+    <string name="attachment_edit_undo">Undo</string>
+    <string name="attachment_edit_reset">Reset</string>
+    <string name="attachment_edit_crop_smaller">Shrink crop frame</string>
+    <string name="attachment_edit_crop_larger">Enlarge crop frame</string>
+    <string name="attachment_edit_crop_left">Move crop frame left</string>
+    <string name="attachment_edit_crop_right">Move crop frame right</string>
+    <string name="attachment_edit_crop_up">Move crop frame up</string>
+    <string name="attachment_edit_crop_down">Move crop frame down</string>
+    <string name="attachment_edit_crop_frame">Crop frame, %1$d%% wide, %2$d%% high, %3$d%% from the left, %4$d%% from the top. Drag a corner to resize, inside to move</string>
+    <string name="attachment_edit_load_failed">Couldn\'t open the picture</string>
+    <string name="attachment_edit_save_failed">Couldn\'t save the picture</string>
+    <string name="attachment_edit_color_red">Red</string>
+    <string name="attachment_edit_color_yellow">Yellow</string>
+    <string name="attachment_edit_color_green">Green</string>
+    <string name="attachment_edit_color_blue">Blue</string>
+    <string name="attachment_edit_color_white">White</string>
+    <string name="attachment_edit_color_black">Black</string>
     <string name="orbit_notifications_row">Notifications</string>
     <string name="orbit_notifications_row_desc">Quiet hours and how often results arrive</string>
     <string name="orbit_profile_open">Open %1$s\'s profile</string>
@@ -9452,7 +9410,7 @@
     <string name="orbit_file_read_only">Read only</string>
     <string name="orbit_prompt_layers">Prompt layers</string>
     <string name="orbit_prompt_layers_desc">See what Orbit reads before each reply</string>
-    <string name="orbit_prompt_layers_help">Each of these goes into Orbit\'s system prompt in this order and cannot be turned off; the alignment synthesis joins once the first review writes it. Tap one to see or edit it.</string>
+    <string name="orbit_prompt_layers_help">Each of these goes into Orbit\'s system prompt in this order and cannot be turned off; the alignment synthesis joins once the first review writes it, and the lessons once the first one is noted. Tap one to see or edit it.</string>
     <string name="orbit_layer_base">Base instructions</string>
     <string name="orbit_layer_base_desc">Initiative, reminders, memory, tone and safety</string>
     <string name="orbit_layer_soul">Personality</string>
@@ -9460,6 +9418,9 @@
     <string name="orbit_layer_alignment">Alignment synthesis</string>
     <string name="orbit_layer_alignment_desc">How to be with you, updated nightly</string>
     <string name="orbit_layer_alignment_empty">Not written yet</string>
+    <string name="orbit_layer_lessons">Lessons</string>
+    <string name="orbit_layer_lessons_desc">Ways of working it learned, up to 8000 characters</string>
+    <string name="orbit_layer_lessons_empty">None yet</string>
     <string name="orbit_layer_identity">Identity</string>
     <string name="orbit_layer_identity_desc">Name, character and vibe</string>
     <string name="orbit_layer_user">About you</string>
@@ -9568,7 +9529,7 @@
     <string name="orbit_files_title">Files</string>
     <string name="orbit_files_notebooks">Notebooks</string>
     <string name="orbit_file_lessons">Lessons</string>
-    <string name="orbit_file_lessons_note">Conventions and lessons %1$s picked up while working, for its future self. This note is not part of the file.</string>
+    <string name="orbit_file_lessons_note">Conventions and lessons %1$s picked up while working, for its future self. Every chat carries it in full, up to 8000 characters; once full, old ones are merged or removed first. A book over 8000 characters is carried only up to that point. Changes apply in a new chat or after refreshing the prompt. This note is not part of the file.</string>
     <string name="orbit_file_proactive">Proactive preferences</string>
     <string name="orbit_file_proactive_note">When, about what and how you want %1$s to reach out first: Tell me about, Never tell me about, When, How. %1$s reads it before deciding whether to interrupt you. This note is not part of the file.</string>
     <string name="orbit_file_timezones">Time zones</string>
@@ -9599,7 +9560,6 @@
     <string name="orbit_builds_files_empty">Files %1$s saves show up here.</string>
     <string name="orbit_builds_made">Builds</string>
     <string name="orbit_builds_uploads">Library</string>
-    <string name="orbit_builds_work">Build</string>
     <string name="orbit_builds_system">System files</string>
     <string name="orbit_system_hint">All of %1$s\'s own files are here. You can look through them; to change something, ask %1$s.</string>
     <string name="orbit_system_empty">This folder is empty.</string>
@@ -9662,6 +9622,7 @@
     <string name="orbit_file_open_failed">Couldn\'t open this file</string>
     <string name="orbit_file_share_failed">Couldn\'t share</string>
     <string name="orbit_file_too_long">Reached the length limit; the extra text was not added</string>
+    <string name="orbit_file_over_limit">Over the length limit. Your draft is kept; shorten it, then save</string>
     <string name="orbit_files_help">These are %1$s\'s own files. Both of you can read them and edit most of them.</string>
     <string name="orbit_files_made">Files %1$s made</string>
     <string name="orbit_file_open_in_browser">Open in browser</string>
@@ -9851,7 +9812,7 @@
     <string name="orbit_tools_row">Per-tool permissions</string>
     <string name="orbit_tools_row_desc">Orbit\'s own list, separate from the main app</string>
     <string name="orbit_tools_title">Tool permissions</string>
-    <string name="orbit_tools_help">Only for Orbit\'s chats and its background tasks; the main app\'s tool permissions stay as they are. Orbit\'s own tools and the built-in lookup-only tools (time, search, weather and the like) are allowed by default; tools that send messages out ask you with a card in the chat; other tools go through the fast automatic review.</string>
+    <string name="orbit_tools_help">Only for Orbit\'s chats and its background tasks; the main app\'s tool permissions stay as they are. Orbit\'s own tools and the built-in lookup-only tools (time, search, weather and the like) are allowed by default; tools that send messages out ask you with a card in the chat; waiting on, looking at or cancelling this chat\'s own terminal and shell runs is allowed unless you set a level for that tool; other tools go through the fast automatic review.</string>
     <string name="orbit_tools_search">Search tools</string>
     <string name="orbit_tools_empty">No tools found</string>
     <string name="orbit_tools_folder_internal">Orbit\'s own tools</string>
@@ -10188,7 +10149,10 @@
     <string name="orbit_chat_image_save_short">Save</string>
     <string name="orbit_chat_text_desc">File %1$s, tap to view</string>
     <string name="orbit_chat_text_open_other">Open in another app</string>
-    <string name="orbit_chat_text_cut">This file is long, so only its beginning shows here. Use the top-right button to read all of it in another app.</string>
+    <string name="orbit_chat_text_cut">This file is long, so only its first part shows here. Use "Open in another app" at the top to read all of it.</string>
+    <string name="orbit_file_reader_failed">The rest of the file could not be read. Close and open it again, or use "Open in another app" at the top.</string>
+    <string name="orbit_file_reader_changed">This file just changed, so the rest is not shown. Close and open it again to see the latest version.</string>
+    <string name="orbit_file_reader_only_note">This file is too big, or not UTF-8, so it can only be read here, not edited, so saving cannot garble it.</string>
     <string name="orbit_chat_file_desc">File %1$s, tap to open in another app</string>
     <string name="orbit_chat_file_open">Tap to open</string>
     <string name="orbit_chat_file_missing">This file is gone</string>

@@ -2,6 +2,7 @@ package com.ai.assistance.operit.ui.features.chat.components
 
 import android.net.Uri
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Row
@@ -22,7 +23,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -30,6 +34,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
@@ -37,8 +42,23 @@ import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.model.AttachmentInfo
 import java.io.File
 
+/** [edit] (old path, new file, name to show) bound to the picture at [path], for [AttachmentChip]'s onEdited. */
+fun editAttachmentAt(path: String, edit: suspend (String, File, String) -> Unit): suspend (File, String) -> Unit =
+    { file, name -> edit(path, file, name) }
+
 @Composable
-fun AttachmentChip(attachmentInfo: AttachmentInfo, onRemove: () -> Unit, onInsert: () -> Unit) {
+fun AttachmentChip(
+    attachmentInfo: AttachmentInfo,
+    onRemove: () -> Unit,
+    onInsert: () -> Unit,
+    /**
+     * Takes an edited copy of a picture (the file and the name to show), returning once it is in
+     * the box; throws if it could not be. Null: tapping only shows the picture.
+     */
+    onEdited: (suspend (File, String) -> Unit)? = null,
+    /** Whether tapping a picture opens it full screen. */
+    openable: Boolean = false,
+) {
     val context = LocalContext.current
     val isImage = attachmentInfo.mimeType.startsWith("image/")
     val icon: ImageVector = if (isImage) Icons.Default.Image else Icons.Default.Description
@@ -53,10 +73,16 @@ fun AttachmentChip(attachmentInfo: AttachmentInfo, onRemove: () -> Unit, onInser
         }
 
     if (isImage) {
+        var open by remember(attachmentInfo.filePath) { mutableStateOf(false) }
+        val openLabel = context.getString(R.string.attachment_edit_open)
         Box(
             modifier =
                 Modifier.size(52.dp)
                     .clip(RoundedCornerShape(12.dp))
+                    .then(
+                        if (openable) Modifier.clickable(onClickLabel = openLabel, role = Role.Image) { open = true }
+                        else Modifier
+                    )
         ) {
             AsyncImage(
                 model = imageModel,
@@ -82,6 +108,15 @@ fun AttachmentChip(attachmentInfo: AttachmentInfo, onRemove: () -> Unit, onInser
                     )
                 }
             }
+        }
+        if (open) {
+            com.ai.assistance.operit.ui.features.chat.components.attachments.AttachmentImageEditor(
+                file = File(attachmentInfo.filePath),
+                fileName = attachmentInfo.fileName,
+                mimeType = attachmentInfo.mimeType,
+                onEdited = onEdited,
+                onDismiss = { open = false },
+            )
         }
     } else {
         Surface(

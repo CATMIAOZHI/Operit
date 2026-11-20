@@ -11,7 +11,6 @@ import com.ai.assistance.operit.core.chat.hooks.SummaryHookRegistry
 import com.ai.assistance.operit.core.chat.hooks.buildActivePromptHookMetadata
 import com.ai.assistance.operit.core.chat.hooks.toPromptTurns
 import com.ai.assistance.operit.core.config.SystemPromptConfig
-import com.ai.assistance.operit.core.tools.climode.ToolExposureMode
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.core.tools.packTool.PackageManager
@@ -512,7 +511,6 @@ class ConversationService(
             chatModelHasDirectVideo: Boolean = false,
             useToolCallApi: Boolean = false,
             chatModelHasDirectImage: Boolean = false,
-            toolExposureMode: ToolExposureMode = ToolExposureMode.FULL,
             memorySpaceIdOverride: String? = null,
             additionalSystemPrompt: String? = null,
             isSubTask: Boolean = false,
@@ -555,7 +553,6 @@ class ConversationService(
                             "chatModelHasDirectVideo" to chatModelHasDirectVideo,
                             "useToolCallApi" to useToolCallApi,
                             "chatModelHasDirectImage" to chatModelHasDirectImage,
-                            "toolExposureMode" to toolExposureMode.name,
                             "isSubTask" to isSubTask,
                         ) + activePromptMetadata
                 )
@@ -718,7 +715,6 @@ class ConversationService(
                     chatModelHasDirectAudio = chatModelHasDirectAudio,
                     chatModelHasDirectVideo = chatModelHasDirectVideo,
                     useToolCallApi = useToolCallApi,
-                    toolExposureMode = toolExposureMode,
                     toolVisibility =
                         if (isSubTask) {
                             roleCardToolAccess.effectiveBuiltinToolVisibility +
@@ -773,7 +769,7 @@ class ConversationService(
                     }
                     append(waifuRulesText)
                     if (orbitParts != null) {
-                        listOf(orbitParts.runtime, orbitParts.identity, orbitParts.soul, orbitParts.alignment)
+                        listOf(orbitParts.runtime, orbitParts.identity, orbitParts.soul, orbitParts.alignment, orbitParts.lessons)
                             .filter { it.isNotEmpty() }
                             .forEach { append("\n\n"); append(it) }
                     }
@@ -817,10 +813,13 @@ class ConversationService(
                 ) else emptyMap()
                 val savedSystem = try {
                     learningSnapshot?.bindSystem(finalSystemPromptWithReplacements, promptRevisions,
-                        "$useToolCallApi:${toolExposureMode.name}",
+                        // ":FULL" is kept from when tools had another mode, so saved prompts stay valid.
+                        "$useToolCallApi:FULL",
                         listOf(roleCardId.orEmpty(), proxyCard?.id.orEmpty(), promptFunctionType.name,
                             enableGroupOrchestrationHint.toString()).joinToString("|"),
-                        sections = promptSections)
+                        sections = promptSections,
+                        // The removed CLI tool mode's prompt listed tools that are gone.
+                        retiredProtocols = setOf("true:CLI", "false:CLI"))
                         ?: finalSystemPromptWithReplacements
                 } catch (_: com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository.IncompatiblePrefixException) {
                     throw IllegalStateException(context.getString(R.string.system_prefix_protocol_changed))

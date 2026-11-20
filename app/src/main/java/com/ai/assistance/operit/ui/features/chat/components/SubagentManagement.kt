@@ -1007,12 +1007,13 @@ private fun PermissionReviewEventRow(event: PermissionReviewEvent) {
             onDismissRequest = { showDetails = false },
             title = { Text(stringResource(R.string.permission_review_detail_title)) },
             text = {
+                // The details scroll; where to change the tool's permission stays in view under them.
+                Column {
                 Column(
                     modifier =
-                        Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
+                        Modifier.weight(1f, fill = false).heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    com.ai.assistance.operit.ui.permissions.AlwaysAllowReviewedToolButton(event.action.toolName)
                     Text(
                         text = stringResource(R.string.permission_review_detail_status, statusText),
                         color = statusColor,
@@ -1109,6 +1110,8 @@ private fun PermissionReviewEventRow(event: PermissionReviewEvent) {
                         stringResource(R.string.permission_review_subagent_unavailable),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                }
+                com.ai.assistance.operit.ui.permissions.ToolPermissionSettingsLink(event.parentChatId) { showDetails = false }
                 }
             },
             confirmButton = {

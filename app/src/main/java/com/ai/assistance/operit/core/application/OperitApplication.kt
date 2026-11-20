@@ -170,6 +170,8 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
         // Logins of deleted Orbits can only be removed before any tab loads them, so do it now.
         // Other processes never open browser tabs and must not start WebView.
         if (isMainAppProcess()) {
+            // Notifications show the home-screen name and icon; read which one it is, off the main thread.
+            AppLauncherIdentity.load(this)
             runCatching {
                 com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserProfiles
                     .deletePendingAtStartup(this)
@@ -297,12 +299,18 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
         )
 
         // Local prices must be available before workers/plugins can freeze token costs.
-        // Initialization reads bundled/applied files only; cloud refresh remains manual.
+        // Initialization reads bundled/applied files only; the daily cloud check runs later, in the background.
         runCatching {
             runBlocking(Dispatchers.IO) {
                 ModelPricingCatalogRepository.getInstance(applicationContext)
             }
         }.onFailure { AppLogger.w(TAG, "Pricing catalog initialization failed", it) }
+        if (isMainAppProcess()) applicationScope.launch {
+            // Prices are checked once the app has settled, so startup is not slowed.
+            kotlinx.coroutines.delay(20_000)
+            runCatching { ModelPricingCatalogRepository.autoUpdateIfDue() }
+                .onFailure { AppLogger.w(TAG, "Automatic price check failed to start", it) }
+        }
 
         ensureWorkManagerInitialized()
 
@@ -383,12 +391,15 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
             AppLogger.d(TAG, "【启动计时】当前角色自定义表情初始化完成（异步） - ${System.currentTimeMillis() - emojiStartTime}ms")
         }
 
-        // On the first start, fetch the newest model catalogs and fill in each saved model's
-        // protocol and picture support; a failed download is tried again next start.
+        // Once a week, fetch the newest model catalogs and fill in what they know about each saved
+        // model (protocol, inputs, context window); a failed download is tried again a day later.
+        // Checked at each start and once a day in the background.
         if (isMainAppProcess()) {
+            runCatching { com.ai.assistance.operit.data.model.ModelAutoConfig.schedule(applicationContext) }
+                .onFailure { AppLogger.w(TAG, "Could not schedule the model catalog refresh: ${it.message}") }
             applicationScope.launch {
-                runCatching { com.ai.assistance.operit.data.model.ModelAutoConfig.firstStart(applicationContext) }
-                    .onFailure { AppLogger.w(TAG, "Model auto-configuration at first start failed: ${it.message}") }
+                runCatching { com.ai.assistance.operit.data.model.ModelAutoConfig.refreshIfStale(applicationContext) }
+                    .onFailure { AppLogger.w(TAG, "Model catalog refresh failed: ${it.message}") }
             }
         }
 

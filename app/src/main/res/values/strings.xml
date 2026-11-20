@@ -20,14 +20,13 @@
     <string name="logcat_export_dropped">日志队列曾因繁忙或线程中断丢弃 %1$d 条记录，无法恢复。</string>
     <string name="logcat_export_write_failed">本次日志记录期间发生过文件写入失败。</string>
     <string name="logcat_export_interrupted">等待日志写入的操作被中断。</string>
+    <string name="local_server_provider_removed">内置的本地模型服务选项（LM Studio、本地 Ollama、OpenAI 兼容本地服务）已移除。你自己的服务器仍然能连：提供商选「OpenAI通用」，地址照旧填；服务器不需要 Key 的话，Key 填一个英文占位词（比如 none）即可。也可以换成云端服务。如果改了模型名，Orbit 用过这个配置的，到 Orbit「模型」里重新选一次。</string>
     <string name="local_llm_removed">此版本已移除手机本地大模型推理。请选择云端或远程服务；原模型文件保留在 Download/Operit/models，可通过文件管理器自行清理。</string>
     <string name="openai_error_repetition_truncation">模型因重复输出被服务端截断，已丢弃异常响应并停止本轮工具执行。</string>
     <string name="openai_retry_repetition_truncation">模型出现重复输出，已丢弃异常响应，正在重新请求一次。</string>
-    <string name="permission_review_always_allow">始终允许此工具</string>
-    <string name="permission_review_always_allowed">此工具已设为始终允许</string>
-    <string name="permission_review_always_allow_confirm">将“%1$s”加入始终允许列表？\n\n该设置对所有对话生效，允许此工具的所有参数，不再进行权限询问或自动审核。其他工具不受影响。\n\n已结束的调用不会自动重试。可在“设置 → 工具权限管理”中撤销。</string>
-    <string name="permission_review_always_allow_confirm_button">确认始终允许</string>
-    <string name="permission_review_always_allow_failed">保存失败，请重试。</string>
+    <string name="permission_review_open_tool_permissions">去工具权限设置</string>
+    <string name="permission_review_tool_permissions_hint">想调整这个工具的权限，可以到「设置 → 工具权限设置」。</string>
+    <string name="permission_review_orbit_tool_permissions_hint">打开 Orbit 设置里的「开发者模式」后，可以在「每个工具的权限」里调整。</string>
     <string name="phone_control_observing">正在操作</string>
     <string name="phone_control_waiting">正在思考</string>
     <string name="phone_control_acting">正在操作</string>
@@ -1092,20 +1091,22 @@
     <string name="agreement_title">用户协议与隐私政策</string>
     <string name="agreement_subtitle">请在使用前仔细阅读并同意以下条款。</string>
     <string name="agreement_version">协议版本：%1$s</string>
-    <string name="personal_branch_disclaimer_title">个人分支版本声明</string>
-    <string name="personal_branch_disclaimer_content">本应用是由 CATMIAOZHI 基于 AAswordman / Operit 独立维护和发布的个人分支版本，不属于上游官方发行。对本分支的修改、构建、发布与附加服务所产生的问题，请通过 CATMIAOZHI / Operit 仓库的 Issues 反馈；除上游项目自身代码依法或依其许可证应承担的责任外，上游项目及其维护者不对本个人分支的改动、构建、分发或运行承担责任。</string>
+    <string name="personal_branch_disclaimer_title">开源项目声明</string>
+    <string name="personal_branch_disclaimer_content">Orbit 是 CATMIAOZHI 基于 AAswordman / Operit 维护和发布的开源个人分支，不是上游官方发行。全部源代码公开在 https://github.com/CATMIAOZHI/orbit ，任何人都可以查看、审计和自行构建。它是免费的开源软件，不是商业服务，使用它的风险和后果由你自己承担；上游项目及其维护者不对本分支负责。遇到问题请到仓库 Issues 反馈。</string>
     <string name="agreement_human_readable_title">人话版协议（非法律版本）</string>
-    <string name="agreement_human_readable_content">服务边界说明：Operit 不提供面向公众的拟人化情感互动服务。Operit 是在用户设备本地运行的开源客户端，不运营模型推理服务、不托管聊天会话或交互数据，也不向用户分发共享模型凭据。云模型请求由用户使用自行配置的凭据从设备直接发送至所选模型服务商，相关数据适用该服务商的规则；本地模型在设备内推理。\n\n本应用可以调用文件、终端、自动化、Root、ADB 和扩展等能力。请在操作前核对内容、备份重要数据并谨慎授予权限；因用户操作、用户配置、第三方服务或第三方扩展造成的设备、数据、账号或其他损失，应由实际操作人依适用法律处理。\n\n插件市场中的第三方插件、脚本、Skill、工具包和其他内容，其著作权及相关责任归标注的作者或权利人所有。市场展示或安装不表示 Operit 对该内容作出保证、背书或取得其权利。使用、修改、发布或再分发前，请自行确认许可和权利状态。</string>
+    <string name="agreement_human_readable_content">• 开源：Orbit 是开源项目，全部源代码公开在 GitHub（CATMIAOZHI/orbit），你可以自己查看它做了什么，也可以自己编译。\n\n• 数据：聊天记录、记忆和配置默认存在你的手机里，我们不托管你的数据。用云模型、微信、搜索等联网功能时，需要的内容会发给对应的服务；手机的系统备份打开时，应用数据也可能被备份。\n\n• 费用：如果你选的模型或联网服务收费，费用由你自己承担，以服务商的规则为准。Orbit 在后台调用收费的模型或服务时，同样会产生费用。\n\n• Orbit 能办实事：你授权后，它可以跑终端、读写文件、在后台操作手机和浏览器、读取短信、通讯录、日历、通知和位置、使用保险箱里的密钥，并且可以不再逐次问你就自动执行。授权前想清楚，重要数据先备份。\n\n• 你自己负责：用不用、怎么用、授了哪些权限、Orbit 照你的授权做了什么，后果都由你自己承担。你在哪里用，就要遵守哪里的法律，只在当地法律允许的范围内使用本应用及其功能。AI 会出错，它说的话不能当作医疗、法律、投资等专业意见。\n\n• 第三方插件和工具包归作者所有，我们不做担保。</string>
     <string name="agreement_serious_title">严谨版法律协议</string>
     <string name="agreement_serious_content"><![CDATA[
-        <p><b>Operit 用户协议与隐私政策</b><br>版本：2026-08-24；拟生效日期：2026 年 8 月 24 日。</p>
-        <p><b>1. 适用范围与协议版本</b><br>本协议适用于 CATMIAOZHI / Operit 仓库维护者发布的 Operit 个人分支 Android 客户端及其可选在线功能，不代表上游项目的官方协议或发行。使用本应用即表示您已阅读并同意当前版本。本应用在启动时记录您确认的协议版本；协议发生实质更新时，应用将要求您重新确认后方可继续使用。仓库中的开源代码许可由根目录 <code>LICENSE</code> 所载 GNU 宽通用公共许可证第三版（LGPLv3）规定；本协议不排除或缩减适用法律及开源许可证赋予您的权利。</p>
-        <p><b>2. 产品定位与第三方服务</b><br>Operit 是开源客户端软件，不提供大语言模型推理、共享 API Key、聊天请求中转或聊天记录云端托管。云模型、云端语音、搜索、绘图、MCP 及其他网络功能由您自行选择、配置和启用。您使用该等服务时，数据将直接发送给相应服务商，并受其服务条款和隐私政策约束。您应自行判断服务商、模型、端点和扩展的安全性、合法性与适用性，并妥善保管相关凭据。</p>
-        <p><b>3. 数据处理与隐私</b><br>聊天记录、角色卡、记忆、模型配置和 API Key 通常存储在设备的应用数据中。您主动导出、备份、上传文件、使用第三方网络功能或向外部 HTTP 服务提交请求时，相关数据将依您的操作被复制、传输或披露。市场、公告、更新检查、GitHub 登录和发布功能会访问 Operit、GitHub 或相关第三方资源；这些功能不转发聊天模型请求。请结合设备安全设置、第三方服务条款及本协议管理您的数据和凭据。</p>
-        <p><b>4. 对外部署与运营责任</b><br>外部 HTTP 服务、QQ Bot、自动回复及类似能力由您选择启用。您将其开放给他人或公众使用时，应作为实际部署或运营者负责访问控制、用户授权、内容安全、数据保护、未成年人保护、必要的提示和其他适用义务。面向中国境内公众持续提供模拟自然人人格特征、思维模式或沟通风格的情感互动服务时，您应自行评估并遵守《人工智能拟人化互动服务管理暂行办法》及其他适用规定。您不得利用本应用提供虚拟亲属、虚拟伴侣等面向未成年人的虚拟亲密关系服务，不得诱导情感依赖或沉迷、实施情感操纵，或从事其他侵害他人合法权益的活动。</p>
-        <p><b>5. 合法使用与内容责任</b><br>您应遵守适用法律法规、第三方服务规则及平台规则，不得利用本应用、扩展或配置实施违法活动、侵害他人权益、未经授权访问系统或数据，或传播违法有害内容。您对自行输入、配置、生成、发布、转发或运营的内容和行为负责。AI 输出可能存在错误、遗漏或偏差，不构成医疗、心理危机、法律、金融或其他专业建议；紧急危险情形请及时联系当地紧急服务、医疗机构或可信赖的人。</p>
-        <p><b>6. 软件按现状提供</b><br>在适用法律允许的范围内，本软件按“现状”和“可用”状态提供。贡献者不对软件或第三方服务的持续可用性、准确性、安全性、适销性、特定用途适用性或不侵权作出明示或默示保证。因使用本软件、第三方服务、扩展、用户配置或自行修改造成的损失，应依适用法律和相应服务协议处理。</p>
-        <p><b>7. 协议更新与联系</b><br>我们可能因功能、法律或安全要求更新本协议，并在应用内提供当前版本。对用户权益有实质影响的更新，将通过提高协议版本并要求重新确认的方式生效。您可通过项目仓库、应用内反馈入口或公开联系渠道提出问题和意见。</p>
+        <p><b>Orbit（Operit 个人分支）用户协议与隐私政策</b><br>版本：2026-11-20；生效日期：2026 年 11 月 20 日。</p>
+        <p><b>1. 开源项目与适用范围</b><br>本应用是 CATMIAOZHI 基于 AAswordman / Operit 维护和发布的开源个人分支，不代表上游项目的官方发行。本应用的全部源代码公开于 https://github.com/CATMIAOZHI/orbit ，依据仓库根目录 <code>LICENSE</code> 所载许可证（基于 GNU 宽通用公共许可证第三版，LGPLv3）授权，任何人均可查看、审计、编译和修改。本协议适用于该仓库发布的 Android 客户端及其可选在线功能，不排除或缩减适用法律及开源许可证赋予您的权利。</p>
+        <p><b>2. 产品性质</b><br>本应用是在您设备上运行的客户端软件，免费提供。维护者不运营模型推理、请求中转或云端存储服务，不提供共享 API Key，也不向公众提供任何在线服务。您可以管理 Orbit 的设置和数据；Orbit 的名字、性格和记忆可能在使用中由 Orbit 根据你们的对话形成或变化。</p>
+        <p><b>3. 第三方服务与费用</b><br>云模型、语音、搜索、绘图、MCP、微信通道、插件等联网功能由您自行选择、配置和启用；所需数据（包括发给模型的对话内容，以及 Orbit 的设定、记忆等提示内容）由您的设备直接发送给对应服务商，适用其服务条款和隐私政策。由此可能产生的费用由您承担，包括 Orbit 按您的设置在后台调用收费模型或服务所产生的费用。应用内的用量和费用统计仅供参考，以服务商账单为准。</p>
+        <p><b>4. 数据与隐私</b><br>聊天记录、Orbit 的记忆与用户资料、保险箱中的凭据、模型配置和 API Key 默认存储在您设备的应用数据中，维护者无法访问，也不收集。系统备份或换机迁移功能开启时，除保险箱外的应用数据可能由系统备份或迁移。您主动导出、备份、上传、分享或使用联网功能时，相关数据将依您的操作被复制或传输。更新检查、价格目录等功能会访问 GitHub 或相关第三方资源，这些功能不发送您的聊天内容。</p>
+        <p><b>5. 权限与自动执行</b><br>经您授权后，本应用可以使用终端、文件、通知、麦克风、无障碍、ADB、Shizuku 或 Root 等能力，可以读取短信、通讯录、日历、通知内容和位置，可以在后台操作手机应用、接管内置浏览器、使用保险箱中的凭据，并可按您的设置在后台自动运行任务；授权后，相关操作可以不经逐次确认自动执行。自动审核由您配置的模型作出判断，不保证判断正确。授予任何权限或开启自动执行前，您应了解其作用和风险，并备份重要数据。</p>
+        <p><b>6. 用户责任</b><br>您自行决定是否下载、安装、配置和使用本应用，并对您的使用、配置、授权、输入和发布的内容，以及 Orbit 依您授权执行的操作及其后果自行负责。您应遵守适用法律法规及第三方服务规则，不得利用本应用实施违法活动、侵害他人权益、未经授权访问系统或数据，或传播违法有害内容。您应自行确认并遵守使用本应用时所在国家或地区的法律法规，仅在当地法律允许的范围内使用本应用及其功能。您将本应用的能力（如外部 HTTP 服务）开放给他人或公众使用时，您是实际运营者，应自行履行访问控制、内容安全、数据保护、未成年人保护等义务，并遵守《人工智能拟人化互动服务管理暂行办法》等适用规定；不得提供面向未成年人的虚拟亲密关系服务，不得诱导情感依赖或沉迷、实施情感操纵。AI 输出可能存在错误，不构成医疗、心理、法律、金融或其他专业建议；遇到紧急危险，请及时联系当地紧急服务或可信赖的人。</p>
+        <p><b>7. 第三方内容</b><br>插件市场中的插件、脚本、Skill、工具包等内容，其权利和责任归标注的作者或权利人所有。市场展示或安装不表示维护者对其作出保证或背书。使用、修改或再分发前，请自行确认许可状态。</p>
+        <p><b>8. 按现状提供与责任限制</b><br>本软件免费开源，按“现状”和“可用”状态提供，不作任何明示或默示保证，包括可用性、准确性、安全性、适销性、特定用途适用性和不侵权。在适用法律允许的最大范围内，维护者、上游项目及贡献者不对因使用或无法使用本软件、第三方服务、扩展、用户配置或 AI 执行的操作所造成的任何直接或间接损失承担责任。</p>
+        <p><b>9. 协议更新与联系</b><br>本协议可能因功能、法律或安全原因更新。对您权益有实质影响的更新，将通过提高协议版本、在您打开应用时要求重新确认的方式生效。问题和意见请通过项目仓库的 Issues 反馈。</p>
     ]]></string>
     <string name="agreement_disclaimer">人话版仅为便于理解；若与中文严谨版不一致，以中文严谨版为准。</string>
     <string name="agreement_accept">我已阅读并同意</string>
@@ -3325,7 +3326,7 @@
     <string name="chat_start_ai_computer_failed">启动AI电脑失败: %1$s</string>
     <string name="chat_ai_computer_closed_due_to_workspace">AI电脑已关闭（由于打开工作区）</string>
     <string name="thinking_mode">思考模式</string>
-    <string name="thinking_mode_desc">目前支持Gemini、Qwen3、Claude、豆包、NVIDIA、硅基流动和MNN本地模型，能够启用内置的思考。</string>
+    <string name="thinking_mode_desc">目前可为 Gemini、Qwen3、Claude、豆包、NVIDIA 和硅基流动启用内置思考功能。</string>
     <string name="details">详情</string>
     <string name="model_selection">模型选择</string>
     <string name="prompt_selection">提示词选择</string>
@@ -3445,6 +3446,8 @@
     
     <string name="settings_data_permissions">数据和权限</string>
     <string name="settings_tool_permissions_subtitle">工具权限和安全设置</string>
+    <string name="settings_terminal_tools">Ubuntu 终端工具</string>
+    <string name="settings_terminal_tools_subtitle">让 AI 在内置的 Ubuntu 终端里运行命令。关掉后主应用的聊天不再提供；Orbit 里一直可用。</string>
     <string name="settings_privacy_data_cleanup">隐私与数据清理</string>
     <string name="settings_clear_cookies">清除 Cookie</string>
     <string name="settings_clear_cookies_subtitle">清除搜索工具、Browser 包和内置浏览器保存的 Cookie</string>
@@ -3522,6 +3525,8 @@
     <string name="token_stats_include_legacy">累计中包含旧版数据</string>
     <string name="token_stats_baseline_rows">%1$d 行旧版累计数据（无时间分布，不进趋势图）</string>
     <string name="token_stats_unknown_cost">其中 %1$d 个请求费用未知</string>
+    <string name="token_stats_estimated_cost">其中 %1$d 个请求当时没有价格，已按现在的价格补算</string>
+    <string name="token_stats_approx_amount">约 %1$s</string>
     <string name="token_stats_unknown_parts">%1$d 个请求部分数据未知</string>
     <string name="token_stats_unknown_part_suffix">未知 %1$d</string>
     <string name="token_stats_token_uncached">未缓存输入</string>
@@ -3557,7 +3562,7 @@
     <string name="token_stats_mode_historical">发生时价格</string>
     <string name="token_stats_mode_revalued">按当前价格重算</string>
     <string name="token_stats_mode_help_title">费用计算方式</string>
-    <string name="token_stats_mode_historical_help">发生时价格：使用请求发生时保存的价格。之后修改模型定价，不会改变这部分费用。</string>
+    <string name="token_stats_mode_historical_help">发生时价格：使用请求发生时保存的价格，之后改模型定价不会改变这部分费用。当时没有价格的请求，按现在的价格补算并标「约」，改价格会跟着变。</string>
     <string name="token_stats_mode_revalued_help">按当前价格重算：使用现在的内置价格和自定义价格重新计算所选时间范围，适合预算模拟，不代表供应商实际账单。</string>
     <string name="token_stats_mode_rate_help">修改汇率只会改变统一币种后的展示结果，不会改变事件保存的原币费用。</string>
     <string name="token_stats_help_got_it">知道了</string>
@@ -3631,9 +3636,15 @@
     <string name="token_stats_pricing_catalog_revision">当前版本 %1$s · 生成时间 %2$s</string>
     <string name="token_stats_pricing_catalog_checked">上次检查：%1$s</string>
     <string name="token_stats_pricing_catalog_not_checked">尚未检查云端更新</string>
-    <string name="token_stats_pricing_catalog_refresh">更新云端目录</string>
+    <string name="token_stats_pricing_catalog_refresh">立即检查</string>
     <string name="token_stats_pricing_catalog_refresh_failed">操作失败，当前价格未变更：%1$s</string>
-    <string name="token_stats_pricing_catalog_hint">按模型名匹配官方价格，与接入提供商无关。更新优先获取 models.dev，超时读取仓库缓存；点击覆盖后生效。手动价格始终优先，历史费用不变。</string>
+    <string name="token_stats_pricing_catalog_hint">按模型名匹配官方价格，与接入提供商无关；名字带冒号标签、厂商前缀或少了日期也能认出，免费模型算 0 元。更新优先获取 models.dev，超时读取仓库缓存。手动价格始终优先。已有价格的历史费用不变，当时没有价格的会按新价格补算。</string>
+    <string name="token_stats_pricing_catalog_auto">自动更新价格</string>
+    <string name="token_stats_pricing_catalog_auto_desc">连着 Wi-Fi 时，打开 App 或价格页会定期检查，有新价格就直接用上</string>
+    <string name="token_stats_pricing_catalog_auto_not_saved">开关没保存成功，重启 App 后可能变回原样</string>
+    <string name="token_stats_pricing_catalog_result_up_to_date">已是最新价格</string>
+    <string name="token_stats_pricing_catalog_result_updated">已更新到最新价格</string>
+    <string name="token_stats_pricing_catalog_result_downloaded">找到新价格，点「覆盖内置价格」后生效</string>
     <string name="token_stats_pricing_catalog_details">目录详情</string>
     <string name="token_stats_pricing_context_tiers">官方价格按输入上下文长度分档，此处显示基础档；手动价格优先。</string>
     <string name="token_stats_pricing_catalog_downloaded">已下载版本 %1$s · 生成时间 %2$s</string>
@@ -4034,22 +4045,11 @@
     <string name="default_config_model_restriction">使用默认配置时，只能使用deepseek-flash模型</string>
     <string name="enable_direct_image_processing">模型支持识图</string>
     <string name="enable_direct_image_processing_desc">启用后，AI 调用 read_file 读取图片时会交给当前模型；用户附加图片时不会自动发送图片内容</string>
-    <string name="model_multimodal_capabilities_desc">为每个模型设置图片、音频和视频输入能力。自动同步读取本地目录；手动刷新优先获取 models.dev，超时回退到 Operit 仓库缓存。</string>
     <string name="model_multimodal_capabilities_no_models">添加模型后可分别设置图片、音频和视频能力</string>
     <string name="model_multimodal_select_model">选择模型</string>
     <string name="model_multimodal_select_model_title">选择要配置的模型</string>
     <string name="model_multimodal_search_models">搜索模型</string>
     <string name="model_multimodal_no_models_found">没有可配置的模型</string>
-    <string name="model_multimodal_auto_sync">自动同步当前配置</string>
-    <string name="model_multimodal_auto_sync_all_matched">已根据官方模型目录配置 %1$d 个模型</string>
-    <string name="model_multimodal_auto_sync_partially_matched">已配置 %1$d 个模型；另有 %2$d 个模型无法唯一匹配，已保留原设置</string>
-    <string name="model_multimodal_auto_sync_none_matched">没有可唯一匹配的官方模型，现有设置未修改</string>
-    <string name="model_multimodal_auto_sync_failed">读取本地模型目录失败，现有设置未修改</string>
-    <string name="model_multimodal_catalog_refresh">刷新本地模型目录</string>
-    <string name="model_multimodal_catalog_refresh_success">本地模型目录已更新，共 %1$d 个官方模型</string>
-    <string name="model_multimodal_catalog_refresh_failed">目录更新失败，已保留原本地目录及更新时间</string>
-    <string name="model_multimodal_catalog_updated_at">本地多模态目录更新时间：%1$s</string>
-    <string name="model_multimodal_catalog_bundled">本地多模态目录：应用内置，尚未更新</string>
     <string name="enable_direct_audio_processing">模型支持音频解析</string>
     <string name="enable_direct_audio_processing_desc">启用后，音频将直接发送给AI处理，而不是通过工具返回文本转写/描述</string>
     <string name="enable_direct_video_processing">模型支持视频解析</string>
@@ -4105,7 +4105,6 @@
     <string name="provider_opencode_zen_free_key_optional">可选：留空尝试匿名免费额度，也可填写自己的 Zen API Key</string>
     <string name="provider_opencode_zen_free_model_required">此提供商只允许使用 OpenCode Zen 免费模型，请从模型列表中选择。</string>
     <string name="provider_opencode_zen_free_anonymous_denied">Zen 匿名访问被服务端拒绝。请填写自己的 Zen API Key 后重试。</string>
-    <string name="provider_opencode_go_protocol_hint">OpenCode Go 的模型使用不同接口。“自动配置协议”使用本地目录，需要更新时请手动刷新目录，也可逐个手动设置。</string>
     <string name="provider_4router">4Router</string>
     <string name="provider_nous_portal">Nous Portal</string>
     <string name="provider_infiniai">无问芯穹</string>
@@ -5244,33 +5243,6 @@
     <string name="toolpkg_widget_picker_empty_body">先启用一个注册了 desktop widget 的 ToolPkg，再回来添加。</string>
     <string name="toolpkg_widget_picker_selecting">正在配置…</string>
 
-    <!-- MNN Model Download -->
-    <string name="screen_title_mnn_model_download">MNN模型下载</string>
-    <string name="mnn_model_download">下载MNN模型</string>
-    <string name="mnn_model_management">模型管理</string>
-    <string name="mnn_download_from_modelscope">从ModelScope下载</string>
-    <string name="mnn_model_size">模型大小: %1$.2f GB</string>
-    <string name="mnn_downloading">下载中</string>
-    <string name="mnn_download_speed">速度: %1$s</string>
-    <string name="mnn_download_complete">下载完成</string>
-    <string name="mnn_download_failed">下载失败: %1$s</string>
-    <string name="mnn_no_models_downloaded">暂无已下载的模型</string>
-    <string name="mnn_select_downloaded_model">选择已下载的模型</string>
-    <string name="mnn_model_name_only">模型名称</string>
-    <string name="mnn_download_progress">进度: %1$d%%</string>
-    <string name="mnn_pause_download">暂停下载</string>
-    <string name="mnn_resume_download">继续下载</string>
-    <string name="mnn_delete_model">删除模型</string>
-    <string name="mnn_confirm_delete">确认删除此模型吗？</string>
-    <string name="mnn_loading_models">加载模型列表中...</string>
-    <string name="mnn_connecting">正在连接...</string>
-    <string name="mnn_load_failed">加载失败</string>
-    <string name="mnn_retry">重试</string>
-    <string name="mnn_start_download">开始下载</string>
-    <string name="mnn_no_local_models">尚未下载任何模型</string>
-    <string name="mnn_go_download">去下载</string>
-    <string name="mnn_search_models">搜索模型...</string>
-    <string name="mnn_no_search_results">没有找到匹配的模型</string>
 
     <!-- Persona Card Generation Screen -->
     <string name="persona_card_generation_title">将修改的角色卡</string>
@@ -5309,36 +5281,7 @@
     <string name="message_limit_reached_message">当前对话数量已达 %1$d 条上限。\n为了保持对话质量和性能，请清空历史记录后继续。</string>
     <string name="go_clear">去清空</string>
     
-    <!-- MNN 本地推理 -->
-    <string name="mnn_local_model_tip">本地运行模型理解能力较差，建议关闭记忆链接、开启禁用工具进行对话</string>
-    <string name="mnn_model_path">模型文件路径</string>
-    <string name="mnn_model_path_placeholder">输入MNN模型文件的完整路径</string>
-    <string name="mnn_forward_type">计算类型</string>
-    <string name="mnn_thread_count">线程数</string>
 
-    <!-- llama.cpp 本地推理 -->
-    <string name="llama_local_model_tip">本地运行模型理解能力较差，建议关闭记忆链接、开启禁用工具进行对话</string>
-    <string name="llama_local_model_download_tip">llama.cpp 模型需要自行下载（.gguf）。请将模型文件放入以下文件夹，然后在“模型名称”中填写文件名：</string>
-    <string name="llama_local_model_dir">默认模型目录：%1$s</string>
-    <string name="llama_auto_config_tip">批大小、mmap、Flash Attention、KV 等 Android 兼容参数已内置，普通使用只需要调整线程数、上下文大小和 GPU 层数。</string>
-    <string name="llama_select_downloaded_model">选择已下载的模型</string>
-    <string name="llama_thread_count">线程数</string>
-    <string name="llama_context_size">上下文长度</string>
-    <string name="llama_context_size_subtitle">Android 上建议先从 2048 开始，太大更容易因内存压力初始化失败</string>
-    <string name="llama_batch_size">批大小</string>
-    <string name="llama_batch_size_subtitle">建议不超过 512，并且不要大于上下文长度</string>
-    <string name="llama_ubatch_size">微批大小</string>
-    <string name="llama_ubatch_size_subtitle">建议不超过批大小，Android 上通常 512 更稳</string>
-    <string name="llama_gpu_layers">GPU 层数</string>
-    <string name="llama_gpu_layers_subtitle">当前构建存在 GPU backend 时才会生效，0 表示纯 CPU</string>
-    <string name="llama_use_mmap">使用 mmap</string>
-    <string name="llama_use_mmap_subtitle">Android 上默认建议关闭，很多机型关闭后更容易成功加载 GGUF</string>
-    <string name="llama_flash_attention">启用 Flash Attention</string>
-    <string name="llama_flash_attention_subtitle">移动端默认建议关闭，避免部分 Android backend 不稳定</string>
-    <string name="llama_kv_unified">统一 KV 缓存</string>
-    <string name="llama_kv_unified_subtitle">单会话聊天默认建议开启，可降低 Android 上的上下文管理开销</string>
-    <string name="llama_offload_kqv">卸载 KQV 到 GPU</string>
-    <string name="llama_offload_kqv_subtitle">仅在 GPU 层数大于 0 时有意义，没有 GPU backend 时会自动忽略</string>
     
     <!-- 工作流执行状态 -->
     <string name="workflow_execution_running">执行中…</string>
@@ -5427,12 +5370,12 @@
 
     <!-- Tool Permission Settings -->
     <string name="tool_permissions_title">工具权限</string>
-    <string name="tool_permissions_description">默认情况下，所有工具都走自动审核：工作区内的操作直接放行，其余交给审核代理判断。您可以在下面添加例外。</string>
+    <string name="tool_permissions_description">默认情况下，工具都走自动审核：工作区内的操作直接放行，其余交给审核代理判断（下面「允许」分组里写了几类默认直接放行的工具）。您可以在下面添加例外。</string>
     <string name="global_permission_switch">全局权限开关</string>
     <string name="global_permission_switch_description">此设置控制默认行为；单个工具的“以后都允许/拒绝”等例外规则优先级更高。</string>
     <string name="permission_level_allow">允许</string>
     <string name="permission_level_allow_description">这些工具将自动运行。</string>
-    <string name="permission_level_allow_default_hint">子代理协作工具（spawn_agent 等）默认就允许，没有单独的开关。想让它们换档位，就在其他分组里用 + 添加。</string>
+    <string name="permission_level_allow_default_hint">子代理协作工具（spawn_agent 等）默认就允许，没有单独的开关。想让它们换档位，就在其他分组里用 + 添加。查看或取消本聊天自己的终端、Shell 任务（等结果、看屏幕、取消）也直接放行，除非你给这个工具单独设了档位，或把全局开关设为禁止。</string>
     <string name="permission_level_auto_review">自动审核</string>
     <string name="permission_level_auto_review_description">可确认位于当前工作区内的操作直接放行；其余需要审核的操作交给独立代理批准或拒绝。审核失败、超时或无有效结果时，操作不执行，原因返回给 AI，由 AI 重试或向你说明配置问题。单工具规则优先，此模式不是系统沙箱。</string>
     <string name="permission_level_forbid">禁止</string>
@@ -7646,25 +7589,6 @@
     <string name="ai_message_continue_task_if_complete">%1$s\n\n请你继续，如果任务完成，输出总结</string>
     <string name="ai_message_user_label">用户</string>
 
-    <!-- MNN Provider -->
-    <string name="mnn_model_dir_not_exist">模型目录不存在: %1$s\n请确保模型已下载</string>
-    <string name="mnn_config_not_exist">配置文件不存在: %1$s\n请确保模型完整下载</string>
-    <string name="mnn_cannot_create_session">无法创建MNN LLM会话，请检查模型文件和配置</string>
-    <string name="mnn_user_prompt">用户: %1$s\n</string>
-    <string name="mnn_assistant_prompt">助手: %1$s\n</string>
-    <string name="mnn_system_prompt">系统: %1$s\n</string>
-    <string name="mnn_message_format">用户: %1$s\n</string>
-    <string name="mnn_assistant">助手: </string>
-    <string name="mnn_error_with_message">错误: %1$s</string>
-    <string name="mnn_session_not_initialized">错误: LLM会话未初始化</string>
-    <string name="mnn_reasoning_error">\n\n[推理过程出现错误]</string>
-    <string name="mnn_error_request_cancelled">请求已被用户取消</string>
-    <string name="mnn_generic_error">错误: %1$s</string>
-    <string name="mnn_model_not_configured">未配置模型名称</string>
-    <string name="mnn_model_dir_missing">模型目录不存在: %1$s\n请先下载模型</string>
-    <string name="mnn_file_status">文件状态:</string>
-    <string name="mnn_init_failed">模型初始化失败</string>
-    <string name="mnn_connection_success">MNN LLM模型连接成功！\n\n模型: %1$s\n目录: %2$s\n总大小: %3$s\n\n%4$s</string>
 
     <!-- APK Reverse Engineer -->
     <string name="apk_unnamed_function">(未命名功能)</string>
@@ -7765,14 +7689,21 @@
 
     <!-- AIForegroundService (新增) -->
     <string name="service_operit_running">Operit 正在运行</string>
+    <string name="service_app_running">%1$s 正在运行</string>
     <string name="service_chat_complete_reminder">对话完成提醒</string>
     <string name="service_chat_complete_reminder_sound">对话完成提醒（提示音）</string>
     <string name="service_chat_complete_reminder_vibration">对话完成提醒（震动）</string>
     <string name="service_chat_complete_reminder_sound_vibration">对话完成提醒（提示音和震动）</string>
     <string name="service_keep_background">保持 Operit 在后台运行。</string>
+    <string name="service_channel_description">让应用在后台保持运行。</string>
+    <string name="service_channel_name">后台运行</string>
+    <string name="screen_capture_notification_title">正在读取屏幕</string>
+    <string name="screen_capture_notification_text">正在读取屏幕内容</string>
     <string name="service_notify_when_complete">对话完成后提醒你。</string>
     <string name="service_running_wake_pause">Operit 正在运行（唤醒暂停）</string>
     <string name="service_running_wake_listening">Operit 正在运行（唤醒监听中）</string>
+    <string name="service_app_running_wake_pause">%1$s 正在运行（唤醒暂停）</string>
+    <string name="service_app_running_wake_listening">%1$s 正在运行（唤醒监听中）</string>
     <string name="service_running_stats">运行对话 %1$d · 调用工具 %2$d</string>
     <string name="service_running_http_listening">外部 HTTP 正在监听端口 %1$d</string>
     <string name="service_running_with_http">%1$s · 外部 HTTP %2$d</string>
@@ -7821,15 +7752,6 @@
     <string name="html_export_message_count">消息数</string>
     <string name="html_export_footer">导出自 Operit Ry Assistant</string>
 
-    <!-- MnnModelDownloadManager (新增) -->
-    <string name="mnn_no_cache_data">无缓存数据</string>
-    <string name="mnn_response_empty">响应体为空</string>
-    <string name="mnn_fetch_repo_files_failed">获取仓库文件列表失败: %1$s</string>
-    <string name="mnn_download_failed_http">下载失败: HTTP %1$d %2$s</string>
-    <string name="mnn_rename_failed">重命名失败</string>
-    <string name="mnn_unknown_error">未知错误</string>
-    <string name="mnn_download_file_failed">下载文件失败: %1$s (HTTP %2$d)</string>
-    <string name="mnn_download_paused">下载已暂停</string>
 
     <!-- MCPBridge (新增) -->
     <string name="mcp_send_command">发送桥接器命令</string>
@@ -7873,6 +7795,9 @@
 
     <!-- StandardTerminalCommandExecutor -->
     <string name="terminal_error_missing_session_name">缺少参数: session_name</string>
+    <string name="terminal_error_no_chat_session">本聊天还没有终端会话，先用 terminal 运行一条命令。</string>
+    <string name="role_card_super_admin_terminal_note">勾选这个包，角色卡也会保留内置的 Ubuntu 终端工具。</string>
+    <string name="terminal_tools_switched_off">没有运行：Ubuntu 终端工具在设置里是关闭的。需要的话，可以请用户在「设置 → 数据和权限 → Ubuntu 终端工具」里打开。</string>
     <string name="terminal_error_create_session">创建或获取终端会话时出错: %1$s</string>
     <string name="terminal_error_missing_command">缺少参数: command</string>
     <string name="terminal_error_missing_session_id">缺少参数: session_id</string>
@@ -7984,15 +7909,6 @@
     <string name="conversation_analyze_audio_prompt">Please analyze this audio.</string>
     <string name="conversation_analyze_video_prompt">Please analyze this video.</string>
 
-    <!-- LlamaProvider -->
-    <string name="llama_error_model_file_not_exist">模型文件不存在: %1$s</string>
-    <string name="llama_error_create_session_failed">创建 llama.cpp 会话失败（nativeCreateSession 返回 0）</string>
-    <string name="llama_error_prefix">错误</string>
-    <string name="llama_error_session_create_failed">错误: 创建 llama.cpp 会话失败（请检查模型文件与 JNI 编译输出）</string>
-    <string name="llama_error_chat_template_failed">错误: 无法应用模型对话模板（llama_model_chat_template/llama_chat_apply_template）</string>
-    <string name="llama_error_inference_failed">llama.cpp 推理过程出现错误</string>
-    <string name="llama_error_inference_tag">[推理过程出现错误]</string>
-    <string name="llama_error_request_cancelled">请求已被用户取消</string>
 
     <!-- TaskExecutor -->
     <string name="task_error_execution_failed">任务执行失败: %1$s</string>
@@ -8018,8 +7934,6 @@
     <!-- GraphVisualizer -->
     <string name="graph_char_for_measurement">中</string>
 
-    <!-- MnnModelDownloadScreen -->
-    <!-- No strings needed here -->
 
     <!-- User profile document -->
     <string name="date_format_pattern">yyyy年MM月dd日</string>
@@ -8752,6 +8666,7 @@
     <string name="tool_repairs_proxy_timeout">将终端超时时长移入工具参数</string>
     <string name="tool_repairs_params_tool_name">去掉参数里重复的 tool_name</string>
     <string name="tool_repairs_write_file_new">把 write_file 的 new 改成 content</string>
+    <string name="tool_repairs_legacy_terminal">把旧的 super_admin 终端工具名改成内置终端工具</string>
     <string name="tool_repairs_package">移除与目标工具包一致的重复 package_name</string>
     <string name="tool_repairs_flattened_proxy">从 params 文本中还原出被并入的 tool_name</string>
     <string name="tool_repairs_memory_argument">将记忆工具误写的 new_text 参数改为 content</string>
@@ -8790,6 +8705,27 @@
     <string name="screen_ocr_hint">用手指圈出想发送的地方</string>
     <string name="screen_ocr_reselect">重选</string>
     <string name="screen_ocr_add">添加</string>
+    <string name="model_catalog_auto_desc">添加模型后，会按模型目录自动填好协议、图片音视频能力和上下文上限，目录每周自动更新。「重新适配」会先更新目录，再按目录重设全部模型。</string>
+    <string name="model_catalog_readapt">重新适配</string>
+    <string name="model_catalog_readapt_matched">已适配 %1$d 个模型</string>
+    <string name="model_catalog_readapt_missing">%1$d 个目录里没有</string>
+    <string name="model_catalog_readapt_partly_offline">有个目录没更新</string>
+    <string name="model_catalog_readapt_separator">，</string>
+    <string name="model_catalog_readapt_end">。</string>
+    <string name="model_catalog_readapt_offline">没联网，用的本地目录</string>
+    <string name="model_catalog_updated_at">模型目录更新于 %1$s</string>
+    <string name="model_catalog_bundled">模型目录：应用自带，还没更新过</string>
+    <string name="model_catalog_not_found">模型目录里没有这个模型，下面几项请手动设置</string>
+    <string name="model_limits_title">上下文和输出上限</string>
+    <string name="model_limits_desc">上下文不超过这里，开了最大输出时回复也不超过；留空沿用聊天设置</string>
+    <string name="model_limits_value">%1$s / %2$s</string>
+    <string name="model_limits_unlimited">未设置</string>
+    <string name="model_limits_context">上下文上限</string>
+    <string name="model_limits_output">最长输出</string>
+    <string name="model_limits_dialog_hint">1K = 1024 token。留空沿用聊天设置。</string>
+    <string name="model_limits_invalid">请输入大于 0 的数字</string>
+    <string name="model_catalog_readapt_kept">保留 %1$d 个模型的现有设置</string>
+    <string name="model_catalog_readapt_failed">重新适配没成功</string>
     <string name="model_protocol_title">API 协议</string>
     <string name="model_protocol_desc">仅应用到当前模型，默认继承提供商配置。</string>
     <string name="model_protocol_inherit">继承提供商</string>
@@ -8803,16 +8739,6 @@
     <string name="model_protocol_mimo">MiMo（思考参数与回传）</string>
     <string name="model_protocol_endpoint">此模型的 API 地址（可选）</string>
     <string name="model_protocol_endpoint_desc">留空使用提供商地址，并按协议转换标准路径；非标准地址可在此单独填写。</string>
-    <string name="model_protocol_auto_configure">自动配置协议</string>
-    <string name="model_protocol_auto_desc">按提供商和模型匹配本地目录，不联网刷新。更新匹配模型的协议，保留手填端点；未匹配的设置不变。</string>
-    <string name="model_protocol_auto_changed">配置已变化，请重新点击自动配置协议</string>
-    <string name="model_protocol_auto_result">已用本地目录配置 %1$d 个模型，跳过 %2$d 个</string>
-    <string name="model_catalog_refresh_success">本地模型目录已更新，包含多模态能力和协议；点击对应自动配置按钮应用</string>
-    <string name="model_catalog_refresh_protocol_failed">多模态目录已更新；协议目录更新失败，保留原目录及更新时间</string>
-    <string name="model_catalog_refresh_multimodal_failed">协议目录已更新；多模态目录更新失败，保留原目录及更新时间</string>
-    <string name="model_protocol_catalog_updated_at">本地协议目录更新时间：%1$s</string>
-    <string name="model_protocol_catalog_bundled">本地协议目录：应用内置，尚未更新</string>
-    <string name="model_protocol_auto_failed">协议目录读取失败，设置未更改</string>
     <string name="pet_floating_entry">悬浮窗入口</string>
     <string name="pet_entry_pet">宠物</string>
     <string name="pet_entry_legacy">旧版悬浮球</string>
@@ -9256,10 +9182,19 @@
     <string name="orbit_usage_other">其他</string>
     <string name="orbit_usage_other_orbits">其他 Orbit</string>
     <string name="orbit_usage_summary_line">本周 %1$s / %2$s · 额外 %3$s / %4$s</string>
-    <string name="orbit_usage_cost_title">本周大概花了多少钱</string>
-    <string name="orbit_usage_cost_week">约 $%1$s（约 ¥%2$s）</string>
-    <string name="orbit_usage_cost_week_tiny">不到 $0.01</string>
-    <string name="orbit_usage_cost_note">按 DeepSeek Flash 的平均价估算：一周用 5 亿 token，大约 3 美元（20 元左右）。只是参考，实际以服务商账单为准，用别的模型会不一样。</string>
+    <string name="orbit_usage_cost_title">花费</string>
+    <string name="orbit_usage_cost_about">约 %1$s</string>
+    <string name="orbit_usage_cost_cache">缓存命中率</string>
+    <string name="orbit_usage_cost_per_call">平均每次</string>
+    <string name="orbit_usage_cost_by_model">按模型</string>
+    <string name="orbit_usage_cost_model_line">%1$s token · %2$d 次调用</string>
+    <string name="orbit_usage_cost_unknown_total">费用未知</string>
+    <string name="orbit_usage_cost_unpriced">另有 %1$d 次调用费用未知，没算进总额。</string>
+    <string name="orbit_usage_cost_note">按「模型定价」里的价格计算；没记下费用的调用，能估算的按最新价格估算。只是参考，以服务商账单为准。</string>
+    <string name="orbit_usage_cost_rate">美元和人民币按 1 : %1$s 换算。</string>
+    <string name="orbit_usage_cost_rate_default">美元和人民币按 1 : %1$s 换算（默认汇率，可在全应用费用页修改）。</string>
+    <string name="orbit_usage_cost_set_prices">设置模型价格</string>
+    <string name="orbit_usage_updating">正在更新</string>
     <string name="orbit_usage_input">输入</string>
     <string name="orbit_usage_active_days">活跃天数</string>
     <string name="orbit_usage_calls">%1$d 次调用</string>
@@ -9359,6 +9294,28 @@
     <string name="orbit_tracking_notes">进展</string>
     <string name="orbit_goal_steps">执行步骤</string>
     <string name="orbit_builds_versions">%1$d 个版本</string>
+    <string name="orbit_builds_has_versions">有版本记录</string>
+    <string name="attachment_edit_rotate">旋转</string>
+    <string name="attachment_edit_open">查看和编辑</string>
+    <string name="attachment_edit_crop">裁切</string>
+    <string name="attachment_edit_mark">标记</string>
+    <string name="attachment_edit_undo">撤销</string>
+    <string name="attachment_edit_reset">还原</string>
+    <string name="attachment_edit_crop_smaller">缩小裁切框</string>
+    <string name="attachment_edit_crop_larger">放大裁切框</string>
+    <string name="attachment_edit_crop_left">裁切框左移</string>
+    <string name="attachment_edit_crop_right">裁切框右移</string>
+    <string name="attachment_edit_crop_up">裁切框上移</string>
+    <string name="attachment_edit_crop_down">裁切框下移</string>
+    <string name="attachment_edit_crop_frame">裁切框，宽 %1$d%%，高 %2$d%%，离左边 %3$d%%，离上边 %4$d%%。拖动四角调整大小，拖动框内移动</string>
+    <string name="attachment_edit_load_failed">图片打不开</string>
+    <string name="attachment_edit_save_failed">图片没能保存</string>
+    <string name="attachment_edit_color_red">红色</string>
+    <string name="attachment_edit_color_yellow">黄色</string>
+    <string name="attachment_edit_color_green">绿色</string>
+    <string name="attachment_edit_color_blue">蓝色</string>
+    <string name="attachment_edit_color_white">白色</string>
+    <string name="attachment_edit_color_black">黑色</string>
     <string name="orbit_notifications_row">通知方式</string>
     <string name="orbit_notifications_row_desc">安静时段和汇报频率</string>
     <string name="orbit_profile_open">查看 %1$s 的资料</string>
@@ -9429,7 +9386,7 @@
     <string name="orbit_file_read_only">只读</string>
     <string name="orbit_prompt_layers">提示词层</string>
     <string name="orbit_prompt_layers_desc">看看 Orbit 每次回复前读了什么</string>
-    <string name="orbit_prompt_layers_help">下面每一层都按顺序放进 Orbit 的系统提示词，不能关掉；对齐总结要等第一次复盘写好后才带上。点开可以查看或编辑。</string>
+    <string name="orbit_prompt_layers_help">下面每一层都按顺序放进 Orbit 的系统提示词，不能关掉；对齐总结要等第一次复盘写好后才带上，经验本要等记下第一条才带上。点开可以查看或编辑。</string>
     <string name="orbit_layer_base">基础指令</string>
     <string name="orbit_layer_base_desc">主动、提醒、记忆、说话方式和安全</string>
     <string name="orbit_layer_soul">个性</string>
@@ -9437,6 +9394,9 @@
     <string name="orbit_layer_alignment">对齐总结</string>
     <string name="orbit_layer_alignment_desc">和你怎么相处，每晚复盘更新</string>
     <string name="orbit_layer_alignment_empty">还没写</string>
+    <string name="orbit_layer_lessons">经验本</string>
+    <string name="orbit_layer_lessons_desc">做事的约定和教训，最多 8000 字</string>
+    <string name="orbit_layer_lessons_empty">还没记</string>
     <string name="orbit_layer_identity">身份</string>
     <string name="orbit_layer_identity_desc">名字、角色和气质</string>
     <string name="orbit_layer_user">用户资料</string>
@@ -9545,7 +9505,7 @@
     <string name="orbit_files_title">文件</string>
     <string name="orbit_files_notebooks">记事本</string>
     <string name="orbit_file_lessons">经验本</string>
-    <string name="orbit_file_lessons_note">%1$s 做事时攒下的约定和教训，写给以后的自己。这段说明不是文件内容。</string>
+    <string name="orbit_file_lessons_note">%1$s 做事时攒下的约定和教训，写给以后的自己。每次聊天都会全文带上，最多 8000 字，写满了要先合并或删掉旧的；超过 8000 字时只带前面一段。改动在新聊天或刷新提示词后生效。这段说明不是文件内容。</string>
     <string name="orbit_file_proactive">主动消息偏好</string>
     <string name="orbit_file_proactive_note">你希望 %1$s 什么时候、为了什么事、用什么方式主动找你：想听的、别跟我说、什么时候、怎么说。%1$s 决定要不要打扰你时会读它。这段说明不是文件内容。</string>
     <string name="orbit_file_timezones">时区</string>
@@ -9576,7 +9536,6 @@
     <string name="orbit_builds_files_empty">%1$s 存下的文件会出现在这里。</string>
     <string name="orbit_builds_made">构件</string>
     <string name="orbit_builds_uploads">文件库</string>
-    <string name="orbit_builds_work">构件</string>
     <string name="orbit_builds_system">系统文件</string>
     <string name="orbit_system_hint">%1$s 自己的全部文件都在这里。这里只能查看，想改什么直接跟 %1$s 说。</string>
     <string name="orbit_system_empty">这个文件夹是空的。</string>
@@ -9638,6 +9597,7 @@
     <string name="orbit_file_open_failed">打不开这个文件</string>
     <string name="orbit_file_share_failed">分享失败</string>
     <string name="orbit_file_too_long">已到字数上限，多出的部分没有加进来</string>
+    <string name="orbit_file_over_limit">超过字数上限了。草稿还在，缩短后再保存</string>
     <string name="orbit_files_help">这些是 %1$s 自己的文件，你和它都能看，大多数还能直接改。</string>
     <string name="orbit_files_made">%1$s 生成的文件</string>
     <string name="orbit_file_open_in_browser">用浏览器打开</string>
@@ -9827,7 +9787,7 @@
     <string name="orbit_tools_row">每个工具的权限</string>
     <string name="orbit_tools_row_desc">Orbit 自己的一套，和主应用分开</string>
     <string name="orbit_tools_title">工具权限</string>
-    <string name="orbit_tools_help">只管 Orbit 的聊天和它的后台任务，主应用的工具权限不受影响。Orbit 自己的工具，以及内置包里只做查询的工具（时间、搜索、天气等），默认直接允许；对外发消息的工具默认在聊天里放卡片问你；其他工具默认走自动审核（快速）。</string>
+    <string name="orbit_tools_help">只管 Orbit 的聊天和它的后台任务，主应用的工具权限不受影响。Orbit 自己的工具，以及内置包里只做查询的工具（时间、搜索、天气等），默认直接允许；对外发消息的工具默认在聊天里放卡片问你；查看或取消本聊天自己的终端、Shell 任务（等结果、看屏幕、取消），在你没单独设定时直接放行；其他工具默认走自动审核（快速）。</string>
     <string name="orbit_tools_search">搜索工具</string>
     <string name="orbit_tools_empty">没有找到工具</string>
     <string name="orbit_tools_folder_internal">Orbit 内部工具</string>
@@ -10164,7 +10124,10 @@
     <string name="orbit_chat_image_save_short">保存</string>
     <string name="orbit_chat_text_desc">文件 %1$s，轻点查看</string>
     <string name="orbit_chat_text_open_other">在其他应用打开</string>
-    <string name="orbit_chat_text_cut">文件太长，这里只显示开头。点右上角可以在其他应用里看完整内容。</string>
+    <string name="orbit_chat_text_cut">文件太长，这里只显示前面一部分。用顶部的“在其他应用打开”可以看完整内容。</string>
+    <string name="orbit_file_reader_failed">后面的内容读取失败了。可以关掉重新打开，或用顶部的“在其他应用打开”。</string>
+    <string name="orbit_file_reader_changed">这个文件刚被改过，后面的内容没有接着显示。关掉重新打开就能看到最新内容。</string>
+    <string name="orbit_file_reader_only_note">这个文件太大，或者不是 UTF-8 编码，只能在这里看，不能编辑，免得保存时把内容弄乱。</string>
     <string name="orbit_chat_file_desc">文件 %1$s，轻点用其他应用打开</string>
     <string name="orbit_chat_file_open">轻点打开</string>
     <string name="orbit_chat_file_missing">文件已经不在了</string>

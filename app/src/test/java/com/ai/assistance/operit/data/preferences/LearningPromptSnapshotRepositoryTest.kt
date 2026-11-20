@@ -15,6 +15,18 @@ class LearningPromptSnapshotRepositoryTest {
     @get:Rule val folder = TemporaryFolder()
     private fun repo(chat: String) = LearningPromptSnapshotRepository(folder.root, chat)
 
+    @Test fun `an app update rebuilds the prefix once and a summary epoch keeps the build`() = runBlocking {
+        fun build(version: String) = LearningPromptSnapshotRepository(folder.root, "chat", version)
+        build("1").bindMemoryScope("global")
+        assertEquals("old tools", build("1").bindSystem("old tools", emptyMap()))
+        build("2").bindMemoryScope("global")
+        assertEquals("new tools", build("2").bindSystem("new tools", emptyMap()))
+        build("2").beginEpoch("summary")
+        assertEquals("after summary", build("2").bindSystem("after summary", emptyMap()))
+        build("2").bindMemoryScope("global")
+        assertEquals("after summary", build("2").bindSystem("later candidate", emptyMap()))
+    }
+
     @Test fun `accepted persona revision clears stale prefix while unchanged revision preserves cache`() = runBlocking {
         repo("orbit").bindMemoryScope("orbit-a", "soul-v1")
         repo("orbit").beginEpoch("")
@@ -119,6 +131,14 @@ class LearningPromptSnapshotRepositoryTest {
         } catch (_: LearningPromptSnapshotRepository.IncompatiblePrefixException) { }
         repo("group").delete()
         assertEquals("Alice XML", repo("group").bindSystem("Alice XML", emptyMap(), "xml", "alice"))
+    }
+
+    @Test fun `a prompt saved under a retired protocol is rebuilt once`() = runBlocking {
+        repo("cli").beginEpoch("")
+        repo("cli").bindSystem("cli prompt", emptyMap(), "true:CLI")
+        val retired = setOf("true:CLI", "false:CLI")
+        assertEquals("full prompt", repo("cli").bindSystem("full prompt", emptyMap(), "true:FULL", retiredProtocols = retired))
+        assertEquals("full prompt", repo("cli").bindSystem("later", emptyMap(), "true:FULL", retiredProtocols = retired))
     }
 
     @Test fun `manual changes mark existing chats pending without changing their prefixes`() = runBlocking {

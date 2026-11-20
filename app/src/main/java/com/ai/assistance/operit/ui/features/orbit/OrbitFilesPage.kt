@@ -164,17 +164,19 @@ internal fun OrbitFilesPage(orbitId: String, onBack: () -> Unit, onDraft: (Strin
             OrbitMadeFilePage(files, path, who, onBack = closeFile)
         } else {
         val notebook = notebooks.firstOrNull { it.path == path }
+        val title = notebook?.let { stringResource(it.title) } ?: path.substringAfterLast('/').removeSuffix(".md")
+        // A notebook that is still its empty template has nothing to delete.
+        val exists = list?.firstOrNull { it.path == path }?.let { it.size >= 0 } ?: (notebook == null)
+        OrbitEditableOrReader(files, path, title, closeFile, onDelete = if (exists) ({ files.delete(path) }) else null) {
         val note = when {
             notebook != null -> stringResource(notebook.note, who)
             path.startsWith("memory/people/") -> stringResource(R.string.orbit_file_person_note, who)
             path.startsWith("memory/groups/") -> stringResource(R.string.orbit_file_group_note, who)
             else -> stringResource(R.string.orbit_file_daily_note, who)
         }
-        // A notebook that is still its empty template has nothing to delete.
-        val exists = list?.firstOrNull { it.path == path }?.let { it.size >= 0 } ?: (notebook == null)
         val editor = rememberOrbitFileEditor(files, path)
         OrbitFilePage(
-            title = notebook?.let { stringResource(it.title) } ?: path.substringAfterLast('/').removeSuffix(".md"),
+            title = title,
             note = note,
             load = editor.load,
             save = editor.save,
@@ -186,9 +188,12 @@ internal fun OrbitFilesPage(orbitId: String, onBack: () -> Unit, onDraft: (Strin
                 editPath = null
                 reload++
             }),
-            maxChars = if (path == OrbitFiles.ALIGNMENT) OrbitFiles.MAX_ALIGNMENT_PROMPT else OrbitFiles.MAX_TEXT,
+            maxChars = editor.maxChars,
+            measure = editor.measure,
+            holdAtLimit = editor.holdAtLimit,
             startEditing = editPath == path,
         )
+        }
         }
     }
     OrbitPushHost(
@@ -291,6 +296,16 @@ internal class OrbitFileEditor(
     val save: suspend (String) -> Unit,
     /** Pass to [OrbitFilePage]: the text a new draft starts from becomes the base its save checks. */
     val onEditStart: () -> Unit,
+    /** Pass to [OrbitFilePage] as its maxChars. */
+    val maxChars: Int,
+    /**
+     * Pass to [OrbitFilePage]: for a notebook every chat carries in full, a book written before its
+     * size limit is kept whole in the editor and may be saved as long as it does not grow. For any
+     * other file, its size in UTF-8 bytes, so a draft too big for the editor is refused before saving.
+     */
+    val measure: (String) -> Int,
+    /** Pass to [OrbitFilePage]: a notebook every chat carries refuses input that would grow it past its limit. */
+    val holdAtLimit: Boolean,
 )
 
 @Composable
@@ -300,13 +315,25 @@ internal fun rememberOrbitFileEditor(files: OrbitFiles, path: String): OrbitFile
     val base = rememberSaveable(path) { mutableStateOf<String?>(null) }
     return remember(files, path) {
         var loaded: String? = null
+        val cap = OrbitFiles.promptCap(path)
         OrbitFileEditor(
-            load = { files.read(path).also { loaded = it } },
+            // Read once, strictly: a file that became too big or not UTF-8 since it was opened fails
+            // to load here rather than reaching the editor, where saving would overwrite it.
+            load = { files.readForEditor(path).also { loaded = it } },
             save = { text ->
-                files.writeIfUnchanged(path, checkNotNull(base.value) { "The file was not opened" }, text)
+                files.writeIfUnchanged(path, checkNotNull(base.value) { "The file was not opened" }, text, strict = true)
                 base.value = text
             },
             onEditStart = { base.value = loaded },
+            maxChars = cap ?: com.ai.assistance.operit.features.orbit.OrbitTextFiles.EDIT_MAX_BYTES,
+            measure = if (cap != null) { text: String -> if (text.length <= (loaded?.length ?: 0)) 0 else text.length }
+            else { text: String ->
+                val max = com.ai.assistance.operit.features.orbit.OrbitTextFiles.EDIT_MAX_BYTES
+                // At most 3 bytes a character: a short text needs no counting, a long one is over anyway.
+                if (text.length * 3 <= max || text.length > max) text.length else text.toByteArray(Charsets.UTF_8).size
+            },
+            // Every file the editor opens fits its limit, so input that would grow it past that is not taken.
+            holdAtLimit = true,
         )
     }
 }
@@ -314,6 +341,58 @@ internal fun rememberOrbitFileEditor(files: OrbitFiles, path: String): OrbitFile
 /** A text file Orbit made for the user: read, edit, share or delete. */
 @Composable
 internal fun OrbitMadeFilePage(files: OrbitFiles, path: String, who: String, onBack: () -> Unit, interceptBack: Boolean = false) {
+    OrbitEditableOrReader(files, path, path.substringAfterLast('/'), onBack, onDelete = { files.delete(path) }) {
+        OrbitMadeFileEditorPage(files, path, who, onBack, interceptBack)
+    }
+}
+
+/**
+ * Opens [path] with [editor] when it is small UTF-8 text. A bigger file, or one in another encoding
+ * (a novel saved as GBK), opens read-only a part at a time: the editor would hold all of it, and
+ * saving text it decoded wrongly would overwrite the file with garbled characters.
+ */
+@Composable
+internal fun OrbitEditableOrReader(
+    files: OrbitFiles,
+    path: String,
+    title: String,
+    onBack: () -> Unit,
+    /** Where the editor page offered delete, the reader does too; the reader closes after it. */
+    onDelete: (suspend () -> Unit)? = null,
+    editor: @Composable () -> Unit,
+) {
+    // Null while deciding; then the file to read, or null in the result for the editor. Only a file
+    // that reads whole as UTF-8 goes to the editor; one that cannot be checked is only read.
+    val decided by androidx.compose.runtime.produceState<Result<java.io.File?>?>(null, files, path) {
+        value = Result.success(kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val file = runCatching { files.fileFor(path) }.getOrNull()
+            when {
+                // Not there yet (a notebook's template) or not one of Orbit's files: the editor says so.
+                file == null || !file.isFile -> null
+                runCatching { com.ai.assistance.operit.features.orbit.OrbitTextFiles.editable(file) }.getOrDefault(false) -> null
+                else -> file
+            }
+        })
+    }
+    when (val d = decided) {
+        null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            // A spinner only for a slow check, so a page never flashes one.
+            var slow by remember { mutableStateOf(false) }
+            androidx.compose.runtime.LaunchedEffect(Unit) { kotlinx.coroutines.delay(400); slow = true }
+            if (slow) androidx.compose.material3.CircularProgressIndicator()
+        }
+        else -> d.getOrNull()?.let { file ->
+            // A web page too big to edit shows its source too, with the same note and delete.
+            OrbitTextPreview.Screen(
+                file, onBack, title = title,
+                notice = stringResource(R.string.orbit_file_reader_only_note), onDelete = onDelete,
+            )
+        } ?: editor()
+    }
+}
+
+@Composable
+private fun OrbitMadeFileEditorPage(files: OrbitFiles, path: String, who: String, onBack: () -> Unit, interceptBack: Boolean) {
     val context = LocalContext.current
     val resources = LocalResources.current
     val editor = rememberOrbitFileEditor(files, path)
@@ -349,7 +428,9 @@ internal fun OrbitMadeFilePage(files: OrbitFiles, path: String, who: String, onB
                 onBack()
             },
         ),
-        maxChars = OrbitFiles.MAX_TEXT,
+        maxChars = editor.maxChars,
+        measure = editor.measure,
+        holdAtLimit = editor.holdAtLimit,
     )
     previewPage?.let { file -> OrbitWebPreview.Screen(file) { previewPage = null } }
 }

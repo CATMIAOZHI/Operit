@@ -55,7 +55,6 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.heading
-import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -290,6 +289,9 @@ internal fun OrbitTabPage(
         }
     }
     val header = LocalOrbitTabHeader.current
+    // A page's button for the header's top right; the page sets it while it is shown.
+    var headerAction by remember(orbit.id) { mutableStateOf<(@Composable () -> Unit)?>(null) }
+    val setHeaderAction = remember(orbit.id) { { action: (@Composable () -> Unit)? -> headerAction = action } }
     val density = LocalDensity.current
     // Measured after the first frame; the guess is the header's usual size so nothing jumps.
     val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
@@ -299,7 +301,10 @@ internal fun OrbitTabPage(
             Surface(Modifier.fillMaxSize().then(contentLayer), color = MaterialTheme.colorScheme.background) {
                 // A task page over the tab hides the tab from screen readers.
                 Box(Modifier.fillMaxSize().then(if (openTaskId != null) Modifier.clearAndSetSemantics { } else Modifier)) {
-                    CompositionLocalProvider(LocalOrbitTabHeaderHeight provides if (header != null) headerHeight else null) {
+                    CompositionLocalProvider(
+                        LocalOrbitTabHeaderHeight provides if (header != null) headerHeight else null,
+                        LocalOrbitTabHeaderAction provides if (header != null) setHeaderAction else null,
+                    ) {
                         pageState.SaveableStateProvider("${orbit.id}:${tab.name}") {
                             when (tab) {
                                 OrbitTab.CHAT -> Unit
@@ -317,7 +322,7 @@ internal fun OrbitTabPage(
         // One header for every tab, over each page's list and the pages it pushes, under a task.
         if (header != null) {
             Box(Modifier.fillMaxWidth().onSizeChanged { headerHeight = with(density) { it.height.toDp() } }) {
-                header()
+                header(headerAction.takeIf { visible && tab == OrbitTab.BUILDS })
             }
         }
         OrbitCoverPage(visible = visible && openTaskId != null, onDismiss = { openTaskId = null }) {
@@ -342,10 +347,13 @@ private fun Modifier.orbitKeptUnplaced(): Modifier = layout { measurable, constr
  * tab, fixed on top in the same place as in the chat, so the picture never moves or reloads when
  * the user switches tabs.
  */
-internal val LocalOrbitTabHeader = compositionLocalOf<(@Composable () -> Unit)?> { null }
+internal val LocalOrbitTabHeader = compositionLocalOf<(@Composable ((@Composable () -> Unit)?) -> Unit)?> { null }
 
 /** The height of the shared tab header, for a page's top padding; null when no header is shown. */
 private val LocalOrbitTabHeaderHeight = compositionLocalOf<Dp?> { null }
+
+/** Puts a page's button at the header's top right (null takes it away); null when no header is shown. */
+private val LocalOrbitTabHeaderAction = compositionLocalOf<(((@Composable () -> Unit)?) -> Unit)?> { null }
 
 /**
  * The page frame: Orbit's fixed header, a large title and an optional action on the right. [info]
@@ -2334,16 +2342,28 @@ private fun OrbitBuildsPage(
     // Keeps the work on screen while its page slides away.
     var shownHistory by remember(orbit.id) { mutableStateOf(history) }
     SideEffect { if (!history.isNullOrEmpty()) shownHistory = history }
+    // The order sits at the header's top right; a work's page over the list has no use for it.
+    val setHeaderAction = LocalOrbitTabHeaderAction.current
+    val shownSort by rememberUpdatedState(sort)
+    val shownRecentLabel by rememberUpdatedState(if (section == 1) R.string.orbit_builds_sort_added else R.string.orbit_builds_sort_time)
+    val chooseSort by rememberUpdatedState { chosen: BuildSort ->
+        val part = section
+        action { sortPreferences.set(part, chosen) }
+    }
+    // Read by the button itself, in the same frame the page changes; a work's page sliding away
+    // still covers the list, so the order waits until it is gone.
+    val detailSlide = remember(orbit.id) { androidx.compose.animation.core.Animatable(if (history.isNullOrEmpty()) 1f else 0f) }
+    val sortShown by rememberUpdatedState(history.isNullOrEmpty())
+    DisposableEffect(setHeaderAction) {
+        setHeaderAction?.invoke {
+            if (sortShown && detailSlide.value >= 1f) BuildSortButton(shownSort, shownRecentLabel) { chooseSort(it) }
+        }
+        onDispose { setHeaderAction?.invoke(null) }
+    }
     // The list stays under an open work's page, hidden from screen readers while covered.
     Box(Modifier.fillMaxSize().then(if (!history.isNullOrEmpty()) Modifier.clearAndSetSemantics { } else Modifier)) {
     TabList(title = null, state = tabList) {
         item(key = "sections") { BuildSections(section) { section = it } }
-        item(key = "sort") {
-            BuildSortBar(sort, recentLabel = if (section == 1) R.string.orbit_builds_sort_added else R.string.orbit_builds_sort_time) { chosen ->
-                val part = section
-                action { sortPreferences.set(part, chosen) }
-            }
-        }
         if (section == 0) {
             val works = versions
             val files = madeFiles
@@ -2378,31 +2398,50 @@ private fun OrbitBuildsPage(
                             DropdownMenuItem(text = { Text(stringResource(R.string.orbit_file_open)) },
                                 onClick = { close(); openMadeFolder(entry.folder.path) })
                         }
-                        is BuildEntry.Work -> BuildRow(
-                            tile = { FileTile(entry.latest.name, work = true, seed = entry.latest.artifactId) },
-                            title = entry.latest.name,
-                            subtitle = stringResource(R.string.orbit_builds_work) +
-                                (if (entry.count > 1) " · " + stringResource(R.string.orbit_builds_versions, entry.count) else "") +
-                                " · " + shortDate(entry.latest.createdAt),
-                            onClick = { openArtifact = entry.latest.artifactId },
-                        ) { close ->
-                            DropdownMenuItem(text = { Text(stringResource(R.string.orbit_file_open)) },
-                                onClick = { close(); openArtifact = entry.latest.artifactId })
-                            DropdownMenuItem(text = { Text(stringResource(R.string.orbit_artifact_source)) },
-                                onClick = { close(); onOpenTask(entry.latest.taskId) })
-                            DropdownMenuItem(text = { Text(stringResource(R.string.orbit_artifact_revise)) }, onClick = {
-                                close(); onDraft(resources.getString(R.string.orbit_build_continue_draft, entry.latest.name))
-                            })
-                            DropdownMenuItem(text = { Text(stringResource(R.string.orbit_quote_menu)) }, onClick = {
-                                close()
-                                val version = entry.latest
-                                quote {
-                                    val root = OrbitPreferences.getInstance(context).orbitDir(orbit.id).canonicalFile
-                                    java.io.File(root, version.relativePath).canonicalFile.also {
-                                        require(it.toPath().startsWith(root.toPath())) { "Not one of Orbit's files" }
+                        is BuildEntry.Work -> {
+                            // A task's result shows as the file it is, like the others; its page keeps the versions.
+                            val latest = entry.latest
+                            val isImage = com.ai.assistance.operit.features.orbit.OrbitFiles.kindOf(latest.name) ==
+                                com.ai.assistance.operit.features.orbit.OrbitFiles.Kind.IMAGE
+                            // A new version starts without the old one's picture.
+                            val image by key(latest.id) {
+                                produceState<java.io.File?>(null, isImage) {
+                                    value = if (!isImage) null else kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                        runCatching {
+                                            val root = OrbitPreferences.getInstance(context).orbitDir(orbit.id).canonicalFile
+                                            java.io.File(root, latest.relativePath).canonicalFile
+                                                .takeIf { it.toPath().startsWith(root.toPath()) && it.isFile }
+                                        }.getOrNull()
                                     }
                                 }
-                            })
+                            }
+                            BuildRow(
+                                tile = { FileTile(latest.name, image = image, imageExpected = isImage) },
+                                title = latest.name,
+                                subtitle = typeLabel(latest.name) +
+                                    (if (entry.count > 1) " · " + stringResource(R.string.orbit_builds_versions, entry.count) else "") +
+                                    " · " + shortDate(latest.createdAt),
+                                versioned = true,
+                                onClick = { openArtifact = entry.latest.artifactId },
+                            ) { close ->
+                                DropdownMenuItem(text = { Text(stringResource(R.string.orbit_file_open)) },
+                                    onClick = { close(); openArtifact = entry.latest.artifactId })
+                                DropdownMenuItem(text = { Text(stringResource(R.string.orbit_artifact_source)) },
+                                    onClick = { close(); onOpenTask(entry.latest.taskId) })
+                                DropdownMenuItem(text = { Text(stringResource(R.string.orbit_artifact_revise)) }, onClick = {
+                                    close(); onDraft(resources.getString(R.string.orbit_build_continue_draft, entry.latest.name))
+                                })
+                                DropdownMenuItem(text = { Text(stringResource(R.string.orbit_quote_menu)) }, onClick = {
+                                    close()
+                                    val version = entry.latest
+                                    quote {
+                                        val root = OrbitPreferences.getInstance(context).orbitDir(orbit.id).canonicalFile
+                                        java.io.File(root, version.relativePath).canonicalFile.also {
+                                            require(it.toPath().startsWith(root.toPath())) { "Not one of Orbit's files" }
+                                        }
+                                    }
+                                })
+                            }
                         }
                         is BuildEntry.Made -> {
                             val file = entry.file
@@ -2588,7 +2627,7 @@ private fun OrbitBuildsPage(
         )
     }
     // A work's page slides in over the list; the back swipe slides it away under the finger.
-    OrbitCoverPage(visible = !history.isNullOrEmpty(), onDismiss = { openArtifact = null }) {
+    OrbitCoverPage(visible = !history.isNullOrEmpty(), onDismiss = { openArtifact = null }, progress = detailSlide) {
         (history?.takeIf { it.isNotEmpty() } ?: shownHistory)?.takeIf { it.isNotEmpty() }?.let { shown ->
             Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                 key(shown.first().artifactId) {
@@ -2635,11 +2674,11 @@ private fun BuildSections(selected: Int, onSelect: (Int) -> Unit) {
 private const val MADE_PLACE = "\u0000made:"
 
 /**
- * The order of the shown part, at the right under the switch; tapping it picks another.
+ * The order of the shown part: a round button at the header's top right; tapping it picks another.
  * [recentLabel] names the newest-first order: the Library orders by when a file was added.
  */
 @Composable
-private fun BuildSortBar(selected: BuildSort, recentLabel: Int, onSelect: (BuildSort) -> Unit) {
+private fun BuildSortButton(selected: BuildSort, recentLabel: Int, onSelect: (BuildSort) -> Unit) {
     val colors = MaterialTheme.colorScheme
     var open by remember { mutableStateOf(false) }
     @Composable
@@ -2651,32 +2690,22 @@ private fun BuildSortBar(selected: BuildSort, recentLabel: Int, onSelect: (Build
             BuildSort.TYPE -> R.string.orbit_builds_sort_type
         }
     )
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-        Box {
-            val description = stringResource(R.string.orbit_builds_sort_current, label(selected))
-            TextButton(
-                onClick = { open = true },
-                modifier = Modifier.clearAndSetSemantics {
-                    contentDescription = description
-                    role = Role.Button
-                    onClick { open = true; true }
-                },
-            ) {
-                Icon(orbitIcon("arrow-up-down"), null, Modifier.size(16.dp), tint = colors.onSurfaceVariant)
-                Spacer(Modifier.width(6.dp))
-                Text(label(selected), style = MaterialTheme.typography.labelLarge, color = colors.onSurfaceVariant)
-            }
-            OrbitDropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-                BuildSort.entries.forEach { sort ->
-                    DropdownMenuItem(
-                        text = { Text(label(sort)) },
-                        trailingIcon = {
-                            if (sort == selected) Icon(orbitIcon("check"), null, Modifier.size(18.dp), tint = colors.primary)
-                        },
-                        onClick = { open = false; if (sort != selected) onSelect(sort) },
-                        modifier = Modifier.semantics { this.selected = sort == selected },
-                    )
-                }
+    Box {
+        OrbitCircleButton(
+            icon = orbitIcon("arrow-up-down"),
+            contentDescription = stringResource(R.string.orbit_builds_sort_current, label(selected)),
+            onClick = { open = true },
+        )
+        OrbitDropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            BuildSort.entries.forEach { sort ->
+                DropdownMenuItem(
+                    text = { Text(label(sort)) },
+                    trailingIcon = {
+                        if (sort == selected) Icon(orbitIcon("check"), null, Modifier.size(18.dp), tint = colors.primary)
+                    },
+                    onClick = { open = false; if (sort != selected) onSelect(sort) },
+                    modifier = Modifier.semantics { this.selected = sort == selected },
+                )
             }
         }
     }
@@ -2795,6 +2824,8 @@ private fun BuildRow(
     subtitle: String,
     onClick: () -> Unit,
     pinned: Boolean = false,
+    /** A task's result, kept with its versions: a small clock beside the name sets it apart from a plain file. */
+    versioned: Boolean = false,
     menu: @Composable ColumnScope.(close: () -> Unit) -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
@@ -2812,6 +2843,10 @@ private fun BuildRow(
                     title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false),
                 )
+                if (versioned) {
+                    Icon(orbitIcon("history"), stringResource(R.string.orbit_builds_has_versions),
+                        Modifier.padding(start = 6.dp).size(16.dp), tint = colors.onSurfaceVariant)
+                }
                 if (pinned) {
                     Icon(orbitIcon("pin"), stringResource(R.string.orbit_library_pinned),
                         Modifier.padding(start = 6.dp).size(16.dp), tint = colors.onSurfaceVariant)
@@ -2839,26 +2874,26 @@ internal fun typeLabel(name: String): String =
 
 /**
  * The picture in front of a file: a picture's own preview; for a document, a small page with a
- * folded corner and its type on it, like a red PDF or a gray MD; for a work Orbit made, a colored
- * square, its color picked from [seed] so each work keeps its own.
+ * folded corner and its type on it, like a red PDF or a gray MD.
  */
 @Composable
 internal fun FileTile(
     name: String,
     image: java.io.File? = null,
     imageExpected: Boolean = false,
-    work: Boolean = false,
-    seed: String = name,
 ) {
     val colors = MaterialTheme.colorScheme
     val ext = name.substringAfterLast('.', "").lowercase()
     val kind = com.ai.assistance.operit.features.orbit.OrbitFiles.kindOf(name)
     val video = ext in setOf("mp4", "webm", "mov", "mkv")
     val audio = kind == com.ai.assistance.operit.features.orbit.OrbitFiles.Kind.AUDIO
-    // Pictures, works, sound and video get a rounded square; documents get a page.
-    if (image != null || imageExpected || work || audio || video) {
+    // A file named like a picture that cannot be read as one falls back to its type's page.
+    var failed by remember(image) { mutableStateOf(false) }
+    val picture = image.takeIf { !failed }
+    val pictureExpected = imageExpected && !failed
+    // Pictures, sound and video get a rounded square; documents get a page.
+    if (picture != null || pictureExpected || audio || video) {
         val (background, content) = when {
-            work -> workTileColors[Math.floorMod(seed.hashCode(), workTileColors.size)] to Color.White
             audio -> Color(0xFF8E59D9) to Color.White
             video -> Color(0xFF374151) to Color.White
             else -> colors.onSurface.copy(alpha = 0.06f) to colors.onSurfaceVariant
@@ -2868,13 +2903,22 @@ internal fun FileTile(
             modifier = Modifier.size(48.dp).clip(RoundedCornerShape(12.dp)).background(background),
         ) {
             when {
-                image != null -> coil.compose.AsyncImage(
-                    model = image, contentDescription = null,
-                    contentScale = androidx.compose.ui.layout.ContentScale.Crop, modifier = Modifier.fillMaxSize(),
-                )
+                picture != null -> {
+                    val context = LocalContext.current
+                    // Coil reads the file's date for its cache key before its own threads; that stays off the main thread.
+                    val request = remember(picture) {
+                        coil.request.ImageRequest.Builder(context).data(picture)
+                            .interceptorDispatcher(kotlinx.coroutines.Dispatchers.IO).build()
+                    }
+                    coil.compose.AsyncImage(
+                        model = request,
+                        contentDescription = null,
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop, modifier = Modifier.fillMaxSize(),
+                        onError = { failed = true },
+                    )
+                }
                 // A picture keeps the plain tile until its file is ready, so no icon flashes first.
-                imageExpected -> Unit
-                work -> Icon(orbitIcon("component"), null, Modifier.size(24.dp), tint = content)
+                pictureExpected -> Unit
                 audio -> Icon(orbitIcon("audio-lines"), null, Modifier.size(24.dp), tint = content)
                 else -> Icon(orbitIcon("film"), null, Modifier.size(24.dp), tint = content)
             }
@@ -2929,13 +2973,6 @@ internal fun FileTile(
         }
     }
 }
-
-/** Soft colors for works' tiles, white icon on each. */
-private val workTileColors = listOf(
-    Color(0xFFC08A6B), Color(0xFF6B9AC0), Color(0xFF7FAE84), Color(0xFFB77FB0),
-    Color(0xFFD1A04F), Color(0xFF6FA8A3), Color(0xFFC07474), Color(0xFF8C86C9),
-)
-
 
 @Composable
 private fun BuildDetail(

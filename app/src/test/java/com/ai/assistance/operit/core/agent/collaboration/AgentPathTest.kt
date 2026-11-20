@@ -20,7 +20,9 @@ class AgentPathTest {
     }
 
     @Test fun parsesForkModesWithoutSilentlyAcceptingInvalidCounts() {
-        assertEquals(AgentFork.All, AgentFork.parse(null))
+        assertEquals(AgentFork.None, AgentFork.parse(null))
+        assertEquals(AgentFork.None, AgentFork.parse(""))
+        assertEquals(AgentFork.All, AgentFork.parse("all"))
         assertEquals(AgentFork.None, AgentFork.parse("NONE"))
         assertEquals(AgentFork.LastTurns(3), AgentFork.parse("3"))
         listOf("0", "-1", "1.5", "bogus", "999999999999").forEach {

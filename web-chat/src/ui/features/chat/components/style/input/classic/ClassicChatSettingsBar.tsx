@@ -51,7 +51,7 @@ const INFO_COPY = {
   },
   thinkingMode: {
     title: '思考模式',
-    description: '目前支持Gemini、Qwen3、Claude、豆包、NVIDIA、硅基流动和MNN本地模型，能够启用内置的思考。'
+    description: '可为支持思考模式的 Gemini、Qwen3、Claude、豆包、NVIDIA 和硅基流动模型开启思考。'
   },
   thinkingQuality: {
     title: '思考程度',
@@ -707,7 +707,7 @@ export function ClassicChatSettingsBar({
   const [showDisableSettingsDropdown, setShowDisableSettingsDropdown] = useState(false);
   const [infoPopupContent, setInfoPopupContent] = useState<InfoContent | null>(null);
   const thinkingEnabled = inputSettings?.enable_thinking_mode ?? false;
-  const thinkingQuality = inputSettings
+  const thinkingQuality = inputSettings && inputSettings.thinking_quality_level != null
     ? {
         maxLevel: MAX_THINKING_QUALITY_LEVEL,
         level: clampThinkingQualityLevel(inputSettings.thinking_quality_level)

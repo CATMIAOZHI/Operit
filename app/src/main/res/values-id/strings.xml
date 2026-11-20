@@ -1374,18 +1374,22 @@
     <string name="agreement_title">Perjanjian Pengguna &amp; Kebijakan Privasi</string>
     <string name="agreement_subtitle">Harap baca dan setujui ketentuan berikut sebelum menggunakan.</string>
     <string name="agreement_version">Versi perjanjian: %1$s</string>
+    <string name="personal_branch_disclaimer_title">Pemberitahuan proyek sumber terbuka</string>
+    <string name="personal_branch_disclaimer_content">Orbit adalah cabang pribadi sumber terbuka dari AAswordman / Operit yang dikelola dan dirilis oleh CATMIAOZHI. Ini bukan rilis resmi dari proyek induk. Seluruh kode sumbernya terbuka di https://github.com/CATMIAOZHI/orbit , sehingga siapa pun bisa membaca, memeriksa, dan membangunnya sendiri. Ini perangkat lunak sumber terbuka gratis, bukan layanan komersial, dan Anda memakainya dengan risiko sendiri; proyek induk dan pengelolanya tidak bertanggung jawab atas cabang ini. Laporkan masalah melalui Issues di repositori.</string>
     <string name="agreement_human_readable_title">Versi Perjanjian Mudah Dipahami (Bukan Versi Hukum)</string>
-    <string name="agreement_human_readable_content">Batas layanan: Operit tidak menyediakan layanan interaksi emosional antropomorfik untuk publik. Operit adalah klien sumber terbuka yang berjalan secara lokal di perangkat pengguna. Operit tidak mengoperasikan layanan inferensi model, tidak menghosting sesi chat atau data interaksi, dan tidak membagikan kredensial model bersama. Permintaan model cloud dikirim langsung dari perangkat Anda ke penyedia model yang Anda konfigurasi dengan kredensial Anda sendiri; data terkait tunduk pada aturan penyedia tersebut. Model lokal melakukan inferensi di perangkat Anda.\n\nAplikasi ini dapat memanggil file, terminal, otomatisasi, Root, ADB, ekstensi, dan kemampuan serupa. Periksa operasi sebelum menjalankannya, cadangkan data penting, dan berikan izin dengan hati-hati. Kerugian atas perangkat, data, akun, atau kepentingan lain yang disebabkan oleh tindakan pengguna, konfigurasi pengguna, layanan pihak ketiga, atau ekstensi pihak ketiga harus ditangani oleh operator sebenarnya menurut hukum yang berlaku.\n\nPlugin, skrip, Skill, toolkit, dan konten pihak ketiga lain di marketplace adalah milik penulis atau pemegang hak yang tercantum, beserta tanggung jawab terkait. Penayangan atau pemasangan dari marketplace tidak berarti Operit menjamin, mendukung, atau memperoleh hak atas konten tersebut. Pastikan lisensi dan status hak sebelum menggunakan, memodifikasi, menerbitkan, atau mendistribusikannya kembali.</string>
+    <string name="agreement_human_readable_content">• Sumber terbuka: Orbit adalah proyek sumber terbuka. Seluruh kode sumbernya terbuka di GitHub (CATMIAOZHI/orbit), jadi Anda bisa memeriksa apa yang dilakukannya atau membangunnya sendiri.\n\n• Data: obrolan, ingatan, dan pengaturan disimpan di ponsel Anda secara bawaan, dan kami tidak menyimpan data Anda. Saat Anda memakai model cloud, WeChat, pencarian, atau fitur daring lain, isi yang diperlukan dikirim ke layanan tersebut; jika cadangan sistem ponsel aktif, data aplikasi juga bisa ikut dicadangkan.\n\n• Biaya: jika model atau layanan daring yang Anda pilih berbayar, Anda yang membayar sesuai aturan penyedianya. Saat Orbit memanggil model atau layanan berbayar di latar belakang, itu juga memakan biaya.\n\n• Orbit benar-benar bekerja: dengan izin Anda, ia bisa menjalankan terminal, membaca dan menulis file, mengoperasikan aplikasi dan browser di latar belakang, membaca SMS, kontak, kalender, notifikasi, dan lokasi, memakai kunci dari brankas, serta bertindak otomatis tanpa bertanya setiap kali. Pikirkan dulu sebelum memberi izin dan cadangkan data penting.\n\n• Anda yang bertanggung jawab: apakah dan bagaimana Anda memakainya, izin apa yang Anda berikan, dan apa yang dilakukan Orbit dengan izin itu sepenuhnya terserah Anda, begitu pula akibatnya. Patuhi hukum setempat di mana pun Anda memakai aplikasi ini. Pakai aplikasi dan fiturnya hanya sejauh diizinkan hukum setempat. AI bisa salah; ucapannya bukan nasihat medis, hukum, keuangan, atau nasihat profesional lain.\n\n• Plugin dan paket alat pihak ketiga milik pembuatnya; kami tidak memberi jaminan atasnya.</string>
     <string name="agreement_serious_title">Perjanjian Hukum Versi Ketat</string>
     <string name="agreement_serious_content"><![CDATA[
-        <p><b>Perjanjian Pengguna dan Kebijakan Privasi Operit</b><br>Versi: 2026-07-15; tanggal berlaku yang direncanakan: 15 Juli 2026.</p>
-        <p><b>1. Ruang Lingkup dan Versi Perjanjian</b><br>Perjanjian ini berlaku untuk klien Android Operit yang dirilis secara resmi dan fitur online opsionalnya. Dengan menggunakan aplikasi ini, Anda menyatakan telah membaca dan menyetujui versi saat ini. Aplikasi mencatat versi perjanjian yang Anda setujui saat startup; ketika perjanjian diperbarui secara substansial, aplikasi akan meminta Anda mengonfirmasi versi baru sebelum melanjutkan. Kode sumber terbuka di repositori dilisensikan berdasarkan GNU Lesser General Public License version 3 (LGPLv3) dalam file <code>LICENSE</code> di root. Perjanjian ini tidak mengecualikan atau mengurangi hak yang diberikan oleh hukum yang berlaku atau lisensi sumber terbuka.</p>
-        <p><b>2. Posisi Produk dan Layanan Pihak Ketiga</b><br>Operit adalah perangkat lunak klien sumber terbuka. Operit tidak menyediakan inferensi model bahasa besar, API Key bersama, relay permintaan chat, atau hosting cloud untuk riwayat chat. Model cloud, suara cloud, pencarian, pembuatan gambar, MCP, dan fitur jaringan lain dipilih, dikonfigurasi, dan diaktifkan oleh Anda. Saat Anda menggunakan layanan tersebut, data dikirim langsung ke penyedia layanan terkait dan tunduk pada ketentuan layanan serta kebijakan privasi penyedia tersebut. Anda harus menilai keamanan, legalitas, dan kesesuaian penyedia, model, endpoint, dan ekstensi, serta menjaga kredensial dengan baik.</p>
-        <p><b>3. Pemrosesan Data dan Privasi</b><br>Riwayat chat, kartu karakter, memori, konfigurasi model, dan API Key biasanya disimpan dalam data aplikasi di perangkat Anda. Saat Anda secara aktif mengekspor, mencadangkan, mengunggah file, menggunakan fitur jaringan pihak ketiga, atau mengirim permintaan ke layanan HTTP eksternal, data terkait akan disalin, dikirim, atau diungkap sesuai tindakan Anda. Marketplace, pengumuman, pemeriksaan pembaruan, login GitHub, dan fitur publikasi dapat mengakses Operit, GitHub, atau sumber daya pihak ketiga terkait; fitur ini tidak merelay permintaan model chat. Kelola data dan kredensial Anda bersama pengaturan keamanan perangkat, ketentuan layanan pihak ketiga, dan perjanjian ini.</p>
-        <p><b>4. Deployment Eksternal dan Tanggung Jawab Operator</b><br>Layanan HTTP eksternal, QQ Bot, balasan otomatis, dan kemampuan serupa diaktifkan atas pilihan Anda. Jika Anda menyediakannya untuk orang lain atau publik, Anda bertindak sebagai pihak yang benar-benar melakukan deployment atau operator dan bertanggung jawab atas kontrol akses, otorisasi pengguna, keamanan konten, perlindungan data, perlindungan anak di bawah umur, pemberitahuan yang diperlukan, dan kewajiban lain yang berlaku. Jika Anda secara berkelanjutan menyediakan kepada publik di Tiongkok daratan layanan interaksi emosional yang mensimulasikan sifat kepribadian, pola berpikir, atau gaya komunikasi manusia alami, Anda harus menilai dan mematuhi Interim Measures for the Administration of Artificial Intelligence Anthropomorphic Interaction Services (《人工智能拟人化互动服务管理暂行办法》) serta aturan lain yang berlaku. Anda tidak boleh menggunakan aplikasi ini untuk menyediakan kerabat virtual, pendamping virtual, atau layanan hubungan intim virtual lain kepada anak di bawah umur, mendorong ketergantungan emosional atau kecanduan, melakukan manipulasi emosional, atau melanggar hak dan kepentingan sah pihak lain.</p>
-        <p><b>5. Penggunaan yang Sah dan Tanggung Jawab Konten</b><br>Anda harus mematuhi hukum dan peraturan yang berlaku, aturan layanan pihak ketiga, dan aturan platform. Anda tidak boleh menggunakan aplikasi, ekstensi, atau konfigurasi ini untuk melakukan kegiatan melanggar hukum, melanggar hak pihak lain, mengakses sistem atau data tanpa izin, atau menyebarkan konten ilegal atau berbahaya. Anda bertanggung jawab atas konten dan tindakan yang Anda masukkan, konfigurasi, hasilkan, publikasikan, teruskan, atau operasikan. Keluaran AI dapat mengandung kesalahan, kelalaian, atau bias dan bukan nasihat medis, krisis kesehatan mental, hukum, keuangan, atau profesional lainnya. Dalam keadaan bahaya mendesak, segera hubungi layanan darurat setempat, institusi medis, atau orang tepercaya.</p>
-        <p><b>6. Perangkat Lunak Disediakan Apa Adanya</b><br>Sejauh diizinkan oleh hukum yang berlaku, perangkat lunak ini disediakan dalam kondisi "apa adanya" dan "sebagaimana tersedia". Kontributor tidak memberikan jaminan tersurat atau tersirat atas ketersediaan berkelanjutan, akurasi, keamanan, kelayakan jual, kesesuaian untuk tujuan tertentu, atau tidak adanya pelanggaran dari perangkat lunak maupun layanan pihak ketiga. Kerugian yang disebabkan oleh penggunaan perangkat lunak ini, layanan pihak ketiga, ekstensi, konfigurasi pengguna, atau modifikasi sendiri harus ditangani menurut hukum yang berlaku dan perjanjian layanan terkait.</p>
-        <p><b>7. Pembaruan Perjanjian dan Kontak</b><br>Kami dapat memperbarui perjanjian ini karena kebutuhan fitur, hukum, atau keamanan, dan menyediakan versi saat ini di dalam aplikasi. Pembaruan yang berdampak substansial pada hak pengguna akan berlaku dengan menaikkan versi perjanjian dan meminta konfirmasi ulang. Anda dapat menyampaikan pertanyaan dan masukan melalui repositori proyek, pintu masuk umpan balik dalam aplikasi, atau kanal kontak publik.</p>
+        <p><b>Perjanjian Pengguna dan Kebijakan Privasi Orbit (cabang pribadi Operit)</b><br>Versi: 2026-11-20; tanggal berlaku: 20 November 2026.</p>
+        <p><b>1. Proyek sumber terbuka dan cakupan</b><br>Aplikasi ini adalah cabang pribadi sumber terbuka dari AAswordman / Operit yang dikelola dan dirilis oleh CATMIAOZHI, dan bukan rilis resmi proyek induk. Seluruh kode sumbernya terbuka di https://github.com/CATMIAOZHI/orbit dan dilisensikan berdasarkan lisensi dalam berkas <code>LICENSE</code> di akar repositori (berdasarkan GNU Lesser General Public License versi 3, LGPLv3); siapa pun boleh membaca, memeriksa, membangun, dan mengubahnya. Perjanjian ini berlaku untuk klien Android yang dirilis dari repositori tersebut beserta fitur daring opsionalnya, dan tidak mengecualikan atau mengurangi hak yang diberikan kepada Anda oleh hukum yang berlaku atau lisensi sumber terbuka.</p>
+        <p><b>2. Sifat produk</b><br>Aplikasi ini adalah perangkat lunak klien yang berjalan di perangkat Anda dan disediakan gratis. Pengelola tidak menjalankan layanan inferensi model, penerusan permintaan, atau penyimpanan cloud, tidak menyediakan API Key bersama, dan tidak menawarkan layanan daring apa pun kepada publik. Anda dapat mengelola pengaturan dan data Orbit; nama, kepribadian, dan ingatan Orbit dapat terbentuk atau berubah selama pemakaian berdasarkan percakapan Anda.</p>
+        <p><b>3. Layanan pihak ketiga dan biaya</b><br>Model cloud, suara, pencarian, pembuatan gambar, MCP, saluran WeChat, plugin, dan fitur daring lain Anda pilih, atur, dan aktifkan sendiri; data yang diperlukan (termasuk percakapan yang dikirim ke model dan isi prompt seperti profil dan ingatan Orbit) dikirim langsung dari perangkat Anda ke penyedia yang bersangkutan dan tunduk pada ketentuan serta kebijakan privasinya. Biaya yang mungkin timbul menjadi tanggungan Anda, termasuk biaya model atau layanan berbayar yang dipanggil Orbit di latar belakang sesuai pengaturan Anda. Angka pemakaian dan biaya di aplikasi hanya sebagai acuan; tagihan penyedia yang berlaku.</p>
+        <p><b>4. Data dan privasi</b><br>Obrolan, ingatan dan profil pengguna Orbit, kredensial di brankas, pengaturan model, dan API Key secara bawaan disimpan dalam data aplikasi di perangkat Anda; pengelola tidak dapat mengaksesnya dan tidak mengumpulkannya. Jika cadangan sistem atau pemindahan antarperangkat aktif, sistem dapat mencadangkan atau memindahkan data aplikasi, kecuali brankas. Saat Anda mengekspor, mencadangkan, mengunggah, membagikan, atau memakai fitur daring, data terkait disalin atau dikirim sesuai arahan Anda. Pemeriksaan pembaruan, katalog harga, dan fitur serupa mengakses GitHub atau sumber pihak ketiga terkait; fitur-fitur itu tidak mengirim obrolan Anda.</p>
+        <p><b>5. Izin dan tindakan otomatis</b><br>Dengan izin Anda, aplikasi ini dapat memakai terminal, file, notifikasi, mikrofon, aksesibilitas, ADB, Shizuku, atau Root, membaca SMS, kontak, kalender, isi notifikasi, dan lokasi, mengoperasikan aplikasi di latar belakang, mengambil alih browser bawaan, memakai kredensial dari brankas, dan menjalankan tugas secara otomatis di latar belakang sesuai pengaturan Anda; setelah diizinkan, tindakan ini dapat berjalan tanpa bertanya setiap kali. Tinjauan otomatis diputuskan oleh model yang Anda atur dan tidak dijamin benar. Sebelum memberi izin apa pun atau menyalakan tindakan otomatis, Anda harus memahami fungsi dan risikonya serta mencadangkan data penting.</p>
+        <p><b>6. Tanggung jawab Anda</b><br>Anda yang memutuskan apakah akan mengunduh, memasang, mengatur, dan memakai aplikasi ini, dan Anda bertanggung jawab atas pemakaian, pengaturan, izin, konten yang Anda masukkan dan terbitkan, serta tindakan yang dilakukan Orbit dengan izin Anda beserta akibatnya. Anda wajib mematuhi hukum dan aturan pihak ketiga yang berlaku dan tidak boleh memakai aplikasi ini untuk kegiatan ilegal, melanggar hak orang lain, mengakses sistem atau data tanpa izin, atau menyebarkan konten ilegal atau berbahaya. Anda wajib memeriksa dan mematuhi hukum negara atau wilayah tempat Anda memakai aplikasi ini, serta memakai aplikasi dan fiturnya hanya sejauh diizinkan hukum setempat. Jika Anda membuka kemampuan aplikasi (seperti layanan HTTP eksternal) untuk orang lain atau publik, Anda adalah operator sebenarnya dan harus menangani sendiri kontrol akses, keamanan konten, perlindungan data, perlindungan anak, dan kewajiban lain, serta mematuhi aturan yang berlaku seperti Langkah Sementara Tiongkok tentang layanan interaksi AI antropomorfis; Anda tidak boleh menawarkan layanan hubungan intim virtual kepada anak di bawah umur, memicu ketergantungan emosional atau kecanduan, atau memanipulasi emosi. Keluaran AI bisa salah dan bukan nasihat medis, psikologis, hukum, keuangan, atau nasihat profesional lain; dalam keadaan darurat, hubungi layanan darurat setempat atau orang yang Anda percaya.</p>
+        <p><b>7. Konten pihak ketiga</b><br>Plugin, skrip, Skill, paket alat, dan konten lain di pasar menjadi milik pembuat atau pemegang hak yang tercantum, beserta tanggung jawabnya. Ditampilkan di pasar atau dipasang tidak berarti pengelola menjamin atau mendukungnya. Periksa lisensinya sebelum memakai, mengubah, atau mendistribusikan ulang.</p>
+        <p><b>8. Disediakan apa adanya; batasan tanggung jawab</b><br>Perangkat lunak ini gratis dan sumber terbuka, disediakan apa adanya dan sebagaimana tersedia, tanpa jaminan tersurat maupun tersirat, termasuk soal ketersediaan, ketepatan, keamanan, kelayakan dagang, kesesuaian untuk tujuan tertentu, atau tidak melanggar hak. Sejauh diizinkan hukum yang berlaku, pengelola, proyek induk, dan kontributor tidak bertanggung jawab atas kerugian langsung maupun tidak langsung akibat memakai atau tidak dapat memakai perangkat lunak ini, layanan pihak ketiga, ekstensi, pengaturan pengguna, atau tindakan yang dilakukan AI.</p>
+        <p><b>9. Pembaruan dan kontak</b><br>Perjanjian ini dapat diperbarui karena alasan fitur, hukum, atau keamanan. Pembaruan yang berpengaruh besar pada hak Anda berlaku dengan menaikkan versi perjanjian dan meminta Anda menyetujuinya lagi saat membuka aplikasi. Kirim pertanyaan dan masukan melalui Issues di repositori proyek.</p>
     ]]></string>
     <string name="agreement_disclaimer">Versi mudah dipahami hanya untuk mempermudah pemahaman. Jika berbeda dari versi formal bahasa Tionghoa, versi formal bahasa Tionghoa yang berlaku.</string>
     <string name="agreement_accept">Saya telah membaca dan menyetujui</string>
@@ -2871,7 +2875,7 @@
     <string name="chat_start_ai_computer_failed">Gagal memulai komputer AI: %1$s</string>
     <string name="chat_ai_computer_closed_due_to_workspace">Komputer AI telah ditutup (karena membuka ruang kerja)</string>
     <string name="thinking_mode">Mode berpikir</string>
-    <string name="thinking_mode_desc">Saat ini mendukung model Gemini, Qwen3, Claude, Doubao, NVIDIA, Silicon Flow, dan MNN lokal, dapat mengaktifkan pemikiran bawaan.</string>
+    <string name="thinking_mode_desc">Saat ini, fitur penalaran bawaan dapat diaktifkan untuk Gemini, Qwen3, Claude, Doubao, NVIDIA, dan SiliconFlow.</string>
     <string name="details">Detail</string>
     <string name="model_selection">Pemilihan model</string>
     <string name="prompt_selection">Pemilihan prompt</string>
@@ -3959,32 +3963,6 @@
     <string name="layout_reset_settings_desc">Mengembalikan semua pengaturan penyesuaian tata letak ke nilai default</string>
 
     <string name="voice_assistant_widget_title">Asisten Suara</string>
-    <string name="screen_title_mnn_model_download">Unduh Model MNN</string>
-    <string name="mnn_model_download">Unduh Model MNN</string>
-    <string name="mnn_model_management">Manajemen Model</string>
-    <string name="mnn_download_from_modelscope">Unduh dari ModelScope</string>
-    <string name="mnn_model_size">Ukuran model: %1$.2f GB</string>
-    <string name="mnn_downloading">Mengunduh</string>
-    <string name="mnn_download_speed">Kecepatan: %1$s</string>
-    <string name="mnn_download_complete">Unduhan selesai</string>
-    <string name="mnn_download_failed">Unduhan gagal: %1$s</string>
-    <string name="mnn_no_models_downloaded">Belum ada model yang diunduh</string>
-    <string name="mnn_select_downloaded_model">Pilih model yang telah diunduh</string>
-    <string name="mnn_model_name_only">Nama Model</string>
-    <string name="mnn_download_progress">Progres: %1$d%%</string>
-    <string name="mnn_pause_download">Jeda unduhan</string>
-    <string name="mnn_resume_download">Lanjutkan unduhan</string>
-    <string name="mnn_delete_model">Hapus model</string>
-    <string name="mnn_confirm_delete">Konfirmasi hapus model ini?</string>
-    <string name="mnn_loading_models">Memuat daftar model...</string>
-    <string name="mnn_connecting">Menghubungkan...</string>
-    <string name="mnn_load_failed">Gagal memuat</string>
-    <string name="mnn_retry">Coba lagi</string>
-    <string name="mnn_start_download">Mulai unduh</string>
-    <string name="mnn_no_local_models">Belum ada model yang diunduh</string>
-    <string name="mnn_go_download">Pergi unduh</string>
-    <string name="mnn_search_models">Cari model...</string>
-    <string name="mnn_no_search_results">Tidak ditemukan model yang cocok</string>
     <string name="persona_card_generation_title">Kartu Karakter yang Dimodifikasi</string>
     <string name="error_character_card_not_exist">Kartu karakter tidak ada</string>
     <string name="error_unsupported_field">Bidang tidak didukung: %1$s</string>
@@ -4140,15 +4118,6 @@
     <string name="dialog_message_orientation_change">Terdeteksi perubahan orientasi layar, muat ulang halaman?</string>
     <string name="dialog_button_confirm">Muat Ulang</string>
     <string name="dialog_button_dismiss">Batal</string>
-    <string name="llama_gpu_layers_subtitle">Hanya berlaku jika build saat ini memiliki backend GPU, 0 berarti CPU murni</string>
-    <string name="llama_use_mmap">Gunakan mmap</string>
-    <string name="llama_use_mmap_subtitle">Secara default disarankan untuk dinonaktifkan di Android, banyak model lebih mudah memuat GGUF setelah dinonaktifkan</string>
-    <string name="llama_flash_attention">Aktifkan Flash Attention</string>
-    <string name="llama_flash_attention_subtitle">Secara default disarankan untuk dinonaktifkan di perangkat seluler, untuk menghindari ketidakstabilan beberapa backend Android</string>
-    <string name="llama_kv_unified">Cache KV terpadu</string>
-    <string name="llama_kv_unified_subtitle">Secara default disarankan untuk diaktifkan untuk obrolan sesi tunggal, dapat mengurangi overhead manajemen konteks di Android</string>
-    <string name="llama_offload_kqv">Offload KQV ke GPU</string>
-    <string name="llama_offload_kqv_subtitle">Hanya bermakna jika jumlah lapisan GPU lebih besar dari 0, akan diabaikan secara otomatis jika tidak ada backend GPU</string>
     <string name="workflow_execution_running">Sedang dieksekusi…</string>
     <string name="workflow_execution_success">Eksekusi berhasil</string>
     <string name="workflow_execution_failed">Eksekusi gagal</string>
@@ -4203,24 +4172,6 @@
     <string name="message_limit_reached_title">Batas jumlah percakapan tercapai</string>
     <string name="message_limit_reached_message">Jumlah percakapan saat ini telah mencapai batas %1$d.\nUntuk menjaga kualitas dan kinerja percakapan, harap kosongkan riwayat sebelum melanjutkan.</string>
     <string name="go_clear">Kosongkan</string>
-    <string name="mnn_local_model_tip">Model yang dijalankan secara lokal memiliki kemampuan pemahaman yang lebih rendah, disarankan untuk menonaktifkan tautan memori dan mengaktifkan alat yang dinonaktifkan untuk percakapan</string>
-    <string name="mnn_model_path">Jalur file model</string>
-    <string name="mnn_model_path_placeholder">Masukkan jalur lengkap file model MNN</string>
-    <string name="mnn_forward_type">Jenis perhitungan</string>
-    <string name="mnn_thread_count">Jumlah thread</string>
-    <string name="llama_local_model_tip">Model yang dijalankan secara lokal memiliki kemampuan pemahaman yang lebih rendah, disarankan untuk menonaktifkan tautan memori dan mengaktifkan alat yang dinonaktifkan untuk percakapan</string>
-    <string name="llama_local_model_download_tip">Model llama.cpp perlu diunduh sendiri (.gguf). Letakkan file model di folder berikut, lalu isi nama file di "Nama Model":</string>
-    <string name="llama_local_model_dir">Direktori model default: %1$s</string>
-    <string name="llama_auto_config_tip">Parameter kompatibilitas Android seperti ukuran batch, mmap, Flash Attention, KV, dll. telah disertakan. Untuk penggunaan biasa, cukup sesuaikan jumlah thread, ukuran konteks, dan jumlah lapisan GPU.</string>
-    <string name="llama_select_downloaded_model">Pilih model yang telah diunduh</string>
-    <string name="llama_thread_count">Jumlah thread</string>
-    <string name="llama_context_size">Panjang konteks</string>
-    <string name="llama_context_size_subtitle">Di Android, disarankan untuk mulai dari 2048, terlalu besar dapat menyebabkan kegagalan inisialisasi karena tekanan memori</string>
-    <string name="llama_batch_size">Ukuran batch</string>
-    <string name="llama_batch_size_subtitle">Disarankan tidak lebih dari 512, dan tidak lebih besar dari panjang konteks</string>
-    <string name="llama_ubatch_size">Ukuran batch mikro</string>
-    <string name="llama_ubatch_size_subtitle">Disarankan tidak lebih dari ukuran batch, biasanya 512 lebih stabil di Android</string>
-    <string name="llama_gpu_layers">Jumlah lapisan GPU</string>
 
     <string name="text_label">Teks</string>
     <string name="attributes_optional">Atribut (opsional)</string>
@@ -6032,23 +5983,6 @@
     <string name="ai_message_dialogue_review">\n\nTinjauan Dialog:\n</string>
     <string name="ai_message_continue_task_if_complete">%1$s\n\nSilakan lanjutkan, jika tugas selesai, keluarkan ringkasan</string>
     <string name="ai_message_user_label">Pengguna</string>
-    <string name="mnn_model_dir_not_exist">Direktori model tidak ada: %1$s\nPastikan model telah diunduh</string>
-    <string name="mnn_config_not_exist">File konfigurasi tidak ada: %1$s\nPastikan model diunduh secara lengkap</string>
-    <string name="mnn_cannot_create_session">Tidak dapat membuat sesi MNN LLM, periksa file dan konfigurasi model</string>
-    <string name="mnn_user_prompt">Pengguna: %1$s\n</string>
-    <string name="mnn_assistant_prompt">Asisten: %1$s\n</string>
-    <string name="mnn_system_prompt">Sistem: %1$s\n</string>
-    <string name="mnn_message_format">Pengguna: %1$s\n</string>
-    <string name="mnn_assistant">Asisten: </string>
-    <string name="mnn_error_with_message">Kesalahan: %1$s</string>
-    <string name="mnn_session_not_initialized">Kesalahan: Sesi LLM belum diinisialisasi</string>
-    <string name="mnn_reasoning_error">\n\n[Terjadi kesalahan dalam proses penalaran]</string>
-    <string name="mnn_generic_error">Kesalahan: %1$s</string>
-    <string name="mnn_model_not_configured">Nama model belum dikonfigurasi</string>
-    <string name="mnn_model_dir_missing">Direktori model tidak ada: %1$s\nHarap unduh model terlebih dahulu</string>
-    <string name="mnn_file_status">Status file:</string>
-    <string name="mnn_init_failed">Inisialisasi model gagal</string>
-    <string name="mnn_connection_success">Koneksi model MNN LLM berhasil!\n\nModel: %1$s\nDirektori: %2$s\nUkuran total: %3$s\n\n%4$s</string>
     <string name="apk_unnamed_function">(Fungsi Tanpa Nama)</string>
     <string name="apk_unknown_error">Kesalahan tidak diketahui</string>
 
@@ -6187,14 +6121,6 @@
     <string name="html_export_group">Grup</string>
     <string name="html_export_message_count">Jumlah Pesan</string>
     <string name="html_export_footer">Diekspor dari Operit AI Assistant</string>
-    <string name="mnn_no_cache_data">Tidak ada data cache</string>
-    <string name="mnn_response_empty">Bodi respons kosong</string>
-    <string name="mnn_fetch_repo_files_failed">Gagal mengambil daftar file repositori: %1$s</string>
-    <string name="mnn_download_failed_http">Unduhan gagal: HTTP %1$d %2$s</string>
-    <string name="mnn_rename_failed">Gagal mengganti nama</string>
-    <string name="mnn_unknown_error">Kesalahan tidak diketahui</string>
-    <string name="mnn_download_file_failed">Gagal mengunduh file: %1$s (HTTP %2$d)</string>
-    <string name="mnn_download_paused">Unduhan dijeda</string>
     <string name="mcp_send_command">Kirim Perintah Bridge</string>
     <string name="mcp_service_label">Layanan</string>
     <string name="mcp_other_params">Parameter Lain</string>
@@ -6316,7 +6242,6 @@
     <string name="web_session_downloads_active_bar">Mengunduh %1$d item</string>
     <string name="web_session_downloads_active_unknown">Mempersiapkan</string>
 
-    <string name="llama_error_inference_tag">[Kesalahan dalam proses inferensi]</string>
     <string name="task_error_execution_failed">Eksekusi tugas gagal: %1$s</string>
     <string name="task_context_original_request">Permintaan pengguna asli: %1$s</string>
     <string name="task_context_current_task">Tugas saat ini: %1$s</string>
@@ -6554,12 +6479,6 @@
     <string name="conversation_analyze_image_prompt">Please analyze this image.</string>
     <string name="conversation_analyze_audio_prompt">Please analyze this audio.</string>
     <string name="conversation_analyze_video_prompt">Please analyze this video.</string>
-    <string name="llama_error_model_file_not_exist">File model tidak ada: %1$s</string>
-    <string name="llama_error_create_session_failed">Gagal membuat sesi llama.cpp (nativeCreateSession mengembalikan 0)</string>
-    <string name="llama_error_prefix">Kesalahan</string>
-    <string name="llama_error_session_create_failed">Kesalahan: Gagal membuat sesi llama.cpp (harap periksa file model dan output kompilasi JNI)</string>
-    <string name="llama_error_chat_template_failed">Kesalahan: Tidak dapat menerapkan template percakapan model (llama_model_chat_template/llama_chat_apply_template)</string>
-    <string name="llama_error_inference_failed">Terjadi kesalahan dalam proses inferensi llama.cpp</string>
 
     <string name="web_session_download_pause">Jeda</string>
     <string name="web_session_download_resume">Lanjutkan</string>

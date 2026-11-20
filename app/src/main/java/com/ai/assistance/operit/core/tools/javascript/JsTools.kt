@@ -878,7 +878,12 @@ fun getJsToolsDefinition(): String {
                 },
                 // 执行终端命令 - 一次性收集输出
                 terminal: {
-                    create: (sessionName) => toolCall("create_terminal_session", { session_name: sessionName }),
+                    create: (sessionName, options = {}) => {
+                        const params = { session_name: sessionName };
+                        // Only find an existing session; never start one.
+                        if (options && options.existingOnly) params.existing_only = "true";
+                        return toolCall("create_terminal_session", params);
+                    },
                     start: (sessionId, command, options = {}) => toolCall("start_terminal_task", {
                         session_id: sessionId, command, timeout_ms: options.timeoutMs, yield_ms: options.yieldMs
                     }),

@@ -12,7 +12,7 @@ Confirm a successful write before saying you remembered something; check before 
 | Facts about the user's life, situational preferences, decisions and commitments made together | `memory.md`, in four fixed sections: facts, preferences, decisions and commitments (marked pending, done or cancelled). Use `memory_review`'s `notes` action and name the `section` when adding; one entry per line, ending with its date. Only what the user said or confirmed; unconfirmed inferences stay out. |
 | People, circles, and relationships | One file per person under `memory/people/`, one per circle under `memory/groups/`. Record known members and relationships in family, work, or friend circles, not messaging groups. Change them with `edit_file` and create them with `write_file`; the app maintains their indexes. |
 | Work on a particular day | `memory/YYYY-MM-DD.md`; use `orbit_file`'s `daily` action. |
-| Corrections, practical lessons, tool usage and pitfalls | `LESSONS.md`; add one at the end of its section with `edit_file`. These never go in `memory.md`. |
+| Corrections, practical lessons, tool usage and pitfalls | `LESSONS.md`; add one at the end of its section with `edit_file`, written as one rule to follow next time, without message ids or the story. These never go in `memory.md`. |
 | Topics, timing, and style of proactive messages | `PROACTIVE_PREFERENCES.md`. |
 
 Load `memory_review` with `use_package`, then follow its current tool instructions.
@@ -31,7 +31,7 @@ When the user finds a mistake, inspect the current content and correct it; do no
 Learning records and origin records can explain changes, but are not a queue awaiting permission.
 
 When a new fact replaces an old one, correct the original location instead of retaining contradictory versions.
-Old lessons in `LESSONS.md` can also be corrected or removed in place; background review can revise existing entries instead of only appending.
+Old lessons in `LESSONS.md` can also be corrected or removed in place; background review can revise existing entries instead of only appending. Every chat carries up to its first 8000 characters: the lessons tools and the editor do not let it grow past that; file tools still write a longer book, but chats do not see the part past the limit. When it is nearly full, merge similar lessons and drop outdated ones before adding.
 Ordinary profile edits do not skip unread conversations. New memory and forgetting reach the prompt in a new chat, at the daily prompt refresh (after the nightly review, or after 24 hours), or after the current chat is compacted; tools can read the latest content during a chat.
 Create person and circle notes only for people and circles the user explicitly mentioned, never from a contact name or inference; record only relationships the user stated and mark anything uncertain.
 Never store passwords, verification codes, or payment-card numbers in memory.
@@ -59,6 +59,6 @@ Import does not restore the original chat, account settings, or another app's pe
 Use `orbit_forget action=plan` to inspect copies and the proposed cleanup scope.
 Explain the categories to be cleared and that deletion is irreversible, without repeating the information being forgotten.
 Use `confirm` only after the user explicitly agrees, then say honestly what was cleared and what `remaining` still lists.
-Matches in SOUL.md and IDENTITY.md are for the user to edit.
+Matches in SOUL.md, IDENTITY.md and the user's own documents in files/ (a downloaded novel, a draft) are only listed, never changed automatically; the user decides. Files that could not be checked are marked unchecked with a reason (too big, changing while read, unreadable); tell the user they were not checked. Ask for confirmation only when something can be cleared.
 Original chat messages are not deleted; the user can delete that chat from the chat list.
 When background memory learning or the nightly review reads that the user asked to forget something, it does not record it and removes what it recorded before; the proactive check skips it and drafts nothing about it.

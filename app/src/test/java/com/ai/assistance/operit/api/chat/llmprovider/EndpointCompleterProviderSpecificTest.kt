@@ -27,10 +27,10 @@ class EndpointCompleterProviderSpecificTest {
         )
     }
 
-    @Test fun mnnProvider_withWhitespaceAndHashReturnsTrimmedRawUrl() {
+    @Test fun ollamaCloudProvider_withWhitespaceAndHashReturnsTrimmedRawUrl() {
         assertEquals(
-            "http://127.0.0.1:8080",
-            EndpointCompleter.completeEndpoint("  http://127.0.0.1:8080#  ", ApiProviderType.MNN)
+            "https://ollama.com",
+            EndpointCompleter.completeEndpoint("  https://ollama.com#  ", ApiProviderType.OLLAMA_CLOUD)
         )
     }
 }

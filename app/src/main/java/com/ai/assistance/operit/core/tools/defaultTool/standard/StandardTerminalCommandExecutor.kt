@@ -25,6 +25,18 @@ class StandardTerminalCommandExecutor(private val context: Context) {
         // 用于将会话名称映射到会话ID
         private val sessionNameToIdMap = ConcurrentHashMap<String, String>()
         private val taskRegistry = TerminalTaskRegistry(CoroutineScope(SupervisorJob() + Dispatchers.IO))
+        // The chat that created each automation session (create_terminal_session made it for that chat).
+        private val sessionOwners = ConcurrentHashMap<String, String>()
+
+        /** The open terminal session [sessionId] was created by the chat [chatId] for itself. */
+        fun chatOwnsSession(context: Context, chatId: String, sessionId: String): Boolean {
+            if (sessionOwners[sessionId] != chatId) return false
+            val open = Terminal.getInstance(context).terminalState.value.sessions.any {
+                it.id == sessionId && it.automation && !it.commandLifecycle.closed
+            }
+            if (!open) sessionOwners.remove(sessionId)
+            return open
+        }
     }
 
     fun terminalTask(tool: AITool, action: String): ToolResult {
@@ -48,15 +60,16 @@ class StandardTerminalCommandExecutor(private val context: Context) {
                 require(command.isNotBlank()) { "command must not be empty." }
                 val timeoutMs = param("timeout_ms")?.toLongOrNull() ?: 1_800_000L
                 require(timeoutMs >= 3_000L) { "timeout_ms must be at least 3000." }
-                taskRegistry.start(sessionId, timeoutMs) { commandId ->
+                taskRegistry.start(chatId, sessionId, timeoutMs) { commandId ->
                     terminal.executeCommandFlow(sessionId, command, commandId)
                 }.also { startedId = it }
             } else {
-                param("run_id") ?: param("session_id")?.let(taskRegistry::latest)
+                // A chat only sees and stops the runs it started.
+                param("run_id") ?: param("session_id")?.let { taskRegistry.latest(chatId, it) }
                     ?: error("No terminal task found. Pass the runId returned by terminal.")
             }
-            val result = if (action == "cancel") taskRegistry.cancel(id) else taskRegistry.poll(
-                id, yieldMs, inbox?.let { { it.awaitInput() } },
+            val result = if (action == "cancel") taskRegistry.cancel(chatId, id) else taskRegistry.poll(
+                chatId, id, yieldMs, inbox?.let { { it.awaitInput() } },
             )
             val session = terminal.terminalState.value.sessions.find { it.id == result.sessionId }
             val status = if (result.status == "running" && session != null &&
@@ -74,7 +87,7 @@ class StandardTerminalCommandExecutor(private val context: Context) {
                 screen = result.screen.takeUnless { finished }
             ))
         } catch (e: CancellationException) {
-            startedId?.let { withContext(NonCancellable) { taskRegistry.cancel(it) } }
+            startedId?.let { withContext(NonCancellable) { taskRegistry.cancel(chatId, it) } }
             throw e
         } catch (e: Exception) {
             ToolResult(tool.name, false, StringResultData(""), e.message)
@@ -97,10 +110,16 @@ class StandardTerminalCommandExecutor(private val context: Context) {
                 }
 
                 val terminal = Terminal.getInstance(context)
+                val chatId = com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
+                    .currentToolRuntimeContext()?.callerChatId?.takeIf { it.isNotBlank() }
+                // Only looking: never start a session, and in a chat only find one that chat created
+                // (a session of the same name is not enough).
+                val existingOnly = tool.parameters.find { it.name == "existing_only" }?.value?.trim() == "true"
 
                 // 修正：直接检查 Terminal 单例中是否已存在同名会话，而不是依赖本地缓存
                 val existingSession = terminal.terminalState.value.sessions.find {
-                    it.title == sessionName && it.automation && !it.commandLifecycle.closed
+                    it.title == sessionName && it.automation && !it.commandLifecycle.closed &&
+                        (!existingOnly || chatId == null || sessionOwners[it.id] == chatId)
                 }
                 if (existingSession != null) {
                     // 如果存在，更新本地缓存并返回该会话
@@ -116,9 +135,26 @@ class StandardTerminalCommandExecutor(private val context: Context) {
                     )
                 }
 
+                if (existingOnly) {
+                    return@runBlocking ToolResult(
+                        toolName = tool.name,
+                        success = false,
+                        result = StringResultData(""),
+                        error = context.getString(R.string.terminal_error_no_chat_session)
+                    )
+                }
+
                 // 如果 Terminal 中不存在，则创建新会话
                 val newSessionId = terminal.createSession(sessionName, automation = true)
                 sessionNameToIdMap[sessionName] = newSessionId
+                // Sessions closed since (by a tool, the user or their process) leave no owner behind.
+                // One lock keeps a concurrent creation's fresh owner out of an older snapshot's sweep.
+                synchronized(sessionOwners) {
+                    val openIds = terminal.terminalState.value.sessions
+                        .filter { !it.commandLifecycle.closed }.mapTo(HashSet()) { it.id }
+                    sessionOwners.keys.retainAll(openIds)
+                    chatId?.let { sessionOwners[newSessionId] = it }
+                }
 
                 ToolResult(
                     toolName = tool.name,

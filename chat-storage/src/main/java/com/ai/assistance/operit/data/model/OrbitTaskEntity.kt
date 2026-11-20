@@ -45,6 +45,13 @@ data class OrbitTaskEntity(
     @ColumnInfo(defaultValue = "'DEFAULT'") val modelRole: String = "DEFAULT",
 )
 
+/** The columns of a task that decide which of its Orbit's models it uses. */
+data class OrbitTaskModelFields(
+    val source: String,
+    val useSubagent: Boolean,
+    val modelRole: String,
+)
+
 @Entity(tableName = "orbit_events", indices = [Index("taskId"), Index("sourceRunId")])
 data class OrbitEventEntity(
     /** Stable key: task + definition version + scheduled time, or explicit request id. */

@@ -302,6 +302,20 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 .distinctUntilChanged().drop(1).collect { onPredictionThinkingChanged() }
         }
         viewModelScope.launch {
+            // The open chat's own level, also when the web chat sets it; a chat switch is handled above.
+            var last: Pair<String?, Int?>? = null
+            combine(
+                currentChatId,
+                com.ai.assistance.operit.data.preferences.ChatModelSelections.getInstance(context).levels,
+            ) { chatId, levels -> chatId to chatId?.let(levels::get) }
+                .distinctUntilChanged()
+                .collect { now ->
+                    val before = last
+                    last = now
+                    if (before != null && before.first == now.first) onPredictionThinkingChanged()
+                }
+        }
+        viewModelScope.launch {
             combine(
                 enableTools, toolPromptVisibility,
                 disableUserPreferenceDescription,
@@ -592,12 +606,14 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     fun openContextEditor(draft: String? = null) {
         val chatId = currentChatId.value ?: return
-        val configId = apiConfigDelegate.effectiveChatConfigTarget.value.configId
+        val target = apiConfigDelegate.effectiveChatConfigTarget.value
+        val configId = target.configId
         val revision = messageProcessingDelegate.draftRevision
         val request = ++contextEditorRequest
         viewModelScope.launch {
             try {
-                val resolved = apiConfigDelegate.loadChatContext(chatId, configId)
+                val resolved = apiConfigDelegate.loadChatContext(chatId, configId,
+                    target.modelIndex.takeIf { target.isResolved })
                 if (currentChatId.value != chatId || request != contextEditorRequest) return@launch
                 _contextEditor.value = com.ai.assistance.operit.ui.features.chat.components.ChatContextEditorTarget(
                     chatId, configId, resolved.policy, resolved.capacityK, draft, revision)
@@ -914,6 +930,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     fun updateThinkingQualityLevel(level: Int) {
         onPredictionThinkingChanged()
         apiConfigDelegate.updateThinkingQualityLevel(level)
+    }
+
+    /** The composer's thinking level: only [chatId] changes, other chats keep theirs. */
+    fun updateChatThinkingQualityLevel(chatId: String?, level: Int) {
+        onPredictionThinkingChanged()
+        com.ai.assistance.operit.ui.features.orbit.selectChatThinkingLevel(context, chatId, level)
     }
 
     // 切换记忆自动更新的方法现在委托给ApiConfigDelegate
@@ -2508,6 +2530,25 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     /** Removes an attachment the user took out of the input box, by its file path */
     fun removeAttachment(filePath: String) {
         attachmentDelegate.discardAttachment(filePath)
+    }
+
+    /**
+     * Puts an edited copy of a picture in the input box in place of [oldPath], in the same spot.
+     * Returns once it is there; throws if it could not be, so the editor keeps the changes.
+     */
+    suspend fun replaceEditedImage(oldPath: String, edited: java.io.File, fileName: String) {
+        val chatId = chatHistoryDelegate.currentChatId.value
+        // A message being got ready to send has already taken the pictures in the box.
+        fun sending() = chatId != null && chatId in modelPreparingChatIds.value
+        check(!sending()) { context.getString(R.string.attachment_edit_save_failed) }
+        try {
+            attachmentDelegate.replaceEditedImage(oldPath, edited, fileName, keepOld = ::sending)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "Could not replace an edited picture", e)
+            throw e
+        }
     }
 
     /** Quotes an Orbit's own files in the input box, in place (no copies). */

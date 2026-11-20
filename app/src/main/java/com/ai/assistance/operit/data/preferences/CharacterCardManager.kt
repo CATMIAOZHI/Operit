@@ -1142,15 +1142,27 @@ class CharacterCardManager private constructor(private val context: Context) {
     /**
      * 从酒馆角色卡JSON字符串创建角色卡
      */
-    suspend fun createCharacterCardFromTavernJson(jsonString: String): Result<String> {
-        return try {
-            val gson = Gson()
-            val tavernCard = gson.fromJson(jsonString, TavernCharacterCard::class.java)
-            
-            if (tavernCard.data.name.isBlank()) {
-                return Result.failure(Exception(context.getString(R.string.charactercard_name_empty)))
-            }
+    suspend fun createCharacterCardFromTavernJson(jsonString: String): Result<String> =
+        parseTavernCard(jsonString).fold({ createCharacterCardFromTavernCard(it) }, { Result.failure(it) })
 
+    /** Reads a Tavern card from [jsonString] without saving anything; fails as the import would. */
+    fun parseTavernCard(jsonString: String): Result<TavernCharacterCard> =
+        try {
+            val tavernCard = Gson().fromJson(jsonString, TavernCharacterCard::class.java)
+            if (tavernCard.data.name.isBlank()) {
+                Result.failure(Exception(context.getString(R.string.charactercard_name_empty)))
+            } else {
+                Result.success(tavernCard)
+            }
+        } catch (e: JsonSyntaxException) {
+            Result.failure(Exception(context.getString(R.string.charactercard_json_format_error, e.message ?: "")))
+        } catch (e: Exception) {
+            Result.failure(Exception(context.getString(R.string.charactercard_parse_failed, e.message ?: "")))
+        }
+
+    /** Saves a card [parseTavernCard] read: its world book and tags first, then the card. */
+    suspend fun createCharacterCardFromTavernCard(tavernCard: TavernCharacterCard): Result<String> {
+        return try {
             // --- New logic for Character Book ---
             var worldBookTagId: String? = null
             tavernCard.data.character_book?.let { book ->
@@ -1318,8 +1330,10 @@ class CharacterCardManager private constructor(private val context: Context) {
     /**
      * 从PNG图片的tEXt块中提取JSON数据
      */
-    private fun extractJsonFromPng(inputStream: InputStream): String {
-        val bytes = inputStream.readBytes()
+    private fun extractJsonFromPng(inputStream: InputStream): String = tavernJsonFromPng(inputStream.readBytes())
+
+    /** The card JSON in a Tavern PNG already read into [bytes]; throws when it has none. */
+    fun tavernJsonFromPng(bytes: ByteArray): String {
         
         // PNG文件头检查
         if (bytes.size < 8 || !isPngHeader(bytes)) {

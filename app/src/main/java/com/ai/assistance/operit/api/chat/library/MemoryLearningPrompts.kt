@@ -167,6 +167,10 @@ private val ORBIT_NOTES_SCOPE = """
     repeatable procedure becomes a skill when skills are in scope; progress is not kept at all.
     Read LESSONS.md with people_read and use lesson_change to replace a corrected lesson or remove one
     that is outdated or duplicated; do not just append a conflicting rule.
+    Write a lesson as one rule to follow next time (in situation X, do Y), without message ids or the story
+    of what happened. Every chat carries LESSONS.md in full, so it holds at most ${com.ai.assistance.operit.features.orbit.OrbitFiles.MAX_LESSONS_PROMPT} characters:
+    when it is near or over that, merge similar lessons and drop outdated ones with lesson_change, and strip
+    message ids and stories from old entries as you go.
     The unsorted section holds notes from before the sections existed. When it is there, move a few of its
     entries on each page: first add each one to the right section, or lesson_add a tool lesson that still
     holds, and only after that succeeds remove it from unsorted. Remove without moving only an entry that is
