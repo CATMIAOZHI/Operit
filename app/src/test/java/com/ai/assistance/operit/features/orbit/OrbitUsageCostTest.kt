@@ -34,7 +34,7 @@ class OrbitUsageCostTest {
                 OrbitQuota.ModelUsage("2026-11-19", "orbit-b", "flash", 100, 0, 1, 0, 0.25, 0.0, 1),
             ),
         )
-        val view = OrbitUsageCost.view(data, day2, day2, me, emptyMap(), cny)
+        val view = OrbitUsageCost.view(data, day2, day2, me, cny)
         // 1.0 + 0.5 USD at 7 + 0.25 from the other Orbit.
         assertEquals(4.75, view.total, 1e-9)
         assertEquals(0.0, view.estimated, 1e-9)
@@ -51,26 +51,58 @@ class OrbitUsageCostTest {
     }
 
     @Test
-    fun olderUseIsEstimatedAtTheDayPriceOrLeftOutWithoutOne() {
+    fun olderUseIsEstimatedAtItsOrbitsModelTodayOrLeftOutWithoutAPrice() {
         val data = OrbitQuota.UsageData(
             rows = listOf(
                 // Partly older: 2,000 of its 3,000 tokens and 2 of its 3 calls have no cost.
                 row("2026-11-18", input = 2500, output = 500, calls = 3, costCny = 0.1, priced = 1, tracked = 1,
                     trackedTokens = 1000),
+                // Not chat, and no price is known for this Orbit's assistant model.
                 row("2026-11-19", purpose = OrbitQuota.Purpose.TASK, input = 400, output = 0, calls = 4),
             ),
             hours = emptyList(),
         )
-        val prices = mapOf("2026-11-18" to OrbitUsageCost.DayPrice(cnyPerToken = 0.0001, usdPerToken = 0.0))
-        val view = OrbitUsageCost.view(data, day1, day2, me, prices, cny)
-        assertEquals(0.2, view.estimated, 1e-9)
-        assertEquals(0.3, view.total, 1e-9)
+        val chat = com.ai.assistance.operit.data.stats.ResolvedPricing(
+            billingMode = com.ai.assistance.operit.data.model.BillingMode.TOKEN, currency = PricingCurrency.CNY,
+            inputPricePerMillion = 100.0, cachedInputPricePerMillion = 10.0, outputPricePerMillion = 200.0,
+            source = com.ai.assistance.operit.data.stats.PricingSource.DEFAULT, known = true,
+        )
+        val prices = OrbitUsageCost.Prices(older = mapOf(OrbitUsageCost.OlderKey(me, chat = true) to
+            OrbitUsageCost.NamedPrice("flash", OrbitUsageCost.ModelPrice(listOf { _: Long? -> chat }))))
+        val view = OrbitUsageCost.view(data, day1, day2, me, cny, prices)
+        // The 2,000 older tokens split like the row's 2,500 : 500: 1,667 input and 333 output.
+        assertEquals(0.1667 + 0.0666, view.estimated, 1e-9)
+        assertEquals(0.1 + 0.1667 + 0.0666, view.total, 1e-9)
         assertEquals(2L, view.estimatedCalls)
-        assertEquals(4L, view.unknownCalls)
+        assertEquals(4L, view.unpricedCalls)
+        assertTrue(view.approximate)
         assertEquals(setOf("CHAT"), view.estimatedLines)
         assertEquals(setOf("CHAT"), view.coveredLines)
         assertEquals(0.0, view.byLine.getValue("TASK"), 1e-9)
         assertNull(view.cacheRate)
+        val flash = view.models.single()
+        assertEquals("flash", flash.model)
+        assertEquals(2L, flash.estimatedCalls)
+        assertEquals(2000L, flash.tokens)
+        assertEquals(0L, flash.unpricedCalls)
+    }
+
+    @Test
+    fun olderUseOnAModelWithoutAPriceIsListedUnderItWithAnUnknownCost() {
+        val data = OrbitQuota.UsageData(
+            rows = listOf(row("2026-11-19", input = 300, output = 100, calls = 2)),
+            hours = emptyList(),
+        )
+        val prices = OrbitUsageCost.Prices(older = mapOf(OrbitUsageCost.OlderKey(me, chat = true) to
+            OrbitUsageCost.NamedPrice("flash", OrbitUsageCost.ModelPrice(emptyList()))))
+        val view = OrbitUsageCost.view(data, day2, day2, me, cny, prices)
+        assertEquals(0.0, view.total, 1e-9)
+        assertEquals(2L, view.unpricedCalls)
+        assertEquals(0L, view.coveredCalls)
+        val flash = view.models.single()
+        assertEquals(2L, flash.calls)
+        assertEquals(2L, flash.unpricedCalls)
+        assertEquals(400L, flash.tokens)
     }
 
     @Test
@@ -98,11 +130,11 @@ class OrbitUsageCostTest {
             source = com.ai.assistance.operit.data.stats.PricingSource.DEFAULT, known = true,
         )
         val price = OrbitUsageCost.ModelPrice(listOf { _: Long? -> today })
-        val view = OrbitUsageCost.view(data, day2, day2, me, emptyMap(), cny,
-            modelPrices = mapOf("flash" to price, "pro" to price))
+        val view = OrbitUsageCost.view(data, day2, day2, me, cny,
+            OrbitUsageCost.Prices(models = mapOf("flash" to price, "pro" to price)))
         // flash: 600k uncached + 400k cached + 500k output = 0.6 + 0.04 + 1.0; pro: 1.0 for 4 calls, 2 unpriced.
-        assertEquals(1.64 + 0.5, view.backfilled, 1e-9)
-        assertEquals(4L, view.backfilledCalls)
+        assertEquals(1.64 + 0.5, view.estimated, 1e-9)
+        assertEquals(4L, view.estimatedCalls)
         assertEquals(1L, view.unpricedCalls)
         assertEquals(0.5 + 1.64 + 0.5, view.total, 1e-9)
         assertTrue(view.approximate)
@@ -111,7 +143,7 @@ class OrbitUsageCostTest {
         assertEquals(0.5 + (1.64 + 0.5) / 2, view.byLine.getValue("TASK"), 1e-9)
         assertTrue("others" !in view.coveredLines)
         val flash = view.models.single { it.model == "flash" }
-        assertEquals(2L, flash.backfilledCalls)
+        assertEquals(2L, flash.estimatedCalls)
         assertEquals(0L, flash.unpricedCalls)
         assertEquals(1.0, view.models.single { it.model == "pro" }.cost, 1e-9)
         assertEquals(1L, view.models.single { it.model == "mystery" }.unpricedCalls)
@@ -150,8 +182,8 @@ class OrbitUsageCostTest {
             rows = listOf(row("2026-11-19", input = 30, output = 0, calls = 3, priced = 1, tracked = 3, trackedTokens = 30)),
             hours = emptyList(), models = listOf(counted),
         )
-        val view = OrbitUsageCost.view(data, day2, day2, me, emptyMap(), cny,
-            modelPrices = mapOf("count" to OrbitUsageCost.ModelPrice(listOf { _: Long? -> perRequest })))
+        val view = OrbitUsageCost.view(data, day2, day2, me, cny,
+            OrbitUsageCost.Prices(models = mapOf("count" to OrbitUsageCost.ModelPrice(listOf { _: Long? -> perRequest }))))
         assertEquals(0.14, view.total, 1e-12)
         assertTrue(view.converted)
         // The tier goes by the average input per call: 1,000,000 over 2 calls is 500,000 each.
@@ -172,7 +204,7 @@ class OrbitUsageCostTest {
                 trackedTokens = 10)),
             hours = emptyList(),
         )
-        assertEquals(0.0, OrbitUsageCost.view(data, day2, day2, me, emptyMap(), cny).total, 1e-9)
+        assertEquals(0.0, OrbitUsageCost.view(data, day2, day2, me, cny).total, 1e-9)
     }
 
     @Test

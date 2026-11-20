@@ -17,7 +17,6 @@ import com.ai.assistance.operit.data.model.TokenStatResetCutoffEntity
 import com.ai.assistance.operit.data.model.TokenStatRestoreGenerationEntity
 import com.ai.assistance.operit.data.stats.TokenStatIdentityResolver
 import com.ai.assistance.operit.data.stats.TokenActivityEventRow
-import com.ai.assistance.operit.data.stats.TokenStatDailyCostRow
 import com.ai.assistance.operit.data.stats.TokenStatsGroupMetadataSnapshot
 import com.ai.assistance.operit.data.stats.TokenStatsLifetimeRead
 import com.ai.assistance.operit.data.stats.TokenStatsRangeRead
@@ -72,28 +71,6 @@ abstract class TokenStatsDao {
 
     @Query("SELECT COUNT(*) FROM token_stat_events")
     abstract suspend fun countEvents(): Int
-
-    /** Emits again whenever events are written or removed; a cheap signal to re-read what hangs on them. */
-    @Query("SELECT COUNT(*) FROM token_stat_events")
-    abstract fun observeEventCount(): Flow<Int>
-
-    /**
-     * The calls with a known cost in `[startMs, endMs)`, added up by local day (`yyyy-MM-dd`) and
-     * price currency; days without priced calls are left out. A call costing more than any real
-     * bill (a mistyped price) is left out with its tokens. TOTAL adds up as floating point.
-     */
-    @Query(
-        "SELECT strftime('%Y-%m-%d', startedAtMs / 1000, 'unixepoch', 'localtime') AS day, " +
-            "pricingCurrency AS currency, TOTAL(costInPricingCurrency) AS cost, " +
-            "TOTAL(CAST(COALESCE(totalInputTokens, COALESCE(uncachedInputTokens, 0) + COALESCE(cachedInputTokens, 0) + " +
-            "COALESCE(cacheWriteTokens, 0)) AS REAL) + CAST(COALESCE(outputTokens, 0) AS REAL) + " +
-            "CASE WHEN reasoningIncludedInOutput = 0 THEN CAST(COALESCE(reasoningTokens, 0) AS REAL) ELSE 0.0 END) AS tokens " +
-            "FROM token_stat_events " +
-            "WHERE costInPricingCurrency IS NOT NULL AND costInPricingCurrency >= 0 AND costInPricingCurrency <= 1000000000.0 " +
-            "AND startedAtMs >= :startMs AND startedAtMs < :endMs " +
-            "GROUP BY day, currency"
-    )
-    abstract suspend fun getDailyKnownCost(startMs: Long, endMs: Long): List<TokenStatDailyCostRow>
 
     /** Bounded range page ordered by the stable `(startedAtMs, eventId)` keyset. */
     @Query(

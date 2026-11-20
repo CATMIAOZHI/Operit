@@ -55,7 +55,7 @@ internal object OrbitUsageTools {
   - allowance is always the current week: weekly_used/limit/left, extra_used/limit/left, resets_at (local time) and paused. Token amounts are raw tokens.
   - peak_hours are the busiest hours of the day in the range, busiest first (at most 3), with their request counts. peak_day is the day with the most tokens in the range. streak_days counts days in a row with use up to today, whatever the range.
   - by_purpose lists what the tokens went to, most first; "other_orbits" is use by Orbits other than you.
-  - cost is what the range cost, in the currency the app's usage page shows: calls carry the price set for their model when they ended (Model pricing in settings). Calls that had no cost then (no price for the model yet, or no usage reported, so Orbit's own token count is used) are priced at today's price when it can be told (every connection used for the model has the same price now) (estimated_at_today_price, priced_at_today_price_requests). Calls from before costs were kept are estimated at that day's average price across the whole app (estimated_older). unpriced_requests still have no cost and unestimated_older_requests had no day price; neither is in the total, so with covered_requests 0 the cost is unknown, not free. by_model lists the top $MAX_MODEL_ROWS. Only a guide; the provider's bill is what counts.
+  - cost is what the range cost, in the currency the app's usage page shows: calls carry the price set for their model when they ended (Model pricing in settings). Every call without a cost (no price for the model then, no usage reported, or from before costs were kept) is estimated at today's price when it can be told (estimated_at_today_price, estimated_requests); calls from before costs were kept use the model the Orbit that made them uses now for that kind of work. unpriced_requests still have no cost and are not in the total, so when there are requests and covered_requests is 0 the cost is unknown, not free. by_model lists the top $MAX_MODEL_ROWS. Only a guide; the provider's bill is what counts.
   - For one day's use, pass range=YYYY-MM-DD. Days before the first record or after today have no use.
 """,
     )
@@ -116,7 +116,7 @@ internal object OrbitUsageTools {
             val span = span(args["range"].orEmpty(), today, usageWeekStart(state.weekStart, zone), firstRecord)
             val view = usageViewBetween(text, data, span.first, span.last, orbit.id,
                 text.getString(R.string.orbit_usage_other_orbits), zone)
-            val cost = OrbitUsageCost.compute(context, data, span.first, span.last, orbit.id, zone)
+            val cost = OrbitUsageCost.compute(context, data, span.first, span.last, orbit.id)
             // Six significant digits: tiny real costs stay above zero, without long float tails.
             fun money(amount: Double): Double = if (!amount.isFinite() || amount <= 0.0) 0.0
                 else java.math.BigDecimal(amount).round(java.math.MathContext(6)).toDouble()
@@ -157,20 +157,18 @@ internal object OrbitUsageTools {
                     .put("currency", cost.money.currency.name)
                     .put("total", money(cost.total))
                     .put("known", money(cost.known))
-                    .put("estimated_older", money(cost.estimated))
-                    .put("estimated_at_today_price", money(cost.backfilled))
+                    .put("estimated_at_today_price", money(cost.estimated))
                     .put("covered_requests", cost.coveredCalls)
                     .put("priced_requests", cost.pricedCalls)
-                    .put("priced_at_today_price_requests", cost.backfilledCalls)
+                    .put("estimated_requests", cost.estimatedCalls)
                     .put("unpriced_requests", cost.unpricedCalls)
-                    .put("unestimated_older_requests", cost.unknownCalls)
                     .put("cache_hit_rate", cost.cacheRate?.let { Math.round(it * 1000.0) / 1000.0 } ?: JSONObject.NULL)
                     .put("usd_to_cny_rate", cost.money.rate)
                     .put("by_model", JSONArray().apply {
                         cost.models.take(MAX_MODEL_ROWS).forEach { m ->
                             put(JSONObject().put("model", m.model).put("cost", money(m.cost)).put("tokens", m.tokens)
                                 .put("requests", m.calls).put("unpriced_requests", m.unpricedCalls)
-                                .put("priced_at_today_price_requests", m.backfilledCalls))
+                                .put("estimated_requests", m.estimatedCalls))
                         }
                     })
                     .apply {
@@ -179,7 +177,7 @@ internal object OrbitUsageTools {
                             .put("cost", money(rest.sumOf { it.cost })).put("tokens", rest.sumOf { it.tokens })
                             .put("requests", rest.sumOf { it.calls })
                             .put("unpriced_requests", rest.sumOf { it.unpricedCalls })
-                            .put("priced_at_today_price_requests", rest.sumOf { it.backfilledCalls }))
+                            .put("estimated_requests", rest.sumOf { it.estimatedCalls }))
                     })
             if (daily) {
                 val used = view.days.filter { it.calls > 0 || it.input + it.output > 0 }
