@@ -76,6 +76,11 @@ data class TokenStatsCostSummary(
     val mode: TokenStatsCostMode,
     /** 原币已知合计（仅含 > 0 币种，供堆叠/分币种展示）。 */
     val originalCurrencyAmounts: Map<PricingCurrency, Double>,
+    /**
+     * 已知合计中按现价补算的条数：当时没有价格、现在有了的调用（仅 HISTORICAL 口径）。
+     * 不为 0 时合计含估算，界面标「约」。
+     */
+    val estimatedContributionCount: Long = 0L,
 ) {
     val isFullyKnown: Boolean
         get() = unknownContributionCount == 0L

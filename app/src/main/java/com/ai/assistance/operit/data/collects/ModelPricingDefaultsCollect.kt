@@ -29,6 +29,17 @@ data class ModelPricingDefaults(
     val hasPricePerRequest: Boolean = known || pricePerRequest > 0.0,
     val contextTiers: List<com.ai.assistance.operit.data.pricing.ContextPriceTier> = emptyList(),
 ) {
+    /**
+     * Which price [forContext] picks for [inputTokens], as a key: equal keys get the same price,
+     * so prices worked out for one call can be kept for others in the same tier.
+     */
+    fun contextTierKey(inputTokens: Long?): Long {
+        if (contextTiers.isEmpty() || billingMode != BillingMode.TOKEN) return BASE_TIER_KEY
+        if (inputTokens == null) return UNKNOWN_TIER_KEY
+        return contextTiers.filter { inputTokens > it.minInputTokens }
+            .maxByOrNull { it.minInputTokens }?.minInputTokens ?: BASE_TIER_KEY
+    }
+
     fun forContext(inputTokens: Long?): ModelPricingDefaults {
         if (contextTiers.isEmpty() || billingMode != BillingMode.TOKEN) return this
         if (inputTokens == null) return copy(
@@ -44,6 +55,11 @@ data class ModelPricingDefaults(
             cacheWritePricePerMillion = tier.cacheWrite,
             hasInputPrice = true, hasOutputPrice = true, hasCachedInputPrice = true, known = true,
         )
+    }
+
+    private companion object {
+        const val BASE_TIER_KEY = -1L
+        const val UNKNOWN_TIER_KEY = -2L
     }
 }
 

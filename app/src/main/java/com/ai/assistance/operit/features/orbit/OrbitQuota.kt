@@ -140,7 +140,8 @@ object OrbitQuota {
     private const val NEW_WEEK_GAP_MS = 3 * 86_400_000L
 
     /** More than any one call could really cost; a larger cost (a mistyped price) is kept as unknown. */
-    private const val MAX_CALL_COST = 1_000_000_000.0
+    /** Above this one call's cost is taken as a mistyped price and kept as unknown. */
+    internal const val MAX_CALL_COST = 1_000_000_000.0
 
     /**
      * One day's use by one Orbit for one purpose. Calls counted since costs were kept

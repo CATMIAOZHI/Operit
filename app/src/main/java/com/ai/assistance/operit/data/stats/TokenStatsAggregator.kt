@@ -1,6 +1,7 @@
 package com.ai.assistance.operit.data.stats
 
 import com.ai.assistance.operit.data.collects.DefaultModelPricingCollect
+import com.ai.assistance.operit.data.collects.ModelPricingDefaults
 import com.ai.assistance.operit.data.collects.PricingCurrency
 import com.ai.assistance.operit.data.model.BillingMode
 import com.ai.assistance.operit.data.model.TokenStatBaselineEntity
@@ -90,6 +91,7 @@ object TokenStatsAggregator {
         private val totalTokens = TokenComponentAccumulator()
         private val originalCosts = EnumMap<PricingCurrency, BigDecimal>(PricingCurrency::class.java)
         private var costUnknownCount = 0L
+        private var costEstimatedCount = 0L
 
         fun addPage(
             events: List<TokenStatEventEntity>,
@@ -107,11 +109,12 @@ object TokenStatsAggregator {
                 output.accept(event.outputTokens)
                 reasoning.accept(independentlyBilledReasoning(event))
                 totalTokens.accept(canonicalTotalTokens(event))
-                val (amount, currency) =
-                    eventCost(event, identities[event.statIdentityId], pricing!!, params)
+                val cost = eventCost(event, identities[event.statIdentityId], pricing!!, params)
+                val (amount, currency) = cost
                 if (amount == null || !amount.isFinite()) {
                     costUnknownCount += 1
                 } else {
+                    if (cost.estimated) costEstimatedCount += 1
                     originalCosts.merge(currency, BigDecimal(amount)) { left, right -> left.add(right) }
                 }
             }
@@ -133,6 +136,7 @@ object TokenStatsAggregator {
                         unknownCount = costUnknownCount,
                         totalCount = requests,
                         params = params,
+                        estimatedCount = costEstimatedCount,
                     ),
             )
 
@@ -223,18 +227,20 @@ object TokenStatsAggregator {
                 val status = TokenStatStatus.fromName(event.status)
                 if (params.statuses?.let { status !in it } == true) continue
 
-                total.accept(event)
-                categories.getOrPut(category) { Aggregate() }.accept(event)
-                statuses.getOrPut(status) { Aggregate() }.accept(event)
+                // Worked out once and shared by every group the call falls in.
+                val cost = eventCost(event, identitiesById[event.statIdentityId], pricing, params)
+                total.accept(event, cost)
+                categories.getOrPut(category) { Aggregate() }.accept(event, cost)
+                statuses.getOrPut(status) { Aggregate() }.accept(event, cost)
 
                 val identity = identitiesById[event.statIdentityId]
                 val displayModelId = identity?.displayModelId
                 if (identity != null && displayModelId != null) {
-                    displayModels.getOrPut(displayModelId) { Aggregate() }.accept(event)
+                    displayModels.getOrPut(displayModelId) { Aggregate() }.accept(event, cost)
                     displayIdentityOrder.getOrPut(displayModelId) { LinkedHashSet() }
                         .add(identity.identityId)
                     identities.getOrPut(identity.identityId) { IdentityAggregate(identity) }
-                        .accept(event)
+                        .accept(event, cost)
                 }
 
                 val bucketIndex = TokenStatsTimeRanges.bucketIndexOf(
@@ -243,9 +249,9 @@ object TokenStatsAggregator {
                     granularity,
                     zone,
                 ) ?: continue
-                buckets[bucketIndex].accept(event)
+                buckets[bucketIndex].accept(event, cost)
                 if (displayModelId != null) {
-                    bucketModels[bucketIndex].getOrPut(displayModelId) { Aggregate() }.accept(event)
+                    bucketModels[bucketIndex].getOrPut(displayModelId) { Aggregate() }.accept(event, cost)
                 }
             }
         }
@@ -308,8 +314,8 @@ object TokenStatsAggregator {
             private val aggregate = Aggregate()
             private var latestEvent: TokenStatEventEntity? = null
 
-            fun accept(event: TokenStatEventEntity) {
-                aggregate.accept(event)
+            fun accept(event: TokenStatEventEntity, cost: EventCost) {
+                aggregate.accept(event, cost)
                 if (latestEvent == null || event.startedAtMs > latestEvent!!.startedAtMs) {
                     latestEvent = event
                 }
@@ -338,6 +344,7 @@ object TokenStatsAggregator {
             private val totalTokens = RangeTokenAccumulator()
             private val originalCosts = EnumMap<PricingCurrency, BigDecimal>(PricingCurrency::class.java)
             private var costUnknownCount = 0L
+            private var costEstimatedCount = 0L
             private var unknownCoreTokenCount = 0L
             private var ttftKnown = 0L
             private var ttftUnknown = 0L
@@ -346,7 +353,7 @@ object TokenStatsAggregator {
             private var generationUnknown = 0L
             private var generationTotal = 0L
 
-            fun accept(event: TokenStatEventEntity) {
+            fun accept(event: TokenStatEventEntity, cost: EventCost) {
                 requests = TokenCostCalculator.saturatedAdd(requests, 1L)
                 uncached.accept(event.uncachedInputTokens)
                 cached.accept(event.cachedInputTokens)
@@ -363,15 +370,11 @@ object TokenStatsAggregator {
                     unknownCoreTokenCount += 1L
                 }
 
-                val (amount, currency) = eventCost(
-                    event,
-                    identitiesById[event.statIdentityId],
-                    pricing,
-                    params,
-                )
+                val (amount, currency) = cost
                 if (amount == null || !amount.isFinite()) {
                     costUnknownCount += 1L
                 } else {
+                    if (cost.estimated) costEstimatedCount += 1L
                     originalCosts.merge(currency, BigDecimal(amount)) { left, right ->
                         left.add(right)
                     }
@@ -405,7 +408,8 @@ object TokenStatsAggregator {
                     output = output.result(requests),
                     reasoning = reasoning.result(requests),
                     totalTokens = totalTokens.result(requests),
-                    cost = buildCostSummary(originalCosts, costUnknownCount, requests, params),
+                    cost = buildCostSummary(originalCosts, costUnknownCount, requests, params,
+                        estimatedCount = costEstimatedCount),
                 )
 
             fun performance(): TokenStatsPerformance =
@@ -429,7 +433,8 @@ object TokenStatsAggregator {
                     totalTokens = totalTokens.knownSum,
                     totalTokensUnknownEventCount = totalTokens.unknownCount,
                     unknownTokenEventCount = unknownCoreTokenCount,
-                    cost = buildCostSummary(originalCosts, costUnknownCount, requests, params),
+                    cost = buildCostSummary(originalCosts, costUnknownCount, requests, params,
+                        estimatedCount = costEstimatedCount),
                 )
         }
 
@@ -673,20 +678,27 @@ object TokenStatsAggregator {
     ): TokenStatsCostSummary {
         val original = EnumMap<PricingCurrency, BigDecimal>(PricingCurrency::class.java)
         var unknownCount = 0L
+        var estimatedCount = 0L
         for (event in events) {
-            val (amount, currency) = eventCost(event, identitiesById[event.statIdentityId], pricing, params)
+            val cost = eventCost(event, identitiesById[event.statIdentityId], pricing, params)
+            val (amount, currency) = cost
             if (amount == null || !amount.isFinite()) {
                 unknownCount += 1
                 continue
             }
+            if (cost.estimated) estimatedCount += 1
             original.merge(currency, BigDecimal(amount)) { left, right -> left.add(right) }
         }
-        return buildCostSummary(original, unknownCount, events.size.toLong(), params)
+        return buildCostSummary(original, unknownCount, events.size.toLong(), params, estimatedCount = estimatedCount)
     }
+
+    /** One call's cost in its price's currency; [estimated] when it was worked out at today's price. */
+    private data class EventCost(val amount: Double?, val currency: PricingCurrency, val estimated: Boolean = false)
 
     /**
      * 单事件原币费用贡献：
      * - HISTORICAL：事件保存的“发生时”快照（null = 未知，不猜测、不当作 0）；
+     *   但当时没有价格（来源 UNKNOWN）、用量已知的调用，若现在有了价格，就按现价补算并标为估算；
      * - REVALUED：当前分层价格 × 事件用量重算（同一 [TokenCostCalculator] 语义，
      *   缓存写入独立计费与推理包含边界与落账时一致，不重复收费）。
      *   **未知定价（identity 缺失或 [ResolvedPricing.known] = false）一律贡献 null
@@ -697,18 +709,19 @@ object TokenStatsAggregator {
         identity: TokenStatIdentityEntity?,
         pricing: PricingContext,
         params: TokenStatsQueryParams,
-    ): Pair<Double?, PricingCurrency> =
-        if (params.mode == TokenStatsCostMode.REVALUED) {
-            val resolved = identity?.let { pricing.pricingFor(it, event) }
-            if (resolved == null || !resolved.known) {
-                null to parseCurrency(event.pricingCurrency)
-            } else {
-                val result = TokenCostCalculator.computeCost(event.toUsageInput(), resolved)
-                result.amount to result.currency
-            }
-        } else {
-            event.costInPricingCurrency to parseCurrency(event.pricingCurrency)
-        }
+    ): EventCost {
+        val recorded = EventCost(event.costInPricingCurrency, parseCurrency(event.pricingCurrency))
+        val revalued = params.mode == TokenStatsCostMode.REVALUED
+        val backfill = !revalued && event.costInPricingCurrency == null &&
+            event.pricingSource == PricingSource.UNKNOWN.name
+        if (!revalued && !backfill) return recorded
+        val resolved = identity?.let { pricing.pricingFor(it, event) }
+        if (resolved == null || !resolved.known) return recorded.copy(amount = null)
+        val result = TokenCostCalculator.computeCost(event.toUsageInput(), resolved)
+        // A call whose tokens were not reported stays unknown under a price per token (computeCost
+        // gives no amount); a price per request needs no tokens, so it is priced all the same.
+        return EventCost(result.amount, result.currency, estimated = backfill && result.amount != null)
+    }
 
     private fun baselineTotalsOf(
         baselines: List<TokenStatBaselineEntity>,
@@ -763,6 +776,7 @@ object TokenStatsAggregator {
         totalCount: Long,
         params: TokenStatsQueryParams,
         modeOverride: TokenStatsCostMode? = null,
+        estimatedCount: Long = 0L,
     ): TokenStatsCostSummary {
         val usd = original[PricingCurrency.USD] ?: BigDecimal.ZERO
         val cny = original[PricingCurrency.CNY] ?: BigDecimal.ZERO
@@ -783,6 +797,7 @@ object TokenStatsAggregator {
             rateIsEstimated = params.rateIsEstimated,
             mode = modeOverride ?: params.mode,
             originalCurrencyAmounts = amounts,
+            estimatedContributionCount = estimatedCount,
         )
     }
 
@@ -855,18 +870,29 @@ object TokenStatsAggregator {
         private val legacyPrices: Map<String, LegacyPriceSettings?>,
         private val params: TokenStatsQueryParams,
     ) {
-        private val cache = HashMap<Pair<String, Long?>, ResolvedPricing>()
+        /** Today's catalog price for each connection's model, read once. */
+        private val defaults = HashMap<String, ModelPricingDefaults>()
+        /** By connection and the price tier a call falls in, so the cache stays as small as the price list. */
+        private val cache = HashMap<Pair<String, Any>, ResolvedPricing>()
 
         fun pricingFor(identity: TokenStatIdentityEntity, event: TokenStatEventEntity): ResolvedPricing? {
-            if (params.mode != TokenStatsCostMode.REVALUED) return null
             val attempts = event.diagnosticsJson?.let {
                 runCatching { org.json.JSONObject(it).optInt("attemptCount", 1) }.getOrDefault(1)
             } ?: 1
             val contextTokens = TokenCostCalculator.contextInputTokens(event.toUsageInput(), attempts)
-            return cache.getOrPut(identity.identityId to contextTokens) { resolveCurrent(identity, contextTokens) }
+            val catalog = defaults.getOrPut(identity.providerModel) {
+                DefaultModelPricingCollect.getDefaultPricing(identity.providerModel)
+            }
+            return cache.getOrPut(identity.identityId to catalog.contextTierKey(contextTokens)) {
+                resolveCurrent(identity, catalog, contextTokens)
+            }
         }
 
-        private fun resolveCurrent(identity: TokenStatIdentityEntity, contextTokens: Long?): ResolvedPricing {
+        private fun resolveCurrent(
+            identity: TokenStatIdentityEntity,
+            catalog: ModelPricingDefaults,
+            contextTokens: Long?,
+        ): ResolvedPricing {
             val providerModel = identity.providerModel
             return TokenPriceResolver.resolve(
                 provider = identity.provider,
@@ -874,7 +900,7 @@ object TokenStatsAggregator {
                 configId = identity.configId,
                 overrides = overrides,
                 legacyOverride = legacyPrices[providerModel],
-                defaults = DefaultModelPricingCollect.getDefaultPricing(providerModel),
+                defaults = catalog,
                 contextInputTokens = contextTokens,
                 selectContextTier = true,
             )
