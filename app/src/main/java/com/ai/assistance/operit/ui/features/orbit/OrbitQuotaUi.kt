@@ -104,6 +104,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -709,22 +711,21 @@ internal fun OrbitUsagePage(
     // A change of display currency or rate (on the all-app costs page) redoes the money.
     val moneySettings by remember(context) {
         com.ai.assistance.operit.data.preferences.ApiPreferences.getInstance(context).statsMoneySettingsFlow
+            // Unreadable settings keep the last ones; the money itself falls back to the defaults.
+            .catch { }
     }.collectAsState(initial = null)
-    // Today's older use is estimated from today's ledger, which a call reaches just after Orbit's
-    // count: while there is any, a ledger write redoes the money too.
-    val todayLegacy = remember(usage, today) {
-        val day = today.date.toString()
-        usage?.rows?.any { it.day == day && it.legacyCalls > 0 } == true
-    }
-    val ledgerTick by remember(todayLegacy, context) {
-        if (!todayLegacy) kotlinx.coroutines.flow.flowOf(-1)
-        else com.ai.assistance.operit.data.db.AppDatabase.getDatabase(context.applicationContext).tokenStatsDao()
-            .observeEventCount().catch { emit(-1) }
-    }.collectAsState(initial = -1)
+    // Calls without a cost follow today's prices: a new price list, or coming back from setting
+    // prices or models (the page stays underneath meanwhile), redoes the money too.
+    val catalogRevision by remember {
+        com.ai.assistance.operit.data.pricing.ModelPricingCatalogRepository.status
+            .map { it?.revision }.distinctUntilChanged()
+    }.collectAsState(initial = null)
+    var returns by remember { mutableStateOf(0) }
+    OrbitOnPageReturn { returns++ }
     // The numbers and what they cost come together, for one range, worked out off the main thread
-    // only when the usage, the range, the week, the day, the zone or the money settings change.
+    // only when the usage, the range, the week, the day, the zone, the money settings or prices change.
     val snapshot by androidx.compose.runtime.produceState<UsageSnapshot?>(null, usage, range, state.weekStart,
-        orbit.id, otherLabel, today, moneySettings, ledgerTick) {
+        orbit.id, otherLabel, today, moneySettings, catalogRevision, returns) {
         val data = usage ?: return@produceState
         val weekStart = state.weekStart
         val forRange = range
@@ -732,7 +733,7 @@ internal fun OrbitUsagePage(
             val first = rangeFirstDay(data, forRange, weekStart, today.date, zone)
             UsageSnapshot(forRange,
                 usageViewBetween(context, data, first, today.date, orbit.id, otherLabel, zone),
-                OrbitUsageCost.compute(context, data, first, today.date, orbit.id, zone))
+                OrbitUsageCost.compute(context, data, first, today.date, orbit.id))
         }
     }
     val view = snapshot?.view ?: remember(today) { emptyUsageView(today.date) }
@@ -896,11 +897,7 @@ private fun UsageCostCard(
             style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold,
         )
         if (cost != null && cost.estimatedCalls > 0L) {
-            Text(stringResource(R.string.orbit_usage_cost_estimated_part, money(cost.estimated)),
-                style = MaterialTheme.typography.bodySmall, color = muted)
-        }
-        if (cost != null && cost.backfilledCalls > 0L) {
-            Text(stringResource(R.string.orbit_usage_cost_backfilled_part, money(cost.backfilled), cost.backfilledCalls),
+            Text(stringResource(R.string.orbit_usage_cost_estimated_part, money(cost.estimated), cost.estimatedCalls),
                 style = MaterialTheme.typography.bodySmall, color = muted)
         }
         Spacer(Modifier.height(12.dp))
@@ -914,40 +911,27 @@ private fun UsageCostCard(
                 } ?: "–", Modifier.weight(1f))
         }
         // What is left out of the total comes first, next to the way to set prices.
-        val missing = buildList {
-            if (cost != null && cost.unpricedCalls > 0) add(stringResource(R.string.orbit_usage_cost_unpriced, cost.unpricedCalls))
-            if (cost != null && cost.unknownCalls > 0) add(stringResource(R.string.orbit_usage_cost_unknown, cost.unknownCalls))
-        }
-        if (missing.isNotEmpty()) {
+        if (cost != null && cost.unpricedCalls > 0) {
             Spacer(Modifier.height(10.dp))
-            missing.forEach { Text(it, style = MaterialTheme.typography.bodySmall, color = muted) }
-            if (cost != null && cost.unpricedCalls > 0) {
-                TextButton(onClick = onOpenPricing, contentPadding = PaddingValues(horizontal = 0.dp)) {
-                    Text(stringResource(R.string.orbit_usage_cost_set_prices))
-                }
+            Text(stringResource(R.string.orbit_usage_cost_unpriced, cost.unpricedCalls),
+                style = MaterialTheme.typography.bodySmall, color = muted)
+            TextButton(onClick = onOpenPricing, contentPadding = PaddingValues(horizontal = 0.dp)) {
+                Text(stringResource(R.string.orbit_usage_cost_set_prices))
             }
         }
-        if (cost != null && (cost.models.isNotEmpty() || cost.estimatedCalls > 0L)) {
+        if (cost != null && cost.models.isNotEmpty()) {
             Spacer(Modifier.height(14.dp))
             Text(stringResource(R.string.orbit_usage_cost_by_model), style = MaterialTheme.typography.bodyMedium, color = muted)
-            val top = (cost.models.maxOfOrNull { it.cost } ?: 0.0).coerceAtLeast(cost.estimated).coerceAtLeast(1e-9)
+            val top = (cost.models.maxOfOrNull { it.cost } ?: 0.0).coerceAtLeast(1e-9)
             cost.models.forEach { model ->
                 CostModelRow(
                     name = model.model,
                     amount = if (model.calls > 0 && model.unpricedCalls == model.calls) stringResource(R.string.orbit_usage_cost_unknown_total)
-                        else if (model.backfilledCalls > 0L) stringResource(R.string.orbit_usage_cost_about, money(model.cost))
+                        else if (model.estimatedCalls > 0L) stringResource(R.string.orbit_usage_cost_about, money(model.cost))
                         else money(model.cost),
                     detail = stringResource(R.string.orbit_usage_cost_model_line,
                         OrbitQuota.amount(context, model.tokens), model.calls),
                     share = (model.cost / top).toFloat(),
-                )
-            }
-            if (cost.estimatedCalls > 0L) {
-                CostModelRow(
-                    name = stringResource(R.string.orbit_usage_cost_legacy_row),
-                    amount = stringResource(R.string.orbit_usage_cost_about, money(cost.estimated)),
-                    detail = stringResource(R.string.orbit_usage_calls, cost.estimatedCalls),
-                    share = (cost.estimated / top).toFloat(),
                 )
             }
         }
