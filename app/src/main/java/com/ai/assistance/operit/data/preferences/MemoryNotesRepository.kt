@@ -43,7 +43,7 @@ class MemoryNotesRepository internal constructor(
         format?.let { MemoryNoteSections.parse(text).markdown(it.english) } ?: text
 
     companion object {
-        const val MAX_CHARS = 6_000
+        const val MAX_CHARS = 16_000
         /** Guidance the extraction model needs when an edit would push memory.md over the limit. */
         internal const val OVERFLOW_MESSAGE =
             "memory.md would exceed its character limit; remove or replace existing text in this batch before adding"
