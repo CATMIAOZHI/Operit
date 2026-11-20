@@ -12,7 +12,9 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 /** A persisted prefix belongs to exactly one chat. Tool reads remain fresh history entries. */
-class LearningPromptSnapshotRepository internal constructor(root: File, chatId: String) {
+class LearningPromptSnapshotRepository internal constructor(root: File, chatId: String,
+    /** The app build a prefix was made by. Tool descriptions and built-in rules change with it. */
+    private val appVersion: String = "${com.ai.assistance.operit.BuildConfig.VERSION_CODE}:${com.ai.assistance.operit.BuildConfig.VERSION_NAME}") {
     constructor(context: Context, chatId: String) : this(File(context.filesDir,"learning_prompt_snapshots"),chatId)
     companion object {
         private val locks = ConcurrentHashMap<String,Mutex>()
@@ -42,7 +44,9 @@ class LearningPromptSnapshotRepository internal constructor(root: File, chatId: 
     }
 
     /**
-     * A scope or identity change starts over. An Orbit chat (a scope other than "global") also
+     * A scope or identity change starts over, and so does an app update: the saved prefix carries
+     * that build's tool descriptions and rules, which would otherwise outlive it until the next
+     * summary. An Orbit chat (a scope other than "global") also
      * starts over once a day: after the nightly review asked for it, or a day after its prompt
      * was built. Memory edits in between wait for that or for the next summary, so the cached
      * prefix stays the same all day. Only the call that starts building a prompt passes
@@ -56,9 +60,10 @@ class LearningPromptSnapshotRepository internal constructor(root: File, chatId: 
             val daily = refreshDaily && scope != "global" && (data.optBoolean("_refresh_due") ||
                 data.has("_since") && now - data.optLong("_since") >= DAY_MS)
             if (data.optString("_memory_scope", "global") != scope ||
-                data.optString("_identity_revision") != identityRevision || daily) {
+                data.optString("_identity_revision") != identityRevision ||
+                data.optString("_app_version") != appVersion || daily) {
                 write(JSONObject().put("_memory_scope", scope).put("_identity_revision", identityRevision)
-                    .put("_since", now))
+                    .put("_app_version", appVersion).put("_since", now))
             } else if (!data.has("_since")) {
                 write(data.put("_since", now))
             }
@@ -80,6 +85,7 @@ class LearningPromptSnapshotRepository internal constructor(root: File, chatId: 
             if (data.optString("_epoch") != epoch)
                 write(JSONObject().put("_epoch", epoch).put("_memory_scope", data.optString("_memory_scope", "global"))
                     .put("_identity_revision", data.optString("_identity_revision"))
+                    .put("_app_version", data.optString("_app_version"))
                     .put("_since", System.currentTimeMillis()))
         }
     }

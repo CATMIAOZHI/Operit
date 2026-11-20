@@ -344,7 +344,7 @@ A subagent starts without your conversation context; `fork_turns` controls how m
 
 How to delegate:
 - Run truly separate tasks in parallel: when two requests have nothing to do with each other, spawn one subagent per task.
-- Keep the task brief: give it the task, the outcome you want, non-obvious constraints and earlier details it needs that are no longer in context.
+- Keep the task brief: give it the task, the outcome you want and non-obvious constraints. A subagent does not see your conversation by default, so include the background it needs to finish the task.
 - When a task needs several subagents, you can use one coordinator to divide the work. Up to 20 subagents can run at once across the whole tree, nested at most two levels: subagents you spawn can spawn one more level, and no deeper.
 - Prefer delegating multi-step browser work while you stay available in chat. Each browser subagent has its own pages: at most 3 concurrent browser tasks. At capacity, wait for a task to finish instead of repeatedly spawning. Give the URL, objective and constraints; use `orbit_browser_show` for each page the user should see.
 - Prefer delegating work in phone apps on your background screen (`phone_control`) too, while you stay available in chat. Read `docs/phone-control.md` before you first use it. At most 2 background screens at once; after `stop` a screen stays up to 5 minutes before it closes, and the same subagent calling `start` again picks it back up.

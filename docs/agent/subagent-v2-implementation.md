@@ -146,12 +146,13 @@ tool delivery before claiming a message was sent. Idle non-root recipients that
 need to work must be continued with `followup_task`. These are model instructions,
 not an automatic rewrite of assistant prose into outgoing messages.
 
-`fork_turns` accepts `none` (default), `all`, or a positive turn count. A full fork
-inherits the running parent's prepared context and model selection unless an
-explicit profile/model overrides it; `none` keeps only the system context.
-Omitting `fork_turns` forgoes the inherited conversation but still applies the
-former full-fork model/profile rule, so the parent's model is inherited unless an
-explicit `model` or `agent_type` is given. To override `model`, first call
+`fork_turns` accepts `none` (default), `all`, or a positive turn count, and only
+decides how much conversation the child gets: `all` inherits the running parent's
+prepared context, `none` keeps only the system context. The model and profile do
+not depend on it: an explicit `agent_type` adds that profile's instructions, and the
+model is chosen in this order: an explicit `model`, then the model configured on an
+explicit `agent_type`, then the parent's model. A child of another subagent also keeps
+that parent's explicit `reasoning_effort` when neither is given. To override `model`, first call
 `list_agent_models`, then copy its readable `model` selector into `spawn_agent`.
 Each model within a configuration is listed separately and resolves to its
 actual index. Duplicate names are qualified by provider and, only when still
@@ -189,7 +190,7 @@ The follow-up corrects portable behavior found by a fresh source-level audit:
 | --- | --- |
 | Fork filtering | Keep system context, user inputs, final assistant text and checkpoints; remove agent communication, intermediate assistants, tools and reasoning. Count real user/NEW_TASK boundaries before filtering agent messages. |
 | Trusted message identity | Persist distinct collaboration task/event and intermediate assistant display modes; prompt filtering does not infer identity from user-controlled text. |
-| Explicit full fork (`fork_turns=all`) | Retain parent prepared instructions, model and role-card tool access; do not append the general profile instructions unless a profile is explicitly selected. An omitted `fork_turns` keeps that model/profile rule but inherits only the system context. |
+| Explicit full fork (`fork_turns=all`) | Retain parent prepared instructions, model and role-card tool access; do not append the general profile instructions unless a profile is explicitly selected. Every other `fork_turns` value follows the same model/profile rule and only inherits less conversation. |
 | Wait | Distinguish mailbox activity, user steering, an idle tree with an empty caller mailbox, and timeout; report minimum clamping; reject values above configured maximum. Terminal notifications are enqueued before jobs are removed. One locked snapshot with no job, reservation or streaming peer proves the idle result. Inbox/state changes wake the wait; once-per-second reconciliation is a recovery fallback. |
 | List | Include `agent_name` and `agent_status`. Per the user's context-budget preference, completed status is `{"completed": null}`: final text is delivered through the mailbox, not repeated on each list call. Durable final results remain stored. Existing Operit IDs/status fields remain available. |
 | Limits | Configure whole-tree active children, depth and wait durations. The v1 per-parent ten-task quota does not cap v2. Provider/model concurrency limits remain shared. |
