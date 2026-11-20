@@ -147,7 +147,7 @@ git cherry-pick <oldest-sha>^..<newest-sha>
 
 | 类型 | 文件 |
 |---|---|
-| 开发包名 | `app/build.gradle.kts` 中的 `applicationIdSuffix = ".dev"`、`versionNameSuffix`、`resValue("string", "app_name", "Operit Ry Dev")`、`buildConfigField("boolean", "PERSONAL_DEV_UPDATE_CHANNEL", "true")` |
+| 开发包名 | `app/build.gradle.kts` 中的 `applicationIdSuffix = ".dev"`、`versionNameSuffix`、`resValue("string", "app_name", "Operit Ry Dev")`、`resValue("string", "orbit_launcher_name", "Orbit Dev")`、`buildConfigField("boolean", "PERSONAL_DEV_UPDATE_CHANNEL", "true")` |
 | DEV 图标 | `app/src/debug/res/` 下的 `ic_launcher_dev_badge.xml`、`ic_launcher_simple_foreground_dev.xml` 等 |
 | 开发版热更新 | `app/src/main/java/.../data/updates/UpdateManager.kt` 和 `PatchUpdateInstaller.kt` 中的 `personal-dev` channel 逻辑 |
 | 差分更新工具 | `tools/hotbuild/build_patch.py`、`tools/hotbuild/publish_dev_update.py` |
@@ -178,16 +178,17 @@ git commit --amend --no-edit
 #   applicationIdSuffix = ".dev"
 #   versionNameSuffix = "-dev"（或含 -dev 的任何变体）
 #   resValue("string", "app_name", "Operit Ry Dev")
+#   resValue("string", "orbit_launcher_name", "Orbit Dev")
 #   buildConfigField("boolean", "PERSONAL_DEV_UPDATE_CHANNEL", "true")
 #   app/src/debug/res/ 下 *_dev_* 图标文件
 
-grep -En 'applicationIdSuffix\s*=\s*"\.dev"|versionNameSuffix\s*=\s*".*-dev|app_name.*Operit Ry Dev|PERSONAL_DEV_UPDATE_CHANNEL.*true' \
+grep -En 'applicationIdSuffix\s*=\s*"\.dev"|versionNameSuffix\s*=\s*".*-dev|app_name.*Operit Ry Dev|orbit_launcher_name.*Orbit Dev|PERSONAL_DEV_UPDATE_CHANNEL.*true' \
   app/build.gradle.kts && echo "FAIL: dev 身份配置残留" && exit 1 || true
 
 test -f app/src/debug/res/drawable/ic_launcher_dev_badge.xml \
   && echo "FAIL: DEV 图标残留" && exit 1 || true
 
-# 注意：clone 配置（applicationIdSuffix = ".clone"、Operit Ry Clone）可以在
+# 注意：clone 配置（applicationIdSuffix = ".clone"、Operit Ry Clone、Orbit Clone）可以在
 # 稳定分支中保留；上述检查只针对 dev 专用身份。
 
 # 编译检查
@@ -271,7 +272,9 @@ APK="$WORK/apk/release/app-release.apk"
 
 ```bash
 # 必须出现：package: name='com.rainy.operitry' versionCode='<本轮>' versionName='<本轮>'
-#           application-label:'Operit Ry'、native-code: 'arm64-v8a'
+#           application-label:'Orbit'、native-code: 'arm64-v8a'
+#           （应用名取自 orbit_launcher_name；用户可在设置里把桌面图标切成 Operit Ry，
+#           那是另一个默认关闭的入口，不影响这里的检查）
 # 不得出现：application-debuggable
 aapt dump badging "$APK" | grep -E "^package:|application-label:|native-code:|application-debuggable"
 
