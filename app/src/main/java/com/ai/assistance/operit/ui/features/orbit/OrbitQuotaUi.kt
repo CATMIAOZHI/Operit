@@ -890,7 +890,7 @@ private fun UsageCostCard(
                 cost.calls == 0L -> money(0.0)
                 // Used, but nothing with a known or estimated cost: unknown, which is not free.
                 cost.coveredCalls == 0L -> stringResource(R.string.orbit_usage_cost_unknown_total)
-                cost.estimatedCalls > 0L -> stringResource(R.string.orbit_usage_cost_about, money(cost.total))
+                cost.approximate -> stringResource(R.string.orbit_usage_cost_about, money(cost.total))
                 else -> money(cost.total)
             },
             style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold,
@@ -899,12 +899,19 @@ private fun UsageCostCard(
             Text(stringResource(R.string.orbit_usage_cost_estimated_part, money(cost.estimated)),
                 style = MaterialTheme.typography.bodySmall, color = muted)
         }
+        if (cost != null && cost.backfilledCalls > 0L) {
+            Text(stringResource(R.string.orbit_usage_cost_backfilled_part, money(cost.backfilled), cost.backfilledCalls),
+                style = MaterialTheme.typography.bodySmall, color = muted)
+        }
         Spacer(Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             UsageStat(stringResource(R.string.orbit_usage_cost_cache),
                 cost?.cacheRate?.let { String.format(java.util.Locale.US, "%.0f%%", it * 100) } ?: "–", Modifier.weight(1f))
             UsageStat(stringResource(R.string.orbit_usage_cost_per_call),
-                cost?.takeIf { it.coveredCalls > 0 }?.let { money(it.total / it.coveredCalls) } ?: "–", Modifier.weight(1f))
+                cost?.takeIf { it.coveredCalls > 0 }?.let {
+                    val each = money(it.total / it.coveredCalls)
+                    if (it.approximate) stringResource(R.string.orbit_usage_cost_about, each) else each
+                } ?: "–", Modifier.weight(1f))
         }
         // What is left out of the total comes first, next to the way to set prices.
         val missing = buildList {
@@ -928,6 +935,7 @@ private fun UsageCostCard(
                 CostModelRow(
                     name = model.model,
                     amount = if (model.calls > 0 && model.unpricedCalls == model.calls) stringResource(R.string.orbit_usage_cost_unknown_total)
+                        else if (model.backfilledCalls > 0L) stringResource(R.string.orbit_usage_cost_about, money(model.cost))
                         else money(model.cost),
                     detail = stringResource(R.string.orbit_usage_cost_model_line,
                         OrbitQuota.amount(context, model.tokens), model.calls),

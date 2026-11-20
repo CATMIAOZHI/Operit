@@ -733,7 +733,7 @@ private fun TokenStatsChartDetailDialog(
                 when (metric) {
                     ChartDetailMetric.COST -> range.displayModels.forEach { model ->
                         if (model.totals.cost.knownAmount > 0.0) {
-                            TokenStatsDetailRow(model.displayName, formatMoney(model.totals.cost.knownAmount, currency))
+                            TokenStatsDetailRow(model.displayName, costText(model.totals.cost, currency = currency))
                         }
                     }
                     ChartDetailMetric.REQUESTS -> range.displayModels.forEach { model ->
@@ -802,16 +802,26 @@ private fun CostChartCard(
     }
     // 预取模板：chart 回调是非 Composable lambda，不能在回调内解析资源
     val unknownCostTemplate = stringResource(R.string.token_stats_unknown_cost)
+    val estimatedCostTemplate = stringResource(R.string.token_stats_estimated_cost)
     val chartTitle = stringResource(R.string.token_stats_chart_cost)
 
     TokenStatsChartCard(
         title = chartTitle,
-        summary = formatMoney(range.summary.cost.knownAmount, currency),
+        summary = costText(range.summary.cost, currency = currency),
         onSummaryClick = onSummaryClick,
     ) {
         if (range.summary.cost.unknownContributionCount > 0L) {
             RangeUnknownHint(
                 stringResource(R.string.token_stats_unknown_cost, range.summary.cost.unknownContributionCount)
+            )
+        }
+        if (range.summary.cost.estimatedContributionCount > 0L) {
+            // Shown even with the unknown hints off: it says why the total reads "about".
+            Text(
+                text = stringResource(R.string.token_stats_estimated_cost, range.summary.cost.estimatedContributionCount),
+                style = MaterialTheme.typography.bodySmall,
+                color = LocalTokenStatsColors.current.unknownHint,
+                modifier = Modifier.padding(bottom = 4.dp),
             )
         }
         TokenStatsStackedBarChart(
@@ -837,6 +847,17 @@ private fun CostChartCard(
                 val unknown = bucket.totals.cost.unknownContributionCount
                 if (unknown > 0L) String.format(unknownCostTemplate, unknown) else null
             },
+            estimateNote = { bucket ->
+                val estimated = bucket.totals.cost.estimatedContributionCount
+                if (estimated > 0L) String.format(estimatedCostTemplate, estimated) else null
+            },
+            stackApproximate = { bucket ->
+                models.mapNotNull { model ->
+                    val cost = bucket.byModel[model.displayModelId]?.cost ?: return@mapNotNull null
+                    if (cost.knownAmount <= 0.0) null else cost.estimatedContributionCount > 0L
+                }
+            },
+            totalApproximate = { bucket -> bucket.totals.cost.estimatedContributionCount > 0L },
             legendItems = models.take(8).map { it.displayName to colorFor(it.displayModelId) },
         )
     }

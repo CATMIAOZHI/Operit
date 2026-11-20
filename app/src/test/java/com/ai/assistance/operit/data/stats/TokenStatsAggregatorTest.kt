@@ -168,6 +168,35 @@ class TokenStatsAggregatorTest {
     }
 
     @Test
+    fun `calls with no price then are priced at today's price and counted as estimated`() {
+        val priced = identity("id", model = "gpt-4o-2024-11-20")
+        val unpriced = identity("other", model = "no-such-model")
+        val unknown = PricingSource.UNKNOWN.name
+        val events = listOf(
+            event("kept", "id", 1000, cost = 0.1),
+            event("filled", "id", 2000, uncached = 1_000_000, output = 0, pricingSource = unknown,
+                inputPrice = null, cachedPrice = null, outputPrice = null),
+            // Nothing reported: no tokens to price, even today.
+            event("noTokens", "id", 3000, uncached = null, cached = null, output = null, pricingSource = unknown),
+            event("stillUnknown", "other", 4000, pricingSource = unknown),
+        )
+        fun cost(mode: TokenStatsCostMode) = TokenStatsAggregator.lifetime(
+            events, emptyList(), mapOf("id" to priced, "other" to unpriced), emptyList(), emptyMap(),
+            params.copy(mode = mode),
+        ).eventTotals.cost
+        val historical = cost(TokenStatsCostMode.HISTORICAL)
+        assertEquals((0.1 + 1.5) * 7, historical.knownAmount, 1e-9)
+        assertEquals(1L, historical.estimatedContributionCount)
+        assertEquals(2L, historical.unknownContributionCount)
+        // The range view counts the same way.
+        val range = aggregated(events, listOf(priced, unpriced)).cost
+        assertEquals(historical.knownAmount, range.knownAmount, 1e-9)
+        assertEquals(1L, range.estimatedContributionCount)
+        // Today's prices for everything are not an estimate of a missing price.
+        assertEquals(0L, cost(TokenStatsCostMode.REVALUED).estimatedContributionCount)
+    }
+
+    @Test
     fun `reasoning aggregate counts only separately billed reasoning`() {
         val id1 = identity("id-1")
         val totals =

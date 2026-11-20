@@ -74,6 +74,98 @@ class OrbitUsageCostTest {
     }
 
     @Test
+    fun callsWithoutAPriceThenArePricedAtTodaysPrice() {
+        val data = OrbitQuota.UsageData(
+            rows = listOf(
+                row("2026-11-19", input = 1_000_000, output = 500_000, calls = 2, tracked = 2, trackedTokens = 1_500_000),
+                // Half its calls were priced; the other half share the row's tokens by count.
+                row("2026-11-19", purpose = OrbitQuota.Purpose.TASK, input = 1_000_000, output = 0, calls = 4,
+                    costCny = 0.5, priced = 2, tracked = 4, trackedTokens = 1_000_000),
+                row("2026-11-19", orbit = "orbit-b", input = 100, output = 0, calls = 1, tracked = 1, trackedTokens = 100),
+            ),
+            hours = emptyList(),
+            models = listOf(
+                OrbitQuota.ModelUsage("2026-11-19", me, "flash", 1_000_000, 500_000, 2, 400_000, 0.0, 0.0, 0,
+                    cacheKnownInput = 1_000_000),
+                OrbitQuota.ModelUsage("2026-11-19", me, "pro", 1_000_000, 0, 4, 0, 0.5, 0.0, 2),
+                // No price for it today either.
+                OrbitQuota.ModelUsage("2026-11-19", "orbit-b", "mystery", 100, 0, 1, 0, 0.0, 0.0, 0),
+            ),
+        )
+        val today = com.ai.assistance.operit.data.stats.ResolvedPricing(
+            billingMode = com.ai.assistance.operit.data.model.BillingMode.TOKEN, currency = PricingCurrency.CNY,
+            inputPricePerMillion = 1.0, cachedInputPricePerMillion = 0.1, outputPricePerMillion = 2.0,
+            source = com.ai.assistance.operit.data.stats.PricingSource.DEFAULT, known = true,
+        )
+        val price = OrbitUsageCost.ModelPrice(listOf { _: Long? -> today })
+        val view = OrbitUsageCost.view(data, day2, day2, me, emptyMap(), cny,
+            modelPrices = mapOf("flash" to price, "pro" to price))
+        // flash: 600k uncached + 400k cached + 500k output = 0.6 + 0.04 + 1.0; pro: 1.0 for 4 calls, 2 unpriced.
+        assertEquals(1.64 + 0.5, view.backfilled, 1e-9)
+        assertEquals(4L, view.backfilledCalls)
+        assertEquals(1L, view.unpricedCalls)
+        assertEquals(0.5 + 1.64 + 0.5, view.total, 1e-9)
+        assertTrue(view.approximate)
+        // Each day's amount goes to that Orbit's lines by their calls without a price: 2 and 2 of 4.
+        assertEquals((1.64 + 0.5) / 2, view.byLine.getValue("CHAT"), 1e-9)
+        assertEquals(0.5 + (1.64 + 0.5) / 2, view.byLine.getValue("TASK"), 1e-9)
+        assertTrue("others" !in view.coveredLines)
+        val flash = view.models.single { it.model == "flash" }
+        assertEquals(2L, flash.backfilledCalls)
+        assertEquals(0L, flash.unpricedCalls)
+        assertEquals(1.0, view.models.single { it.model == "pro" }.cost, 1e-9)
+        assertEquals(1L, view.models.single { it.model == "mystery" }.unpricedCalls)
+    }
+
+    private fun perMillion(input: Double, currency: PricingCurrency = PricingCurrency.CNY, known: Boolean = true) =
+        com.ai.assistance.operit.data.stats.ResolvedPricing(
+            billingMode = com.ai.assistance.operit.data.model.BillingMode.TOKEN, currency = currency,
+            inputPricePerMillion = input, cachedInputPricePerMillion = input, outputPricePerMillion = input,
+            source = com.ai.assistance.operit.data.stats.PricingSource.DEFAULT, known = known,
+        )
+
+    @Test
+    fun aModelIsPricedOnlyWhenEveryConnectionHasTheSamePrice() {
+        val one = perMillion(1.0)
+        val sameElsewhere = one.copy(source = com.ai.assistance.operit.data.stats.PricingSource.CONFIG_OVERRIDE)
+        assertEquals(one, OrbitUsageCost.ModelPrice(listOf({ _: Long? -> one }, { _: Long? -> sameElsewhere })).at(10))
+        assertNull(OrbitUsageCost.ModelPrice(listOf({ _: Long? -> one }, { _: Long? -> perMillion(2.0) })).at(10))
+        // A connection still without a price could be where these calls went.
+        assertNull(OrbitUsageCost.ModelPrice(listOf({ _: Long? -> one }, { _: Long? -> perMillion(0.0, known = false) })).at(10))
+        assertNull(OrbitUsageCost.ModelPrice(emptyList()).at(10))
+    }
+
+    @Test
+    fun perRequestPricesDollarsAndPriceTiersAreHonoured() {
+        val perRequest = com.ai.assistance.operit.data.stats.ResolvedPricing(
+            billingMode = com.ai.assistance.operit.data.model.BillingMode.COUNT, currency = PricingCurrency.USD,
+            pricePerRequest = 0.01, source = com.ai.assistance.operit.data.stats.PricingSource.DEFAULT, known = true,
+        )
+        // Three calls, one priced at an explicit zero: that one stays as it was.
+        val counted = OrbitQuota.ModelUsage("2026-11-19", me, "count", 30, 0, 3, 0, 0.0, 0.0, 1)
+        val (amount, currency) = OrbitUsageCost.backfill(counted, OrbitUsageCost.ModelPrice(listOf { _: Long? -> perRequest }))!!
+        assertEquals(0.02, amount, 1e-12)
+        assertEquals(PricingCurrency.USD, currency)
+        val data = OrbitQuota.UsageData(
+            rows = listOf(row("2026-11-19", input = 30, output = 0, calls = 3, priced = 1, tracked = 3, trackedTokens = 30)),
+            hours = emptyList(), models = listOf(counted),
+        )
+        val view = OrbitUsageCost.view(data, day2, day2, me, emptyMap(), cny,
+            modelPrices = mapOf("count" to OrbitUsageCost.ModelPrice(listOf { _: Long? -> perRequest })))
+        assertEquals(0.14, view.total, 1e-12)
+        assertTrue(view.converted)
+        // The tier goes by the average input per call: 1,000,000 over 2 calls is 500,000 each.
+        val tiered = OrbitUsageCost.ModelPrice(listOf { tokens: Long? ->
+            if ((tokens ?: 0L) > 200_000L) perMillion(2.0) else perMillion(1.0)
+        })
+        val long = OrbitQuota.ModelUsage("2026-11-19", me, "long", 1_000_000, 0, 2, 0, 0.0, 0.0, 0)
+        assertEquals(2.0, OrbitUsageCost.backfill(long, tiered)!!.first, 1e-9)
+        // A price that would make one call cost more than any real call stays unknown, as when recording.
+        val huge = OrbitUsageCost.ModelPrice(listOf { _: Long? -> perMillion(1e308) })
+        assertNull(OrbitUsageCost.backfill(long, huge))
+    }
+
+    @Test
     fun rangeLeavesOutOtherDays() {
         val data = OrbitQuota.UsageData(
             rows = listOf(row("2026-11-18", input = 10, output = 0, calls = 1, costCny = 9.0, priced = 1, tracked = 1,

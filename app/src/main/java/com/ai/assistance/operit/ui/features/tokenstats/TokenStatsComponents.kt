@@ -205,7 +205,8 @@ internal fun TokenStatsLifetimeCard(
                 BigNumber(
                     label = stringResource(R.string.settings_total_cost),
                     value =
-                        formatMoney(
+                        costText(
+                            eventTotals.cost,
                             eventTotals.cost.knownAmount +
                                 if (includeLegacy) baseline.cost.knownAmount else 0.0,
                             currency,
@@ -230,6 +231,7 @@ internal fun TokenStatsLifetimeCard(
                     color = colors.unknownHint,
                 )
             }
+            EstimatedCostHint(eventTotals.cost, colors.summaryCardContent.copy(alpha = 0.8f))
             if (unknownCostContributions == 0L &&
                 eventTotals.cost.rateIsEstimated
             ) {
@@ -347,6 +349,35 @@ private fun UnknownHint(text: String, color: androidx.compose.ui.graphics.Color)
     if (!LocalShowUnknownHints.current) return
     Text(
         text = text,
+        style = MaterialTheme.typography.bodySmall,
+        color = color,
+        modifier = Modifier.padding(top = 4.dp),
+    )
+}
+
+/** A cost that includes calls priced at today's price, marked as approximate. */
+@Composable
+internal fun costText(
+    cost: com.ai.assistance.operit.data.stats.TokenStatsCostSummary,
+    amount: Double = cost.knownAmount,
+    currency: PricingCurrency,
+): String {
+    val money = formatMoney(amount, currency)
+    return if (cost.estimatedContributionCount > 0L) stringResource(R.string.token_stats_approx_amount, money) else money
+}
+
+/**
+ * Says how many calls had no price when they happened and were priced at today's price. Shown
+ * even with the unknown hints off, since it explains why an amount reads "about".
+ */
+@Composable
+internal fun EstimatedCostHint(
+    cost: com.ai.assistance.operit.data.stats.TokenStatsCostSummary,
+    color: androidx.compose.ui.graphics.Color,
+) {
+    if (cost.estimatedContributionCount <= 0L) return
+    Text(
+        text = stringResource(R.string.token_stats_estimated_cost, cost.estimatedContributionCount),
         style = MaterialTheme.typography.bodySmall,
         color = color,
         modifier = Modifier.padding(top = 4.dp),
@@ -1010,7 +1041,7 @@ internal fun TokenStatsModelCard(
                 }
                 Column(horizontalAlignment = Alignment.End) {
                     Text(
-                        text = formatMoney(model.totals.cost.knownAmount, currency),
+                        text = costText(model.totals.cost, currency = currency),
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Bold,
                         color = colors.chartAccent,
@@ -1090,7 +1121,7 @@ private fun TokenStatsIdentityRow(
                 color = TokenStatsCardMuted,
             )
             Text(
-                text = formatMoney(totals.cost.knownAmount, currency),
+                text = costText(totals.cost, currency = currency),
                 style = MaterialTheme.typography.bodySmall,
                 fontWeight = FontWeight.Medium,
             )
@@ -1117,6 +1148,8 @@ private fun TokenStatsIdentityRow(
                 color = colors.unknownHint,
             )
         }
+        // Per connection only with the hints on; the page totals always say it.
+        if (LocalShowUnknownHints.current) EstimatedCostHint(totals.cost, TokenStatsCardMuted)
 
         // 单价：历史口径 = 事件快照；重估口径 = 当前解析价格
         identity.pricing?.let { pricing ->

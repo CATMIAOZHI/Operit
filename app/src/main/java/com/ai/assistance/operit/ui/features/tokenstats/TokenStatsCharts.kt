@@ -94,6 +94,12 @@ internal fun TokenStatsStackedBarChart(
         stackSelector(bucket).sumOf { it.first }
     },
     unknownNote: (TokenStatsTrendBucket) -> String? = { null },
+    /** Why a bucket's amounts read "about"; shown even with the unknown hints off. */
+    estimateNote: (TokenStatsTrendBucket) -> String? = { null },
+    /** Which of a bucket's stack values (in [stackSelector]'s order) include an estimate, shown as "about". */
+    stackApproximate: (TokenStatsTrendBucket) -> List<Boolean> = { emptyList() },
+    /** Whether a bucket's total includes an estimate, shown as "about". */
+    totalApproximate: (TokenStatsTrendBucket) -> Boolean = { false },
     legendItems: List<Pair<String, Color>> = emptyList(),
     /** The bucket's time in the details and the spoken summary; by default its start, by [granularity]. */
     timeLabel: ((TokenStatsTrendBucket) -> String)? = null,
@@ -115,6 +121,9 @@ internal fun TokenStatsStackedBarChart(
     val bucketPositionTemplate = stringResource(R.string.token_stats_chart_bucket_of)
     val prevBucketLabel = stringResource(R.string.token_stats_chart_prev_bucket)
     val nextBucketLabel = stringResource(R.string.token_stats_chart_next_bucket)
+    val approxTemplate = stringResource(R.string.token_stats_approx_amount)
+    fun shown(value: Double, approximate: Boolean): String =
+        if (approximate) String.format(approxTemplate, formatValue(value)) else formatValue(value)
 
     val maxVal = buckets.maxOf { bucket -> stackSelector(bucket).sumOf { it.first } }.coerceAtLeast(0.0)
     val refTop = niceCeil(maxVal)
@@ -134,6 +143,7 @@ internal fun TokenStatsStackedBarChart(
                     .semantics(mergeDescendants = true) {
                         val selected = buckets[selectedIndex]
                         val stacks = stackSelector(selected)
+                        val approximate = stackApproximate(selected)
                         val positionText =
                             String.format(bucketPositionTemplate, selectedIndex + 1, buckets.size)
                         val summary = String.format(
@@ -141,12 +151,12 @@ internal fun TokenStatsStackedBarChart(
                             chartLabel,
                             labelOf(selected),
                             positionText,
-                            formatValue(stackTotalSelector(selected)),
+                            shown(stackTotalSelector(selected), totalApproximate(selected)),
                         )
                         val rows = stacks.mapIndexedNotNull { index, (value, color) ->
                             val label = stackLabels(selected).getOrNull(index) ?: ""
                             if (value > 0.0 || label.isNotEmpty()) {
-                                "${label.ifEmpty { "" }} ${formatValue(value)}".trim()
+                                "${label.ifEmpty { "" }} ${shown(value, approximate.getOrElse(index) { false })}".trim()
                             } else {
                                 null
                             }
@@ -227,18 +237,20 @@ internal fun TokenStatsStackedBarChart(
 
             val selected = buckets[selectedIndex]
             val stacks = stackSelector(selected)
+            val approximate = stackApproximate(selected)
             ChartTooltip(
                 title = labelOf(selected),
                 rows = stacks.mapIndexedNotNull { index, (value, color) ->
                     val label = stackLabels(selected).getOrNull(index) ?: ""
                     if (value > 0.0 || label.isNotEmpty()) {
-                        Triple(color, label, formatValue(value))
+                        Triple(color, label, shown(value, approximate.getOrElse(index) { false }))
                     } else {
                         null
                     }
                 },
-                total = formatValue(stackTotalSelector(selected)),
+                total = shown(stackTotalSelector(selected), totalApproximate(selected)),
                 unknownNote = unknownNote(selected),
+                estimateNote = estimateNote(selected),
             )
         }
     }
@@ -402,6 +414,7 @@ private fun ChartTooltip(
     rows: List<Triple<Color, String, String>>,
     total: String?,
     unknownNote: String?,
+    estimateNote: String? = null,
 ) {
     val colors = LocalTokenStatsColors.current
     Card(
@@ -442,6 +455,13 @@ private fun ChartTooltip(
                 }
             }
             unknownNote?.takeIf { LocalShowUnknownHints.current }?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.unknownHint,
+                )
+            }
+            estimateNote?.let {
                 Text(
                     text = it,
                     style = MaterialTheme.typography.bodySmall,

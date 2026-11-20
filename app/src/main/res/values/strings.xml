@@ -3523,6 +3523,8 @@
     <string name="token_stats_include_legacy">累计中包含旧版数据</string>
     <string name="token_stats_baseline_rows">%1$d 行旧版累计数据（无时间分布，不进趋势图）</string>
     <string name="token_stats_unknown_cost">其中 %1$d 个请求费用未知</string>
+    <string name="token_stats_estimated_cost">其中 %1$d 个请求当时没有价格，已按现在的价格补算</string>
+    <string name="token_stats_approx_amount">约 %1$s</string>
     <string name="token_stats_unknown_parts">%1$d 个请求部分数据未知</string>
     <string name="token_stats_unknown_part_suffix">未知 %1$d</string>
     <string name="token_stats_token_uncached">未缓存输入</string>
@@ -3558,7 +3560,7 @@
     <string name="token_stats_mode_historical">发生时价格</string>
     <string name="token_stats_mode_revalued">按当前价格重算</string>
     <string name="token_stats_mode_help_title">费用计算方式</string>
-    <string name="token_stats_mode_historical_help">发生时价格：使用请求发生时保存的价格。之后修改模型定价，不会改变这部分费用。</string>
+    <string name="token_stats_mode_historical_help">发生时价格：使用请求发生时保存的价格，之后改模型定价不会改变这部分费用。当时没有价格的请求，按现在的价格补算并标「约」，改价格会跟着变。</string>
     <string name="token_stats_mode_revalued_help">按当前价格重算：使用现在的内置价格和自定义价格重新计算所选时间范围，适合预算模拟，不代表供应商实际账单。</string>
     <string name="token_stats_mode_rate_help">修改汇率只会改变统一币种后的展示结果，不会改变事件保存的原币费用。</string>
     <string name="token_stats_help_got_it">知道了</string>
@@ -3634,7 +3636,7 @@
     <string name="token_stats_pricing_catalog_not_checked">尚未检查云端更新</string>
     <string name="token_stats_pricing_catalog_refresh">立即检查</string>
     <string name="token_stats_pricing_catalog_refresh_failed">操作失败，当前价格未变更：%1$s</string>
-    <string name="token_stats_pricing_catalog_hint">按模型名匹配官方价格，与接入提供商无关；名字带冒号标签、厂商前缀或少了日期也能认出，免费模型算 0 元。更新优先获取 models.dev，超时读取仓库缓存。手动价格始终优先，历史费用不变。</string>
+    <string name="token_stats_pricing_catalog_hint">按模型名匹配官方价格，与接入提供商无关；名字带冒号标签、厂商前缀或少了日期也能认出，免费模型算 0 元。更新优先获取 models.dev，超时读取仓库缓存。手动价格始终优先。已有价格的历史费用不变，当时没有价格的会按新价格补算。</string>
     <string name="token_stats_pricing_catalog_auto">自动更新价格</string>
     <string name="token_stats_pricing_catalog_auto_desc">连着 Wi-Fi 时，打开 App 或价格页会定期检查，有新价格就直接用上</string>
     <string name="token_stats_pricing_catalog_auto_not_saved">开关没保存成功，重启 App 后可能变回原样</string>
@@ -9181,15 +9183,16 @@
     <string name="orbit_usage_cost_title">花费</string>
     <string name="orbit_usage_cost_about">约 %1$s</string>
     <string name="orbit_usage_cost_estimated_part">其中约 %1$s 是更新前的用量，按当天全应用均价估算</string>
+    <string name="orbit_usage_cost_backfilled_part">其中约 %1$s 是 %2$d 次当时没算出费用的调用，按现在的价格补算</string>
     <string name="orbit_usage_cost_cache">缓存命中率</string>
     <string name="orbit_usage_cost_per_call">平均每次</string>
     <string name="orbit_usage_cost_by_model">按模型</string>
     <string name="orbit_usage_cost_model_line">%1$s token · %2$d 次调用</string>
     <string name="orbit_usage_cost_unknown_total">费用未知</string>
     <string name="orbit_usage_cost_legacy_row">更新前的用量</string>
-    <string name="orbit_usage_cost_unpriced">有 %1$d 次调用没算出费用（模型没设价格，或服务商没报用量），没算进去。</string>
+    <string name="orbit_usage_cost_unpriced">另有 %1$d 次调用费用未知，没算进总额。</string>
     <string name="orbit_usage_cost_unknown">有 %1$d 次更新前的调用，当天全应用也没有价格记录，没算进去。</string>
-    <string name="orbit_usage_cost_note">按「模型定价」里设的价格计算，只是参考，以服务商账单为准。改价格只影响以后的调用。</string>
+    <string name="orbit_usage_cost_note">按「模型定价」里设的价格计算，只是参考，以服务商账单为准。改价格不影响已算出的费用，只会改变按现价补算的部分。</string>
     <string name="orbit_usage_cost_rate">美元和人民币按 1 : %1$s 换算。</string>
     <string name="orbit_usage_cost_rate_default">美元和人民币按 1 : %1$s 换算（默认汇率，可在全应用费用页修改）。</string>
     <string name="orbit_usage_cost_set_prices">设置模型价格</string>

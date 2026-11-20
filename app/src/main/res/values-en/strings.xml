@@ -3628,6 +3628,8 @@
     <string name="token_stats_include_legacy">Include legacy data in totals</string>
     <string name="token_stats_baseline_rows">%1$d legacy rows (no time distribution; excluded from trends)</string>
     <string name="token_stats_unknown_cost">%1$d request(s) with unknown cost</string>
+    <string name="token_stats_estimated_cost">%1$d request(s) had no price at the time and are priced at today\'s price</string>
+    <string name="token_stats_approx_amount">About %1$s</string>
     <string name="token_stats_unknown_parts">%1$d request(s) with partially unknown data</string>
     <string name="token_stats_unknown_part_suffix">unknown %1$d</string>
     <string name="token_stats_token_uncached">Uncached input</string>
@@ -3663,7 +3665,7 @@
     <string name="token_stats_mode_historical">Price at request time</string>
     <string name="token_stats_mode_revalued">Recalculate now</string>
     <string name="token_stats_mode_help_title">Cost calculation</string>
-    <string name="token_stats_mode_historical_help">Price at request time: uses the price saved when each request occurred. Later pricing changes do not alter this cost.</string>
+    <string name="token_stats_mode_historical_help">Price at request time: uses the price saved when each request occurred. Later pricing changes do not alter this cost. Requests that had no price at the time are priced at today\'s price and marked “About”, so they follow price changes.</string>
     <string name="token_stats_mode_revalued_help">Recalculate now: recalculates the selected range with current built-in and custom prices. This is useful for estimates and is not a provider bill.</string>
     <string name="token_stats_mode_rate_help">Changing the exchange rate only changes converted display totals. It does not alter the original-currency cost saved with an event.</string>
     <string name="token_stats_help_got_it">Got it</string>
@@ -3739,7 +3741,7 @@
     <string name="token_stats_pricing_catalog_not_checked">Cloud updates have not been checked yet</string>
     <string name="token_stats_pricing_catalog_refresh">Check now</string>
     <string name="token_stats_pricing_catalog_refresh_failed">Operation failed; current prices are unchanged: %1$s</string>
-    <string name="token_stats_pricing_catalog_hint">Matches official prices by model name, regardless of your API provider; names with a colon tag, a vendor prefix or without the date are recognized too, and free models cost 0. Updates fetch models.dev first and use the repository cache on timeout. Manual prices take priority; historical costs stay unchanged.</string>
+    <string name="token_stats_pricing_catalog_hint">Matches official prices by model name, regardless of your API provider; names with a colon tag, a vendor prefix or without the date are recognized too, and free models cost 0. Updates fetch models.dev first and use the repository cache on timeout. Manual prices take priority. Historical costs that had a price stay unchanged; those without one are priced at the new price.</string>
     <string name="token_stats_pricing_catalog_auto">Update prices automatically</string>
     <string name="token_stats_pricing_catalog_auto_desc">On Wi-Fi, checks from time to time when you open the app or prices, and uses new prices right away</string>
     <string name="token_stats_pricing_catalog_auto_not_saved">The switch was not saved; it may go back after the app restarts</string>
@@ -9205,15 +9207,16 @@
     <string name="orbit_usage_cost_title">Spending</string>
     <string name="orbit_usage_cost_about">About %1$s</string>
     <string name="orbit_usage_cost_estimated_part">About %1$s of it is use from before this update, estimated at that day\'s app-wide average price</string>
+    <string name="orbit_usage_cost_backfilled_part">About %1$s of it is %2$d call(s) whose cost was not worked out at the time, priced at today\'s price</string>
     <string name="orbit_usage_cost_cache">Cache hit rate</string>
     <string name="orbit_usage_cost_per_call">Per call</string>
     <string name="orbit_usage_cost_by_model">By model</string>
     <string name="orbit_usage_cost_model_line">%1$s tokens · %2$d calls</string>
     <string name="orbit_usage_cost_unknown_total">Cost unknown</string>
     <string name="orbit_usage_cost_legacy_row">Before this update</string>
-    <string name="orbit_usage_cost_unpriced">%1$d calls have no cost (no price set for the model, or the provider didn\'t report usage) and aren\'t counted.</string>
+    <string name="orbit_usage_cost_unpriced">Another %1$d call(s) have an unknown cost and aren\'t in the total.</string>
     <string name="orbit_usage_cost_unknown">%1$d calls from before this update fell on days with no prices anywhere in the app and aren\'t counted.</string>
-    <string name="orbit_usage_cost_note">Worked out from the prices set under Model pricing. Only a guide; your provider\'s bill is what counts. A price change only affects later calls.</string>
+    <string name="orbit_usage_cost_note">Worked out from the prices set under Model pricing. Only a guide; your provider\'s bill is what counts. A price change leaves costs already worked out as they are and only changes amounts estimated at today\'s prices.</string>
     <string name="orbit_usage_cost_rate">US dollars and yuan are converted at 1 : %1$s.</string>
     <string name="orbit_usage_cost_rate_default">US dollars and yuan are converted at 1 : %1$s (the default rate; change it on the all-app costs page).</string>
     <string name="orbit_usage_cost_set_prices">Set model prices</string>
