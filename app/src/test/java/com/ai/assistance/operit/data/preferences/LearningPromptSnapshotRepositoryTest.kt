@@ -15,6 +15,18 @@ class LearningPromptSnapshotRepositoryTest {
     @get:Rule val folder = TemporaryFolder()
     private fun repo(chat: String) = LearningPromptSnapshotRepository(folder.root, chat)
 
+    @Test fun `an app update rebuilds the prefix once and a summary epoch keeps the build`() = runBlocking {
+        fun build(version: String) = LearningPromptSnapshotRepository(folder.root, "chat", version)
+        build("1").bindMemoryScope("global")
+        assertEquals("old tools", build("1").bindSystem("old tools", emptyMap()))
+        build("2").bindMemoryScope("global")
+        assertEquals("new tools", build("2").bindSystem("new tools", emptyMap()))
+        build("2").beginEpoch("summary")
+        assertEquals("after summary", build("2").bindSystem("after summary", emptyMap()))
+        build("2").bindMemoryScope("global")
+        assertEquals("after summary", build("2").bindSystem("later candidate", emptyMap()))
+    }
+
     @Test fun `accepted persona revision clears stale prefix while unchanged revision preserves cache`() = runBlocking {
         repo("orbit").bindMemoryScope("orbit-a", "soul-v1")
         repo("orbit").beginEpoch("")

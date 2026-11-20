@@ -75,21 +75,19 @@ class CollaborationToolExecutor(context: Context) : ToolExecutor {
                         manager.initializeIfNeeded()
                         CollaborationModels.resolve(model, manager.getAllConfigSummaries())
                     } else null
-                    // An omitted fork_turns now starts the child without the parent's conversation.
-                    // Model inheritance and profile-prompt injection keep the rule they had while the
-                    // default was a full fork, so only the inherited context changes for those callers.
-                    val forkRaw = optional("fork_turns")
+                    // fork_turns only decides how much conversation the child gets. The model and the
+                    // profile prompt follow agent_type and model alone: without either the child runs
+                    // on the parent's model with no extra profile prompt, whatever fork_turns says.
                     val agentType = optional("agent_type")
-                    val fork = AgentFork.parse(forkRaw)
-                    val fullForkCompat = forkRaw == null || fork == AgentFork.All
+                    val fork = AgentFork.parse(optional("fork_turns"))
                     val agent = coordinator.spawn(
                         chatId, required("task_name"), required("message"), agentType ?: "general",
                         fork, selectedModel?.configId ?: runtime.parentModelConfigId,
                         selectedModel?.modelIndex ?: runtime.parentModelIndex, runtime.callId,
-                        inheritModel = model != null || (fullForkCompat && agentType == null),
+                        inheritModel = model != null || agentType == null,
                         reasoningEffort = effort,
                         roleCardId = runtime.callerCardId,
-                        includeProfilePrompt = !fullForkCompat || agentType != null,
+                        includeProfilePrompt = agentType != null,
                     )
                     buildJsonObject {
                         put("task_name", agent.path)
