@@ -77,6 +77,8 @@ private class LayerInfo(
     val identityBytes: Long,
     /** The synthesis as it goes into the prompt; 0 while it is still an empty template. */
     val alignmentBytes: Long,
+    /** The lessons book as it goes into the prompt; 0 while it holds no lesson. */
+    val lessonsBytes: Long,
     val memoryBytes: Long?,
     val userBytes: Long?,
     /** What the main chat last sent, or null before its first reply or after a refresh. */
@@ -104,6 +106,7 @@ internal fun OrbitPromptLayersPage(
     onOpenSoul: () -> Unit,
     onOpenIdentity: () -> Unit,
     onOpenAlignment: () -> Unit,
+    onOpenLessons: () -> Unit,
     onOpenMemory: () -> Unit,
     onOpenUser: () -> Unit,
 ) {
@@ -123,6 +126,8 @@ internal fun OrbitPromptLayersPage(
                 identityBytes = bytes(OrbitPromptFiles.identity(context, orbit.id)),
                 alignmentBytes = OrbitFiles.alignmentForPrompt(OrbitFiles.of(context, orbit.id).read(OrbitFiles.ALIGNMENT))
                     ?.let { bytes(it) } ?: 0L,
+                lessonsBytes = OrbitFiles.lessonsForPrompt(OrbitFiles.of(context, orbit.id).lessonsHead(),
+                    com.ai.assistance.operit.util.LocaleUtils.usesEnglishPrompt(context))?.let { bytes(it) } ?: 0L,
                 memoryBytes = orbit.memorySpaceId?.let { bytes(MemoryNotesRepository(context, it).load().markdown) },
                 userBytes = orbit.memorySpaceId?.let {
                     bytes(UserProfileDocumentRepository.forMemorySpace(context, it).load())
@@ -142,7 +147,7 @@ internal fun OrbitPromptLayersPage(
         onPop = { view = null },
         modifier = Modifier.background(MaterialTheme.colorScheme.background),
         base = {
-            LayersList(orbit, info, onBack, onOpenPrompt, onOpenSoul, onOpenIdentity, onOpenAlignment, onOpenMemory, onOpenUser,
+            LayersList(orbit, info, onBack, onOpenPrompt, onOpenSoul, onOpenIdentity, onOpenAlignment, onOpenLessons, onOpenMemory, onOpenUser,
                 onView = { view = it }, onReload = { reload++ })
         },
     ) { shown ->
@@ -159,6 +164,7 @@ private fun LayersList(
     onOpenSoul: () -> Unit,
     onOpenIdentity: () -> Unit,
     onOpenAlignment: () -> Unit,
+    onOpenLessons: () -> Unit,
     onOpenMemory: () -> Unit,
     onOpenUser: () -> Unit,
     onView: (PromptView) -> Unit,
@@ -227,10 +233,15 @@ private fun LayersList(
                     if (info.alignmentBytes > 0) size(info.alignmentBytes) else stringResource(R.string.orbit_layer_alignment_empty),
                     onOpenAlignment)
                 LayerDivider()
-                LayerRow(7, stringResource(R.string.orbit_layer_memory), "memory.md",
+                LayerRow(7, stringResource(R.string.orbit_layer_lessons), OrbitFiles.LESSONS,
+                    stringResource(R.string.orbit_layer_lessons_desc),
+                    if (info.lessonsBytes > 0) size(info.lessonsBytes) else stringResource(R.string.orbit_layer_lessons_empty),
+                    onOpenLessons)
+                LayerDivider()
+                LayerRow(8, stringResource(R.string.orbit_layer_memory), "memory.md",
                     stringResource(R.string.orbit_layer_memory_desc, who), size(info.memoryBytes), onOpenMemory)
                 LayerDivider()
-                LayerRow(8, stringResource(R.string.orbit_layer_user), "user.md",
+                LayerRow(9, stringResource(R.string.orbit_layer_user), "user.md",
                     stringResource(R.string.orbit_layer_user_desc), size(info.userBytes), onOpenUser)
             }
         }
