@@ -1209,11 +1209,18 @@ class MainActivity : ComponentActivity(), com.ai.assistance.operit.ui.components
                             MarkLaunchReadyAfterFrame()
                             AgreementScreen(
                                     onAgreementAccepted = {
+                                        // A second tap before the screen changes does nothing.
+                                        if (agreementPreferences.isAgreementAccepted()) return@AgreementScreen
                                         agreementPreferences.acceptCurrentAgreement()
                                         lifecycleScope.launch {
                                             checkPermissionLevelSet()
                                             if (!showModeSelection && !showPermissionGuide) {
                                                 startPluginLoading()
+                                            }
+                                            // The startup checks skipped this while the agreement was open.
+                                            if (!showModeSelection && !hasExplicitLaunchTarget &&
+                                                currentMainNavItem == NavItem.AiChat) {
+                                                prepareStartupChatIfNeeded()
                                             }
                                             // 重新设置应用内容
                                             setAppContent()
