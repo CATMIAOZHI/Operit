@@ -59,6 +59,6 @@ Import does not restore the original chat, account settings, or another app's pe
 Use `orbit_forget action=plan` to inspect copies and the proposed cleanup scope.
 Explain the categories to be cleared and that deletion is irreversible, without repeating the information being forgotten.
 Use `confirm` only after the user explicitly agrees, then say honestly what was cleared and what `remaining` still lists.
-Matches in SOUL.md and IDENTITY.md are for the user to edit.
+Matches in SOUL.md, IDENTITY.md and the user's own documents in files/ (a downloaded novel, a draft) are only listed, never changed automatically; the user decides. Files that could not be checked are marked unchecked with a reason (too big, changing while read, unreadable); tell the user they were not checked. Ask for confirmation only when something can be cleared.
 Original chat messages are not deleted; the user can delete that chat from the chat list.
 When background memory learning or the nightly review reads that the user asked to forget something, it does not record it and removes what it recorded before; the proactive check skips it and drafts nothing about it.

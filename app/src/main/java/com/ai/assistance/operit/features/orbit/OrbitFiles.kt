@@ -44,6 +44,34 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
     }
 
     /**
+     * Whether [path] is one of the user's own documents: anything under files/, or reached through a
+     * link into it, whether the link is the file or a folder above it (a delete or rewrite changes the
+     * entry in that real folder). Of files/ only the [hooks] scripts tasks registered are Orbit's own,
+     * and only as the very file at that place. Unknown counts as a document, so it is left alone.
+     */
+    fun isUserDocument(path: String, hooks: Set<String> = emptySet()): Boolean = runCatching {
+        val p = normalize(path)
+        val documents = File(root, "files").canonicalFile.toPath()
+        val file = File(root, p)
+        val target = file.canonicalFile.toPath()
+        val folder = file.parentFile.canonicalFile.toPath()
+        if (p in hooks && target == documents.resolve(p.removePrefix("files/"))) return@runCatching false
+        p.startsWith("files/") || target.startsWith(documents) || folder.startsWith(documents)
+    }.getOrDefault(true)
+
+    /**
+     * The text the editor opens, read once under the lock: a file not there yet opens as its template;
+     * one too big or not UTF-8 fails, so text decoded wrongly can never be saved back over it.
+     */
+    suspend fun readForEditor(path: String): String = io {
+        val p = normalize(path)
+        require(allowed(p)) { notOrbitFile(path, p) }
+        val f = inside(File(root, p))
+        if (!f.isFile) return@io template(p) ?: error("No such file: $p")
+        OrbitTextFiles.readEditable(f) ?: throw java.io.IOException("$p is too big or not UTF-8 to edit here")
+    }
+
+    /**
      * Refuses a file that a link would take outside Orbit's folder: checks the file if it exists,
      * otherwise the nearest folder above it that does, so a linked folder is caught too.
      * Sent chat copies (sent/) are only reachable with [sent], and only through a real sent/ folder,
@@ -215,7 +243,9 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         val existed: Boolean = before != null,
     )
 
-    suspend fun write(path: String, text: String): Written = io {
+    suspend fun write(path: String, text: String): Written = io { writeNow(path, text) }
+
+    private fun writeNow(path: String, text: String): Written {
         val p = writable(path)
         require(text.length <= MAX_TEXT) { "Text is longer than $MAX_TEXT characters" }
         val f = File(root, p)
@@ -225,7 +255,33 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         checkPromptCap(p, before, text)
         atomic(f, text)
         afterChange(p)
-        Written(p, before, text, existed = existed)
+        return Written(p, before, text, existed = existed)
+    }
+
+    /**
+     * For forgetting: deletes [path], or rewrites it with [clean], only while it is still Orbit's own,
+     * checked under the lock together with the change: never a user document, and a hook script in
+     * files/ only while its bytes still read as what its task registered ([hooks]: path to hash).
+     * False when it was left alone.
+     */
+    suspend fun cleanOwned(path: String, hooks: Map<String, String>, delete: Boolean, clean: (String) -> String): Boolean = io {
+        val p = normalize(path)
+        val owned = hooks[p]?.let { registered ->
+            runCatching {
+                val f = inside(File(root, p))
+                f.isFile && f.length() <= MAX_TEXT * 4L &&
+                    OrbitTextFiles.readStrictUtf8(f)?.let(OrbitWatchSources::hash) == registered
+            }.getOrDefault(false)
+        } == true
+        if (isUserDocument(p, if (owned) setOf(p) else emptySet())) return@io false
+        // Gone since the scan (or never written, only its template): nothing here to clean.
+        val f = inside(File(root, p))
+        if (!f.isFile) return@io false
+        if (delete) deleteNow(path) else {
+            require(f.length() <= MAX_TEXT * 4L) { "File is too large to read" }
+            writeNow(p, clean(f.readText()))
+        }
+        true
     }
 
     /** The newest nightly review, dreams/YYYY-MM-DD.md, or null before the first one. */
@@ -244,12 +300,21 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
      * template or empty), so a background review never overwrites an edit made after it read the file.
      * Already holding [after] counts as done, which lets an interrupted apply be retried.
      */
-    suspend fun writeIfUnchanged(path: String, before: String, after: String): Written = io {
+    suspend fun writeIfUnchanged(path: String, before: String, after: String, strict: Boolean = false): Written = io {
         val p = writable(path)
         require(after.length <= MAX_TEXT) { "Text is longer than $MAX_TEXT characters" }
+        // The editor saves only what it can open again.
+        require(!strict || after.toByteArray(Charsets.UTF_8).size <= OrbitTextFiles.EDIT_MAX_BYTES) {
+            "Text is bigger than ${OrbitTextFiles.EDIT_MAX_BYTES} bytes, the most the editor opens"
+        }
         val f = File(root, p)
         val existed = f.isFile
-        val current = if (existed) inside(f).readText() else ""
+        // [strict] for the editor: a file no longer small UTF-8 counts as changed, never decoded loosely.
+        val current = when {
+            !existed -> ""
+            strict -> OrbitTextFiles.readEditable(inside(f)) ?: throw ChangedMeanwhile(p)
+            else -> inside(f).readText()
+        }
         // An apply interrupted after the write but before the index update finishes that here.
         if (current == after) return@io Written(p, current, after, existed = existed).also { afterChange(p) }
         if (current != before && !(!existed && before == template(p).orEmpty())) throw ChangedMeanwhile(p)
@@ -301,7 +366,9 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
     }
 
     /** Deletes a file for good. Returns its short path. */
-    suspend fun delete(path: String): String = io {
+    suspend fun delete(path: String): String = io { deleteNow(path) }
+
+    private fun deleteNow(path: String): String {
         val p = normalize(path)
         require((allowed(p) && !isIndex(p)) || isWorkspace(p)) { "This file cannot be deleted: $path" }
         val f = inside(File(root, p))
@@ -310,7 +377,7 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         require((allowed(real) && !isIndex(real)) || isWorkspace(real)) { "This file cannot be deleted: $path" }
         Files.delete(f.toPath())
         afterChange(real)
-        p
+        return p
     }
 
     /**
