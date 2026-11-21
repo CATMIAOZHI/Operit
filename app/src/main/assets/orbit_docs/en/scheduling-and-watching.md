@@ -26,7 +26,8 @@ Do not promise a punctual reminder merely because task creation succeeded.
 Check existing tasks first to avoid duplicate reminders from repeated requests or retries.
 `list` returns summaries; use `detail` for complete instructions, recent observations, or failure details.
 
-Updates change only supplied fields; an instruction update must contain the complete new instruction.
+Updates change only supplied fields. To change a small piece of the instruction or script, use `instruction_old`/`instruction_new` or `script_old`/`script_new` to replace that piece (the old text must match exactly and appear once; read it with `detail` first); pass the complete `instruction` or `script` only to rewrite it whole.
+Each unfinished task has a read-only copy in `tasks/` for you and the user to look at; change tasks with `orbit_task`, since editing a copy changes nothing.
 A real update stops the task's current run and schedules according to the revised configuration.
 Do not interrupt important running work merely to change an unrelated title.
 

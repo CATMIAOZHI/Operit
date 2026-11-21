@@ -595,6 +595,68 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         runCatching { normalize(path) }.getOrNull()?.takeIf(::isPeopleNote)?.let(::afterChange)
     }
 
+    /**
+     * Makes tasks/ hold exactly [copies] (file name to text), the read-only copies of the unfinished
+     * tasks ([OrbitTaskFiles]). Only copies the app wrote are removed, anything else there stays; an
+     * unchanged copy is not rewritten, and the folder goes once it is empty. A name already taken by
+     * something else (the user's own file) puts the copy beside it as "<name>-task.md" (then -task-2.md
+     * and on). A copy is known by [TASK_COPY_MARK] in a data block at its top. A linked tasks/
+     * is left alone, and an Orbit folder that is gone (deleted meanwhile) is not made again. A file that
+     * cannot be handled goes to [failed] and does not stop the others. True when a file was written or removed.
+     */
+    suspend fun syncTaskCopies(copies: Map<String, String>, failed: (String, Exception) -> Unit = { _, _ -> }): Boolean = io {
+        val noLinks = java.nio.file.LinkOption.NOFOLLOW_LINKS
+        // A linked Orbit folder (or folder of all Orbits) could lead anywhere; nothing is written through it.
+        if (!Files.isDirectory(root.toPath(), noLinks) ||
+            root.parentFile?.let { Files.isSymbolicLink(it.toPath()) } != false) return@io false
+        val dir = File(root, TASKS)
+        val there = Files.exists(dir.toPath(), noLinks)
+        if (!there && copies.isEmpty()) return@io false
+        if (there && !Files.isDirectory(dir.toPath(), noLinks)) return@io false
+        inside(dir)
+        var changed = false
+        // Read only as far as the copy's data block and heading.
+        fun isCopy(f: File) = Files.isRegularFile(f.toPath(), noLinks) && isTaskCopy(readHead(f, TASK_COPY_HEAD))
+        // Something there that is not a copy (or cannot be read to tell) is kept.
+        fun taken(f: File) = Files.exists(f.toPath(), noLinks) && !Files.isSymbolicLink(f.toPath()) &&
+            !runCatching { isCopy(f) }.getOrDefault(false)
+        val placed = LinkedHashMap<String, String>()
+        copies.forEach { (name, text) ->
+            val stem = name.removeSuffix(".md")
+            val names = sequenceOf(name, "$stem-task.md") + (2..20).asSequence().map { "$stem-task-$it.md" }
+            // The first name free for a copy; when none is, the first, which then reports why.
+            placed[names.firstOrNull { it !in placed && it !in copies.keys.minus(name) && !taken(File(dir, it)) } ?: name] = text
+        }
+        dir.listFiles()?.forEach { f ->
+            if (f.name in placed || !f.name.endsWith(".md")) return@forEach
+            try {
+                if (isCopy(f)) { Files.delete(f.toPath()); changed = true }
+            } catch (e: Exception) {
+                failed(f.name, e)
+            }
+        }
+        placed.forEach { (name, text) ->
+            val f = File(dir, name)
+            try {
+                // A link in its place is replaced, never written through.
+                if (Files.isSymbolicLink(f.toPath())) { Files.delete(f.toPath()); changed = true }
+                check(!taken(f)) { "$TASKS/$name is not a task copy; left as it is" }
+                val bytes = text.toByteArray()
+                val same = Files.isRegularFile(f.toPath(), noLinks) && Files.size(f.toPath()) == bytes.size.toLong() &&
+                    Files.readAllBytes(f.toPath()).contentEquals(bytes)
+                if (!same) {
+                    atomic(f, text)
+                    changed = true
+                }
+            } catch (e: Exception) {
+                failed(name, e)
+            }
+        }
+        // Not empty (something else was put there): it stays.
+        if (copies.isEmpty() && runCatching { Files.delete(dir.toPath()) }.isSuccess) changed = true
+        changed
+    }
+
     private fun writable(path: String): String {
         val p = normalize(path)
         require(allowed(p)) { notOrbitFile(path, p) }
@@ -692,6 +754,27 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         private const val SENT = "sent"
         /** Orbit's place to work in: clones, drafts, in-between files. Not shown in the Library. */
         const val WORKSPACE = "workspace"
+        /** Read-only copies of the unfinished tasks, kept by the app (see [OrbitTaskFiles]). */
+        const val TASKS = "tasks"
+        /** How much of a file in tasks/ is read to tell whether it is one of the app's copies. */
+        private const val TASK_COPY_HEAD = 4_000
+        /**
+         * The only line of the data block (`---` … `---`) a task copy starts with, marking it as the
+         * app's (see [OrbitTaskFiles]); formatted previews leave such a block out.
+         */
+        const val TASK_COPY_MARK = "orbit: task-copy"
+
+        /** Whether [head], the start of a file in tasks/, is a task copy the app wrote. */
+        fun isTaskCopy(head: String) = head.lineSequence().take(4).toList().let {
+            it.size == 4 && it[0] == "---" && it[1] == TASK_COPY_MARK && it[2] == "---" && it[3].startsWith("# ")
+        }
+
+        /**
+         * Runs [block] holding the lock the files of the Orbit folder [root] are changed under, so
+         * deleting the folder and writing in it never overlap.
+         */
+        suspend fun <T> withFolderLock(root: File, block: () -> T): T =
+            locks.computeIfAbsent(root.absolutePath) { Mutex() }.withLock { block() }
         private val SENT_FOLDER = Regex("\\d{8}-\\d{6}-[0-9a-f]{8}")
         /** The "yyyyMMdd-HHmmss" start of a sent folder's name. */
         private const val SECOND_PREFIX = 15
