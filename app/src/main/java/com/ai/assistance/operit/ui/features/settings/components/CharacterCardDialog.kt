@@ -1733,6 +1733,8 @@ fun FullScreenEditDialog(
         Card(
             modifier = Modifier
                 .fillMaxSize()
+                // Clear of a small (freeform) window's title and handle bars; zero full screen.
+                .windowInsetsPadding(WindowInsets.captionBar)
                 .padding(8.dp)
                 .imePadding(),
             shape = RoundedCornerShape(12.dp),

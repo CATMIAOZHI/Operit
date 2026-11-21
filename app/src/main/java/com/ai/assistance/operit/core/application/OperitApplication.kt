@@ -593,6 +593,12 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
             }.onFailure { AppLogger.e(TAG, "Failed to remove Orbit's old trash", it) }
         }
 
+        // Each Orbit's tasks/ copies follow its tasks; one process writes them.
+        if (isMainAppProcess()) applicationScope.launch {
+            runCatching { com.ai.assistance.operit.features.orbit.OrbitTaskFiles.follow(applicationContext) }
+                .onFailure { if (it !is kotlinx.coroutines.CancellationException) AppLogger.e(TAG, "Orbit task copies stopped", it) }
+        }
+
         // The subagent store is read from disk when first used; read it here, off the main thread,
         // so the first chat screen does not wait on it.
         applicationScope.launch {

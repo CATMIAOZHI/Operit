@@ -145,6 +145,7 @@ private fun OrbitLockScreen(orbit: OrbitProfile?, resumed: Boolean) {
     // The lock's content follows the back swipe; its background stays, so nothing behind shows.
     val leaveBack = rememberOrbitBackMotion()
     OrbitBackHandler(leaveBack) { context.lockActivity()?.moveTaskToBack(true) }
+    com.ai.assistance.operit.ui.theme.FillsCaptionStrips(MaterialTheme.colorScheme.background)
     androidx.compose.material3.Surface(
         modifier = Modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background,

@@ -92,7 +92,7 @@ interface OrbitTaskDao {
     /** One message for the selected due results; every member keeps its own Feed content. */
     @Transaction
     suspend fun appendDeliveryBatch(ids: List<String>, now: Long, chats: ChatDao, messages: MessageDao,
-        roleName: String = ""): List<OrbitDeliveryEntity> {
+        roleName: String = "", content: String? = null): List<OrbitDeliveryEntity> {
         val members = validPending(ids)
         if (members.isEmpty()) return emptyList()
         val first = members.first()
@@ -101,7 +101,7 @@ interface OrbitTaskDao {
         if (saved.isNotEmpty()) return saved // Retry the committed batch before inserting another one.
         val chat = chats.getChatById(first.chatId) ?: return emptyList()
         val timestamp = maxOf(now, (chat.lastMessageAt ?: 0) + 1)
-        val body = if (members.size == 1) first.body else members.joinToString("\n\n---\n\n") { "${it.title}\n\n${it.body}" }
+        val body = content ?: if (members.size == 1) first.body else members.joinToString("\n\n---\n\n") { "${it.title}\n\n${it.body}" }
         // Signed with Orbit's name like its other messages, so replying to it quotes a real sender.
         val id = messages.insertMessage(MessageEntity(chatId = first.chatId, sender = "ai", content = body, roleName = roleName,
             timestamp = timestamp, orderIndex = messages.getMaxOrderIndex(first.chatId)?.plus(1) ?: 0))
@@ -370,6 +370,10 @@ interface OrbitTaskDao {
     @Query("SELECT * FROM orbit_tasks WHERE orbitId = :orbitId ORDER BY createdAt DESC")
     suspend fun tasks(orbitId: String): List<OrbitTaskEntity>
 
+    /** Every Orbit's unfinished tasks, followed as they change: the source of the tasks/ copies. */
+    @Query("SELECT * FROM orbit_tasks WHERE state NOT IN ('CANCELLED', 'DONE') ORDER BY createdAt")
+    fun observeOpenTasks(): Flow<List<OrbitTaskEntity>>
+
     /** Live tasks with one exact title and schedule mode, e.g. the old daily feed task to retire. */
     @Query(
         "SELECT * FROM orbit_tasks WHERE orbitId = :orbitId AND kind = :kind AND scheduleMode = :scheduleMode " +
@@ -515,6 +519,60 @@ interface OrbitTaskDao {
     @Query("SELECT * FROM orbit_deliveries WHERE orbitId = :orbitId AND state = 'HANDING'")
     suspend fun handingDeliveries(orbitId: String): List<OrbitDeliveryEntity>
 
+    /**
+     * True while [id] is the request of a task stopped for the user's answer: the run that asked
+     * still waits and the task was not answered, changed or ended since. Such a request goes into
+     * the chat as it is; it is not a draft for Orbit to weigh.
+     */
+    @Query("SELECT EXISTS(SELECT 1 FROM orbit_deliveries d JOIN orbit_runs r ON r.id = d.runId " +
+        "JOIN orbit_tasks t ON t.id = d.taskId WHERE d.id = :id AND " + WAITING + ")")
+    suspend fun waitingRequest(id: String): Boolean
+
+    /**
+     * Requests of tasks still waiting that an older build handed to Orbit and Orbit left out (it
+     * skipped them or never decided) go back to be posted. Ones it chose to tell are taken as told.
+     * One statement, so an answer that comes in meanwhile is never undone.
+     */
+    @Query("UPDATE orbit_deliveries SET state = 'PENDING', notificationSent = 0, handoffTurnId = '', retryAt = 0, " +
+        "verdict = '', verdictReason = '', verdictNote = '', presentation = '', decidedAt = 0 WHERE id IN (" +
+        "SELECT d.id " + UNTOLD + ")")
+    suspend fun reopenUntoldWaitingRequests(orbitId: String): Int
+
+    @Query("SELECT EXISTS(SELECT 1 " + UNTOLD + ")")
+    suspend fun hasUntoldWaitingRequests(orbitId: String): Boolean
+
+    /** [reopenUntoldWaitingRequests] behind a read-only look, so the usual case writes nothing. */
+    suspend fun reopenUntoldWaitingRequestsIfAny(orbitId: String): Int =
+        if (hasUntoldWaitingRequests(orbitId)) reopenUntoldWaitingRequests(orbitId) else 0
+
+    /** Requests of waiting tasks to post now or later: their ids, oldest first. */
+    @Query("SELECT d.id FROM orbit_tasks t JOIN orbit_deliveries d ON d.taskId = t.id JOIN orbit_runs r ON r.id = d.runId " +
+        "WHERE d.orbitId = :orbitId AND d.state = 'PENDING' AND " + WAITING + " ORDER BY d.createdAt")
+    suspend fun pendingWaitingRequests(orbitId: String): List<String>
+
+    @Query("UPDATE orbit_deliveries SET retryAt = :at WHERE id = :id AND state = 'PENDING'")
+    suspend fun postponeDelivery(id: String, at: Long)
+
+    /**
+     * Marks a posted waiting request told, only while its message is still there (deleting a chat
+     * deletes its messages), in one statement. False leaves it waiting to be posted again.
+     */
+    @Query("UPDATE orbit_deliveries SET state = 'SENT', notificationSent = 1 WHERE id = :id AND state = 'PENDING' " +
+        "AND messageId = :messageId AND EXISTS(SELECT 1 FROM messages m WHERE m.messageId = :messageId AND m.chatId = orbit_deliveries.chatId)")
+    suspend fun markWaitingPosted(id: String, messageId: Long): Int
+
+    /** A posted request whose message is gone from its chat (deleted, or left behind in another chat) is posted again. */
+    @Query("UPDATE orbit_deliveries SET messageId = NULL, messageTimestamp = NULL WHERE id = :id AND state = 'PENDING' " +
+        "AND messageId IS NOT NULL AND NOT EXISTS(SELECT 1 FROM messages m WHERE m.messageId = orbit_deliveries.messageId " +
+        "AND m.chatId = orbit_deliveries.chatId)")
+    suspend fun forgetMissingMessage(id: String): Int
+
+    /** Reports already posted as [messageId], other than waiting tasks' requests (postWaiting tells those). */
+    @Query("UPDATE orbit_deliveries SET state='SENT', notificationSent=1 WHERE orbitId=:orbitId AND messageId=:messageId " +
+        "AND state='PENDING' AND id NOT IN (SELECT d.id FROM orbit_deliveries d JOIN orbit_runs r ON r.id = d.runId " +
+        "JOIN orbit_tasks t ON t.id = d.taskId WHERE d.orbitId = :orbitId AND d.messageId = :messageId AND " + WAITING + ")")
+    suspend fun markPostedReports(orbitId: String, messageId: Long)
+
     @Query("SELECT EXISTS(SELECT 1 FROM orbit_deliveries WHERE taskId=:taskId AND state IN ('PENDING','HANDING'))")
     suspend fun hasPendingResult(taskId: String): Boolean
 
@@ -574,7 +632,9 @@ interface OrbitTaskDao {
     )
     suspend fun dropRunPhrase(taskId: String, phrase: String): Int
 
-    @Query("UPDATE orbit_deliveries SET chatId = :to WHERE orbitId = :orbitId AND chatId = :from AND state = 'PENDING'")
+    /** A message already posted in [from] goes with that chat, so the report is posted again in [to]. */
+    @Query("UPDATE orbit_deliveries SET chatId = :to, messageId = NULL, messageTimestamp = NULL " +
+        "WHERE orbitId = :orbitId AND chatId = :from AND state = 'PENDING'")
     suspend fun movePendingDeliveries(orbitId: String, from: String, to: String)
 
     @Query("UPDATE orbit_deliveries SET state='SENT', notificationSent=1 WHERE orbitId=:orbitId AND messageId=:messageId AND state='PENDING'")
@@ -1030,3 +1090,15 @@ interface OrbitTaskDao {
         "AND NOT EXISTS (SELECT 1 FROM orbit_artifact_versions a WHERE a.runId=orbit_runs.id)")
     suspend fun pruneRuns(taskId: String)
 }
+
+/** A task's request still unanswered: [d] its delivery, [r] the run that asked, [t] the task. */
+private const val WAITING = "d.id = d.runId AND r.state = 'WAITING_USER' AND t.state IN ('WAITING_USER', 'VERIFY') " +
+    "AND t.version = d.taskVersion"
+
+/**
+ * Requests an older build let Orbit leave out, found from this Orbit's waiting tasks (few) rather
+ * than its whole delivery history; the waiting run's request has the run's id.
+ */
+private const val UNTOLD = "FROM orbit_tasks t CROSS JOIN orbit_runs r ON r.taskId = t.id CROSS JOIN orbit_deliveries d ON d.id = r.id " +
+    "WHERE t.orbitId = :orbitId AND t.state IN ('WAITING_USER', 'VERIFY') AND d.state = 'SENT' AND d.messageId IS NULL " +
+    "AND d.verdict != '" + OrbitDeliveryEntity.SEND + "' AND " + WAITING

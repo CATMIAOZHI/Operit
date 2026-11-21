@@ -130,6 +130,8 @@ class EnhancedAIService private constructor(
         private const val TAG = "EnhancedAIService"
         /** A compacted background reading run keeps this share of its trigger free for the next pages. */
         private const val IN_PLACE_ROOM = 0.7
+        /** Share of the compaction line the summary request of an in-place compaction may take. */
+        private const val SUMMARY_INPUT_SHARE = 0.8
 
         @Volatile private var INSTANCE: EnhancedAIService? = null
 
@@ -552,6 +554,10 @@ class EnhancedAIService private constructor(
          * before the turn, which a [turnCompactor] summary replaces. -1 when not known.
          */
         var turnStart: Int = -1,
+        /** The turn's message took in user messages left unanswered before it (see [turnStart]). */
+        var turnMergedEarlier: Boolean = false,
+        /** The turn's own message before that merge; the summary covers the rest of it. */
+        var turnOwnMessage: PromptTurn? = null,
         var composerPredictionAllowed: Boolean = true,
         var samplingInterrupted: Boolean = false,
         var samplingSavepoint: String = "",
@@ -1068,15 +1074,33 @@ class EnhancedAIService private constructor(
         ) {
             "Background run has no task to keep"
         }
-        val summary = generateSummaryFromPromptTurns(
-            com.ai.assistance.operit.core.agent.collaboration.CollaborationCheckpoint.summaryInput(history),
-            previousSummary = null,
-            summaryConfig = ConversationSummaryConfig(
-                globalRules = com.ai.assistance.operit.api.chat.enhance.InPlaceCompaction.SUMMARY_RULES),
-        )
-        check(summary.isNotBlank()) { "Context compaction returned an empty checkpoint" }
+        // The summary model may read less than this one: a request it rejects as too long is sent
+        // again shorter, the way the chat's own summary is.
+        val budget = (maxTokens * threshold * SUMMARY_INPUT_SHARE).toInt()
+        val compaction = com.ai.assistance.operit.api.chat.compaction.ContextCompaction
+        var step = 0
+        var summary: String? = null
+        while (summary == null) {
+            val share = if (step == 0) 1.0 else compaction.SHRINK_STEPS[step - 1]
+            try {
+                summary = generateSummaryFromPromptTurns(
+                    com.ai.assistance.operit.core.agent.collaboration.CollaborationCheckpoint.summaryInput(
+                        fitForSummary(history, (budget * share).toInt())),
+                    previousSummary = null,
+                    summaryConfig = ConversationSummaryConfig(
+                        globalRules = com.ai.assistance.operit.api.chat.enhance.InPlaceCompaction.SUMMARY_RULES),
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (!compaction.isContextOverflow(e) || step >= compaction.SHRINK_STEPS.size) throw e
+                step++
+            }
+        }
+        val checkpoint = checkNotNull(summary)
+        check(checkpoint.isNotBlank()) { "Context compaction returned an empty checkpoint" }
         val compacted = history.filter { it.kind == PromptTurnKind.SYSTEM } +
-            PromptTurn(PromptTurnKind.SUMMARY, summary) +
+            PromptTurn(PromptTurnKind.SUMMARY, checkpoint) +
             PromptTurn(PromptTurnKind.SUMMARY, com.ai.assistance.operit.api.chat.enhance.InPlaceCompaction.RESUME_NOTE) +
             task
         // The checkpoint must leave room for the next pages; one that does not would be compacted again
@@ -1086,10 +1110,29 @@ class EnhancedAIService private constructor(
         }
         com.ai.assistance.operit.core.chat.OrbitDevRecorder.event(
             chatId, com.ai.assistance.operit.core.chat.OrbitDevRecorder.EVENT_COMPACT,
-            context.getString(R.string.orbit_dev_event_compact_whole, history.size, compacted.size, summary.length),
+            context.getString(R.string.orbit_dev_event_compact_whole, history.size, compacted.size, checkpoint.length),
         )
         com.ai.assistance.operit.api.chat.enhance.InPlaceCompaction.compacted(chatId)
         return compacted
+    }
+
+    /**
+     * [history] cut to about [budget] tokens for the summary request, so the request that compacts
+     * an overfull context is not itself too long: earlier checkpoints stay, then the newest turns.
+     */
+    private fun fitForSummary(history: List<PromptTurn>, budget: Int): List<PromptTurn> {
+        fun size(turn: PromptTurn) = com.ai.assistance.operit.api.chat.compaction.ContextCompaction.estimateTokens(turn.content)
+        val talk = history.filter { it.kind != PromptTurnKind.SYSTEM }
+        if (budget <= 0 || talk.sumOf { size(it).toLong() } <= budget) return history
+        var left = budget.toLong() - talk.filter { it.kind == PromptTurnKind.SUMMARY }.sumOf { size(it).toLong() }
+        val kept = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<PromptTurn, Boolean>())
+        for (turn in talk.asReversed()) {
+            if (turn.kind == PromptTurnKind.SUMMARY) continue
+            left -= size(turn)
+            if (left < 0) break
+            kept += turn
+        }
+        return history.filter { it.kind == PromptTurnKind.SYSTEM || it.kind == PromptTurnKind.SUMMARY || it in kept }
     }
 
     private fun bypassPromptHooks(context: PromptHookContext): PromptHookContext = context
@@ -1120,6 +1163,9 @@ class EnhancedAIService private constructor(
         )
         val beforeTurn = compactor.beforeTurnPending && beforeTurnCompactable(execution, history)
         if (ratio < threshold) {
+            // An Orbit chat compacting in the background wakes up often; writing ahead on each wake
+            // would cost a summary every time, so it writes one only at the line.
+            if (com.ai.assistance.operit.api.chat.enhance.InPlaceCompaction.contains(chatId)) return null
             if (beforeTurn) {
                 compactor.prepare()
             } else {
@@ -1142,7 +1188,9 @@ class EnhancedAIService private constructor(
     private fun beforeTurnCompactable(execution: MessageExecutionContext, history: List<PromptTurn>): Boolean {
         val start = execution.turnStart
         if (start < 0 || start > history.size) return false
-        return history.subList(0, start).any { it.kind != PromptTurnKind.SYSTEM && it.kind != PromptTurnKind.SUMMARY }
+        // Unanswered messages merged into the turn's are in the saved chat before it, still to summarize.
+        return execution.turnMergedEarlier ||
+            history.subList(0, start).any { it.kind != PromptTurnKind.SYSTEM && it.kind != PromptTurnKind.SUMMARY }
     }
 
     /** Shows that the turn waits for a summary while [block] runs. */
@@ -1208,15 +1256,20 @@ class EnhancedAIService private constructor(
         val start = execution.turnStart
         if (start < 0 || start > history.size) return null
         val leading = history.subList(0, start).takeWhile { it.kind == PromptTurnKind.SYSTEM }
-        if (leading.size >= start) return null
+        if (leading.size >= start && !execution.turnMergedEarlier) return null
         val summary = compactor.takeReady() ?: whileSummarizing { compactor.await() }
         if (summary.isNullOrBlank()) return null
-        val compacted = leading + PromptTurn(PromptTurnKind.SUMMARY, summary) + history.subList(start, history.size)
+        // The unanswered messages merged into the turn's own are in the summary now: only its own stays.
+        val own = execution.turnOwnMessage?.takeIf { execution.turnMergedEarlier && history.getOrNull(start)?.kind == PromptTurnKind.USER }
+        val turn = history.subList(start, history.size).let { if (own != null) listOf(own) + it.drop(1) else it }
+        val compacted = leading + PromptTurn(PromptTurnKind.SUMMARY, summary) + turn
         com.ai.assistance.operit.core.chat.OrbitDevRecorder.event(
             chatId, com.ai.assistance.operit.core.chat.OrbitDevRecorder.EVENT_COMPACT,
             context.getString(R.string.orbit_dev_event_compact_before_turn, start - leading.size, summary.length),
         )
         execution.turnStart = leading.size + 1
+        execution.turnMergedEarlier = false
+        execution.turnOwnMessage = null
         execution.conversationHistory.clear()
         execution.conversationHistory.addAll(compacted)
         return compacted
@@ -1795,13 +1848,18 @@ class EnhancedAIService private constructor(
                     perf.lap("插件改写")
                     // The current message ends the prepared request; a turn without one adds only what follows.
                     execContext.turnStart =
-                        if (currentMergedWithEarlier) {
+                        if (currentMergedWithEarlier &&
+                            !(com.ai.assistance.operit.api.chat.enhance.InPlaceCompaction.contains(chatId) &&
+                                requestHistory.lastOrNull()?.kind == PromptTurnKind.USER)
+                        ) {
                             -1
                         } else if (message.isNotBlank() && requestHistory.lastOrNull()?.kind == PromptTurnKind.USER) {
                             requestHistory.lastIndex
                         } else {
                             requestHistory.size
                         }
+                    execContext.turnMergedEarlier = currentMergedWithEarlier && execContext.turnStart >= 0
+                    execContext.turnOwnMessage = finalizedHistory.lastOrNull()?.takeIf { execContext.turnMergedEarlier && it.kind == PromptTurnKind.USER }
                     val initialWindow = estimatePreparedRequestWindow(
                         serviceForFunction = serviceForFunction,
                         preparedHistory = requestHistory,
@@ -1810,9 +1868,10 @@ class EnhancedAIService private constructor(
                     )
                     perf.lap("估算token")
                     val initialCompactor = execContext.turnCompactor?.takeIf {
-                        onTokenLimitExceeded != null && !isSubTask &&
-                            !com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(context).isAgent(chatId) &&
-                            !com.ai.assistance.operit.api.chat.enhance.InPlaceCompaction.contains(chatId)
+                        // An Orbit chat compacting in the background saves its summary this way first.
+                        (onTokenLimitExceeded != null || com.ai.assistance.operit.api.chat.enhance.InPlaceCompaction.contains(chatId)) &&
+                            !isSubTask &&
+                            !com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(context).isAgent(chatId)
                     }
                     val initialRatio = if (maxTokens > 0) initialWindow.toDouble() / maxTokens else 0.0
                     if (initialCompactor != null &&
@@ -1842,7 +1901,17 @@ class EnhancedAIService private constructor(
                         // Still over the line (no summary, or the turn alone is that big): the request is
                         // never sent past it. Once the chat is summarized whole and the turn sent again;
                         // over it after that, the turn fails and says why.
-                        if (finalWindow.toDouble() / maxTokens >= tokenUsageThreshold) {
+                        if (finalWindow.toDouble() / maxTokens >= tokenUsageThreshold &&
+                            com.ai.assistance.operit.api.chat.enhance.InPlaceCompaction.contains(chatId)
+                        ) {
+                            // Still over in the background: compact the rest in place and go on.
+                            requestHistory = compactInPlace(
+                                requireNotNull(chatId), requestHistory, serviceForFunction, availableTools, maxTokens,
+                                tokenUsageThreshold,
+                            )
+                            execContext.conversationHistory.clear()
+                            execContext.conversationHistory.addAll(requestHistory)
+                        } else if (finalWindow.toDouble() / maxTokens >= tokenUsageThreshold) {
                             if (com.ai.assistance.operit.api.chat.compaction.ContextOverflowRecovery.begin(requireNotNull(chatId))) {
                                 throw TurnOverCompactionLine()
                             }
@@ -3241,9 +3310,9 @@ class EnhancedAIService private constructor(
                 // A main chat compacts within the turn (see [compactTurn]): a summary is written in
                 // the background from the precompute share of the line on and swapped in at the line.
                 val turnCompactor = context.turnCompactor?.takeIf {
-                    onTokenLimitExceeded != null && !isSubTask &&
-                        !com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(this@EnhancedAIService.context).isAgent(chatId) &&
-                        !com.ai.assistance.operit.api.chat.enhance.InPlaceCompaction.contains(chatId)
+                    (onTokenLimitExceeded != null || com.ai.assistance.operit.api.chat.enhance.InPlaceCompaction.contains(chatId)) &&
+                        !isSubTask &&
+                        !com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(this@EnhancedAIService.context).isAgent(chatId)
                 }
                 if (turnCompactor != null &&
                     usageRatio >= tokenUsageThreshold * com.ai.assistance.operit.api.chat.compaction.ContextCompaction.PRECOMPUTE_RATIO

@@ -81,4 +81,106 @@ class OrbitPieceTest {
         assertEquals(first.key, first.reactionKey(mapOf("4" to "👍", first.key to "❤️")))
         assertEquals(first.key, first.reactionKey(emptyMap()))
     }
+
+    // Orbit grepped a log holding half a stored reply; its answer after that still shows in the chat.
+    @Test fun anUnclosedThinkInAToolCallDoesNotHideTheReply() {
+        val content = "<think>先查日志</think>" +
+            "<tool_ab12 name=\"super_admin:terminal\"><param name=\"command\">grep -n '<think>' app.log</param></tool_ab12>" +
+            "\n报告在下面，可以直接发给 Codex。"
+        assertEquals("报告在下面，可以直接发给 Codex。", OrbitSpeech.of(content))
+    }
+
+    @Test fun anUnclosedThinkInAToolResultDoesNotHideTheReply() {
+        val content = "<tool_result_ab12 name=\"super_admin:terminal\" status=\"success\"><content>12: <think>半条旧回复" +
+            "</content></tool_result_ab12>\n报告在下面，可以直接发给 Codex。"
+        assertEquals("报告在下面，可以直接发给 Codex。", OrbitSpeech.of(content))
+    }
+
+    // The steps found while reading past the thinking are the ones taken out; nothing reads them again.
+    @Test fun aSelfClosingStepDoesNotTakeTheWordsAfterItWithALaterStep() {
+        val content = "<tool name=\"old\"/>已说过的正文\n<tool name=\"run\"><param name=\"p\"><think>log</param></tool>"
+        assertEquals("已说过的正文", OrbitSpeech.of(content))
+    }
+
+    @Test fun aStepClosingWithASpaceGoesWholeAndKeepsTheReply() {
+        assertEquals("正常回答", OrbitSpeech.of("<tool comment=\"log\" name=\"read\"><think>私有</think></tool >正常回答"))
+    }
+
+    @Test fun aClosingTagInsideCdataDoesNotEndTheStep() {
+        val content = "<tool name=\"write_file\"><param name=\"content\"><![CDATA[script </tool> with <think>literal]]>" +
+            "</param></tool>真正的回答"
+        assertEquals("真正的回答", OrbitSpeech.of(content))
+    }
+
+    @Test fun aStepMentionedInThinkingDoesNotSwallowTheReply() {
+        val content = "<think>准备调用 <tool_x name=\"a\"> 看看</think>先说一句" +
+            "<tool_x name=\"b\"><param name=\"p\"><think>log</param></tool_x>结论"
+        assertEquals("先说一句结论", OrbitSpeech.of(content))
+    }
+
+    // A broken step whose thinking runs on came out of Orbit's own thinking: finished or cut off,
+    // none of that thinking shows.
+    @Test fun thinkingAfterABrokenStepStaysHidden() {
+        // With a parameter open too, a nested example's `</param></tool>` must not close the step.
+        listOf("<tool name=\"cut\">", "<tool name=\"cut\"><param name=\"q\">").forEach { step ->
+            val cut = "$step<think>想想 <tool name=\"example\"><param name=\"p\">v</param></tool>这里是隐藏思考"
+            listOf(cut, "$cut</think>答复").forEach { content ->
+                val shown = OrbitSpeech.of(content)
+                assertFalse(shown, shown.contains("想想") || shown.contains("隐藏思考"))
+            }
+        }
+    }
+
+    // Two tool results each holding half of a log's thinking tags; the reply between them stays.
+    @Test fun tagsInToolResultsPairWithNothingOutside() {
+        val content = "<tool_result_a name=\"read\" status=\"success\"><content><think>前半日志</content></tool_result_a>" +
+            "真正答复<tool_result_b name=\"read\" status=\"success\"><content>后半日志</think></content></tool_result_b>"
+        assertEquals("真正答复", OrbitSpeech.of(content))
+    }
+
+    // A card's text can hold anything (a file named "<think>a.md"); it never reads as markup.
+    @Test fun aCardsTextNeverReadsAsMarkup() {
+        val card = JSONObject().put("kind", "file").put("name", "<think>a`\uE000.md")
+        val content = "<tool_result_ab12 name=\"orbit_file\" status=\"success\"><content>" +
+            JSONObject().put(OrbitChatCards.KEY, card) + "</content></tool_result_ab12>发好了"
+        val shown = OrbitSpeech.history(listOf(com.ai.assistance.operit.data.model.ChatMessage("ai", content, timestamp = 100L)))
+            .single().content
+        val pieces = OrbitSpeech.pieceList(shown, 100L, english = false)
+        assertEquals(listOf("发好了"), pieces.filter { it.summary == null }.map { it.content })
+        val cardPiece = pieces.single { it.summary != null }
+        assertEquals("card:100:0", cardPiece.key)
+        val json = cardPiece.content.removePrefix("```orbit-card\n").removeSuffix("\n```")
+        assertFalse(json, json.any { it == '<' || it == '>' || it == '`' || it == '\uE000' })
+        assertEquals("<think>a`\uE000.md", JSONObject(json).getString("name"))
+    }
+
+    // Long runs of tags that never end (no `>`, no closing) cost one pass, not one per tag.
+    @Test(timeout = 3_000L)
+    fun longRunsOfUnendedTagsStayFast() {
+        val n = 20_000
+        val tail = "z".repeat(200_000)
+        listOf("<tool_x ", "<tool_result_x ", "<status>", "<emotion>").forEach { tag ->
+            val shown = OrbitSpeech.of("答复" + tag.repeat(n) + tail)
+            assertTrue(shown.startsWith("答复"))
+        }
+        assertEquals("a b", OrbitSpeech.of("a<status type=\"x\">s</status> b<tool_x name=\"y\"/>"))
+    }
+
+    // A self-closing tag ends at the first `>` after its name, even with a `<` in an attribute.
+    @Test fun selfClosingTagsWithALessThanInAnAttributeStillGo() {
+        assertEquals("前文后文", OrbitSpeech.of("前文<status type=\"queued\" title=\"<queued\"/>后文"))
+        assertEquals("实际答复", OrbitSpeech.of("<tool name=\"x\" description=\"a<b\"/>实际答复"))
+    }
+
+    // A tool result's opening is read once to find its card, however often it repeats a name.
+    @Test(timeout = 3_000L)
+    fun aLongToolResultOpeningIsReadOnce() {
+        val card = JSONObject().put(OrbitChatCards.KEY, JSONObject().put("kind", "file").put("name", "a.md"))
+        val opening = "<tool_result_ab12" + " name=\"orbit_file\"".repeat(50_000)
+        fun shown(status: String) = OrbitSpeech.history(listOf(com.ai.assistance.operit.data.model.ChatMessage(
+            "ai", "$opening status=\"$status\"><content>$card</content></tool_result_ab12>发好了", timestamp = 100L,
+        ))).single().content
+        assertEquals("发好了", shown("error"))
+        assertTrue(shown("success").contains("```orbit-card"))
+    }
 }

@@ -8953,7 +8953,7 @@
     <string name="chat_shortcuts">聊天指令 · 点击执行，发送仍是普通消息</string>
     <string name="chat_shortcut_compact">压缩上下文</string>
     <string name="chat_shortcut_autocompact">自动压缩阈值 · 例如 /autocompact 300K，auto 恢复自动</string>
-    <string name="chat_shortcut_context">调整当前对话预算 · 例如 /context 400K</string>
+    <string name="chat_shortcut_context">调整当前对话预算 · 例如 /context 500K</string>
     <string name="chat_shortcut_max">模型最大上下文 · /max on 开启，off 恢复自定义预算</string>
     <string name="chat_shortcut_invalid">参数无效，请按示例填写；仍可作为普通消息发送</string>
     <string name="chat_shortcut_busy">请等当前回复结束后再压缩</string>
@@ -9190,7 +9190,10 @@
     <string name="orbit_usage_cost_model_line">%1$s token · %2$d 次调用</string>
     <string name="orbit_usage_cost_unknown_total">费用未知</string>
     <string name="orbit_usage_cost_unpriced">另有 %1$d 次调用费用未知，没算进总额。</string>
-    <string name="orbit_usage_cost_note">按「模型定价」里的价格计算；没记下费用的调用，能估算的按最新价格估算。只是参考，以服务商账单为准。</string>
+    <string name="orbit_usage_cost_note">按「模型定价」里的价格计算；没记下费用的调用，能估算的按最新价格估算，缺少模型或缓存记录时参考全应用的用量。只是参考，以服务商账单为准。</string>
+    <string name="orbit_waiting_message">「%1$s」在等你回复：\n\n%2$s</string>
+    <string name="orbit_waiting_verify_hint">上次有操作没确认结果：请先到这个任务的详情里核对，点「我已核实：操作已完成」或「我已核实：可以重新尝试」，然后再继续。</string>
+    <string name="orbit_waiting_page_hint">这一步要在网页上操作：到这个任务的详情里点「打开页面处理」，弄好后点「完成并继续」。</string>
     <string name="orbit_usage_cost_rate">美元和人民币按 1 : %1$s 换算。</string>
     <string name="orbit_usage_cost_rate_default">美元和人民币按 1 : %1$s 换算（默认汇率，可在全应用费用页修改）。</string>
     <string name="orbit_usage_cost_set_prices">设置模型价格</string>

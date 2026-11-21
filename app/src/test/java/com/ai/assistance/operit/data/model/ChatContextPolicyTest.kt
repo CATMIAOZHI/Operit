@@ -27,8 +27,8 @@ class ChatContextPolicyTest {
 
     @Test fun explicitCompactionCanBeEarlierButNeverBeyondSafeWindow() {
         assertEquals(100f, resolveChatContext(ChatContextPolicy(compactAtK = 100f), model).compactAtK, 0f)
-        assertEquals(360f, resolveChatContext(ChatContextPolicy(compactAtK = 900f), model).compactAtK, 0f)
-        assertEquals(300f, resolveChatContext(ChatContextPolicy(), model.copy(maxTokensEnabled = true,
+        assertEquals(360f, resolveChatContext(ChatContextPolicy(windowK = 400f, compactAtK = 900f), model).compactAtK, 0f)
+        assertEquals(300f, resolveChatContext(ChatContextPolicy(windowK = 400f), model.copy(maxTokensEnabled = true,
             maxTokens = 100 * 1024)).compactAtK, 0f)
     }
 

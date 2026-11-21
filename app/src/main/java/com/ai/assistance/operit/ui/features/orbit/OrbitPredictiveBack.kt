@@ -13,6 +13,9 @@ import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.captionBar
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
@@ -234,7 +237,9 @@ internal fun OrbitModalWindow(
         OrbitWindowBackScope {
             val motion = rememberOrbitBackMotion()
             OrbitBackHandler(motion, canDismiss = dismissEnabled, onBack = { onDismissRequest() })
-            Box(Modifier.orbitDismissLayer(motion)) { content() }
+            // A full-screen window in a small (freeform) window steps clear of the system's title
+            // and handle bars, like the app itself (MainActivity); elsewhere they are zero.
+            Box(Modifier.windowInsetsPadding(WindowInsets.captionBar).orbitDismissLayer(motion)) { content() }
         }
     }
 }

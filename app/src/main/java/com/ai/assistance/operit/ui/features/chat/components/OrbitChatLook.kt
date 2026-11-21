@@ -506,12 +506,12 @@ object OrbitSpeech {
         "orbit_models", "orbit_components", "orbit_settings", "orbit_skills", "orbit_voice",
         "orbit_channel", "orbit_soul", "orbit_mcp", "orbit_task",
     )
-    private val cardToolResult = Regex(
-        "^<tool_result[A-Za-z0-9_]*\\s[^>]*\\bname=\"(?:${CARD_TOOLS.joinToString("|")})\"[^>]*\\bstatus=\"success\"",
-        RegexOption.IGNORE_CASE,
-    )
-    // A sending tool stopped for the user's OK: its error carries the approval card.
-    private val errorToolResult = Regex("^<tool_result[A-Za-z0-9_]*\\s[^>]*\\bstatus=\"error\"", RegexOption.IGNORE_CASE)
+    // A tool result's opening tag is read once, up to its first `>`: a card tool's name, then a
+    // success; or, for a sending tool stopped for the user's OK, an error carrying the approval card.
+    private val toolResultOpening = Regex("^<tool_result[A-Za-z0-9_]*\\s", RegexOption.IGNORE_CASE)
+    private val cardToolName = Regex("\\bname=\"(?:${CARD_TOOLS.joinToString("|")})\"", RegexOption.IGNORE_CASE)
+    private val successStatus = Regex("\\bstatus=\"success\"", RegexOption.IGNORE_CASE)
+    private val errorStatus = Regex("\\bstatus=\"error\"", RegexOption.IGNORE_CASE)
     private val placeholder = Regex("\uE000(\\d+)\uE001")
     // The start of an options token at the very end of a reply still streaming in.
     private val partialOptionsToken = Regex("\\[\\[orbit-options(?::[a-z0-9]{0,10}]?)?$")
@@ -632,29 +632,21 @@ object OrbitSpeech {
     }
 
     private fun clean(content: String): String {
-        var text = ChatUtils.removeThinkingContent(content)
-        text = ChatMarkupRegex.removeGeminiThoughtSignatureMeta(text)
-        text = ChatMarkupRegex.removeOpenAiResponsesReasoningMeta(text)
         // A card a tool put in the chat (a secure entry card, a picture or file Orbit sent) stays
         // where the tool ran; every other step and result goes.
         val cards = mutableListOf<String>()
-        // The marks below stand in for cards; the same characters in the text itself are dropped.
-        if (text.indexOf('\uE000') >= 0 || text.indexOf('\uE001') >= 0) text = text.replace("\uE000", "").replace("\uE001", "")
-        text = text.replace(ChatMarkupRegex.toolOrToolResultBlock) { match ->
-            cardOf(match.value)?.let { card ->
-                cards += card
-                "\uE000${cards.size - 1}\uE001"
-            }.orEmpty()
-        }
+        var text = withoutThinkingOrSteps(content, cards)
+        text = ChatMarkupRegex.removeGeminiThoughtSignatureMeta(text)
+        text = ChatMarkupRegex.removeOpenAiResponsesReasoningMeta(text)
         // "Viewed N images": the pictures Orbit looked at while working, which the user never sees.
         text = com.ai.assistance.operit.api.chat.llmprovider.MediaLinkParser.removeImageLinks(text)
-        listOf(
-            ChatMarkupRegex.toolSelfClosingTag,
-            ChatMarkupRegex.toolResultSelfClosingTag,
-            ChatMarkupRegex.statusTag,
-            ChatMarkupRegex.statusSelfClosingTag,
-            ChatMarkupRegex.emotionTag,
-        ).forEach { text = text.replace(it, "") }
+        // The shared patterns read on from each opening to the end of the text when it never ends,
+        // so a long run of them would cost a pass each; these remove the same tags in one pass.
+        text = withoutSelfClosing(text, stepOpening)
+        text = withoutSelfClosing(text, resultOpening)
+        text = withoutBlocks(text, "status")
+        text = withoutSelfClosing(text, statusOpening)
+        text = withoutBlocks(text, "emotion")
         // A card Orbit wrote itself never shows; checked last, so removing a tag cannot put one together.
         if (text.contains(ORBIT_CARD_FENCE)) text = text.replace(writtenOrbitCard, "")
         // Reply options: the token Orbit wrote becomes buttons (see OrbitOptions); a fence it typed
@@ -675,11 +667,138 @@ object OrbitSpeech {
         return text.replace(unclosedStepAtEnd, "").replace(blank, "\n\n").trim()
     }
 
+    // Where a tool, tool result or status tag starts: its name, whole.
+    private val stepOpening = Regex("<${ChatMarkupRegex.TOOL_TAG_NAME_REGEX_SOURCE}\\b", RegexOption.IGNORE_CASE)
+    private val resultOpening = Regex("<${ChatMarkupRegex.TOOL_RESULT_TAG_NAME_REGEX_SOURCE}\\b", RegexOption.IGNORE_CASE)
+    private val statusOpening = Regex("<status\\b", RegexOption.IGNORE_CASE)
+
+    /**
+     * [text] without the self-closing tags [opening] starts, read as the shared patterns read them
+     * (the tag ends at the first `>` after its name, a `/` right before it), in one pass: the
+     * first `>` after a name is the same for every name before it, so it is looked for once.
+     */
+    private fun withoutSelfClosing(text: String, opening: Regex): String {
+        var match = opening.find(text) ?: return text
+        var out: StringBuilder? = null
+        var copied = 0
+        var close = -2
+        while (true) {
+            val nameEnd = match.range.last + 1
+            if (close != -1 && close < nameEnd) close = text.indexOf('>', nameEnd)
+            // No `>` after this name means none after a later one either.
+            if (close < 0) break
+            val next = if (text[close - 1] == '/') {
+                if (out == null) out = StringBuilder(text.length)
+                out.append(text, copied, match.range.first)
+                copied = close + 1
+                opening.find(text, copied)
+            } else {
+                match.next()
+            }
+            match = next ?: break
+        }
+        return out?.append(text, copied, text.length)?.toString() ?: text
+    }
+
+    /**
+     * [text] without its `<name …>…</name>` blocks, each ending at the first closing after its
+     * opening, in one pass: an opening with no closing after it has none after a later one either.
+     */
+    private fun withoutBlocks(text: String, name: String): String {
+        val open = "<$name"
+        val close = "</$name>"
+        var at = openingAt(text, open, 0)
+        var out: StringBuilder? = null
+        var copied = 0
+        while (at >= 0) {
+            val end = text.indexOf(close, at + open.length, ignoreCase = true)
+            if (end < 0) break
+            if (out == null) out = StringBuilder(text.length)
+            out.append(text, copied, at)
+            copied = end + close.length
+            at = openingAt(text, open, copied)
+        }
+        return out?.append(text, copied, text.length)?.toString() ?: text
+    }
+
+    // Where the next [open] starts at or after [from] as a whole name (`<status`, not `<statusbar`), or -1.
+    private fun openingAt(text: String, open: String, from: Int): Int {
+        var at = text.indexOf(open, from, ignoreCase = true)
+        while (at >= 0) {
+            val next = text.getOrNull(at + open.length)
+            if (next == null || !(next.isLetterOrDigit() || next == '_')) return at
+            at = text.indexOf(open, at + 1, ignoreCase = true)
+        }
+        return -1
+    }
+
+    /**
+     * [content] without its thinking and without its tool calls and results, read in one pass
+     * (see [ChatUtils.visitOutsideThinking]), so a `<think>` in a tool's input or output (a log
+     * Orbit read, an old message) cannot hide the rest of the reply. A tool result carrying a card
+     * leaves a mark for it in [cards]; the marks' own characters in the text itself are dropped.
+     */
+    private fun withoutThinkingOrSteps(content: String, cards: MutableList<String>): String {
+        val marks = content.indexOf('\uE000') >= 0 || content.indexOf('\uE001') >= 0
+        val out = StringBuilder()
+        var whole = false
+        // Where the card key comes next; a step without it holds no card and is not copied.
+        var nextKey = -2
+        ChatUtils.visitOutsideThinking(content, object : ChatUtils.OutsideThinkingVisitor {
+            override fun text(start: Int, end: Int) {
+                when {
+                    marks -> for (i in start until end) {
+                        val c = content[i]
+                        if (c != '\uE000' && c != '\uE001') out.append(c)
+                    }
+                    // Nothing to leave out at all: the text is the content itself.
+                    start == 0 && end == content.length -> whole = true
+                    else -> out.append(content, start, end)
+                }
+            }
+
+            override fun toolBlock(start: Int, end: Int) {
+                if (nextKey != -1 && nextKey < start) {
+                    nextKey = content.indexOf(com.ai.assistance.operit.features.orbit.OrbitChatCards.KEY, start)
+                }
+                if (nextKey < 0 || nextKey >= end) return
+                cardOf(content.substring(start, end))?.let { card ->
+                    cards += card
+                    out.append('\uE000').append(cards.size - 1).append('\uE001')
+                }
+            }
+        })
+        return if (whole) content.trim() else out.trim().toString()
+    }
+
     /** The card in one of Orbit's tool results, as one line of JSON, or null. */
-    private fun cardOf(block: String): String? {
+    private fun cardOf(block: String): String? = cardJsonOf(block)?.let(::inert)
+
+    /**
+     * [json] with the characters that mean something in a reply written as `\u` escapes, so a card
+     * can never be read as a tag (a `<think>` in a file name), a code fence or a card mark. They
+     * only occur inside JSON strings, where the escape reads back the same.
+     */
+    private fun inert(json: String): String {
+        if (json.none { it == '<' || it == '>' || it == '`' || it == '\uE000' || it == '\uE001' }) return json
+        val out = StringBuilder(json.length + 16)
+        for (c in json) {
+            when (c) {
+                '<', '>', '`', '\uE000', '\uE001' -> out.append("\\u").append(Integer.toHexString(c.code).padStart(4, '0'))
+                else -> out.append(c)
+            }
+        }
+        return out.toString()
+    }
+
+    private fun cardJsonOf(block: String): String? {
         if (!block.contains(com.ai.assistance.operit.features.orbit.OrbitChatCards.KEY)) return null
-        if (!cardToolResult.containsMatchIn(block)) {
-            if (!errorToolResult.containsMatchIn(block) ||
+        val opening = toolResultOpening.find(block) ?: return null
+        // From the space after the name, so a `\b` before an attribute reads as it does in the tag.
+        val attributes = block.substring(opening.range.last, block.indexOf('>').let { if (it < 0) block.length else it })
+        val name = cardToolName.find(attributes)
+        if (name == null || successStatus.find(attributes, name.range.last + 1) == null) {
+            if (!errorStatus.containsMatchIn(attributes) ||
                 !block.contains(com.ai.assistance.operit.features.orbit.OrbitConnectorSend.PREFIX)) return null
             val error = block.substringAfter("<error>", "").substringBeforeLast("</error>", "")
             return com.ai.assistance.operit.features.orbit.OrbitConnectorSend.cardIn(error)?.toString()
@@ -721,9 +840,10 @@ object OrbitSpeech {
             }
             val (speech, cards) = splitCards(of(message.content))
             // Each card remembers the message it came from, so it keeps its reactions once moved.
+            // Writing the key writes the JSON again, so it is made inert again too.
             pending += cards.mapIndexed { i, card ->
-                com.ai.assistance.operit.features.orbit.OrbitChatCards.withPieceKey(card,
-                    com.ai.assistance.operit.features.orbit.OrbitReactions.pieceKey("card", message.timestamp, i))
+                inert(com.ai.assistance.operit.features.orbit.OrbitChatCards.withPieceKey(card,
+                    com.ai.assistance.operit.features.orbit.OrbitReactions.pieceKey("card", message.timestamp, i)))
             }
             lastAi = out.size
             out += message.copy(content = speech, contentStream = null)

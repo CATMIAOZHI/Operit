@@ -31,7 +31,7 @@ internal object OrbitContextSettings {
     )
 
     /** The budget suggested for DeepSeek Flash models. */
-    const val DEEPSEEK_FLASH_BUDGET_K = 400
+    const val DEEPSEEK_FLASH_BUDGET_K = 500
 
     fun isDeepSeekFlash(modelName: String): Boolean =
         modelName.lowercase().let { "deepseek" in it && "flash" in it }
