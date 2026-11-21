@@ -286,6 +286,42 @@ class OrbitTaskDaoTest {
         assertNotNull(dao.enqueueDue("task", 1003))
     }
 
+    @Test fun `a waiting request is posted as a message, and one an older build left untold opens again`() = runBlocking {
+        database.chatDao().insertChat(ChatEntity(id = "chat", title = "Orbit"))
+        dao.insertTask(definition(kind = "ASSIST"))
+        val token = checkNotNull(claim())
+        assertTrue(dao.waitForUser(token, "Choose a source", "boot", 1001, 11))
+        val request = dao.pendingDeliveries("orbit").single()
+        assertTrue(dao.waitingRequest(request.id))
+        // An older build handed it to Orbit, which left it out: closed without a message.
+        dao.updateDelivery(request.copy(state = "SENT", verdict = "skip", verdictReason = "not_useful_now"))
+        assertEquals(1, dao.reopenUntoldWaitingRequests("orbit"))
+        assertEquals("PENDING", dao.delivery(request.id)?.state)
+        assertEquals(listOf(request.id), dao.pendingWaitingRequests("orbit"))
+        assertEquals("", dao.delivery(request.id)?.verdict)
+        // Posted as a message: told, and never opened again. Its message is there, so nothing is forgotten.
+        val saved = dao.appendDeliveryBatch(listOf(request.id), 1002, database.chatDao(), database.messageDao(), "Rainy",
+            "Test waits: Choose a source")
+        val messageId = checkNotNull(saved.single().messageId)
+        assertEquals(0, dao.forgetMissingMessage(request.id))
+        // An older build moved it to another chat and kept the old message: not told there, so it is posted again.
+        database.chatDao().insertChat(ChatEntity(id = "other", title = "Orbit main"))
+        dao.updateDelivery(saved.single().copy(chatId = "other"))
+        assertEquals(0, dao.markWaitingPosted(request.id, messageId))
+        assertEquals("PENDING", dao.delivery(request.id)?.state)
+        assertEquals(1, dao.forgetMissingMessage(request.id))
+        assertNull(dao.delivery(request.id)?.messageId)
+        val again = dao.appendDeliveryBatch(listOf(request.id), 1002, database.chatDao(), database.messageDao(), "Rainy",
+            "Test waits: Choose a source")
+        assertEquals(1, dao.markWaitingPosted(request.id, checkNotNull(again.single().messageId)))
+        assertEquals("SENT", dao.delivery(request.id)?.state)
+        assertEquals(0, dao.reopenUntoldWaitingRequests("orbit"))
+        assertEquals("Test waits: Choose a source", database.chatContentDao().getMessagesForChat("other").single().content)
+        // Once answered, it is no longer a waiting request.
+        assertTrue(dao.resumeWithInput("task", 1, "Use this source", "", 1003))
+        assertFalse(dao.waitingRequest(request.id))
+    }
+
     @Test fun `waiting while child finishes reconciles unknown receipt without losing user request`() = runBlocking {
         dao.insertTask(definition(kind = "ASSIST"))
         val token = checkNotNull(claim())

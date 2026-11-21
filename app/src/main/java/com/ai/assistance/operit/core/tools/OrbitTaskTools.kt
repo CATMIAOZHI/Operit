@@ -34,6 +34,7 @@ internal object OrbitTaskTools {
             ToolParameterSchema("source_artifact_version_id", description = "可选，继续修改的成果版本编号，由 orbit_artifact 获取", required = false),
             ToolParameterSchema("task_id", description = "list 返回的 task_id；detail/update/pause/resume/cancel/run/dry_run 必填", required = false),
             ToolParameterSchema("user_note", description = "resume：用户对待办问题的答复，最多4000字符；仅转达实际答复，不代替用户授权", required = false),
+            ToolParameterSchema("request_id", description = "resume 等用户回复的任务时必填：pending 给的 request_id；任务已经不在等这个问题就不会动它", required = false),
             ToolParameterSchema("title", description = "create 必填、update 可改：任务名称，最多80字符", required = false),
             ToolParameterSchema("instruction", description = "create 必填、update 可改：要做什么、关注什么变化、怎么汇报，最多4000字符", required = false),
             ToolParameterSchema("instruction_old", description = "update 时只改说明的一段：要换掉的原文，一字不差（含空格换行），在说明里只能出现一次；先 detail 看原文。配 instruction_new，不和 instruction 同传", required = false),
@@ -63,7 +64,10 @@ internal object OrbitTaskTools {
             "「动态更新」（每12小时写一条动态）和「每日点子」（每天上午9点想点子）是你自己的后台任务，动态页和点子页靠它们更新：" +
             "只能 pause/resume/run 或用 update 改时间（schedule_mode、interval_minutes、daily_time、repeat_on）和 model，不能 cancel，也不能改标题、内容或执行方式。" +
             "用户说“点子多一点/少一点”“动态更勤/更少”时就改它们的时间，比如点子改成 INTERVAL+interval_minutes=720 就是一天两次。" +
-            "用户在聊天里回答后，调用 resume 转达 user_note。中断过的操作先看 detail 核实，不能盲目重做。" +
+            "任务停下等用户时，App 会用你的名义把它的问题发到聊天里，开头写着任务名。用户在聊天里回答后，先用 pending 找到对应的任务：" +
+            "用户引用了那条消息时，按引用的 timestamp 对 asked_message_timestamp；没引用就按任务名和问题对。能唯一对上才调用 resume，带上它的 request_id 并转达 user_note；" +
+            "对不上、或有几个任务都可能，就先问用户是在答哪一个。check_first=verify 要用户先到任务详情核对操作结果，check_first=open_page 要用户在任务详情里打开页面处理，这两种都不能直接 resume。" +
+            "中断过的操作先看 detail 核实，不能盲目重做。" +
             "子代理的工具过程保存在执行记录，它的结果先交给你，由你在安排它的聊天（主聊天或侧聊）里告诉用户。" +
             "用户说“有某某消息/短信/日程变化就告诉我”时用 WATCH+INTERVAL+notify_policy=CHANGES，间隔按急不急定（最少15分钟）。" +
             "通知、短信、日历需要用户在系统设置里给 Operit 对应权限，没给时任务会记下原因并提醒用户一次。" +
@@ -148,6 +152,18 @@ internal object OrbitTaskTools {
                     ?: last?.error?.takeIf { it.isNotBlank() }
                     ?: if (chatFailed) "The last run was handed to you in the chat, but the model failed while replying, so it did not get done." else "")
                     .put("unverified_actions", JSONArray(repository.dao.unresolvedActions(task.id).map { it.summary }))
+                    .apply {
+                        if (task.state !in setOf("WAITING_USER", "VERIFY") || last?.state != "WAITING_USER") return@apply
+                        put("request_id", last.id)
+                        // The message that asked the user, to match a reply that quotes it.
+                        repository.dao.delivery(last.id)?.takeIf { it.messageTimestamp != null }?.let {
+                            put("asked_in_chat", it.chatId).put("asked_message_timestamp", it.messageTimestamp)
+                        }
+                        when {
+                            task.state == "VERIFY" -> put("check_first", "verify")
+                            !repository.dao.input(task.id)?.requestedUrl.isNullOrBlank() -> put("check_first", "open_page")
+                        }
+                    }
             })
             else -> {
                 val id = arguments["task_id"]?.trim()?.takeIf { it.isNotEmpty() } ?: error("$action needs task_id; get it from list")
@@ -276,6 +292,17 @@ internal object OrbitTaskTools {
                             })
                     })
                     "resume" -> {
+                        // The answer is for the question it was matched to: once the task has moved on
+                        // (answered, asking something newer, paused or ended) the answer changes nothing.
+                        val asked = arguments["request_id"]?.trim()?.takeIf { it.isNotEmpty() }
+                        if (asked != null || task.state == "WAITING_USER") {
+                            val current = repository.dao.latestRun(task.id)
+                                ?.takeIf { task.state == "WAITING_USER" && it.state == "WAITING_USER" }?.id
+                            if (asked == null) error("This task waits for the user's answer; call pending, match the answer " +
+                                "to its question and pass that request_id")
+                            if (current != asked) error("This task is no longer waiting on request_id \"$asked\"; " +
+                                "call pending again and ask the user which question their answer is for")
+                        }
                         if (task.state == "WAITING_USER") {
                             OrbitBrowserHandoff.resume(context, task, arguments["user_note"].orEmpty())
                             after(true, force = true) { put("user_note_passed", arguments["user_note"].orEmpty().isNotBlank()) }

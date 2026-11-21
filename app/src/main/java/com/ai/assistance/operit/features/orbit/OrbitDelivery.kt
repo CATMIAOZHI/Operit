@@ -57,6 +57,7 @@ object OrbitDelivery {
         if (!sending.tryLock()) return
         try {
             val end = android.os.SystemClock.elapsedRealtime() + budgetMs
+            postWaiting(context, orbitId)
             // Each chat is tried once per pass: a busy chat waits for the next wake-up, and the
             // reports for the other chats still go now.
             val busy = HashSet<String>()
@@ -70,6 +71,83 @@ object OrbitDelivery {
         }
     }
 
+    /**
+     * A task stopped for the user's answer asks them itself: the request Orbit wrote for the user
+     * when the task stopped goes into the chat as Orbit's message, under the task's name, with a
+     * notification. It is not handed to Orbit as a draft to weigh, so it cannot be left out. Quiet
+     * hours hold it like any report; a chat in the middle of a reply gets it a little later.
+     */
+    private suspend fun postWaiting(context: Context, orbitId: String) {
+        val dao = AppDatabase.getDatabase(context).orbitTaskDao()
+        val holder = com.ai.assistance.operit.api.chat.ChatRuntimeHolder.getInstance(context)
+        val slots = com.ai.assistance.operit.api.chat.ChatRuntimeSlot.entries
+        dao.reopenUntoldWaitingRequestsIfAny(orbitId)
+        // Read once; each is checked again right before it is posted. Only the ones really posted
+        // count toward the limit, so ones that must wait never hold back one that is due.
+        var left = MAX_WAITING_PER_PASS
+        for (id in dao.pendingWaitingRequests(orbitId)) {
+            if (left <= 0) break
+            val replying = slots.flatMap { holder.getCore(it).activeStreamingChatIds.value }.toSet()
+            val chatId = OrbitExecutionGate.serialized {
+                val orbit = OrbitPreferences.getInstance(context).current().active
+                if (orbit?.id != orbitId || orbit.deleting) return@serialized null
+                val now = System.currentTimeMillis()
+                var ask = dao.delivery(id)?.takeIf { it.state == "PENDING" && dao.waitingRequest(it.id) }
+                    ?: return@serialized ""
+                // Quiet hours hold even the notification of one already in the chat.
+                if (dueAt(context, ask, now) > now) return@serialized ""
+                // A side chat that is gone (also one deleted after the request was posted there): the
+                // main chat gets it, as a new message.
+                suspend fun chatGone(chatId: String) =
+                    AppDatabase.getDatabase(context).chatDao().getChatById(chatId) == null
+                if (ask.chatId != orbit.chatId && chatGone(ask.chatId)) {
+                    dao.movePendingDeliveries(orbitId, ask.chatId, orbit.chatId)
+                    ask = dao.delivery(id) ?: return@serialized ""
+                }
+                // Posted before the app stopped, but the message was deleted since: post it again.
+                if (dao.forgetMissingMessage(id) > 0) ask = dao.delivery(id) ?: return@serialized ""
+                if (ask.messageId == null && ask.chatId in replying) {
+                    dao.postponeDelivery(id, now + BUSY_RETRY_MS)
+                    return@serialized ""
+                }
+                val text = waitingText(context, dao, ask)
+                // Already a message when the app stopped before it was marked: only the notification is left.
+                val item = if (ask.messageId != null) ask else
+                    com.ai.assistance.operit.data.repository.ChatHistoryManager.getInstance(context)
+                        .appendOrbitDeliveryBatch(listOf(id), orbit.name, text)
+                        .firstOrNull()?.takeIf { it.messageId != null } ?: return@serialized ""
+                // Posted, told and marked in one go, so deleting a side chat cannot come in between;
+                // a stop before the mark tells it again rather than never.
+                unread.update { it + item.chatId }
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    runCatching { notify(context.applicationContext, "said-${item.chatId}-$id", item.chatId, orbit.name, text) }
+                }
+                // The chat history screen deletes chats without this gate, so the mark itself checks the
+                // message is still there; if not, the request is posted again on the next pass.
+                if (dao.markWaitingPosted(id, checkNotNull(item.messageId)) == 0) return@serialized ""
+                item.chatId
+            } ?: return
+            if (chatId.isEmpty()) continue
+            left--
+            slots.forEach { slot ->
+                val core = holder.getCore(slot)
+                if (core.currentChatId.value == chatId) core.reloadChatMessagesSmart(chatId)
+            }
+        }
+    }
+
+    /** What the user reads: the task's name, its request, and where to act when the chat is not the place. */
+    private suspend fun waitingText(context: Context, dao: com.ai.assistance.operit.data.dao.OrbitTaskDao,
+        ask: com.ai.assistance.operit.data.model.OrbitDeliveryEntity): String = buildString {
+        append(context.getString(R.string.orbit_waiting_message, ask.title.trim(), ask.body.trim()))
+        // Both can apply: check first, then the page.
+        if (dao.task(ask.taskId)?.state == "VERIFY") append("\n\n").append(context.getString(R.string.orbit_waiting_verify_hint))
+        if (!dao.input(ask.taskId)?.requestedUrl.isNullOrBlank()) append("\n\n").append(context.getString(R.string.orbit_waiting_page_hint))
+    }
+
+    private const val MAX_WAITING_PER_PASS = 10
+    /** A chat in the middle of a reply is asked again after this. */
+    private const val BUSY_RETRY_MS = 2 * 60_000L
     /**
      * Chats that got a report the user has not looked at yet, kept for this app session. The
      * Orbit page shows a dot for them and clears a chat once it is on screen.
@@ -122,9 +200,12 @@ object OrbitDelivery {
                 dao.expirePending(orbitId, now)
                 val pending = dao.pendingDeliveries(orbitId).filter { dueAt(context, it, now) <= now }
                 // A report already posted as a message by an older build is done.
-                pending.mapNotNull { it.messageId }.distinct().forEach { dao.markBatchDelivered(orbitId, it) }
+                // A waiting task's request is left to postWaiting, which still owes its notification.
+                pending.filter { it.messageId != null && !dao.waitingRequest(it.id) }
+                    .mapNotNull { it.messageId }.distinct().forEach { dao.markPostedReports(orbitId, it) }
                 // One notice goes to one chat; reports for other chats follow on the next pass.
-                for (due in pending.filter { it.messageId == null && it.chatId !in busy }.groupBy { it.chatId }.values) {
+                // A waiting task's request is posted by postWaiting, never handed over as a draft.
+                for (due in pending.filter { it.messageId == null && it.chatId !in busy && !dao.waitingRequest(it.id) }.groupBy { it.chatId }.values) {
                     val batch = dao.validPending(due.take(6).map { it.id })
                     if (batch.isNotEmpty()) return@serialized orbit to batch
                 }
