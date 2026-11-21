@@ -26,7 +26,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.captionBar
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.ComposeView
@@ -270,6 +273,15 @@ internal class WebSessionBrowserHost(
                             com.ai.assistance.operit.ui.features.websession.browser.LocalBrowserFollowsKeyboard provides hostedInActivity,
                         ) {
                         WebSessionBrowserScreen(
+                            // In a small (freeform) window its activity has the system's title bar
+                            // over the top and a handle bar over the bottom; the page keeps clear
+                            // of them, and the bars and keyboard inside it count from there.
+                            modifier =
+                                if (hostedInActivity) {
+                                    Modifier.windowInsetsPadding(WindowInsets.captionBar)
+                                } else {
+                                    Modifier
+                                },
                             hostState = if (watchWork == null) hostState else hostState.copy(browserState =
                                 hostState.browserState.copy(tabs = hostState.browserState.tabs.filter { tab ->
                                     com.ai.assistance.operit.core.tools.defaultTool.standard.StandardBrowserSessionTools.sessions[tab.sessionId]?.browserTaskId == watchWork.executorChatId

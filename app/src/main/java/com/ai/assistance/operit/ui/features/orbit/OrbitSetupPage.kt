@@ -209,6 +209,7 @@ internal fun OrbitSetupPage(onSkip: () -> Unit) {
         }
     }
 
+    com.ai.assistance.operit.ui.theme.FillsCaptionStrips(colors.background)
     Box(Modifier.fillMaxSize().background(colors.background)) {
         Column(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState()).statusBarsPadding().navigationBarsPadding().imePadding()
