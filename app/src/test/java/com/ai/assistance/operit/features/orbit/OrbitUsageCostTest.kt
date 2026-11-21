@@ -246,4 +246,173 @@ class OrbitUsageCostTest {
         // With no rate for the model, the other half counts as uncached: 550k uncached + 450k cached.
         assertEquals(0.595, OrbitUsageCost.backfill(partly, price)!!.first, 1e-9)
     }
+
+    private fun tokenPrice(input: Double, cached: Double) = OrbitUsageCost.ModelPrice(listOf { _: Long? ->
+        com.ai.assistance.operit.data.stats.ResolvedPricing(
+            billingMode = com.ai.assistance.operit.data.model.BillingMode.TOKEN, currency = PricingCurrency.CNY,
+            inputPricePerMillion = input, cachedInputPricePerMillion = cached, outputPricePerMillion = 2.0,
+            source = com.ai.assistance.operit.data.stats.PricingSource.DEFAULT, known = true,
+        )
+    })
+
+    @Test
+    fun olderUseIsSharedOverTheModelsTheLedgerShowsThatDay() {
+        val data = OrbitQuota.UsageData(
+            rows = listOf(
+                row("2026-11-18", input = 1_000_000, output = 0, calls = 1),
+                row("2026-11-19", input = 3_000_000, output = 0, calls = 4),
+            ),
+            hours = emptyList(),
+        )
+        val prices = OrbitUsageCost.Prices(
+            // What the Orbit uses now: only for the day the ledger has nothing.
+            older = mapOf(OrbitUsageCost.OlderKey(me, chat = true) to
+                OrbitUsageCost.NamedPrice("guess", tokenPrice(1.0, 1.0))),
+            cacheRates = mapOf("b" to 0.5),
+            olderDays = mapOf("2026-11-19" to listOf(
+                OrbitUsageCost.DayModel("A", tokenPrice(1.0, 0.1), share = 0.75, cacheRate = 0.9),
+                // Its cache reads that day are not known: its rate over the range.
+                OrbitUsageCost.DayModel("B", tokenPrice(4.0, 0.4), share = 0.25, cacheRate = null),
+            )),
+        )
+        val view = OrbitUsageCost.view(data, day1, day2, me, cny, prices)
+        // A: 300k uncached + 2.7M cached = 0.57, for 3/4. B: 1.5M + 1.5M at 4.0/0.4 = 6.6, for 1/4.
+        val a = 0.57 * 0.75
+        val b = 6.6 * 0.25
+        assertEquals(1.0 + a + b, view.total, 1e-9)
+        assertEquals(5L, view.estimatedCalls)
+        assertEquals(0L, view.unpricedCalls)
+        val byName = view.models.associateBy { it.model }
+        assertEquals(setOf("guess", "A", "B"), byName.keys)
+        assertEquals(a, byName.getValue("A").cost, 1e-9)
+        assertEquals(3L, byName.getValue("A").calls)
+        assertEquals(2_250_000L, byName.getValue("A").tokens)
+        assertEquals(b, byName.getValue("B").cost, 1e-9)
+        assertEquals(1L, byName.getValue("B").estimatedCalls)
+        assertEquals(750_000L, byName.getValue("B").tokens)
+        assertEquals(1L, byName.getValue("guess").calls)
+        assertEquals(1.0, byName.getValue("guess").cost, 1e-9)
+    }
+
+    @Test
+    fun aModelTooSmallForOneOlderCallIsPricedWithTheLargest() {
+        val data = OrbitQuota.UsageData(
+            rows = listOf(row("2026-11-19", input = 1_000_000, output = 0, calls = 1)),
+            hours = emptyList(),
+        )
+        val prices = OrbitUsageCost.Prices(olderDays = mapOf("2026-11-19" to listOf(
+            OrbitUsageCost.DayModel("A", tokenPrice(1.0, 0.1), share = 0.6, cacheRate = 0.0),
+            OrbitUsageCost.DayModel("B", tokenPrice(4.0, 0.4), share = 0.4, cacheRate = 0.0),
+        )))
+        val view = OrbitUsageCost.view(data, day2, day2, me, cny, prices)
+        assertEquals(1.0, view.total, 1e-9)
+        val only = view.models.single()
+        assertEquals("A", only.model)
+        assertEquals(1L, only.calls)
+        assertEquals(1_000_000L, only.tokens)
+    }
+
+    @Test
+    fun splitKeepsTheTotalAndRoundsTheLargestRemaindersUp() {
+        assertEquals(listOf(3L, 1L, 1L), OrbitUsageCost.split(5, listOf(0.5, 0.3, 0.2)))
+        assertEquals(listOf(1L, 0L, 0L), OrbitUsageCost.split(1, listOf(0.4, 0.3, 0.3)))
+        assertEquals(listOf(7L), OrbitUsageCost.split(7, listOf(1.0)))
+        // Shares need not add up to 1.
+        assertEquals(listOf(2L, 6L), OrbitUsageCost.split(8, listOf(1.0, 3.0)))
+        assertEquals(listOf(0L, 0L), OrbitUsageCost.split(10, listOf(0.0, 0.0)))
+        assertEquals(1_234_567_891L, OrbitUsageCost.split(1_234_567_891L, listOf(0.1, 0.2, 0.7)).sum())
+        // Shares too large to add up still split.
+        assertEquals(listOf(5L, 5L), OrbitUsageCost.split(10, listOf(Double.MAX_VALUE, Double.MAX_VALUE)))
+    }
+
+    @Test
+    fun olderCallsAreSharedOutAWholeDayAtATime() {
+        // Two lines with one older call each; the ledger's two models are half and half that day.
+        val data = OrbitQuota.UsageData(
+            rows = listOf(
+                row("2026-11-19", input = 1_000_000, output = 0, calls = 1),
+                row("2026-11-19", purpose = OrbitQuota.Purpose.TASK, input = 1_000_000, output = 0, calls = 1),
+            ),
+            hours = emptyList(),
+        )
+        val prices = OrbitUsageCost.Prices(olderDays = mapOf("2026-11-19" to listOf(
+            OrbitUsageCost.DayModel("A", tokenPrice(1.0, 0.1), share = 0.5, cacheRate = 0.0),
+            OrbitUsageCost.DayModel("B", tokenPrice(4.0, 0.4), share = 0.5, cacheRate = 0.0),
+        )))
+        val view = OrbitUsageCost.view(data, day2, day2, me, cny, prices)
+        // One call and 1M input each: 1.0 + 4.0, not both on one model.
+        assertEquals(5.0, view.total, 1e-9)
+        assertEquals(1L, view.models.single { it.model == "A" }.calls)
+        assertEquals(1L, view.models.single { it.model == "B" }.calls)
+        // The day's amount goes to the two lines by their tokens.
+        assertEquals(2.5, view.byLine.getValue("CHAT"), 1e-9)
+        assertEquals(2.5, view.byLine.getValue("TASK"), 1e-9)
+        assertEquals(setOf("CHAT", "TASK"), view.estimatedLines)
+    }
+
+    @Test
+    fun olderCallsOnAPricePerRequestAreChargedForTheWholeCallsTheyGet() {
+        fun perRequest(price: Double) = OrbitUsageCost.ModelPrice(listOf { _: Long? ->
+            com.ai.assistance.operit.data.stats.ResolvedPricing(
+                billingMode = com.ai.assistance.operit.data.model.BillingMode.COUNT, currency = PricingCurrency.CNY,
+                pricePerRequest = price, source = com.ai.assistance.operit.data.stats.PricingSource.DEFAULT, known = true,
+            )
+        })
+        val data = OrbitQuota.UsageData(
+            rows = listOf(row("2026-11-19", input = 300, output = 0, calls = 3)),
+            hours = emptyList(),
+        )
+        val prices = OrbitUsageCost.Prices(olderDays = mapOf("2026-11-19" to listOf(
+            OrbitUsageCost.DayModel("A", perRequest(1.0), share = 0.5, cacheRate = 0.0),
+            OrbitUsageCost.DayModel("B", perRequest(10.0), share = 0.5, cacheRate = 0.0),
+        )))
+        // Two calls at 1 and one at 10.
+        assertEquals(12.0, OrbitUsageCost.view(data, day2, day2, me, cny, prices).total, 1e-9)
+
+        // Back on the lines by calls, not tokens: chat's one call kept no tokens, the task's nine did.
+        val lines = OrbitQuota.UsageData(
+            rows = listOf(
+                row("2026-11-19", input = 0, output = 0, calls = 1),
+                row("2026-11-19", purpose = OrbitQuota.Purpose.TASK, input = 100, output = 0, calls = 9),
+            ),
+            hours = emptyList(),
+        )
+        val one = OrbitUsageCost.Prices(olderDays = mapOf("2026-11-19" to listOf(
+            OrbitUsageCost.DayModel("A", perRequest(1.0), share = 1.0, cacheRate = 0.0))))
+        val view = OrbitUsageCost.view(lines, day2, day2, me, cny, one)
+        assertEquals(10.0, view.total, 1e-9)
+        assertEquals(1.0, view.byLine.getValue("CHAT"), 1e-9)
+        assertEquals(9.0, view.byLine.getValue("TASK"), 1e-9)
+    }
+
+    @Test
+    fun aFreeDaysLinesAreEstimatedAtNothing() {
+        val data = OrbitQuota.UsageData(
+            rows = listOf(
+                row("2026-11-19", input = 1000, output = 0, calls = 1),
+                row("2026-11-19", purpose = OrbitQuota.Purpose.TASK, input = 0, output = 0, calls = 1),
+            ),
+            hours = emptyList(),
+        )
+        val prices = OrbitUsageCost.Prices(olderDays = mapOf("2026-11-19" to listOf(
+            OrbitUsageCost.DayModel("free", tokenPrice(0.0, 0.0), share = 1.0, cacheRate = 0.0))))
+        val view = OrbitUsageCost.view(data, day2, day2, me, cny, prices)
+        assertEquals(0.0, view.total, 1e-9)
+        assertEquals(2L, view.estimatedCalls)
+        assertEquals(setOf("CHAT", "TASK"), view.coveredLines)
+        assertEquals(setOf("CHAT", "TASK"), view.estimatedLines)
+    }
+
+    @Test
+    fun aModelOnTwoConnectionsIsWeighedAsOneWhenSharingOutWholeCalls() {
+        val a = OrbitUsageCost.DayModel("A", tokenPrice(1.0, 0.1), share = 0.4, cacheRate = 0.0)
+        val b1 = OrbitUsageCost.DayModel("B", tokenPrice(2.0, 0.2), share = 0.3, cacheRate = 0.0)
+        val b2 = OrbitUsageCost.DayModel("b", tokenPrice(3.0, 0.3), share = 0.3, cacheRate = 0.0)
+        val callsOf = OrbitUsageCost.olderCalls(1, listOf(a, b1, b2))
+        // B has 60% over its two connections, so the one call is B's.
+        assertEquals(listOf(0L, 1L, 0L), callsOf)
+        // Tokens follow the calls: A's share goes to B's busiest connection too.
+        val shares = OrbitUsageCost.tokenShares(listOf(a, b1, b2), callsOf)
+        assertEquals(listOf(0.0, 1.0, 0.0), shares.map { Math.round(it * 1e9) / 1e9 })
+    }
 }

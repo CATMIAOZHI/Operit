@@ -17,7 +17,7 @@ import com.ai.assistance.operit.data.model.TokenStatResetCutoffEntity
 import com.ai.assistance.operit.data.model.TokenStatRestoreGenerationEntity
 import com.ai.assistance.operit.data.stats.TokenStatIdentityResolver
 import com.ai.assistance.operit.data.stats.TokenActivityEventRow
-import com.ai.assistance.operit.data.stats.TokenStatCacheSplitRow
+import com.ai.assistance.operit.data.stats.TokenStatDayUseRow
 import com.ai.assistance.operit.data.stats.TokenStatsGroupMetadataSnapshot
 import com.ai.assistance.operit.data.stats.TokenStatsLifetimeRead
 import com.ai.assistance.operit.data.stats.TokenStatsRangeRead
@@ -74,28 +74,29 @@ abstract class TokenStatsDao {
     abstract suspend fun countEvents(): Int
 
     /**
-     * 指定连接在 [startMs, endMs) 内**结束**的请求的缓存命中合计（与 Orbit 按结束时间归日一致）。
-     * 与 Orbit 记录口径相同，只算缓存命中已知、且总输入能确定的请求：上报了 totalInputTokens，
-     * 或 uncached 与缓存写入都已知（总输入 = uncached + cached + 写入）。
-     * 供没记下缓存的调用按同模型的实际命中率估价。
+     * 在 [startMs, endMs) 内**结束**的请求（与 Orbit 按结束时间归日一致），按连接和本地日合计；
+     * 本地日用 SQLite 的 localtime，即设备时区，与 Java 默认时区相同。
+     * 输入口径与 Orbit 记录相同；缓存命中只算命中已知、且总输入能确定的请求（上报了
+     * totalInputTokens，或 uncached 与缓存写入都已知）。供 Orbit 旧调用按当天实际用的模型分摊、
+     * 没记下缓存的调用按同模型的实际命中率估价。只按结束时间筛选（没有该列索引，会扫全表），
+     * 调用方应缓存结果。token 合计用 TOTAL（浮点），不会因整数溢出失败。
      */
     @Query(
-        "SELECT statIdentityId, SUM(cachedInputTokens) AS cachedInputTokens, " +
-            "SUM(COALESCE(totalInputTokens, " +
-            "uncachedInputTokens + cachedInputTokens + cacheWriteTokens)) AS inputTokens " +
+        "SELECT statIdentityId, strftime('%Y-%m-%d', endedAtMs / 1000, 'unixepoch', 'localtime') AS day, " +
+            "COUNT(*) AS calls, " +
+            "COUNT(" + DAY_USE_INPUT + ") AS inputCalls, " +
+            "TOTAL(" + DAY_USE_INPUT + ") AS inputTokens, " +
+            "TOTAL(CASE WHEN " + DAY_USE_CACHE_KNOWN + " THEN cachedInputTokens END) AS cachedInputTokens, " +
+            "TOTAL(CASE WHEN " + DAY_USE_CACHE_KNOWN + " THEN " + DAY_USE_INPUT + " END) " +
+            "AS cacheKnownInputTokens " +
             "FROM token_stat_events " +
-            "WHERE statIdentityId IN (:identityIds) " +
-            "AND endedAtMs >= :startMs AND endedAtMs < :endMs " +
-            "AND cachedInputTokens IS NOT NULL " +
-            "AND (totalInputTokens IS NOT NULL OR " +
-            "(uncachedInputTokens IS NOT NULL AND cacheWriteTokens IS NOT NULL)) " +
-            "GROUP BY statIdentityId"
+            "WHERE endedAtMs >= :startMs AND endedAtMs < :endMs " +
+            "GROUP BY statIdentityId, day"
     )
-    abstract suspend fun getCacheSplitByIdentity(
-        identityIds: List<String>,
+    abstract suspend fun getUseByIdentityAndLocalDay(
         startMs: Long,
         endMs: Long,
-    ): List<TokenStatCacheSplitRow>
+    ): List<TokenStatDayUseRow>
 
     /** Bounded range page ordered by the stable `(startedAtMs, eventId)` keyset. */
     @Query(
@@ -975,6 +976,17 @@ abstract class TokenStatsDao {
 object TokenStatRestoreGenerationContract {
     const val TABLE_NAME = "token_stat_restore_generations"
 }
+
+/** 一次请求的总输入，与 Orbit 记录同口径：优先 totalInputTokens，否则已知分量之和；全未知为 NULL。 */
+private const val DAY_USE_INPUT =
+    "COALESCE(totalInputTokens, CASE WHEN uncachedInputTokens IS NULL AND cachedInputTokens IS NULL " +
+        "AND cacheWriteTokens IS NULL THEN NULL ELSE COALESCE(uncachedInputTokens, 0) + " +
+        "COALESCE(cachedInputTokens, 0) + COALESCE(cacheWriteTokens, 0) END)"
+
+/** 缓存命中已知，且总输入能确定（上报了 totalInputTokens，或 uncached 与缓存写入都已知）。 */
+private const val DAY_USE_CACHE_KNOWN =
+    "(cachedInputTokens IS NOT NULL AND (totalInputTokens IS NOT NULL OR " +
+        "(uncachedInputTokens IS NOT NULL AND cacheWriteTokens IS NOT NULL)))"
 
 /**
  * 按展示分组删除的结果：删除的事件数与（baseline=yes 且组内存在 legacy 成员时）

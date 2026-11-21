@@ -9190,7 +9190,7 @@
     <string name="orbit_usage_cost_model_line">%1$s token · %2$d 次调用</string>
     <string name="orbit_usage_cost_unknown_total">费用未知</string>
     <string name="orbit_usage_cost_unpriced">另有 %1$d 次调用费用未知，没算进总额。</string>
-    <string name="orbit_usage_cost_note">按「模型定价」里的价格计算；没记下费用的调用，能估算的按最新价格估算，缺少缓存记录时参考同模型的缓存命中率。只是参考，以服务商账单为准。</string>
+    <string name="orbit_usage_cost_note">按「模型定价」里的价格计算；没记下费用的调用，能估算的按最新价格估算，缺少模型或缓存记录时参考全应用的用量。只是参考，以服务商账单为准。</string>
     <string name="orbit_usage_cost_rate">美元和人民币按 1 : %1$s 换算。</string>
     <string name="orbit_usage_cost_rate_default">美元和人民币按 1 : %1$s 换算（默认汇率，可在全应用费用页修改）。</string>
     <string name="orbit_usage_cost_set_prices">设置模型价格</string>
