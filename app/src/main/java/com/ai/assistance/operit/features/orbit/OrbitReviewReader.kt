@@ -230,10 +230,16 @@ internal class OrbitReviewReader private constructor(private val context: Contex
 
     /** Moves the reading position back to the last written-down page. */
     private fun unread(session: JSONObject) {
+        // The page comes again under its own number.
+        session.optInt("pending_from", 0).takeIf { it > 0 }?.let { session.put("pages", it - 1) }
         session.put("read", session.getJSONObject("committed")).put("pending_pages", 0)
             .put("pending_users", JSONArray()).put("pending_ids", JSONArray()).remove("pending_from")
+        session.remove("page_key")
         if (session.has("committed_n")) session.put("read_n", session.getInt("committed_n"))
     }
+
+    /** A short key only the page's result shows, so a page is committed only once it was really seen. */
+    private fun newPageKey() = java.util.UUID.randomUUID().toString().take(6)
 
     /**
      * A commit saves its notes in the state together with the new position, then copies them into
@@ -262,7 +268,7 @@ internal class OrbitReviewReader private constructor(private val context: Contex
         upgrade(state, session)
         when (val action = args["action"]?.trim().orEmpty()) {
             "next" -> next(state, session)
-            "commit" -> commit(state, session, runId, args["notes"].orEmpty(), args["ruptures"].orEmpty())
+            "commit" -> commit(state, session, runId, args["notes"].orEmpty(), args["ruptures"].orEmpty(), args["page_key"].orEmpty())
             "look" -> look(session, args)
             "status" -> progress(session).put("notes_file", OrbitFiles.REVIEW_NOTES)
             else -> error("Unknown action \"${action.take(20)}\". Use next, commit, look or status.")
@@ -270,10 +276,10 @@ internal class OrbitReviewReader private constructor(private val context: Contex
     }
 
     private suspend fun next(state: JSONObject, session: JSONObject): JSONObject {
-        require(session.getInt("pending_pages") < MAX_UNCOMMITTED_PAGES) {
-            "You have read $MAX_UNCOMMITTED_PAGES pages without writing them down. Call action=commit with notes on " +
-                "them first (\"nothing new\" is fine), then read on."
-        }
+        // A page not written down yet comes again: its result may never have reached the model (tool
+        // results given together share one limit), and reading on past it would lose it.
+        val again = session.getInt("pending_pages") >= MAX_UNCOMMITTED_PAGES
+        if (again) unread(session)
         val chats = chats(session)
         val ids = chats.keys.toList()
         val since = session.getLong("since")
@@ -290,14 +296,30 @@ internal class OrbitReviewReader private constructor(private val context: Contex
         fun add(m: OrbitWindowMessage, from: Int): Int {
             val text = cached(m.messageId)?.takeIf { from > 0 } ?: clean(m)
             val start = from.coerceIn(0, text.length)
-            val end = minOf(text.length, start + budget.coerceAtLeast(MIN_SLICE))
-            messages.put(entry(m, chats, reactions, time).put("text", text.substring(start, end)).apply {
+            // The page is counted as the tool sends it: each message's id, time and sender count too,
+            // so a page of many short messages stays well under the tool result's limit.
+            val overhead = entry(m, chats, reactions, time).toString().length + PART_CHARS
+            val limit = budget.coerceAtLeast(overhead + MIN_SLICE)
+            var end = minOf(text.length, start + (limit - overhead))
+            fun build(end: Int) = entry(m, chats, reactions, time).put("text", text.substring(start, end)).apply {
                 if (start > 0 || end < text.length) put("part", "chars ${start + 1}-$end of ${text.length}")
-            })
+            }
+            var item = build(end)
+            // Escaped characters take more room once sent: cut the slice until it really fits.
+            while (end - start > MIN_SLICE) {
+                val sent = item.toString().length
+                if (sent <= limit) break
+                // Scale by how much each character grew when sent, so dense escapes are not cut far too short.
+                val textSent = (sent - overhead + PART_CHARS).coerceAtLeast(1)
+                val scaled = start + ((end - start).toLong() * (limit - overhead) / textSent).toInt()
+                end = maxOf(start + MIN_SLICE, minOf(end - 1, scaled))
+                item = build(end)
+            }
+            messages.put(item)
             if (m.sender == "user" && start == 0) users.put(m.timestamp)
             // Any slice of a user message may show the friction, so each one can be named in ruptures.
             if (m.sender == "user") userIds.put(m.timestamp)
-            budget -= end - start
+            budget -= item.toString().length
             if (end < text.length) {
                 // The rest comes on the next page: keep the cleaned text rather than load it again.
                 remember(m, text)
@@ -324,7 +346,8 @@ internal class OrbitReviewReader private constructor(private val context: Contex
             }
         }
         if (messages.length() == 0) {
-            if (pos != first) {
+            // A page given again whose messages were all deleted since: the step back is kept too.
+            if (pos != first || again) {
                 // The rest of a message that was cut was deleted or shortened since: step past it, or
                 // the review would wait on it forever.
                 session.put("read", pos.json())
@@ -338,38 +361,48 @@ internal class OrbitReviewReader private constructor(private val context: Contex
         val page = session.getInt("pages") + 1
         if (session.getInt("pending_pages") == 0) session.put("pending_from", page)
         session.put("read", pos.json()).put("pages", page).put("pending_pages", session.getInt("pending_pages") + 1)
-            .put("pending_users", users).put("pending_ids", userIds)
+            .put("pending_users", users).put("pending_ids", userIds).put("page_key", newPageKey())
         if (session.has("read_n")) session.put("read_n", session.getInt("read_n") + finished)
         save(state)
         val more = pos.off > 0 || dao.reviewMessages(ids, since, until, pos.ts, pos.id, 1).isNotEmpty()
-        return JSONObject().put("page", page).put("messages", messages).put("more", more)
+        return JSONObject().put("page", page).put("page_key", session.getString("page_key")).put("messages", messages).put("more", more)
             .put("position", progress(session).let { "read ${it.getInt("read")} of ${it.getInt("total")} messages" })
             .put("uncommitted_pages", session.getInt("pending_pages"))
-            .put("next", if (session.getInt("pending_pages") >= MAX_UNCOMMITTED_PAGES || !more)
-                "Before reading on or finishing, write down what these pages show with action=commit. To check a " +
-                    "tool step first, action=look message_id=... count=1 (a long message goes on with its more_with)."
-            else "Write down what this page shows with action=commit (you may read up to " +
-                "$MAX_UNCOMMITTED_PAGES pages before committing when a matter runs across pages).")
+            .put("next", "Before reading on or finishing, write down what this page shows with action=commit; a " +
+                "matter that goes on past it goes into the notes as open, with its message ids. To check a tool step " +
+                "first, action=look message_id=... count=1 (a long message goes on with its more_with).")
+            .apply { if (again) put("again", "This is the page you have not written down yet, given again. Commit it before reading on.") }
             .apply { if (first.off > 0) put("continues", "The first message goes on from where the last page stopped.") }
     }
 
-    private suspend fun commit(state: JSONObject, session: JSONObject, runId: String, notes: String, ruptures: String): JSONObject {
+    private suspend fun commit(state: JSONObject, session: JSONObject, runId: String, notes: String, ruptures: String,
+        pageKey: String): JSONObject {
         require(session.getInt("pending_pages") > 0) { "Nothing read since the last commit. Call action=next." }
+        // A page read by an older build has no key.
+        session.optString("page_key").takeIf { it.isNotEmpty() }?.let { key ->
+            require(pageKey.trim() == key) {
+                "page_key does not match the page you read. Commit only after you have seen the page: pass the " +
+                    "page_key that action=next gave with it (call next again to see the page if you did not get it)."
+            }
+        }
         val text = notes.trim()
         require(text.isNotEmpty()) {
-            "notes is empty. Write what these pages show about working with the user, or \"nothing new\"."
+            "notes is empty. Write what this page shows about working with the user, or \"nothing new\"."
         }
         require(text.length <= MAX_NOTES) { "notes has ${text.length} characters; at most $MAX_NOTES" }
         val pendingUsers = session.getJSONArray("pending_users").let { a -> (0 until a.length()).map { a.getLong(it) } }
         val onPages = (session.optJSONArray("pending_ids") ?: session.getJSONArray("pending_users"))
             .let { a -> (0 until a.length()).map { a.getLong(it) }.distinct() }
+        // A matter can show its friction only on the next page: the page before's user messages may be named too.
+        val before = session.optJSONArray("previous_ids")?.let { a -> (0 until a.length()).map { a.getLong(it) } }.orEmpty()
         val ids = ruptures.split(Regex("[\\s,，#]+")).filter { it.isNotBlank() }.map {
             it.toLongOrNull() ?: error("ruptures must be message ids (numbers) separated by commas, got \"${it.take(30)}\"")
         }.distinct()
-        val stray = ids.filter { it !in onPages }
+        val stray = ids.filter { it !in onPages && it !in before }
         require(stray.isEmpty()) {
-            "ruptures may only name the user's messages on the pages you are committing; not among them: " +
-                stray.joinToString() + ". User message ids on these pages: " + onPages.joinToString()
+            "ruptures may only name the user's messages on this page or the page before; not among them: " +
+                stray.joinToString() + ". User message ids on this page: " + onPages.joinToString() +
+                (if (before.isEmpty()) "" else "; on the page before: " + before.joinToString())
         }
         val from = session.optInt("pending_from", session.getInt("pages"))
         val to = session.getInt("pages")
@@ -393,7 +426,7 @@ internal class OrbitReviewReader private constructor(private val context: Contex
         ids.filter { it !in known }.forEach { all.put(it) }
         session.put("committed", session.getJSONObject("read")).put("pending_pages", 0)
             .put("user_read", session.getInt("user_read") + pendingUsers.size).put("pending_users", JSONArray())
-            .put("pending_ids", JSONArray())
+            .put("pending_ids", JSONArray()).put("previous_ids", JSONArray(onPages)).apply { remove("page_key") }
             .put("notes", session.optInt("notes") + 1).put("last_run", runId).put("writing", block).remove("pending_from")
         if (session.has("read_n")) session.put("committed_n", session.getInt("read_n"))
         save(state)
@@ -557,18 +590,27 @@ internal class OrbitReviewReader private constructor(private val context: Contex
 
     companion object {
         const val TOOL = "orbit_review_read"
-        /** About 4,000 tokens of chat a page: a few pages fit before the context is compacted. */
-        private const val PAGE_CHARS = 12_000
+        /**
+         * About 8,000 tokens of English chat a page, up to about 36,000 of Chinese; with
+         * [MAX_UNCOMMITTED_PAGES] it stays well inside the models Orbit runs on before compaction.
+         */
+        private const val PAGE_CHARS = 24_000
         private const val MIN_SLICE = 400
+        /** Room left for a message's "part" note when it is cut. */
+        private const val PART_CHARS = 40
         private const val LOOK_CHARS = 4_000
-        private const val MAX_NOTES = 3_000
+        private const val MAX_NOTES = 4_000
         /** Notes past this many characters are asked to be condensed; the file itself takes 200,000. */
         private const val NOTES_LONG = 60_000
         private const val NOTES_FULL = 190_000
         /** The one long message being read across pages, so its next slice does not clean it again. */
         @Volatile private var lastLong: Triple<String, OrbitWindowMessage, String>? = null
         /** A matter can run across pages, but reading on and on without writing down loses it. */
-        const val MAX_UNCOMMITTED_PAGES = 3
+        /**
+         * Each page is written down before the next: a compaction drops what was not, and tool
+         * results given together share one limit, so two pages at once could lose the second.
+         */
+        const val MAX_UNCOMMITTED_PAGES = 1
         private const val FIRST_WINDOW_MS = 3L * 24 * 60 * 60 * 1000
         private const val MAX_WINDOW_MS = 7L * 24 * 60 * 60 * 1000
         /** After a long break (or a stuck review) the backlog read in one review is bounded. */
@@ -688,13 +730,16 @@ internal class OrbitReviewReader private constructor(private val context: Contex
                 "The app keeps your position: next always continues where you are. On pages your own tool calls and " +
                 "results are one line each; look shows a message in full.",
             parametersStructured = listOf(
-                ToolParameterSchema("action", "string", "next (the next page), commit (write down the pages read since the " +
-                    "last commit), look (re-read messages in full, without moving your position) or status", true),
-                ToolParameterSchema("notes", "string", "commit: what these pages show about working with the user: " +
+                ToolParameterSchema("action", "string", "next (the next page; call it on its own, not together with " +
+                    "other tools; until the page is committed, next gives the same page again), commit (write down " +
+                    "the page just read), look (re-read messages in full, without moving your position) or status", true),
+                ToolParameterSchema("notes", "string", "commit: what this page shows about working with the user: " +
                     "frictions and corrections with message ids, new rules, what went well, open matters. \"nothing new\" " +
                     "is fine. At most $MAX_NOTES characters", false),
-                ToolParameterSchema("ruptures", "string", "commit: the ids of the user's messages on these pages that show " +
-                    "friction or a correction, separated by commas; empty when none", false),
+                ToolParameterSchema("ruptures", "string", "commit: the ids of the user's messages on this page (or the " +
+                    "page before, when only this page shows it) that show friction or a correction, separated by " +
+                    "commas; empty when none", false),
+                ToolParameterSchema("page_key", "string", "commit: the page_key that next gave with the page", false),
                 ToolParameterSchema("message_id", "string", "look: the message to start from", false),
                 ToolParameterSchema("count", "string", "look: how many messages, 1-20 (default 5)", false),
                 ToolParameterSchema("start_char", "string", "look: for a long message, the character to start from", false),
