@@ -11,8 +11,15 @@ import com.ai.assistance.operit.data.api.GitHubRelease
 import com.ai.assistance.operit.data.api.GitHubReleaseAsset
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import java.io.File
 import java.security.MessageDigest
@@ -128,21 +135,51 @@ class UpdateManager private constructor(private val context: Context) {
         }
     }
 
-    /** 开始更新检查流程 */
-    suspend fun checkForUpdates(currentVersion: String) {
-        AppLogger.d(TAG, "checkForUpdates() start: currentVersion=$currentVersion")
-        _updateStatus.postValue(UpdateStatus.Checking)
+    // 检查由 UpdateManager 自己跑完，不跟着页面取消：离开页面再回来，要么还在查，要么已有结果，
+    // 不会停在 Checking 点不动。只在主线程读写。
+    private val checkScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var runningCheck: Deferred<UpdateStatus>? = null
 
+    // 一次检查最多转这么久：分页、Beta 失败后再查正式版都算在内。超时算失败，可以重试。
+    private val checkTimeoutMs = 60_000L
+
+    /**
+     * 开始一次更新检查（已有检查在跑就等它），返回结果。
+     *
+     * 状态在主线程直接设置，每次都会先经过 Checking 再给结果。调用方被取消只是不再等，检查照常跑完。
+     */
+    suspend fun checkForUpdates(currentVersion: String): UpdateStatus {
+        val check =
+            withContext(Dispatchers.Main.immediate) {
+                runningCheck?.takeIf { it.isActive }
+                    ?: checkScope.async { runCheck(currentVersion) }.also { runningCheck = it }
+            }
+        return check.await()
+    }
+
+    private suspend fun runCheck(currentVersion: String): UpdateStatus {
+        AppLogger.d(TAG, "checkForUpdates() start: currentVersion=$currentVersion")
+        val previous = _updateStatus.value?.takeUnless { it is UpdateStatus.Checking } ?: UpdateStatus.Initial
+        _updateStatus.value = UpdateStatus.Checking
         try {
-            val result = checkForUpdatesInternal(currentVersion)
+            val result =
+                try {
+                    withTimeoutOrNull(checkTimeoutMs) { checkForUpdatesInternal(currentVersion) }
+                        ?: UpdateStatus.Error(
+                            context.getString(R.string.update_check_failed, context.getString(R.string.request_timeout))
+                        ).also { AppLogger.w(TAG, "Update check timed out after ${checkTimeoutMs}ms") }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    AppLogger.e(TAG, "Update check failed", e)
+                    UpdateStatus.Error(context.getString(R.string.update_check_failed, e.message))
+                }
             AppLogger.d(TAG, "checkForUpdates() done: status=${result::class.java.simpleName}")
-            _updateStatus.postValue(result)
-        } catch (e: CancellationException) {
-            // 协程取消必须继续向上传播，不能发布成更新检查失败。
-            throw e
-        } catch (e: Exception) {
-            AppLogger.e(TAG, "Update check failed", e)
-            _updateStatus.postValue(UpdateStatus.Error(context.getString(R.string.update_check_failed, e.message)))
+            _updateStatus.value = result
+            return result
+        } finally {
+            // 正常不会走到这里还是 Checking；万一被取消，也别留在 Checking。
+            if (_updateStatus.value is UpdateStatus.Checking) _updateStatus.value = previous
         }
     }
 
@@ -246,14 +283,21 @@ class UpdateManager private constructor(private val context: Context) {
      * installed (the previous release). A user further behind downloads the whole APK, which is
      * quicker than rebuilding the app once per release they skipped.
      */
-    private fun stablePatchFor(
+    private suspend fun stablePatchFor(
         release: GitHubRelease,
         version: String,
         apkAsset: GitHubReleaseAsset?,
     ): UpdateStatus.PatchAvailable? {
         val patches = release.assets.filter { it.name.startsWith("apkrawpatch_") && it.name.endsWith(".zip") }
         if (patches.isEmpty()) return null
-        val installed = runCatching { sha256Hex(File(context.applicationInfo.sourceDir)) }.getOrNull() ?: return null
+        val installed =
+            try {
+                sha256Hex(File(context.applicationInfo.sourceDir))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                return null
+            }
         // tools/hotbuild/build_patch.py names them ..._<base sha256, 12>_<target sha256, 12>.zip, with
         // the meta file patch_<same>.json; the installer checks the whole hashes again.
         val patch = patches.firstOrNull { asset ->
@@ -414,11 +458,14 @@ class UpdateManager private constructor(private val context: Context) {
         return false
     }
 
-    private fun sha256Hex(file: File): String {
+    /** 安装包的 SHA-256；每读一块就看一下是否已取消（检查更新超时或被取消时不再读完整个 APK）。 */
+    private suspend fun sha256Hex(file: File): String {
+        val coroutine = currentCoroutineContext()
         val digest = MessageDigest.getInstance("SHA-256")
         file.inputStream().buffered().use { input ->
             val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
             while (true) {
+                coroutine.ensureActive()
                 val count = input.read(buffer)
                 if (count < 0) break
                 if (count > 0) digest.update(buffer, 0, count)
