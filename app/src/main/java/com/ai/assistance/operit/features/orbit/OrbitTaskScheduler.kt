@@ -64,6 +64,9 @@ object OrbitTaskScheduler {
             }
             due = minOf(due ?: retryAt, retryAt)
         }
+        // A waiting task's request an older build let Orbit leave out asks again; it is then posted
+        // as a message, so this happens once.
+        repo.dao.reopenUntoldWaitingRequestsIfAny(active.id)
         for (delivery in repo.dao.pendingDeliveries(active.id)) {
             val ready = OrbitDelivery.dueAt(context, delivery, now).coerceAtLeast(now + 60_000)
             due = minOf(due ?: ready, ready)

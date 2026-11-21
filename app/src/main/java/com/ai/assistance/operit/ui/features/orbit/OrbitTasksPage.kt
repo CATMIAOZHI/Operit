@@ -786,6 +786,13 @@ private fun TaskDetail(
         catch (e: CancellationException) { throw e }
         catch (e: Exception) { onError() }
     }
+    // A draft answers one question: a newer one starts with an empty box.
+    var noteFor by rememberSaveable(taskId) { mutableStateOf<String?>(null) }
+    LaunchedEffect(lastRun?.id) {
+        val runId = lastRun?.id ?: return@LaunchedEffect
+        if (noteFor != null && noteFor != runId) userNote = ""
+        noteFor = runId
+    }
     // What Orbit did with the run's draft: told the user or left it out, and why.
     val lastItem by produceState<OrbitDeliveryEntity?>(null, lastRun?.id) {
         val runId = lastRun?.id ?: return@produceState
@@ -952,19 +959,25 @@ private fun TaskDetail(
         if (task.state == "WAITING_USER") item(key = "waiting") {
             CardLabel(stringResource(R.string.orbit_tasks_group_attention))
             TaskCard {
+                // The question and its draft load apart from the task; answer only once they match it.
+                val ready = lastRun?.let { it.state == "WAITING_USER" && it.taskVersion == task.version && noteFor == it.id } == true
+                // What the task asks, next to where it is answered.
+                lastRun?.takeIf { ready }?.error?.takeIf { it.isNotBlank() }?.let { question ->
+                    Text(question, style = MaterialTheme.typography.bodyLarge)
+                }
                 if (!input?.requestedUrl.isNullOrBlank()) {
                     Text(stringResource(R.string.orbit_browser_handoff_help), style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    TaskButton(stringResource(R.string.orbit_browser_open), "globe", enabled = !busy) {
+                    TaskButton(stringResource(R.string.orbit_browser_open), "globe", enabled = !busy && ready) {
                         action { com.ai.assistance.operit.features.orbit.OrbitBrowserHandoff.open(context, task) }
                     }
                 }
                 OutlinedTextField(
                     value = userNote, onValueChange = { if (it.length <= 4000) userNote = it },
-                    modifier = Modifier.fillMaxWidth(), enabled = !busy, shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth(), enabled = !busy && ready, shape = RoundedCornerShape(14.dp),
                     label = { Text(stringResource(R.string.orbit_task_user_note)) },
                 )
-                TaskButton(stringResource(R.string.orbit_task_continue), "check", primary = true, enabled = !busy) {
+                TaskButton(stringResource(R.string.orbit_task_continue), "check", primary = true, enabled = !busy && ready) {
                     action {
                         com.ai.assistance.operit.features.orbit.OrbitBrowserHandoff.resume(context, task, userNote)
                         userNote = ""

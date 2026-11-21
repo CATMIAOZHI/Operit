@@ -9215,6 +9215,9 @@
     <string name="orbit_usage_cost_unknown_total">Cost unknown</string>
     <string name="orbit_usage_cost_unpriced">Another %1$d call(s) have an unknown cost and aren\'t in the total.</string>
     <string name="orbit_usage_cost_note">Worked out from the prices under Model pricing; calls with no recorded cost are estimated at the latest prices where possible, going by the app-wide usage where their model or cache reads were not recorded. Only a guide; your provider\'s bill is what counts.</string>
+    <string name="orbit_waiting_message">“%1$s” is waiting for your answer:\n\n%2$s</string>
+    <string name="orbit_waiting_verify_hint">An action last time has no confirmed result. First check it in this task\'s details and tap Verified: the action completed or Verified: retry is safe, then go on.</string>
+    <string name="orbit_waiting_page_hint">This step is done on a web page: open the task\'s details, tap Open page to continue, and tap Done, continue task when you are done.</string>
     <string name="orbit_usage_cost_rate">US dollars and yuan are converted at 1 : %1$s.</string>
     <string name="orbit_usage_cost_rate_default">US dollars and yuan are converted at 1 : %1$s (the default rate; change it on the all-app costs page).</string>
     <string name="orbit_usage_cost_set_prices">Set model prices</string>
