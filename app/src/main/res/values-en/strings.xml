@@ -8980,7 +8980,7 @@
     <string name="chat_shortcuts">Chat shortcuts · Click to run; Send sends ordinary text</string>
     <string name="chat_shortcut_compact">Compact conversation context</string>
     <string name="chat_shortcut_autocompact">Auto-compaction threshold · /autocompact 300K; auto restores automatic management</string>
-    <string name="chat_shortcut_context">Adjust this conversation budget · /context 400K</string>
+    <string name="chat_shortcut_context">Adjust this conversation budget · /context 500K</string>
     <string name="chat_shortcut_max">Use model capacity · /max on; off restores your budget</string>
     <string name="chat_shortcut_invalid">Invalid argument. Follow the example, or send it as ordinary text.</string>
     <string name="chat_shortcut_busy">Wait for the current reply to finish before compacting.</string>

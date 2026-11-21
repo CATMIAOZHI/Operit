@@ -75,7 +75,7 @@ internal object OrbitSettingsTools {
         ),
         details = """
   - get returns current values, allowed values/ranges, units and shared_by_all_orbits. Quotas, developer mode, launch mode and pausing are shared; appearance, the memory review wait, message notifications and the context budget belong to this Orbit.
-  - context_window_k is the context budget for the main chat and every side chat together, in K tokens measured against your main model. Automatic compaction is always on and the app picks where it starts (get returns it); neither can be changed. For DeepSeek Flash models 400K is recommended.
+  - context_window_k is the context budget for the main chat and every side chat together, in K tokens measured against your main model. Automatic compaction is always on and the app picks where it starts (get returns it); neither can be changed. For DeepSeek Flash models 500K is recommended.
   - message_notifications=true lets your messages also appear as their own phone notification while the app is closed; false keeps them in the chat only. It is separate from the system notification permission, which orbit_permission_card notify asks for.
   - request_change validates every item, including unknown keys, invalid values and unchanged values; correct all reported errors and ask again. Token limits use raw tokens, never millions or currency. Only get's allowlisted settings can be changed.
   - The approval card lists old → new values. End this turn with one short line after the card appears. Only after approval does the app recheck and apply each item, then send you a hidden result. Read each result; an outdated or failed item may be skipped.

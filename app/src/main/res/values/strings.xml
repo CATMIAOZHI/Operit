@@ -8953,7 +8953,7 @@
     <string name="chat_shortcuts">聊天指令 · 点击执行，发送仍是普通消息</string>
     <string name="chat_shortcut_compact">压缩上下文</string>
     <string name="chat_shortcut_autocompact">自动压缩阈值 · 例如 /autocompact 300K，auto 恢复自动</string>
-    <string name="chat_shortcut_context">调整当前对话预算 · 例如 /context 400K</string>
+    <string name="chat_shortcut_context">调整当前对话预算 · 例如 /context 500K</string>
     <string name="chat_shortcut_max">模型最大上下文 · /max on 开启，off 恢复自定义预算</string>
     <string name="chat_shortcut_invalid">参数无效，请按示例填写；仍可作为普通消息发送</string>
     <string name="chat_shortcut_busy">请等当前回复结束后再压缩</string>

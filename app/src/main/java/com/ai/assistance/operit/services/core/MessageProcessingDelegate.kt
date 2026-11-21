@@ -1510,7 +1510,10 @@ class MessageProcessingDelegate(
             },
             onTokenLimitExceeded = effectiveOnTokenLimitExceeded,
             // Everything this turn adds starts at its user message, or at its reply when it has none.
-            turnCompactor = if (effectiveOnTokenLimitExceeded != null && activeChatId != null &&
+            // An Orbit chat compacting in the background gets one too, so its summary is saved in the
+            // chat and the next wake-up starts from it instead of the whole history.
+            turnCompactor = if ((effectiveOnTokenLimitExceeded != null || turnInPlaceCompactionChatId == activeChatId) &&
+                activeChatId != null &&
                 !isGroupOrchestrationTurn && !turnOptions.isCollaborationAgent
             ) {
                 turnCompactorFor(activeChatId, if (userMessageAdded) userMessage.timestamp else aiMessageTimestamp)
