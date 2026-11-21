@@ -370,6 +370,10 @@ interface OrbitTaskDao {
     @Query("SELECT * FROM orbit_tasks WHERE orbitId = :orbitId ORDER BY createdAt DESC")
     suspend fun tasks(orbitId: String): List<OrbitTaskEntity>
 
+    /** Every Orbit's unfinished tasks, followed as they change: the source of the tasks/ copies. */
+    @Query("SELECT * FROM orbit_tasks WHERE state NOT IN ('CANCELLED', 'DONE') ORDER BY createdAt")
+    fun observeOpenTasks(): Flow<List<OrbitTaskEntity>>
+
     /** Live tasks with one exact title and schedule mode, e.g. the old daily feed task to retire. */
     @Query(
         "SELECT * FROM orbit_tasks WHERE orbitId = :orbitId AND kind = :kind AND scheduleMode = :scheduleMode " +

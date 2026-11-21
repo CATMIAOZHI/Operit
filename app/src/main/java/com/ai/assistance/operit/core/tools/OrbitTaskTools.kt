@@ -23,8 +23,8 @@ internal object OrbitTaskTools {
                 "函数已注入，调用后立即结束。silent 不叫醒 Orbit；wake 把理由和 JSON 对象交给 Orbit。输出最多20000字符，JSON最多8000字符。" +
                 "新建/换脚本后暂停，先 dry_run 看输出，核对通过再 resume；试跑时环境变量 HATCH_HOOK_DRY_RUN=1，不叫醒 Orbit", required = false),
             ToolParameterSchema("language", description = "script 的语言：sh 或 python；create 不填为 sh，update 不填沿用原来的", required = false),
-            ToolParameterSchema("vault_proxy", description = "可选，脚本要调用的保险箱 API 密钥 credential_id，逗号分隔，最多8个。脚本拿到替身值 \$ORBIT_VAULT_<大写编号>，以及代理地址 \$ORBIT_VAULT_PROXY（后面接 域名/路径，如 \$ORBIT_VAULT_PROXY+api.example.com/v1/x）；把替身值放在密钥原本的位置，代理换成真值转发，只能发往这把密钥允许的网站。不用用户批准。更新时要连同 script 一起传", required = false),
-            ToolParameterSchema("vault_env", description = "可选，只有 language=python 能用：要直接拿到真值的保险箱 credential_id（比如签名要用密钥本身），逗号分隔，最多8个；条目必须已允许在终端使用。真值在环境变量里（变量名同 orbit_vault env 的 env_name），输出里会被打码。需要用户在批准卡上同意（这把密钥设了始终允许就不用），没同意前 dry_run 会失败。能用 vault_proxy 就别用这个。更新时要连同 script 一起传", required = false),
+            ToolParameterSchema("vault_proxy", description = "可选，脚本要调用的保险箱 API 密钥 credential_id，逗号分隔，最多8个。脚本拿到替身值 \$ORBIT_VAULT_<大写编号>，以及代理地址 \$ORBIT_VAULT_PROXY（后面接 域名/路径，如 \$ORBIT_VAULT_PROXY+api.example.com/v1/x）；把替身值放在密钥原本的位置，代理换成真值转发，只能发往这把密钥允许的网站。不用用户批准。update 时不传就沿用原来的，传 none 去掉；改了它脚本也会暂停，要重新 dry_run 再 resume", required = false),
+            ToolParameterSchema("vault_env", description = "可选，只有 language=python 能用：要直接拿到真值的保险箱 credential_id（比如签名要用密钥本身），逗号分隔，最多8个；条目必须已允许在终端使用。真值在环境变量里（变量名同 orbit_vault env 的 env_name），输出里会被打码。需要用户在批准卡上同意（这把密钥设了始终允许就不用），没同意前 dry_run 会失败。能用 vault_proxy 就别用这个。update 时不传就沿用原来的，传 none 去掉；改了它脚本也会暂停，要重新 dry_run 再 resume", required = false),
             ToolParameterSchema("schedule_mode", description = "ONCE 一次执行（ASSIST默认，配 run_at 即日程提醒）；DAILY 每天；WEEKLY 每周；MONTHLY 每月；YEARLY 每年（这四种在 daily_time 执行）；INTERVAL 每隔 interval_minutes 执行（网页监控默认）；EVENT 指定任务成功后执行。update 时也能改，但只能在 INTERVAL/DAILY/WEEKLY/MONTHLY/YEARLY 之间改", required = false),
             ToolParameterSchema("run_at", description = "ONCE 的执行时间，本地时间 yyyy-MM-dd HH:mm；不填则立即执行。到点时你会被唤醒处理并提醒用户", required = false),
             ToolParameterSchema("daily_time", description = "DAILY/WEEKLY/MONTHLY/YEARLY 必填：执行的本地时间 HH:mm", required = false),
@@ -36,6 +36,10 @@ internal object OrbitTaskTools {
             ToolParameterSchema("user_note", description = "resume：用户对待办问题的答复，最多4000字符；仅转达实际答复，不代替用户授权", required = false),
             ToolParameterSchema("title", description = "create 必填、update 可改：任务名称，最多80字符", required = false),
             ToolParameterSchema("instruction", description = "create 必填、update 可改：要做什么、关注什么变化、怎么汇报，最多4000字符", required = false),
+            ToolParameterSchema("instruction_old", description = "update 时只改说明的一段：要换掉的原文，一字不差（含空格换行），在说明里只能出现一次；先 detail 看原文。配 instruction_new，不和 instruction 同传", required = false),
+            ToolParameterSchema("instruction_new", description = "换上的新文字；空字符串表示删掉 instruction_old 那段", required = false),
+            ToolParameterSchema("script_old", description = "update 时只改脚本的一段：要换掉的原文，规则同 instruction_old（detail 里有脚本全文）。配 script_new，不和 script 同传。改完同样暂停，要重新 dry_run 再 resume", required = false),
+            ToolParameterSchema("script_new", description = "换上的新脚本文字；空字符串表示删掉 script_old 那段", required = false),
             ToolParameterSchema("url", description = "URL_CHANGE 的 http(s) 网页（create 填，update 可改），不带账号密码；仅执行 GET", required = false),
             ToolParameterSchema("interval_minutes", "integer", "检查间隔，15到10080分钟，默认60", false),
             ToolParameterSchema("notify_policy", description = "CHANGES 仅有价值变化时通知，ALWAYS 每次汇报，DIGEST 每日汇总有价值的结果", required = false),
@@ -45,6 +49,7 @@ internal object OrbitTaskTools {
         ),
         details = "根据用户交代的目标安排后续工作。用户说“某天几点提醒我”用 ONCE+run_at+notify_policy=ALWAYS；" +
             "update 只改传入的字段（title、instruction、url、watch/script、schedule_mode、run_at、daily_time、repeat_on、interval_minutes、notify_policy、timeout_minutes、use_subagent、model），没传的保持不变。" +
+            "只改说明或脚本的一小段时用 instruction_old/instruction_new 或 script_old/script_new，像 edit_file 一样换掉那段，不用整篇重写。" +
             "model 指定主模型或辅助模型，不填写内部配置编号；返回 model 是保存的选择，effective_model 是实际角色、配置名和模型名，model_error 表示需用户到设置→模型重新选择。" +
             "改了时间（schedule_mode、run_at、daily_time、repeat_on、interval_minutes）或网页会重算下次运行，只改 title、notify_policy 等不动下次时间；任何真的改动都会停掉正在进行的这次运行（没做完的结果作废），正在跑时别为了改标题去 update。" +
             "改动类操作会返回任务现在的样子、changed（有没有变）和 changed_fields（变了哪些），next_run 是下次执行的本地时间（timezone 是时区，停了的任务为 null）。run 只是排队，结果做完才回来。" +
@@ -164,7 +169,7 @@ internal object OrbitTaskTools {
                                 put("dry_run_passed", passed)
                                 if (applied && now.state == "PAUSED") put("next", when {
                                     !intact -> "The hook file was changed after it was pinned, so it will not run. " +
-                                        "Update the task with the full script (and its language) to pin the new text, then dry_run."
+                                        "Update the task with the full script to pin the new text (language and vault keys stay unless given), then dry_run."
                                     passed -> "The pinned script passed dry_run. Review its output, then explicitly resume to enable."
                                     else -> "The script is paused. Call dry_run, inspect the output, then resume if correct."
                                 })
@@ -197,33 +202,48 @@ internal object OrbitTaskTools {
                         }
                     }
                     "update" -> {
-                        val mode = arguments["schedule_mode"]?.trim()?.uppercase()?.takeIf { it.isNotEmpty() } ?: task.scheduleMode
+                        // An optional field sent empty (or only spaces) counts as left out. The pieces are exact
+                        // text: *_old only counts as left out when empty, and an empty *_new deletes its piece.
+                        val given = arguments.filter { (name, value) ->
+                            when (name) {
+                                in PIECE_NEW -> true
+                                in PIECE_OLD -> value.isNotEmpty()
+                                else -> value.isNotBlank()
+                            }
+                        }
+                        val mode = given["schedule_mode"]?.trim()?.uppercase()?.takeIf { it.isNotEmpty() } ?: task.scheduleMode
                         val timed = mode == "DAILY" || mode in OrbitCalendarSchedule.modes
                         val wasTimed = task.scheduleMode == "DAILY" || task.scheduleMode in OrbitCalendarSchedule.modes
-                        val dailyTime = arguments["daily_time"]?.takeIf { it.isNotBlank() }?.let(::parseDailyTime)
+                        val dailyTime = given["daily_time"]?.takeIf { it.isNotBlank() }?.let(::parseDailyTime)
                         if (timed && !wasTimed && dailyTime == null) error("$mode needs daily_time (HH:mm)")
                         // A day rule belongs to its own mode: a new calendar mode needs its own.
-                        val rule = arguments["repeat_on"]?.takeIf { it.isNotBlank() }
+                        val rule = given["repeat_on"]?.takeIf { it.isNotBlank() }
                             ?: if (mode == task.scheduleMode) task.calendarRule else ""
+                        val instruction = if (pieceGiven(given, "instruction")) piece(given, "instruction", task.instruction)
+                            else given["instruction"] ?: task.instruction
+                        val hook = OrbitWatchSources.hook(task.source)
+                        // Only a new language or vault keys for a script hook: its pinned script with them.
+                        val hookOnly = hook != null && given["script"] == null && given["watch"] == null &&
+                            listOf("language", "vault_proxy", "vault_env").any { it in given }
+                        val args = if (pieceGiven(given, "script") || hookOnly) scriptArgs(context, orbit.id, task, given) else given
                         after(repository.edit(task,
-                        arguments["title"] ?: task.title, arguments["instruction"] ?: task.instruction,
+                        given["title"] ?: task.title, instruction,
                         if (task.kind == OrbitGeofence.KIND) {
-                            arguments["location"]?.let { OrbitGeofence.source(context, it) } ?: task.source
+                            given["location"]?.let { OrbitGeofence.source(context, it) } ?: task.source
                         } else if (task.kind == OrbitWatchSources.KIND &&
-                            (arguments["watch"] != null || arguments["script"] != null || arguments["url"] != null)) {
-                            watchSource(context, orbit.id, arguments, task.title, runtime?.callId ?: java.util.UUID.randomUUID().toString(),
-                                // A new script without language keeps the hook's language.
-                                keepPython = OrbitWatchSources.hook(task.source)?.python == true)
-                        } else arguments["url"] ?: task.source,
-                        parseInterval(arguments["interval_minutes"]) ?: task.intervalMinutes,
-                        arguments["notify_policy"] ?: task.notifyPolicy,
-                        arguments["run_at"]?.takeIf { it.isNotBlank() }?.let(::parseRunAt),
+                            (args["watch"] != null || args["script"] != null || args["url"] != null)) {
+                            // A new script without language or vault keys keeps the hook's.
+                            watchSource(context, orbit.id, args, task.title, runtime?.callId ?: java.util.UUID.randomUUID().toString(), keep = hook)
+                        } else args["url"] ?: task.source,
+                        parseInterval(given["interval_minutes"]) ?: task.intervalMinutes,
+                        given["notify_policy"] ?: task.notifyPolicy,
+                        given["run_at"]?.takeIf { it.isNotBlank() }?.let(::parseRunAt),
                         dailyTime ?: task.dailyMinute,
                         rule,
-                        parseTimeout(arguments["timeout_minutes"]) ?: task.timeoutMinutes,
-                        parseFlag(arguments["use_subagent"]) ?: task.useSubagent,
+                        parseTimeout(given["timeout_minutes"]) ?: task.timeoutMinutes,
+                        parseFlag(given["use_subagent"]) ?: task.useSubagent,
                         scheduleMode = mode,
-                        modelRole = arguments["model"]?.let(OrbitModels::checkedRole) ?: task.modelRole)) {
+                        modelRole = given["model"]?.let(OrbitModels::checkedRole) ?: task.modelRole)) {
                             val now = repository.dao.task(id)
                             if (now != null && now.source != task.source) askVault(context, orbit, now, this)
                         }
@@ -231,8 +251,16 @@ internal object OrbitTaskTools {
                     "detail" -> json(task, context).put("instruction", OrbitRoutines.runningInstruction(context, task))
                         .put("timezone", zone()).put("execution_record", repository.executionRecord(id))
                         .apply {
-                            if (OrbitHookChecks.needed(task)) put("dry_run_passed",
-                                OrbitHookChecks.intact(context, task) && OrbitHookChecks.passed(context, task))
+                            OrbitWatchSources.hook(task.source)?.let { hook ->
+                                // The pinned script in full, so a small change can quote it in script_old.
+                                val script = pinnedScript(context, orbit.id, hook)
+                                if (OrbitHookChecks.needed(task)) put("dry_run_passed", script != null && OrbitHookChecks.passed(context, task))
+                                put("language", if (hook.python) "python" else "sh")
+                                    .put("vault_proxy", hook.proxy.joinToString(",")).put("vault_env", hook.env.joinToString(","))
+                                if (script != null) put("script", script)
+                                else put("script_note", "The hook file is missing or was changed after it was pinned; give the " +
+                                    "full script in script to pin it again (language and vault keys stay unless given).")
+                            }
                         }
                         .put("last_run", repository.dao.latestRun(id)?.let {
                         JSONObject().put("state", it.state).put("observation", it.observation)
@@ -289,11 +317,78 @@ internal object OrbitTaskTools {
     }
 
     private val ACTIONS = listOf("create", "list", "detail", "update", "pause", "resume", "cancel", "run", "dry_run", "pending")
+    /** The pieces' new text, whose empty value means something: the piece is deleted. */
+    private val PIECE_NEW = setOf("instruction_new", "script_new")
+    /** The pieces' old text, which may be only spaces or line breaks. */
+    private val PIECE_OLD = setOf("instruction_old", "script_old")
     private const val EXCERPT = 200
 
     private fun zone(): String = java.util.TimeZone.getDefault().id
 
     private fun excerpt(text: String) = if (text.length <= EXCERPT) text else text.take(EXCERPT) + "…"
+
+    /** Whether update was given [field]_old or [field]_new, to change one piece of [field]; both empty count as left out. */
+    private fun pieceGiven(args: Map<String, String>, field: String) =
+        !args["${field}_old"].isNullOrEmpty() || !args["${field}_new"].isNullOrEmpty()
+
+    /** [current] with the piece in [field]_old replaced by [field]_new, the way edit_file changes a file. */
+    private fun piece(args: Map<String, String>, field: String, current: String): String {
+        require(args[field].isNullOrEmpty()) { "Give either $field (the whole text) or ${field}_old with ${field}_new, not both" }
+        val old = args["${field}_old"] ?: error("${field}_new needs ${field}_old: the exact text it replaces")
+        val new = args["${field}_new"]
+            ?: error("${field}_old needs ${field}_new: the text to put there (an empty string deletes it)")
+        return replaceOnce(current, old, new, field)
+    }
+
+    /** [text] with the one place [old] appears replaced by [new]; [field] names the text in errors. */
+    internal fun replaceOnce(text: String, old: String, new: String, field: String): String {
+        require(old.isNotEmpty()) { "${field}_old is empty; give the exact text to change" }
+        val at = text.indexOf(old)
+        require(at >= 0) {
+            "${field}_old was not found in the current $field; nothing changed. Read it with detail and copy the text exactly, spaces and line breaks too"
+        }
+        require(text.indexOf(old, at + 1) < 0) {
+            "${field}_old appears more than once in the $field; nothing changed. Add the words around it so it matches one place"
+        }
+        return text.substring(0, at) + new + text.substring(at + old.length)
+    }
+
+    /** The text of the script [hook] pinned, or null when the file is gone or no longer that script. */
+    private suspend fun pinnedScript(context: Context, orbitId: String, hook: OrbitWatchSources.Hook): String? = try {
+        OrbitFiles.of(context, orbitId).read(hook.path).takeIf { OrbitWatchSources.hash(it) == hook.hash }
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        null
+    }
+
+    /**
+     * The update's arguments with script_old/script_new (if given) applied to the pinned script: the
+     * whole new script in script (its language and vault keys stay unless given, as for any new script).
+     * When the script, its language and its vault keys all stay as they are, the hook stays pinned.
+     */
+    private suspend fun scriptArgs(context: Context, orbitId: String, task: OrbitTaskEntity,
+        args: Map<String, String>): Map<String, String> {
+        val hook = OrbitWatchSources.hook(task.source)
+            ?: error("script_old and script_new change the script of a script hook; this task has none")
+        require(args["watch"].isNullOrBlank() || args["watch"]?.trim() == "script") {
+            "script_old and script_new only change a script hook; leave watch out"
+        }
+        val current = pinnedScript(context, orbitId, hook) ?: error("The hook file is missing or was changed after it was " +
+            "pinned, so it cannot be changed piece by piece; give the full script in script")
+        val script = if (pieceGiven(args, "script")) piece(args, "script", current) else current
+        fun sameKeys(name: String, kept: List<String>) = args[name]?.trim()?.let { text ->
+            if (text.equals("none", ignoreCase = true)) kept.isEmpty()
+            else text.split(',').map { it.trim() }.filter { it.isNotEmpty() }.distinct() == kept
+        } ?: true
+        val sameLanguage = args["language"]?.trim()?.lowercase()?.let {
+            if (hook.python) it in setOf("python", "py", "python3") else it in setOf("sh", "shell")
+        } ?: true
+        if (script == current && sameLanguage && sameKeys("vault_proxy", hook.proxy) && sameKeys("vault_env", hook.env)) {
+            return args - setOf("watch", "script", "url", "language", "vault_proxy", "vault_env")
+        }
+        return args + mapOf("watch" to "script", "script" to script)
+    }
 
     /** One task in a list: how to find it and what it is doing, with long texts cut. */
     private suspend fun summary(task: OrbitTaskEntity, context: Context) = json(task, context).apply {
@@ -354,10 +449,11 @@ internal object OrbitTaskTools {
 
     /**
      * The source of a WATCH task. A script is saved in files/hooks/ and pinned by its hash, so the
-     * script that was reviewed with this call is the only one the background check will run.
+     * script that was reviewed with this call is the only one the background check will run. A new
+     * script for the hook [keep] keeps its language and vault keys unless given ("none" drops the keys).
      */
     private suspend fun watchSource(context: Context, orbitId: String, args: Map<String, String>,
-        title: String, requestId: String, keepPython: Boolean = false): String {
+        title: String, requestId: String, keep: OrbitWatchSources.Hook? = null): String {
         val watch = args["watch"]?.trim()?.takeIf { it.isNotEmpty() }
             ?: if (!args["script"].isNullOrBlank()) "script" else error("WATCH needs watch")
         // A script is only ever pinned here, from the text given in this call.
@@ -373,7 +469,7 @@ internal object OrbitTaskTools {
         val script = args["script"]?.takeIf { it.isNotBlank() } ?: error("watch=script needs the script text in script")
         require(script.length <= 8000) { "script is longer than 8000 characters" }
         val python = when (args["language"]?.trim()?.lowercase().orEmpty()) {
-            "" -> keepPython
+            "" -> keep?.python == true
             "sh", "shell" -> false
             "python", "py", "python3" -> true
             else -> error("language must be sh or python")
@@ -382,20 +478,25 @@ internal object OrbitTaskTools {
             "Python hooks run in the Ubuntu terminal, which is not installed; ask with orbit_components first or write a sh hook"
         }
         val entries = OrbitVault.entries(context, orbitId)
-        fun ids(name: String): List<String> {
-            val list = args[name].orEmpty().split(',').map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+        fun ids(name: String, kept: List<String>): List<String> {
+            val text = args[name]?.trim().orEmpty()
+            val list = when {
+                text.isEmpty() -> kept
+                text.equals("none", ignoreCase = true) -> emptyList()
+                else -> text.split(',').map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+            }
             require(list.size <= 8) { "$name takes at most 8 credential_ids" }
             return list
         }
         fun entry(name: String, id: String) = entries.firstOrNull { it.id == id }
             ?: error("$name: no vault entry with credential_id \"$id\"; use orbit_vault list")
-        val proxy = ids("vault_proxy").onEach { id ->
+        val proxy = ids("vault_proxy", keep?.proxy.orEmpty()).onEach { id ->
             val e = entry("vault_proxy", id)
             require(e.kind == OrbitVault.API_KEY && e.apiHosts.isNotEmpty()) {
                 "vault_proxy: ${e.site} is not an API key with allowed sites, so the proxy cannot use it"
             }
         }
-        val env = ids("vault_env").onEach { id ->
+        val env = ids("vault_env", keep?.env.orEmpty()).onEach { id ->
             val e = entry("vault_env", id)
             require(python) { "vault_env only works with language=python; sh hooks can use vault_proxy" }
             require((e.kind == OrbitVault.API_KEY || e.kind == OrbitVault.LOGIN) && e.envName.isNotEmpty() &&

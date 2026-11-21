@@ -19,6 +19,7 @@ import com.ai.assistance.operit.ui.common.displays.VirtualDisplayOverlay
 import com.ai.assistance.operit.util.LocaleUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.last
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.toList
@@ -1887,7 +1888,8 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 if (tool.parameters.none { it.name == "content" }) {
                     buildToolErrorResult(tool, "content is required: the whole new text of the file. Nothing was written.")
                 } else runBlockingIoPreservingToolRuntimeContext {
-                    fileSystemTools.writeFile(tool).also { com.ai.assistance.operit.features.orbit.OrbitFolderGuard.afterWrite(context, tool) }
+                    com.ai.assistance.operit.features.orbit.OrbitFolderGuard.refuseWrite(context, tool)
+                        ?: fileSystemTools.writeFile(tool).also { com.ai.assistance.operit.features.orbit.OrbitFolderGuard.afterWrite(context, tool) }
                 }
             }
     )
@@ -2090,7 +2092,12 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val envInfo = formatEnvInfo(environment)
                 s(R.string.toolreg_move_file_desc, source, destination, envInfo)
             },
-            executor = { tool -> runBlockingIoPreservingToolRuntimeContext { fileSystemTools.moveFile(tool) } }
+            executor = { tool ->
+                runBlockingIoPreservingToolRuntimeContext {
+                    com.ai.assistance.operit.features.orbit.OrbitFolderGuard.refuseWrite(context, tool, listOf("source", "destination"))
+                        ?: fileSystemTools.moveFile(tool)
+                }
+            }
     )
 
     // 复制文件或目录
@@ -2110,7 +2117,13 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val envInfo = formatEnvArrowInfo(srcEnv, dstEnv)
                 s(R.string.toolreg_copy_file_desc, source, destination, envInfo)
             },
-            executor = { tool -> runBlockingIoPreservingToolRuntimeContext { fileSystemTools.copyFile(tool) } }
+            executor = { tool ->
+                runBlockingIoPreservingToolRuntimeContext {
+                    // The copy lands where dest_environment says, else environment.
+                    com.ai.assistance.operit.features.orbit.OrbitFolderGuard.refuseWrite(context, tool, listOf("destination"),
+                        listOf("dest_environment", "environment")) ?: fileSystemTools.copyFile(tool)
+                }
+            }
     )
 
     // 创建目录
@@ -2123,7 +2136,9 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 s(R.string.toolreg_make_directory_desc, path, envInfo)
             },
             executor = { tool ->
-                runBlockingIoPreservingToolRuntimeContext { fileSystemTools.makeDirectory(tool) }
+                runBlockingIoPreservingToolRuntimeContext {
+                    com.ai.assistance.operit.features.orbit.OrbitFolderGuard.refuseWrite(context, tool) ?: fileSystemTools.makeDirectory(tool)
+                }
             }
     )
 
@@ -2169,15 +2184,23 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                     object : ToolExecutor {
                         override fun invoke(tool: AITool): ToolResult {
                             return runBlocking {
-                                fileSystemTools.applyFile(tool).last().also { com.ai.assistance.operit.features.orbit.OrbitFolderGuard.afterWrite(context, tool) }
+                                kotlinx.coroutines.withContext(Dispatchers.IO) {
+                                    com.ai.assistance.operit.features.orbit.OrbitFolderGuard.refuseWrite(context, tool)
+                                } ?: fileSystemTools.applyFile(tool).last().also { com.ai.assistance.operit.features.orbit.OrbitFolderGuard.afterWrite(context, tool) }
                             }
                         }
 
                         override fun invokeAndStream(
                                 tool: AITool
                         ): kotlinx.coroutines.flow.Flow<ToolResult> {
-                            return fileSystemTools.applyFile(tool).onCompletion { cause ->
-                                if (cause == null) com.ai.assistance.operit.features.orbit.OrbitFolderGuard.afterWrite(context, tool)
+                            return kotlinx.coroutines.flow.flow {
+                                val refused = kotlinx.coroutines.withContext(Dispatchers.IO) {
+                                    com.ai.assistance.operit.features.orbit.OrbitFolderGuard.refuseWrite(context, tool)
+                                }
+                                if (refused != null) emit(refused)
+                                else emitAll(fileSystemTools.applyFile(tool).onCompletion { cause ->
+                                    if (cause == null) com.ai.assistance.operit.features.orbit.OrbitFolderGuard.afterWrite(context, tool)
+                                })
                             }
                         }
                     }
@@ -2193,7 +2216,8 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
             },
             executor = { tool ->
                 runBlockingIoPreservingToolRuntimeContext {
-                    fileSystemTools.createFile(tool).also { com.ai.assistance.operit.features.orbit.OrbitFolderGuard.afterWrite(context, tool) }
+                    com.ai.assistance.operit.features.orbit.OrbitFolderGuard.refuseWrite(context, tool)
+                        ?: fileSystemTools.createFile(tool).also { com.ai.assistance.operit.features.orbit.OrbitFolderGuard.afterWrite(context, tool) }
                 }
             }
     )
@@ -2208,7 +2232,8 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
             },
             executor = { tool ->
                 runBlockingIoPreservingToolRuntimeContext {
-                    fileSystemTools.editFile(tool).also { com.ai.assistance.operit.features.orbit.OrbitFolderGuard.afterWrite(context, tool) }
+                    com.ai.assistance.operit.features.orbit.OrbitFolderGuard.refuseWrite(context, tool)
+                        ?: fileSystemTools.editFile(tool).also { com.ai.assistance.operit.features.orbit.OrbitFolderGuard.afterWrite(context, tool) }
                 }
             }
     )

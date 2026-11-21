@@ -117,6 +117,57 @@ object OrbitFolderGuard {
         runCatching { OrbitFiles.of(context, orbitId).changedOutside(shortPath) }
     }
 
+    /**
+     * Before a file tool writes (write_file, edit_file, create_file, apply_file, make_directory, or the
+     * destination of move_file and copy_file, and what move_file takes away): a change in an Orbit's
+     * tasks/, or to a folder holding one (an Orbit's folder, the folder of all Orbits), is refused,
+     * since those files are copies the app rebuilds from the tasks. [paths] names the parameters holding
+     * the paths to check, [environments] the ones naming where they are, first found first. Null lets the
+     * tool go on. Reads the file system.
+     */
+    fun refuseWrite(context: Context, tool: AITool, paths: List<String> = listOf("path"),
+        environments: List<String> = listOf("environment")): ToolResult? =
+        refuseWrite(File(context.applicationContext.filesDir, "orbit"), tool, paths, environments)
+
+    internal fun refuseWrite(base: File, tool: AITool, paths: List<String> = listOf("path"),
+        environments: List<String> = listOf("environment")): ToolResult? {
+        val environment = environments.firstNotNullOfOrNull { name -> tool.parameters.find { it.name == name }?.value }
+        if (environment?.lowercase() == "linux" || environment?.startsWith("repo:", ignoreCase = true) == true) return null
+        val path = paths.mapNotNull { name -> tool.parameters.find { it.name == name }?.value }
+            .firstOrNull { inTaskCopies(base, it) } ?: return null
+        val details = "Nothing was written: tasks/ holds read-only copies of your tasks that the app rebuilds, " +
+            "so editing them changes no task. Change the task with orbit_task update; for a small change use " +
+            "instruction_old and instruction_new (or script_old and script_new)."
+        return ToolResult(
+            toolName = tool.name,
+            success = false,
+            result = FileOperationData(operation = "write", env = "android", path = path, successful = false, details = details),
+            error = details,
+        )
+    }
+
+    /**
+     * Whether [path] is in an Orbit's tasks/ or is a folder holding one (an Orbit's folder, the folder
+     * of all Orbits or any folder above it), as written or where it really leads (links resolved).
+     */
+    private fun inTaskCopies(base: File, path: String): Boolean {
+        val raw = path.trim().removePrefix("file://")
+        if (raw.isEmpty() || !File(raw).isAbsolute) return false
+        val file = File(raw)
+        val candidates = listOf(base.absoluteFile.normalize() to file.absoluteFile.normalize()) +
+            listOfNotNull(runCatching { base.canonicalFile to file.canonicalFile }.getOrNull())
+        return candidates.any { (root, target) ->
+            // A folder above the folder of all Orbits holds every tasks/ too.
+            val above = root.relativeToOrNull(target)?.invariantSeparatorsPath
+            if (above != null && above != ".." && !above.startsWith("../")) return@any true
+            val rel = target.relativeToOrNull(root)?.invariantSeparatorsPath ?: return@any false
+            if (rel == ".." || rel.startsWith("../")) return@any false
+            if ('/' !in rel) return@any true
+            val short = rel.substringAfter('/', "")
+            short == OrbitFiles.TASKS || short.startsWith("${OrbitFiles.TASKS}/")
+        }
+    }
+
     /** Why delete_file may not remove [short]; null when it may. */
     private fun refusal(short: String): String? {
         val p = runCatching { OrbitFiles.normalize(short) }.getOrNull()
@@ -129,6 +180,8 @@ object OrbitFolderGuard {
                 "$p cannot be deleted. Change it with orbit_soul action=update, file=${if (p.equals("SOUL.md", true)) "soul" else "identity"} (read it first)."
             p.startsWith("docs/") || p == "docs" ->
                 "docs/ is Orbit's read-only handbook; it cannot be deleted."
+            p == OrbitFiles.TASKS || p.startsWith("${OrbitFiles.TASKS}/") ->
+                "tasks/ holds read-only copies of your tasks that the app keeps; to remove a task, use orbit_task cancel."
             OrbitFiles.isIndex(p) ->
                 "INDEX.md is kept by the app. Delete the person or group note instead; the index updates itself."
             p == "files" -> "files/ itself cannot be deleted; delete the files or folders inside it."

@@ -92,4 +92,44 @@ class OrbitFolderGuardTest {
         assertTrue(File(root, "packages.json").exists())
         assertTrue(File(root, "docs/orbit.md").exists())
     }
+
+    @Test fun theTaskCopiesCannotBeWrittenOrDeleted() {
+        fun write(path: String, environment: String? = null) = OrbitFolderGuard.refuseWrite(base,
+            AITool("edit_file", listOfNotNull(ToolParameter("path", path), environment?.let { ToolParameter("environment", it) })))
+        val copy = File(root, "tasks/看邮件-1a2b3c4d.md")
+        copy.parentFile.mkdirs()
+        copy.writeText("copy")
+        val refused = write(copy.absolutePath)
+        assertNotNull(refused)
+        assertFalse(refused!!.success)
+        assertTrue(refused.error.orEmpty().contains("orbit_task update"))
+        assertNotNull(write(File(root, "files/../tasks/new.md").path))
+        assertNotNull(write(File(root, "tasks").absolutePath))
+        assertNull(write(File(root, "files/tasks/a.md").absolutePath))
+        assertNull(write(File(root, "LESSONS.md").absolutePath))
+        assertNull(write(copy.absolutePath, environment = "linux"))
+        assertNull(write(folder.newFile("tasks.md").absolutePath))
+        val elsewhere = File(root, "files/a.md").absolutePath
+        fun move(name: String, source: String, destination: String) = OrbitFolderGuard.refuseWrite(base,
+            AITool(name, listOf(ToolParameter("source", source), ToolParameter("destination", destination))),
+            if (name == "move_file") listOf("source", "destination") else listOf("destination"))
+        assertNotNull(move("move_file", copy.absolutePath, elsewhere))
+        assertNotNull(move("move_file", elsewhere, File(root, "tasks/x.md").absolutePath))
+        assertNotNull(move("copy_file", elsewhere, copy.absolutePath))
+        assertNull(move("copy_file", copy.absolutePath, elsewhere))
+        // A folder holding a tasks/: the Orbit's folder and the folder of all Orbits.
+        assertNotNull(move("move_file", root.absolutePath, folder.newFolder("away").absolutePath))
+        assertNotNull(move("copy_file", folder.newFolder("source").absolutePath, root.absolutePath))
+        assertNotNull(move("copy_file", elsewhere, base.absolutePath))
+        assertNotNull(move("copy_file", elsewhere, folder.root.absolutePath))
+        val linuxCopy = AITool("copy_file", listOf(ToolParameter("source", elsewhere), ToolParameter("destination", copy.absolutePath),
+            ToolParameter("dest_environment", "linux")))
+        assertNull(OrbitFolderGuard.refuseWrite(base, linuxCopy, listOf("destination"), listOf("dest_environment", "environment")))
+        // Only copy_file goes by dest_environment.
+        val edit = AITool("edit_file", listOf(ToolParameter("path", copy.absolutePath), ToolParameter("dest_environment", "linux")))
+        assertNotNull(OrbitFolderGuard.refuseWrite(base, edit))
+        val deleted = delete(copy.absolutePath)
+        assertFalse(deleted!!.success)
+        assertTrue(copy.exists())
+    }
 }

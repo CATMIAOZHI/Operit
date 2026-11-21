@@ -107,6 +107,8 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
@@ -2185,12 +2187,27 @@ private fun OrbitBuildsPage(
     // The folder shown in section 2, relative to Orbit's folder; "" is the top.
     var folder by rememberSaveable(orbit.id) { mutableStateOf("") }
     var folderReload by remember { mutableIntStateOf(0) }
+    // The task copies in tasks/ change in the background; the top folder and tasks/ follow them.
+    val taskCopies by remember(orbit.id) {
+        com.ai.assistance.operit.features.orbit.OrbitTaskFiles.versions
+            .map { it[orbit.id] ?: 0 }.distinctUntilChanged()
+    }.collectAsState(0)
+    val tasksFolder = com.ai.assistance.operit.features.orbit.OrbitFiles.TASKS
+    val taskCopiesVersion = if (section == 2 && (folder.isEmpty() || folder == tasksFolder ||
+            folder.startsWith("$tasksFolder/"))) taskCopies else 0
     // Which folder the rows belong to, so another folder's rows never show under this one's path.
-    val folderRows by produceState(data.systemRows, orbit.id, folder, folderReload, filesVersion, section) {
+    val folderRows by produceState(data.systemRows, orbit.id, folder, folderReload, filesVersion, section, taskCopiesVersion) {
         if (section != 2) return@produceState
         val shown = folder
+        val root = OrbitPreferences.getInstance(context).orbitDir(orbit.id)
+        // A folder gone while open (tasks/ once the last task ended) goes up to the nearest one still there.
+        val still = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            generateSequence(shown) { if (it.isEmpty()) null else it.substringBeforeLast('/', "") }
+                .first { it.isEmpty() || java.io.File(root, it).isDirectory }
+        }
+        if (still != shown) { folder = still; return@produceState }
         value = shown to try {
-            Result.success(listOrbitFolder(OrbitPreferences.getInstance(context).orbitDir(orbit.id), shown))
+            Result.success(listOrbitFolder(root, shown))
         } catch (e: CancellationException) { throw e } catch (e: Exception) { Result.failure(e) }
             .also { data.systemRows = shown to it }
     }
