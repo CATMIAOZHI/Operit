@@ -1017,1257 +1017,58 @@ class MessageProcessingDelegate(
         // 性能日志：这一轮的起点只交给本轮主请求；没用上（插件接管、出错、还没开始就取消）时结束补一行。
         val perfStart = com.ai.assistance.operit.core.chat.LlmPerfStart(
             turnOptions.perfStartMs ?: com.ai.assistance.operit.core.chat.LlmRequestPerf.now())
-        val sendJob =
-            coroutineScope.launch(Dispatchers.IO + CoroutineName("ChatSend")) {
-            // Preparing the message (model settings, attachments, saving it) runs before the turn's own
-            // try/finally. A failure there must still release the chat, or it stays "generating" for good.
-            var sendBodyStarted = false
-            try {
-            val sendUserMessageStartTime = messageTimingNow()
-            val effectivePersistTurn = turnOptions.persistTurn
-            val effectiveHideUserMessage = effectivePersistTurn && turnOptions.hideUserMessage
-            // 检查这是否是聊天中的第一条用户消息（忽略AI的开场白）
-            val isFirstMessage = !hasUserMessage(chatId)
-            val titleFallback =
-                if (
-                    effectivePersistTurn &&
-                        isFirstMessage &&
-                        chatId != null &&
-                        !turnOptions.isSubTask
-                ) {
-                fallbackConversationTitle(originalMessageText, attachments).also { fallbackTitle ->
-                    updateChatTitle(chatId, fallbackTitle)
-                }
-            } else {
-                null
-            }
-
-            AppLogger.d(TAG, "开始处理用户消息：附件数量=${attachments.size}")
-
-            // 图片附件始终按需读取；音频和视频是否直传由当前模型的独立能力决定。
-            val chatConfigMapping =
-                functionalConfigManager.getConfigMappingForFunction(FunctionType.CHAT)
-            val overrideConfigId = chatModelConfigIdOverride?.takeIf { it.isNotBlank() }
-            val configId = overrideConfigId ?: chatConfigMapping.configId
-            val modelIndex =
-                if (overrideConfigId != null) {
-                    chatModelIndexOverride ?: 0
-                } else {
-                    chatConfigMapping.modelIndex
-                }
-            val loadModelConfigStartTime = messageTimingNow()
-            val currentModelConfig = modelConfigManager.getModelConfigFlow(configId).first()
-            val multimodalCapabilities =
-                currentModelConfig.multimodalCapabilitiesForModel(modelIndex)
-            AppLogger.d(
-                TAG,
-                "图片附件按需读取，当前模型多模态能力: $multimodalCapabilities (配置ID: $configId, 模型索引: $modelIndex)"
-            )
-            logMessageTiming(
-                stage = "delegate.loadModelConfig",
-                startTimeMs = loadModelConfigStartTime,
-                details = "chatId=$chatId, configId=$configId"
-            )
-
-            // 1. 使用 AIMessageManager 构建最终消息
-            val buildUserMessageStartTime = messageTimingNow()
-            val finalMessageContent = prebuiltUserMessage?.content ?: AIMessageManager.buildUserMessageContent(
-                context = context,
-                messageText = messageText,
-                proxySenderName = proxySenderNameOverride,
+        val turn =
+            SendTurn(
                 attachments = attachments,
+                chatId = chatId,
+                prebuiltUserMessage = prebuiltUserMessage,
+                proxySenderNameOverride = proxySenderNameOverride,
                 workspacePath = workspacePath,
                 workspaceEnv = workspaceEnv,
-                replyToMessage = replyToMessage,
-                enableDirectAudioProcessing = multimodalCapabilities.audio,
-                enableDirectVideoProcessing = multimodalCapabilities.video,
-                chatId = chatId,
+                promptFunctionType = promptFunctionType,
                 roleCardId = roleCardId,
-                isSubTask = turnOptions.isSubTask,
-                promptHooksEnabled = turnOptions.promptHooksEnabled,
+                enableThinking = enableThinking,
+                enableMemoryAutoUpdate = enableMemoryAutoUpdate,
+                maxTokens = maxTokens,
+                tokenUsageThreshold = tokenUsageThreshold,
+                replyToMessage = replyToMessage,
+                isAutoContinuation = isAutoContinuation,
+                enableSummary = enableSummary,
+                chatModelConfigIdOverride = chatModelConfigIdOverride,
+                chatModelIndexOverride = chatModelIndexOverride,
+                memorySpaceIdOverride = memorySpaceIdOverride,
+                suppressUserMessageInHistory = suppressUserMessageInHistory,
+                isGroupOrchestrationTurn = isGroupOrchestrationTurn,
+                groupParticipantNamesText = groupParticipantNamesText,
+                turnOptions = turnOptions,
+                chatRuntime = chatRuntime,
+                composerPredictionGeneration = composerPredictionGeneration,
+                originalMessageText = originalMessageText,
+                messageText = messageText,
+                perfStart = perfStart,
             )
-            logMessageTiming(
-                stage = "delegate.buildUserMessageContent",
-                startTimeMs = buildUserMessageStartTime,
-                details = "chatId=$chatId, attachments=${attachments.size}, finalLength=${finalMessageContent.length}"
-            )
-
-            // 自动继续且原本消息为空时，不添加到聊天历史（虽然会发送"继续"给AI）
-            // 群组编排模式下，空消息也不添加到聊天历史
-            val shouldAddUserMessageToChat =
-                effectivePersistTurn &&
-                !suppressUserMessageInHistory &&
-                !(isAutoContinuation &&
-                        originalMessageText.isBlank() &&
-                        attachments.isEmpty()) &&
-                !(isGroupOrchestrationTurn &&
-                        originalMessageText.isBlank() &&
-                        attachments.isEmpty())
-            var userMessageAdded = false
-            var userMessage = ChatMessage(
-                sender = "user",
-                content = finalMessageContent,
-                timestamp = turnOptions.userMessageTimestamp ?: ChatMessageTimestampAllocator.next(),
-                roleName =
-                    resolveTranscriptRoleName(
-                        override = turnOptions.userRoleNameOverride,
-                        fallback = context.getString(R.string.message_role_user),
-                    ),
-                displayMode = turnOptions.userTurnDisplayMode(hidden = effectiveHideUserMessage)
-            )
-
-            if (shouldAddUserMessageToChat && chatId != null) {
-                // 等待消息添加到聊天历史完成，确保getChatHistory()包含新消息
-                val addUserMessageStartTime = messageTimingNow()
-                addMessageToChat(chatId, userMessage)
-                userMessageAdded = true
-                // A message sent again is saved under its own time: it is on its way now.
-                com.ai.assistance.operit.core.chat.ChatSendFailures.clear(context, chatId, userMessage.timestamp)
-                // Sent again: the new copy is saved as the latest message, so the old one goes.
-                turnOptions.resendsMessageTimestamp?.let { old ->
-                    removeResentOriginal(chatId, old)
-                    com.ai.assistance.operit.core.chat.ChatSendFailures.clear(context, chatId, old)
-                }
-                logMessageTiming(
-                    stage = "delegate.addUserMessageToChat",
-                    startTimeMs = addUserMessageStartTime,
-                    details = "chatId=$chatId, contentLength=${userMessage.content.length}"
-                )
-                titleFallback?.let { fallbackTitle ->
-                    launchConversationTitleGeneration(
-                        chatId = chatId,
-                        userText = originalMessageText,
-                        attachments = attachments,
-                        fallbackTitle = fallbackTitle
-                    )
+        val sendJob =
+            coroutineScope.launch(Dispatchers.IO + CoroutineName("ChatSend")) {
+                // Preparing the message (model settings, attachments, saving it) runs before the turn's own
+                // try/finally. A failure there must still release the chat, or it stays "generating" for good.
+                var sendBodyStarted = false
+                try {
+                    turn.prepareSend()
+                    try {
+                        sendBodyStarted = true
+                        turn.runSend()
+                    } catch (e: Exception) {
+                        turn.failSend(e)
+                    } finally {
+                        turn.finishSend()
+                    }
+                    turn.cancellationToPropagate?.let { throw it }
+                } catch (e: Throwable) {
+                    if (sendBodyStarted) throw e
+                    abortBeforeSend(chatId, chatRuntime, e, turnOptions.turnId)
+                    if (e is kotlinx.coroutines.CancellationException) throw e
                 }
             }
-
-            lateinit var aiMessage: ChatMessage
-            val activeChatId = chatId
-            var serviceForTurnComplete: EnhancedAIService? = null
-            var shouldNotifyTurnComplete = false
-            var finalInputStateAfterSend: EnhancedInputProcessingState? = null
-            var isWaifuModeEnabled = false
-            var didStreamAutoRead = false
-            val effectiveRoleCardId = roleCardId
-            val waifuEmittedMessages = mutableListOf<ChatMessage>()
-            var syncWaifuMessageMetricsHandler: (suspend (ChatMessage) -> Unit)? = null
-            var requestSentAt = 0L
-            var requestStartElapsed = 0L
-            var firstResponseElapsed: Long? = null
-            var turnInputTokens = 0
-            var turnOutputTokens = 0
-            var turnCachedInputTokens = 0
-            var calculateNextWindowSize: (suspend () -> Int?)? = null
-            // In an Orbit chat a message the owner typed that never reached the model gets a red
-            // sign to send it again, as in a messenger, instead of an error dialog.
-            fun marksUnsentOrbitMessage(): Boolean =
-                chatId != null && userMessageAdded && firstResponseElapsed == null &&
-                    !effectiveHideUserMessage && !turnOptions.isSubTask && !turnOptions.deliveredByTool &&
-                    com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context)
-                        .snapshot.orbitForChat(chatId) != null
-            var cancellationToPropagate: kotlinx.coroutines.CancellationException? = null
-            var terminalFailureMessage: String? = null
-            var assistantMessageTimestampForTurn: Long? = null
-            var compactionGenerationForTurn: Long? = null
-            var turnInPlaceCompactionChatId: String? = null
-            val toolBoundaryContentSnapshot =
-                AtomicReference<EnhancedAIService.ToolExecutionBoundarySnapshot?>(null)
-            // Final merged content produced by the stream-collection exit. resolveFinalContent()
-            // prefers the raw replay cache when no revision event exists, so the finalizer must
-            // not rebuild the content from that unmerged replay after the boundary merge ran.
-            val boundaryMergedContent = AtomicReference<String?>(null)
-            try {
-                sendBodyStarted = true
-                // if (!NetworkUtils.isNetworkAvailable(context)) {
-                //     withContext(Dispatchers.Main) { showErrorMessage("网络连接不可用") }
-                //     _isLoading.value = false
-                //     setChatInputProcessingState(activeChatId, EnhancedInputProcessingState.Idle)
-                //     return@launch
-                // }
-
-                val acquireServiceStartTime = messageTimingNow()
-                val chatScopedService = EnhancedAIService.getChatInstance(context, activeChatId)
-                val service =
-                    (chatScopedService
-                        ?: getEnhancedAiService())
-                        ?: run {
-                            withContext(Dispatchers.Main) { showErrorMessage(context.getString(R.string.message_ai_service_not_initialized)) }
-                            chatRuntime.isLoading.value = false
-                            updateGlobalLoadingState()
-                            setChatInputProcessingState(activeChatId, EnhancedInputProcessingState.Idle)
-                            return@launch
-                        }
-                logMessageTiming(
-                    stage = "delegate.acquireService",
-                    startTimeMs = acquireServiceStartTime,
-                    details = "chatId=$activeChatId, reusedChatInstance=${chatScopedService != null}"
-                )
-                serviceForTurnComplete = service
-
-                // 清除上一次可能残留的 Error 状态，避免 StateFlow 重放导致新一轮发送立即再次触发弹窗
-                service.setInputProcessingState(EnhancedInputProcessingState.Processing(context.getString(R.string.message_processing)))
-
-                // 监听此 chat 对应的 EnhancedAIService 状态，映射到 per-chat state
-                chatRuntime.stateCollectionJob?.cancel()
-                chatRuntime.stateCollectionJob =
-                    coroutineScope.launch {
-                        var lastErrorMessage: String? = null
-                        service.inputProcessingState.collect { state ->
-                            setChatInputProcessingState(activeChatId, state)
-
-                            if (state is EnhancedInputProcessingState.Error) {
-                                val msg = state.message
-                                if (state.unreachable && marksUnsentOrbitMessage()) {
-                                    lastErrorMessage = msg
-                                    activeChatId?.let {
-                                        com.ai.assistance.operit.core.chat.ChatSendFailures
-                                            .mark(context, it, userMessage.timestamp)
-                                    }
-                                } else if (msg != lastErrorMessage) {
-                                    lastErrorMessage = msg
-                                    withContext(Dispatchers.Main) {
-                                        showErrorMessage(msg)
-                                    }
-                                }
-                            } else {
-                                lastErrorMessage = null
-                            }
-                        }
-                    }
-
-                val responseStartTime = messageTimingNow()
-
-                val userPreferencesManager = UserPreferencesManager.getInstance(context)
-
-                // 获取角色信息用于通知
-                val loadRoleInfoStartTime = messageTimingNow()
-                val (characterName, avatarUri) =
-                    effectiveRoleCardId?.let { cardId ->
-                        try {
-                            val roleCard =
-                                characterCardManager.getCharacterCardFlow(cardId).first()
-                            val avatar =
-                                userPreferencesManager
-                                    .getAiAvatarForCharacterCardFlow(roleCard.id)
-                                    .first()
-                            Pair(roleCard.name, avatar)
-                        } catch (e: Exception) {
-                            AppLogger.e(TAG, "获取角色信息失败: ${e.message}", e)
-                            Pair(null, null)
-                        }
-                    } ?: Pair(null, null)
-                val orbitOfChat = com.ai.assistance.operit.data.preferences.OrbitPreferences
-                    .getInstance(context)
-                    .current()
-                    .orbitForChat(activeChatId)
-                val currentRoleName =
-                    resolveTranscriptRoleName(
-                        // An Orbit signs its replies with the name it chose for itself.
-                        override =
-                            turnOptions.assistantRoleNameOverride
-                                ?: orbitOfChat?.name?.takeIf { it.isNotBlank() },
-                        fallback = characterName ?: "Operit",
-                    )
-                logMessageTiming(
-                    stage = "delegate.loadRoleInfo",
-                    startTimeMs = loadRoleInfoStartTime,
-                    details = "chatId=$activeChatId, roleCardId=$effectiveRoleCardId, roleName=$currentRoleName"
-                )
-                calculateNextWindowSize = {
-                    runCatching {
-                        AIMessageManager.calculateStableContextWindow(
-                            enhancedAiService = service,
-                            chatId = activeChatId,
-                            messageContent = "",
-                            chatHistory = getRuntimeChatHistory(activeChatId),
-                            workspacePath = workspacePath,
-                            workspaceEnv = workspaceEnv,
-                            promptFunctionType = promptFunctionType,
-                            roleCardId = effectiveRoleCardId,
-                            currentRoleName = currentRoleName,
-                            splitHistoryByRole = true,
-                            groupOrchestrationMode = isGroupOrchestrationTurn,
-                            groupParticipantNamesText = groupParticipantNamesText,
-                            chatModelConfigIdOverride = chatModelConfigIdOverride,
-                            chatModelIndexOverride = chatModelIndexOverride,
-                            memorySpaceIdOverride = memorySpaceIdOverride,
-                            publishEstimate = false
-                        )
-                    }.onFailure {
-                        AppLogger.w(TAG, "回合结束后重算上下文窗口失败", it)
-                    }.getOrNull()
-                }
-
-                val loadChatHistoryStartTime = messageTimingNow()
-                // A message sent again is sent once: its old copy is already gone, kept out here too.
-                val chatHistory = getRuntimeChatHistory(activeChatId).let { history ->
-                    turnOptions.resendsMessageTimestamp?.let { old -> history.filterNot { it.timestamp == old } }
-                        ?: history
-                }
-                logMessageTiming(
-                    stage = "delegate.loadChatHistory",
-                    startTimeMs = loadChatHistoryStartTime,
-                    details = "chatId=$activeChatId, size=${chatHistory.size}"
-                )
-
-                // 关闭总结时仍保留真实 limits，避免下游插件收到 0/Infinity 这类无效 JSON 值。
-                val effectiveMaxTokens = maxTokens
-                val effectiveEnableSummary = enableSummary && effectivePersistTurn
-                // An Orbit turn that cannot run the normal summary (a hidden notice, or a chat that is
-                // not on screen) compacts its context in place and goes on, so a long-running Orbit
-                // chat never outgrows the model's window while the user is away.
-                if (orbitOfChat != null && !effectiveEnableSummary && effectivePersistTurn &&
-                    !turnOptions.isCollaborationAgent && activeChatId != null &&
-                    !com.ai.assistance.operit.api.chat.enhance.InPlaceCompaction.contains(activeChatId)
-                ) {
-                    com.ai.assistance.operit.api.chat.enhance.InPlaceCompaction.register(activeChatId, keepsLatestUserTurn = true)
-                    turnInPlaceCompactionChatId = activeChatId
-                }
-                val effectiveTokenUsageThreshold =
-                    if (effectiveEnableSummary || turnOptions.isCollaborationAgent ||
-                        // Background reading runs compact themselves in place instead of stopping.
-                        com.ai.assistance.operit.api.chat.enhance.InPlaceCompaction.contains(activeChatId)
-                    ) tokenUsageThreshold else Double.MAX_VALUE
-                val effectiveOnTokenLimitExceeded = if (effectiveEnableSummary) {
-                    suspend {
-                        onTokenLimitExceeded(
-                            activeChatId,
-                            effectiveRoleCardId,
-                            isGroupOrchestrationTurn,
-                            groupParticipantNamesText
-                        )
-                    }
-                } else {
-                    null
-                }
-
-                // 2. 使用 AIMessageManager 发送消息
-                // 群组编排模式下，只有当消息内容不为空时才添加 [From user] 前缀
-                val requestMessageContent =
-                    if (isGroupOrchestrationTurn &&
-                        finalMessageContent.trimStart().isNotEmpty() &&
-                        !finalMessageContent.trimStart().startsWith("[From user]")
-                    ) {
-                        "[From user]\n$finalMessageContent"
-                    } else {
-                        finalMessageContent
-                    }
-
-                requestSentAt = System.currentTimeMillis()
-                requestStartElapsed = messageTimingNow()
-                chatRuntime.requestSentAt = requestSentAt
-                chatRuntime.requestStartElapsed = requestStartElapsed
-                chatRuntime.firstResponseElapsed = null
-                if (userMessageAdded && chatId != null) {
-                    userMessage = userMessage.copy(sentAt = requestSentAt)
-                    addMessageToChat(chatId, userMessage)
-                }
-
-                val prepareResponseStreamStartTime = messageTimingNow()
-                val aiMessageTimestamp = ChatMessageTimestampAllocator.next()
-                assistantMessageTimestampForTurn = aiMessageTimestamp
-                // The previous turn's request no longer ends this chat, even if this turn fails.
-                if (chatId != null) {
-                    compactionGenerationForTurn =
-                        com.ai.assistance.operit.api.chat.compaction.CompactionSnapshots.begin(chatId)
-                }
-                val toolBoundaryMessageReady = CompletableDeferred<ChatMessage?>()
-                coroutineContext[Job]?.invokeOnCompletion {
-                    toolBoundaryMessageReady.complete(null)
-                }
-                val responseStream = try {
-                    AIMessageManager.sendMessage(
-                    enhancedAiService = service,
-                    chatId = activeChatId,
-                    messageContent = requestMessageContent,
-                    // 仅在群组编排中去掉当前用户消息，避免重复拼接。
-                    chatHistory = if (isGroupOrchestrationTurn && (userMessageAdded || prebuiltUserMessage != null)) {
-                        // The orchestrator already persisted this turn. Remove only that message;
-                        // concurrent history updates may have appended other messages after it.
-                        val sentTimestamp = prebuiltUserMessage?.timestamp ?: userMessage.timestamp
-                        chatHistory.filterNot { it.sender == "user" && it.timestamp == sentTimestamp }
-                    } else {
-                        turnOptions.collaborationHistoryCutoff?.let { cutoff ->
-                            chatHistory.filter { it.timestamp > cutoff }
-                        } ?: chatHistory
-                    },
-                    workspacePath = workspacePath,
-                    workspaceEnv = workspaceEnv,
-                    promptFunctionType = promptFunctionType,
-                    functionType = turnOptions.functionType,
-                    providerSessionId = turnOptions.providerSessionId,
-                    enableThinking = enableThinking,
-                    enableMemoryAutoUpdate = enableMemoryAutoUpdate,
-                    maxTokens = effectiveMaxTokens,
-                    tokenUsageThreshold = effectiveTokenUsageThreshold,
-                    onNonFatalError = { error ->
-                        _nonFatalErrorEvent.emit(error)
-                    },
-                    onTokenLimitExceeded = effectiveOnTokenLimitExceeded,
-                    // Everything this turn adds starts at its user message, or at its reply when it has none.
-                    turnCompactor = if (effectiveOnTokenLimitExceeded != null && activeChatId != null &&
-                        !isGroupOrchestrationTurn && !turnOptions.isCollaborationAgent
-                    ) {
-                        turnCompactorFor(activeChatId, if (userMessageAdded) userMessage.timestamp else aiMessageTimestamp)
-                    } else {
-                        null
-                    },
-                    characterName = characterName,
-                    avatarUri = avatarUri,
-                    roleCardId = effectiveRoleCardId,
-                    currentRoleName = currentRoleName,
-                    // An Orbit chat has one companion whose name can change; every reply in it is its own,
-                    // so replies signed with an earlier name must not be read back as someone else's.
-                    splitHistoryByRole = orbitOfChat == null,
-                    groupOrchestrationMode = isGroupOrchestrationTurn,
-                    groupParticipantNamesText = groupParticipantNamesText,
-                    proxySenderName = proxySenderNameOverride,
-                    onToolInvocation = { toolName ->
-                        recordCurrentTurnToolInvocation(chatId, toolName)
-                    },
-                    onToolExecutionBoundary = boundary@ { boundarySnapshot ->
-                        val snapshotMessage = toolBoundaryMessageReady.await() ?: return@boundary
-                        val targetChatId = chatId ?: return@boundary
-                        chatRuntime.transcriptMutex.withLock {
-                            toolBoundaryContentSnapshot.set(boundarySnapshot)
-                            chatRuntime.toolBoundarySnapshot = boundarySnapshot
-                            chatRuntime.steeredTranscript.project(
-                                snapshotMessage.copy(content = boundarySnapshot.displayContent.toString()),
-                            ).forEach { addMessageToChat(targetChatId, it) }
-                        }
-                    },
-                    turnInputInbox = chatRuntime.inputInbox,
-                    onTurnInput = { texts, boundary ->
-                        val snapshotMessage = requireNotNull(toolBoundaryMessageReady.await())
-                        chatRuntime.transcriptMutex.withLock {
-                            toolBoundaryContentSnapshot.set(boundary)
-                            chatRuntime.toolBoundarySnapshot = boundary
-                            chatRuntime.steeringBoundarySnapshot = boundary
-                            chatRuntime.steeredTranscript.project(snapshotMessage.copy(
-                                content = boundary.displayContent.toString(), contentStream = null,
-                                displayMode = ChatMessageDisplayMode.ASSISTANT_INTERMEDIATE,
-                            )).forEach { row -> sentAsMessages(chatId, row).forEach { addMessageToChat(chatId, it) } }
-                            texts.forEach { input ->
-                                val row = ChatMessage(
-                                    sender = "user", content = input.text,
-                                    roleName = input.agentPath ?: context.getString(R.string.message_role_user),
-                                    displayMode = when {
-                                        input.agentPath == null -> ChatMessageDisplayMode.NORMAL
-                                        input.startsAgentTurn -> ChatMessageDisplayMode.COLLABORATION_TASK
-                                        else -> ChatMessageDisplayMode.COLLABORATION_EVENT
-                                    },
-                                    // The row is ordered when the model takes it; for a user row,
-                                    // completedAt keeps when the user sent it. (sentAt stays empty:
-                                    // that is what marks a message slipped into a running reply.)
-                                    completedAt = input.sentAt,
-                                )
-                                // The sender's stand-in bubble steps aside once this row is shown.
-                                input.saved(row.timestamp)
-                                addMessageToChat(chatId, row)
-                            }
-                            val nextAssistantTimestamp = ChatMessageTimestampAllocator.next()
-                            chatRuntime.steeredTranscript.add(
-                                boundary.displayContent.toString(), nextAssistantTimestamp,
-                                snapshotMessage.timestamp,
-                            )
-                            nextAssistantTimestamp.toString()
-                        }
-                    },
-                    notifyReplyOverride = turnOptions.notifyReply,
-                    chatModelConfigIdOverride = chatModelConfigIdOverride,
-                    chatModelIndexOverride = chatModelIndexOverride,
-                    chatReasoningLevelOverride = turnOptions.chatReasoningLevel,
-                    memorySpaceIdOverride = memorySpaceIdOverride,
-                    toolTimingScopeId = aiMessageTimestamp.toString(),
-                    disableWarning = turnOptions.disableWarning,
-                    isSubTask = turnOptions.isSubTask,
-                    toolsEnabled = turnOptions.toolsEnabled,
-                    isolatedToolPrompts = turnOptions.isolatedToolPrompts,
-                    terminalToolNames = turnOptions.terminalToolNames,
-                    promptHooksEnabled = turnOptions.promptHooksEnabled,
-                    systemPromptOverride = turnOptions.systemPromptOverride,
-                    collaborationHistory = turnOptions.collaborationHistory,
-                    collaborationInput = turnOptions.isCollaborationAgent,
-                    perfStart = perfStart,
-                )
-                } catch (error: Throwable) {
-                    toolBoundaryMessageReady.complete(null)
-                    throw error
-                }
-                logMessageTiming(
-                    stage = "delegate.prepareResponseStream",
-                    startTimeMs = prepareResponseStreamStartTime,
-                    details = "chatId=$activeChatId, requestLength=${requestMessageContent.length}, history=${chatHistory.size}"
-                )
-
-                // AIMessageManager 已返回可重放的共享流，这里直接复用，避免在 viewModelScope 上再包一层。
-                val sharedCharStream = responseStream
-
-                // 更新当前响应流，使其可以被其他组件（如悬浮窗）访问
-                chatRuntime.responseStream = sharedCharStream
-
-                // 获取当前使用的provider和model信息
-                val loadProviderModelStartTime = messageTimingNow()
-                val (provider, modelName) = try {
-                    service.getDisplayProviderAndModelForFunction(
-                        functionType = turnOptions.functionType,
-                        chatModelConfigIdOverride = chatModelConfigIdOverride,
-                        chatModelIndexOverride = chatModelIndexOverride
-                    )
-                } catch (e: Exception) {
-                    AppLogger.e(TAG, "获取provider和model信息失败: ${e.message}", e)
-                    Pair("", "")
-                }
-                logMessageTiming(
-                    stage = "delegate.loadProviderModel",
-                    startTimeMs = loadProviderModelStartTime,
-                    details = "chatId=$activeChatId, provider=$provider, model=$modelName"
-                )
-
-                aiMessage = ChatMessage(
-                    sender = "ai", 
-                    contentStream = sharedCharStream,
-                    timestamp = aiMessageTimestamp,
-                    roleName = currentRoleName,
-                    provider = provider,
-                    modelName = modelName,
-                    sentAt = requestSentAt
-                )
-                chatRuntime.streamingAiMessage = aiMessage
-                AppLogger.d(
-                    TAG,
-                    "创建带流的AI消息, stream is null: ${aiMessage.contentStream == null}, timestamp: ${aiMessage.timestamp}"
-                )
-
-                // 检查是否启用waifu模式来决定是否显示流式过程
-                val waifuPreferences = WaifuPreferences.getInstance(context)
-                // The main app's waifu mode (split sentences, typing delay, emotion stickers) is not an Orbit's.
-                isWaifuModeEnabled = waifuPreferences.enableWaifuModeFlow.first() &&
-                    runCatching { com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context, chatId) }
-                        .getOrNull() == null
-                val collaborationEnabled =
-                    com.ai.assistance.operit.core.agent.collaboration.CollaborationToolPolicy
-                        .visibility(context, chatId, turnOptions.isSubTask)["spawn_agent"] == true
-                chatRuntime.prepareSteeringInput = { text, inputAttachments, reply ->
-                    AIMessageManager.buildUserMessageContent(
-                        context = context, messageText = text, attachments = inputAttachments,
-                        workspacePath = workspacePath, workspaceEnv = workspaceEnv,
-                        replyToMessage = reply,
-                        enableDirectAudioProcessing = multimodalCapabilities.audio,
-                        enableDirectVideoProcessing = multimodalCapabilities.video,
-                        chatId = chatId, roleCardId = roleCardId,
-                        isSubTask = turnOptions.isSubTask, promptHooksEnabled = turnOptions.promptHooksEnabled,
-                    )
-                }
-                chatRuntime.canSteer = effectivePersistTurn && (!isWaifuModeEnabled || collaborationEnabled) &&
-                    (!turnOptions.isSubTask || turnOptions.isCollaborationAgent) && !isGroupOrchestrationTurn
-                if (chatRuntime.canSteer) {
-                    com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator
-                        .getInstance(context).deliverPending(chatId)
-                }
-                toolBoundaryMessageReady.complete(
-                    aiMessage.takeIf {
-                        effectivePersistTurn && chatId != null && (!isWaifuModeEnabled || collaborationEnabled)
-                    }
-                )
-                val waifuCharDelay = waifuPreferences.waifuCharDelayFlow.first()
-                val waifuRemovePunctuation =
-                    if (isWaifuModeEnabled) {
-                        waifuPreferences.waifuRemovePunctuationFlow.first()
-                    } else {
-                        false
-                    }
-
-                suspend fun emitWaifuSegment(segment: String) {
-                    if (segment.isBlank()) return
-
-                    val interrupt = waifuEmittedMessages.isEmpty()
-                    val segmentMessage =
-                        ChatMessage(
-                            sender = "ai",
-                            content = segment,
-                            contentStream = null,
-                            timestamp = ChatMessageTimestampAllocator.next(),
-                            roleName = currentRoleName,
-                            provider = provider,
-                            modelName = modelName,
-                            sentAt = requestSentAt
-                        )
-
-                    withContext(Dispatchers.Main) {
-                        waifuEmittedMessages += segmentMessage
-                        if (effectivePersistTurn && chatId != null) {
-                            addMessageToChat(chatId, segmentMessage)
-                        }
-                        if (effectivePersistTurn && !com.ai.assistance.operit.ui.permissions.UnattendedChats.contains(chatId) && getIsAutoReadEnabled()) {
-                            didStreamAutoRead = true
-                            AppLogger.d(
-                                TAG,
-                                "autoRead[waifuStream] interrupt=$interrupt len=${segment.length} preview=\"${speechPreview(segment)}\""
-                            )
-                            speakMessageHandler(segment, interrupt)
-                        }
-                        tryEmitScrollToBottomThrottled(chatId)
-                    }
-                }
-
-                suspend fun syncWaifuMessageMetrics(sourceMessage: ChatMessage) {
-                    if (!effectivePersistTurn || chatId == null || waifuEmittedMessages.isEmpty()) return
-
-                    withContext(Dispatchers.Main) {
-                        waifuEmittedMessages.indices.forEach { index ->
-                            val updatedMessage =
-                                waifuEmittedMessages[index].copy(
-                                    inputTokens = sourceMessage.inputTokens,
-                                    outputTokens = sourceMessage.outputTokens,
-                                    cachedInputTokens = sourceMessage.cachedInputTokens,
-                                    sentAt = sourceMessage.sentAt,
-                                    outputDurationMs = sourceMessage.outputDurationMs,
-                                    waitDurationMs = sourceMessage.waitDurationMs,
-                                    completedAt = sourceMessage.completedAt,
-                                )
-                            waifuEmittedMessages[index] = updatedMessage
-                            addMessageToChat(chatId, updatedMessage)
-                        }
-                    }
-                }
-                syncWaifuMessageMetricsHandler = { sourceMessage ->
-                    syncWaifuMessageMetrics(sourceMessage)
-                }
-                
-                // 只有在非waifu模式下才添加初始的AI消息
-                if (!isWaifuModeEnabled) {
-                    withContext(Dispatchers.Main) {
-                        if (effectivePersistTurn && chatId != null) {
-                            val initialContent =
-                                preferToolBoundarySnapshot(
-                                    toolBoundaryContentSnapshot.get(),
-                                    aiMessage.content,
-                                )
-                            aiMessage.content = initialContent
-                            persistAssistantMessage(chatId, aiMessage.copy(content = initialContent))
-                        }
-                    }
-                }
-                
-                // 启动一个独立的协程来收集流内容并持续更新数据库
-                val streamCollectionResult = CompletableDeferred<Throwable?>()
-                // A failed trailing save, reported once the collector has finished its own ending.
-                val trailingSaveFailure = java.util.concurrent.atomic.AtomicReference<Throwable?>(null)
-                chatRuntime.streamCollectionJob =
-                    coroutineScope.launch(Dispatchers.IO + CoroutineName("ChatStreamPersistence")) {
-                        try {
-                            var hasLoggedFirstChunk = false
-                            val lastStreamingPersistAt = java.util.concurrent.atomic.AtomicLong(0L)
-                            val revisionTracker = TextStreamRevisionTracker()
-                            // The trailing save below reads the reply from another coroutine.
-                            val revisionLock = Any()
-                            // Guarded by revisionLock: how often the reply changed, which change the
-                            // record holds, and whether the trailing save is running.
-                            var appendedVersion = 0L
-                            var savedVersion = 0L
-                            var trailingRunning = false
-                            // Set once the reply is ending; no saver starts after it, and none clears it.
-                            var trailingClosed = false
-                            var trailingPersistJob: Job? = null
-                            val collectorJob = coroutineContext[Job]
-                            var processedRevisionEventCount = 0
-                            var processedReplayCharCount = 0
-                            val autoReadBuffer = StringBuilder()
-                            var isFirstAutoReadSegment = true
-                            val autoReadStream =
-                                if (!isWaifuModeEnabled) {
-                                    WaifuMessageProcessor.streamTtsText(sharedCharStream)
-                                } else {
-                                    null
-                                }
-                            val revisableStream = sharedCharStream as? TextStreamEventCarrier
-
-                            fun flushAutoReadSegment(segment: String, interrupt: Boolean) {
-                                val trimmed = segment.trim()
-                                if (trimmed.isNotEmpty()) {
-                                    didStreamAutoRead = true
-                                    AppLogger.d(
-                                        TAG,
-                                        "autoRead[flush] interrupt=$interrupt didStreamAutoRead=$didStreamAutoRead len=${trimmed.length} preview=\"${speechPreview(trimmed)}\""
-                                    )
-                                    speakMessageHandler(trimmed, interrupt)
-                                } else if (segment.isNotEmpty()) {
-                                    AppLogger.d(
-                                        TAG,
-                                        "autoRead[flush.skipBlank] rawLen=${segment.length}"
-                                    )
-                                }
-                            }
-
-                            fun tryFlushAutoRead() {
-                                // A turn that never enters the chat is not read aloud either.
-                                if (!effectivePersistTurn || com.ai.assistance.operit.ui.permissions.UnattendedChats.contains(chatId) || !getIsAutoReadEnabled()) return
-                                if (isWaifuModeEnabled) return
-                                while (true) {
-                                    val bufferBefore = autoReadBuffer.length
-                                    val cutIdx = TtsSegmenter.nextSegmentEnd(autoReadBuffer)
-                                    if (cutIdx < 0) return
-
-                                    val seg = autoReadBuffer.substring(0, cutIdx)
-                                    autoReadBuffer.delete(0, cutIdx)
-                                    AppLogger.d(
-                                        TAG,
-                                        "autoRead[cut] cutIdx=$cutIdx bufferBefore=$bufferBefore bufferAfter=${autoReadBuffer.length} firstSegment=$isFirstAutoReadSegment rawLen=${seg.length} preview=\"${speechPreview(seg)}\""
-                                    )
-
-                                    flushAutoReadSegment(seg, interrupt = isFirstAutoReadSegment)
-                                    isFirstAutoReadSegment = false
-                                }
-                            }
-
-                            fun claimStreamingSnapshot(): Boolean {
-                                if (!effectivePersistTurn || isWaifuModeEnabled || chatId == null) return false
-                                while (true) {
-                                    val last = lastStreamingPersistAt.get()
-                                    val now = messageTimingNow()
-                                    if (now - last < STREAM_PERSIST_INTERVAL_MS) return false
-                                    if (lastStreamingPersistAt.compareAndSet(last, now)) return true
-                                }
-                            }
-
-                            /** The reply as it is now, marked as the version the record will hold. */
-                            fun readForSave(): String = synchronized(revisionLock) {
-                                savedVersion = appendedVersion
-                                revisionTracker.currentContent().toString()
-                            }
-
-                            suspend fun persistStreamingSnapshotLocked(contentSnapshot: String) {
-                                val targetChatId = chatId ?: return
-                                val current = preferToolBoundarySnapshot(
-                                    toolBoundaryContentSnapshot.get(), contentSnapshot,
-                                )
-                                aiMessage.content = current
-                                chatRuntime.steeredTranscript.project(aiMessage.copy(content = current))
-                                    .forEach { addMessageToChat(targetChatId, it) }
-                            }
-
-                            /** Saves the reply as it is now; read under the lock, so a save never puts back older text. */
-                            suspend fun persistStreamingSnapshot() {
-                                chatRuntime.transcriptMutex.withLock {
-                                    persistStreamingSnapshotLocked(readForSave())
-                                }
-                            }
-
-                            /**
-                             * A change that came too soon after the last save is saved a moment later, and
-                             * again until the record holds the newest text. Without this, a tool's result
-                             * (several quick chunks) reached the record only when the model wrote again, so
-                             * pages reading the record missed it until then. One saver runs at a time.
-                             */
-                            fun scheduleTrailingSnapshot() {
-                                if (!effectivePersistTurn || isWaifuModeEnabled || chatId == null) return
-                                synchronized(revisionLock) {
-                                    if (trailingClosed || trailingRunning) return
-                                    trailingRunning = true
-                                }
-                                trailingPersistJob = launch {
-                                    try {
-                                        while (true) {
-                                            // Stops only when nothing is left unsaved, decided with the
-                                            // lock held so a change made meanwhile starts a new saver.
-                                            val pending = synchronized(revisionLock) {
-                                                (savedVersion < appendedVersion).also { if (!it) trailingRunning = false }
-                                            }
-                                            if (!pending) break
-                                            val wait = lastStreamingPersistAt.get() + STREAM_PERSIST_INTERVAL_MS - messageTimingNow()
-                                            if (wait > 0) {
-                                                kotlinx.coroutines.delay(wait)
-                                                continue
-                                            }
-                                            if (claimStreamingSnapshot()) persistStreamingSnapshot()
-                                        }
-                                    } catch (e: kotlinx.coroutines.CancellationException) {
-                                        throw e
-                                    } catch (e: Exception) {
-                                        // Fails the reply the way a save in the collector does, after the
-                                        // collector has wrapped up (see its catch below).
-                                        trailingSaveFailure.compareAndSet(null, e)
-                                        collectorJob?.cancel()
-                                    }
-                                }
-                            }
-
-                            suspend fun drainRevisionEvents() {
-                                val events = revisableStream?.eventChannel
-                                    ?.replayAfter(processedRevisionEventCount).orEmpty()
-                                for (event in events) {
-                                    if (event.replayCharCount?.let { it > processedReplayCharCount } == true) {
-                                        break
-                                    }
-                                    processedRevisionEventCount++
-                                    when (event.eventType) {
-                                        TextStreamEventType.SAVEPOINT ->
-                                            synchronized(revisionLock) { revisionTracker.savepoint(event.id) }
-
-                                        TextStreamEventType.ROLLBACK -> {
-                                            // Provider rollback applies to the new response, not
-                                            // the already persisted pre-steer assistant prefix.
-                                            val snapshot =
-                                                synchronized(revisionLock) {
-                                                    revisionTracker.rollback(event.id)?.toString()?.also { appendedVersion++ }
-                                                }
-                                                    ?: continue
-                                            chatRuntime.transcriptMutex.withLock {
-                                                // The producer may already have published a boundary
-                                                // that includes this delayed rollback event.
-                                                val sealedBoundary = boundaryAfterRollback(
-                                                    toolBoundaryContentSnapshot.get(),
-                                                    chatRuntime.steeringBoundarySnapshot,
-                                                    processedRevisionEventCount,
-                                                )
-                                                toolBoundaryContentSnapshot.set(sealedBoundary)
-                                                chatRuntime.toolBoundarySnapshot = sealedBoundary
-                                                aiMessage.content = snapshot
-                                                if (claimStreamingSnapshot()) {
-                                                    // Only this coroutine changes the reply, so this is the snapshot.
-                                                    persistStreamingSnapshotLocked(readForSave())
-                                                } else {
-                                                    scheduleTrailingSnapshot()
-                                                }
-                                            }
-                                            if (!isWaifuModeEnabled) {
-                                                tryEmitScrollToBottomThrottled(chatId)
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            val autoReadJob =
-                                autoReadStream?.let { stream ->
-                                    launch {
-                                        try {
-                                            stream.collect { char ->
-                                                autoReadBuffer.append(char)
-                                                tryFlushAutoRead()
-                                            }
-                                        } catch (e: kotlinx.coroutines.CancellationException) {
-                                            throw e
-                                        } catch (e: Exception) {
-                                            // The primary collector reports the turn failure.
-                                            AppLogger.d(TAG, "自动朗读流结束: ${e.message}")
-                                        }
-                                    }
-                                }
-                            val waifuSegmentsJob =
-                                if (isWaifuModeEnabled) {
-                                    launch {
-                                        try {
-                                            WaifuMessageProcessor.streamSegmentsWithTypingQueue(
-                                                sourceStream = sharedCharStream,
-                                                removePunctuation = waifuRemovePunctuation,
-                                                charDelayMs = waifuCharDelay
-                                            ).collect { segment ->
-                                                emitWaifuSegment(segment)
-                                            }
-                                        } catch (e: kotlinx.coroutines.CancellationException) {
-                                            throw e
-                                        } catch (e: Exception) {
-                                            AppLogger.d(TAG, "Waifu 展示流结束: ${e.message}")
-                                        }
-                                    }
-                                } else {
-                                    null
-                                }
-
-                            try {
-                                sharedCharStream.collect { chunk ->
-                                    drainRevisionEvents()
-                                    if (!hasLoggedFirstChunk) {
-                                        hasLoggedFirstChunk = true
-                                        if (firstResponseElapsed == null) {
-                                            firstResponseElapsed = messageTimingNow()
-                                            chatRuntime.firstResponseElapsed = firstResponseElapsed
-                                            // The model got this chat's history, earlier unsent messages included.
-                                            activeChatId?.let {
-                                                com.ai.assistance.operit.core.chat.ChatSendFailures.clearChat(context, it)
-                                            }
-                                        }
-                                        logMessageTiming(
-                                            stage = "delegate.firstResponseChunk",
-                                            startTimeMs = responseStartTime,
-                                            details = "chatId=$activeChatId, firstChunkLength=${chunk.length}"
-                                        )
-                                    }
-                                    synchronized(revisionLock) {
-                                        revisionTracker.append(chunk)
-                                        appendedVersion++
-                                    }
-                                    processedReplayCharCount += chunk.length
-                                    if (claimStreamingSnapshot()) {
-                                        persistStreamingSnapshot()
-                                    } else {
-                                        scheduleTrailingSnapshot()
-                                    }
-                                    if (!isWaifuModeEnabled) {
-                                        tryEmitScrollToBottomThrottled(chatId)
-                                    }
-                                }
-                            } finally {
-                                // The reply is saved whole when it ends; a pending partial save is not
-                                // needed, and none may start now (it could land after the final one).
-                                synchronized(revisionLock) { trailingClosed = true }
-                                trailingPersistJob?.cancel()
-                                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
-                                    trailingPersistJob?.join()
-                                }
-                                drainRevisionEvents()
-                                // The finalizer uses aiMessage.content when revision events exist,
-                                // so publish one immutable snapshot on every collection exit.
-                                val replaySnapshot = revisionTracker.currentContent().toString()
-                                val mergedContent =
-                                    preferToolBoundarySnapshot(
-                                        toolBoundaryContentSnapshot.get(),
-                                        replaySnapshot,
-                                    )
-                                aiMessage.content = mergedContent
-                                // The boundary merge is not idempotent: reapplying it against the
-                                // already-merged content would duplicate the boundary region (the
-                                // tail of the last tool call) whenever the round-manager display
-                                // content is longer than the emitted replay prefix. Record the
-                                // merged result and drop the raw snapshot so the finalizer keeps
-                                // exactly this content instead of re-merging or falling back to
-                                // the unmerged replay cache.
-                                boundaryMergedContent.set(mergedContent)
-                                toolBoundaryContentSnapshot.set(null)
-                            }
-
-                            autoReadJob?.join()
-                            waifuSegmentsJob?.join()
-
-                            if (effectivePersistTurn && !com.ai.assistance.operit.ui.permissions.UnattendedChats.contains(chatId) && getIsAutoReadEnabled() && !isWaifuModeEnabled) {
-                                val remaining = autoReadBuffer.toString()
-                                autoReadBuffer.clear()
-                                AppLogger.d(
-                                    TAG,
-                                    "autoRead[remaining] firstSegment=$isFirstAutoReadSegment rawLen=${remaining.length} trimmedLen=${remaining.trim().length} preview=\"${speechPreview(remaining)}\""
-                                )
-                                flushAutoReadSegment(remaining, interrupt = isFirstAutoReadSegment)
-                            }
-                        } catch (t: Throwable) {
-                            // A failed trailing save cancels the collector; report that failure itself.
-                            val failure = trailingSaveFailure.get() ?: t
-                            if (!streamCollectionResult.isCompleted) {
-                                streamCollectionResult.complete(failure)
-                            }
-                            // The sending coroutine awaits this result and owns failure reporting
-                            // and partial-message persistence. Do not also crash this launch.
-                            if (t is kotlinx.coroutines.CancellationException && failure === t) throw t
-                        } finally {
-                            if (!streamCollectionResult.isCompleted) {
-                                // Ended without noticing the cancel: a failed trailing save still counts.
-                                streamCollectionResult.complete(trailingSaveFailure.get())
-                            }
-                        }
-                    }
-
-                val streamCollectionError = streamCollectionResult.await()
-                if (streamCollectionError != null) {
-                    throw streamCollectionError
-                }
-                logMessageTiming(
-                    stage = "delegate.sharedStreamComplete",
-                    startTimeMs = responseStartTime,
-                    details = "chatId=$activeChatId"
-                )
-
-                runCatching {
-                    turnInputTokens = service.getCurrentInputTokenCount()
-                    turnOutputTokens = service.getCurrentOutputTokenCount()
-                    turnCachedInputTokens = service.getCurrentCachedInputTokenCount()
-                }.onFailure {
-                    AppLogger.w(TAG, "读取本轮 token 统计失败", it)
-                }
-
-                val waitDurationMs =
-                    if (requestStartElapsed > 0L && firstResponseElapsed != null) {
-                        (firstResponseElapsed!! - requestStartElapsed).coerceAtLeast(0L)
-                    } else {
-                        0L
-                    }
-                val outputDurationMs =
-                    if (firstResponseElapsed != null) {
-                        (messageTimingNow() - firstResponseElapsed!!).coerceAtLeast(0L)
-                    } else {
-                        0L
-                    }
-
-                if (requestSentAt > 0L) {
-                    if (userMessageAdded && chatId != null) {
-                        userMessage =
-                            userMessage.withTurnMetrics(
-                                inputTokens = turnInputTokens,
-                                outputTokens = turnOutputTokens,
-                                cachedInputTokens = turnCachedInputTokens,
-                                sentAt = requestSentAt,
-                                outputDurationMs = outputDurationMs,
-                                waitDurationMs = waitDurationMs
-                            )
-                        addMessageToChat(chatId, userMessage)
-                    }
-
-                    aiMessage =
-                        aiMessage.withTurnMetrics(
-                            inputTokens = turnInputTokens,
-                            outputTokens = turnOutputTokens,
-                            cachedInputTokens = turnCachedInputTokens,
-                            sentAt = requestSentAt,
-                            outputDurationMs = outputDurationMs,
-                            waitDurationMs = waitDurationMs
-                        )
-                }
-                aiMessage = aiMessage.copy(completedAt = System.currentTimeMillis())
-
-                if (isWaifuModeEnabled) {
-                    syncWaifuMessageMetricsHandler?.invoke(aiMessage)
-                }
-
-                val stateAfterStream =
-                    _inputProcessingStateByChatId.value[chatKey(chatId)]
-                if (stateAfterStream !is EnhancedInputProcessingState.Error) {
-                    shouldNotifyTurnComplete = true
-                    finalInputStateAfterSend = EnhancedInputProcessingState.Completed
-                }
-
-                if (pendingAsyncSummaryUiByChatId.containsKey(chatId)) {
-                    setSuppressIdleCompletedStateForChat(chatId, true)
-                    finalInputStateAfterSend =
-                        EnhancedInputProcessingState.Summarizing(
-                            context.getString(R.string.message_summarizing)
-                        )
-                }
-
-                logMessageTiming(
-                    stage = "delegate.responseProcessingComplete",
-                    startTimeMs = responseStartTime,
-                    details = "chatId=$activeChatId, waifu=$isWaifuModeEnabled, autoRead=$didStreamAutoRead"
-                )
-            } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) {
-                    AppLogger.d(TAG, "消息发送被取消")
-                    finalInputStateAfterSend = EnhancedInputProcessingState.Idle
-                    shouldNotifyTurnComplete = false
-                    cancellationToPropagate = e
-                } else {
-                    AppLogger.e(TAG, "发送消息时出错", e)
-                    val rawFailureMessage = e.message ?: e.javaClass.simpleName
-                    // A permission denial carries a long English instruction for the model. Showing
-                    // it verbatim would put that internal text in the error dialog, so report the
-                    // same short conclusion the tool result shows.
-                    val userVisibleFailureMessage =
-                        permissionDenialSummary(context, rawFailureMessage) ?: rawFailureMessage
-                    // The turn terminal signal also carries this text to a subagent's caller, where the
-                    // model needs the original instruction (it explains what to do next), so only the
-                    // dialog and the input state get the short conclusion.
-                    terminalFailureMessage = rawFailureMessage
-                    setChatInputProcessingState(
-                        chatId,
-                        EnhancedInputProcessingState.Error(
-                            context.getString(R.string.message_send_failed, userVisibleFailureMessage)
-                        )
-                    )
-                    val unsentOrbitMessage =
-                        com.ai.assistance.operit.core.chat.ChatSendFailures.isUnreachable(e) &&
-                            marksUnsentOrbitMessage()
-                    if (unsentOrbitMessage && chatId != null) {
-                        com.ai.assistance.operit.core.chat.ChatSendFailures.mark(context, chatId, userMessage.timestamp)
-                    } else {
-                        withContext(Dispatchers.Main) {
-                            showErrorMessage(
-                                context.getString(R.string.message_send_failed, userVisibleFailureMessage)
-                            )
-                        }
-                    }
-                }
-            } finally {
-                chatRuntime.canSteer = false
-                chatRuntime.prepareSteeringInput = null
-                turnInPlaceCompactionChatId?.let {
-                    com.ai.assistance.operit.api.chat.enhance.InPlaceCompaction.unregister(it)
-                }
-                val returnedForSummary = chatRuntime.inputInbox?.sealedForSummary == true
-                val unconsumedInputs = chatRuntime.inputInbox?.close().orEmpty()
-                unconsumedInputs.forEach {
-                    if (returnedForSummary) (it.returnedForSummary ?: it.returned)() else it.returned()
-                }
-                val finalizeMessageStartTime = messageTimingNow()
-                val deferTurnCompleteToAsyncJob =
-                    if (cancellationToPropagate == null) {
-                        try {
-                            finalizeMessageAndNotify(
-                                chatId = chatId,
-                                activeChatId = activeChatId,
-                                aiMessageProvider = { aiMessage },
-                                isWaifuModeEnabled = isWaifuModeEnabled,
-                                skipFinalAutoRead = didStreamAutoRead && !isWaifuModeEnabled,
-                                syncWaifuMessageMetrics = { sourceMessage ->
-                                    syncWaifuMessageMetricsHandler?.invoke(sourceMessage)
-                                },
-                                calculateNextWindowSize = calculateNextWindowSize,
-                                finalContentTransform = { replayContent ->
-                                    // The stream-collection exit already merged the tool-boundary
-                                    // snapshot; reuse it so the raw replay cache (preferred by
-                                    // resolveFinalContent when no revision event exists) can never
-                                    // replace the merged content with a shorter unmerged prefix.
-                                    boundaryMergedContent.get()
-                                        ?: preferToolBoundarySnapshot(
-                                            toolBoundaryContentSnapshot.get(),
-                                            replayContent,
-                                        )
-                                },
-                                turnOptions = turnOptions,
-                                dropWhenEmpty = returnedForSummary,
-                            )
-                        } finally {
-                            // The finalizer rethrows a cancellation raised while it was finishing, and
-                            // that would skip the cleanup below: this conversation would then stay
-                            // marked as generating for the rest of the process lifetime, which blocks
-                            // both its background extraction and a manual one.
-                            com.ai.assistance.operit.api.chat.library.MemoryLearningCoordinator
-                                .foregroundEnded(context, chatId)
-                        }
-                    } else {
-                        AppLogger.d(TAG, "取消回合不执行消息收尾: chatId=$activeChatId")
-                        false
-                    }
-                logMessageTiming(
-                    stage = "delegate.finalizeMessage",
-                    startTimeMs = finalizeMessageStartTime,
-                    details = "chatId=$activeChatId, notifyTurnComplete=$shouldNotifyTurnComplete"
-                )
-
-                // cleanup permits another turn to clear the shared transcript before terminal bookkeeping.
-                val completedAssistantTimestamp = assistantMessageTimestampForTurn?.let {
-                    chatRuntime.steeredTranscript.finalTimestamp(it)
-                }
-                val cleanupRuntimeStartTime = messageTimingNow()
-                // A stopped turn still saves its partial reply after this (cancelMessageInternal),
-                // so its text is let go there instead.
-                cleanupRuntimeAfterSend(chatId, chatRuntime, releaseTranscript = cancellationToPropagate == null)
-                logMessageTiming(
-                    stage = "delegate.cleanupRuntime",
-                    startTimeMs = cleanupRuntimeStartTime,
-                    details = "chatId=$activeChatId"
-                )
-
-                if (!deferTurnCompleteToAsyncJob) {
-                    finalInputStateAfterSend?.let { terminalState ->
-                        setChatInputProcessingState(chatId, terminalState)
-                    }
-                }
-
-                if (shouldNotifyTurnComplete && !deferTurnCompleteToAsyncJob) {
-                    val service = serviceForTurnComplete
-                    if (service != null) {
-                        // Kept before the turn-complete callback, which may start a background
-                        // summary that resends this request to read it from the cache.
-                        try {
-                            val compactionSnapshot = assistantMessageTimestampForTurn?.toString()
-                                ?.let(service::takeCompactionSnapshot)
-                            val compactionGeneration = compactionGenerationForTurn
-                            if (compactionSnapshot != null && chatId != null && compactionGeneration != null &&
-                                finalInputStateAfterSend is com.ai.assistance.operit.data.model.InputProcessingState.Completed &&
-                                turnOptions.persistTurn && !turnOptions.isSubTask &&
-                                !turnOptions.isCollaborationAgent && !isGroupOrchestrationTurn
-                            ) {
-                                com.ai.assistance.operit.api.chat.compaction.CompactionSnapshots.put(
-                                    chatId, compactionSnapshot, assistantMessageTimestampForTurn ?: Long.MAX_VALUE,
-                                    // A newer turn started after loading was released, or an edit, bumps it.
-                                    compactionGeneration,
-                                )
-                            }
-                        } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                            throw cancelled
-                        } catch (error: Exception) {
-                            AppLogger.w(TAG, "Unable to keep the turn's request for compaction", error)
-                        }
-                        notifyTurnComplete(
-                            chatId,
-                            activeChatId,
-                            service,
-                            calculateNextWindowSize,
-                            turnOptions
-                        )
-                        try {
-                            // Persistence and all tool rounds have settled. Group orchestration and
-                            // internal/delivered turns do not represent a completed owner conversation.
-                            val prediction = assistantMessageTimestampForTurn?.toString()?.let(service::takeComposerPredictionSnapshot)
-                                ?.let { snapshot ->
-                                    getRuntimeChatHistory(chatId).lastOrNull()?.takeIf {
-                                        it.sender == "ai" && it.contentStream == null && it.completedAt > 0L &&
-                                            it.timestamp >= (assistantMessageTimestampForTurn ?: Long.MAX_VALUE)
-                                    }?.let { snapshot.copy(sourceMessageId = it.timestamp.toString()) }
-                                }
-                            if (prediction != null && composerPredictionGenerations[chatId] == composerPredictionGeneration &&
-                                com.ai.assistance.operit.api.chat.prediction.isComposerPredictionCompletion(
-                                    finalInputStateAfterSend, turnOptions, isGroupOrchestrationTurn,
-                                )
-                            ) {
-                                _composerPredictionSnapshots.update {
-                                    if (composerPredictionGenerations[chatId] == composerPredictionGeneration)
-                                        it + (chatId to prediction) else it
-                                }
-                            }
-                        } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                            throw cancelled
-                        } catch (error: Exception) {
-                            AppLogger.w(TAG, "Unable to prepare auxiliary composer prediction", error)
-                        }
-                    }
-                }
-
-                turnOptions.turnId?.let { turnId ->
-                    val terminalSignal =
-                        when {
-                            cancellationToPropagate != null ->
-                                ChatTurnTerminalSignal.Cancelled(
-                                    turnId = turnId,
-                                    chatId = activeChatId,
-                                )
-                            shouldNotifyTurnComplete && assistantMessageTimestampForTurn != null ->
-                                ChatTurnTerminalSignal.Completed(
-                                    turnId = turnId,
-                                    chatId = activeChatId,
-                                    assistantMessageTimestamp =
-                                        requireNotNull(completedAssistantTimestamp),
-                                )
-                            else ->
-                                ChatTurnTerminalSignal.Failed(
-                                    turnId = turnId,
-                                    chatId = activeChatId,
-                                    error =
-                                        terminalFailureMessage
-                                            ?: "Turn ended without a final assistant result",
-                                )
-                        }
-                    onTurnTerminated(terminalSignal)
-                }
-
-                logMessageTiming(
-                    stage = "delegate.sendUserMessage.total",
-                    startTimeMs = sendUserMessageStartTime,
-                    details = "chatId=$activeChatId, addedUserMessage=$userMessageAdded, enableSummary=$enableSummary, persistTurn=${turnOptions.persistTurn}"
-                )
-                val currentJob = coroutineContext[Job]
-                if (currentJob != null && chatRuntime.sendJob === currentJob) {
-                    chatRuntime.sendJob = null
-                }
-            }
-            cancellationToPropagate?.let { throw it }
-            } catch (e: Throwable) {
-                if (sendBodyStarted) throw e
-                abortBeforeSend(chatId, chatRuntime, e, turnOptions.turnId)
-                if (e is kotlinx.coroutines.CancellationException) throw e
-            }
-        }
         sendJob.invokeOnCompletion { perfStart.reportIfUnused(it) }
         chatRuntime.sendJob = sendJob
         if (turnOptions.turnId?.let(isTurnCancellationRequested) == true) {
@@ -2278,6 +1079,1294 @@ class MessageProcessingDelegate(
             )
         }
         return true
+    }
+
+    /**
+     * One send of [sendUserMessage]: what it was asked to send, and what its steps hand on to each
+     * other (prepareSend, then runSend, failSend if that fails, and finishSend). The steps were
+     * once one coroutine, which compiled to a single method too large for ART's fast interpreter
+     * (727 registers), so it ran on the slow one, where both native crashes (SIGSEGV) seen in
+     * background turns happened. Each step is a method of its own now, small enough for the fast
+     * interpreter, which makes that path much less likely.
+     */
+    private class SendTurn(
+        val attachments: List<AttachmentInfo>,
+        val chatId: String,
+        val prebuiltUserMessage: ChatMessage?,
+        val proxySenderNameOverride: String?,
+        val workspacePath: String?,
+        val workspaceEnv: String?,
+        val promptFunctionType: PromptFunctionType,
+        val roleCardId: String?,
+        val enableThinking: Boolean,
+        val enableMemoryAutoUpdate: Boolean,
+        val maxTokens: Int,
+        val tokenUsageThreshold: Double,
+        val replyToMessage: ChatMessage?,
+        val isAutoContinuation: Boolean,
+        val enableSummary: Boolean,
+        val chatModelConfigIdOverride: String?,
+        val chatModelIndexOverride: Int?,
+        val memorySpaceIdOverride: String?,
+        val suppressUserMessageInHistory: Boolean,
+        val isGroupOrchestrationTurn: Boolean,
+        val groupParticipantNamesText: String?,
+        val turnOptions: ChatTurnOptions,
+        val chatRuntime: ChatRuntime,
+        val composerPredictionGeneration: String,
+        val originalMessageText: String,
+        val messageText: String,
+        val perfStart: com.ai.assistance.operit.core.chat.LlmPerfStart,
+    ) {
+        val effectivePersistTurn = turnOptions.persistTurn
+        val effectiveHideUserMessage = effectivePersistTurn && turnOptions.hideUserMessage
+        var sendUserMessageStartTime = 0L
+        lateinit var multimodalCapabilities: com.ai.assistance.operit.data.model.ModelMultimodalCapabilities
+        lateinit var finalMessageContent: String
+        var userMessageAdded = false
+        lateinit var userMessage: ChatMessage
+        lateinit var aiMessage: ChatMessage
+        val activeChatId = chatId
+        var serviceForTurnComplete: EnhancedAIService? = null
+        var shouldNotifyTurnComplete = false
+        var finalInputStateAfterSend: EnhancedInputProcessingState? = null
+        var isWaifuModeEnabled = false
+        var didStreamAutoRead = false
+        val effectiveRoleCardId = roleCardId
+        val waifuEmittedMessages = mutableListOf<ChatMessage>()
+        var syncWaifuMessageMetricsHandler: (suspend (ChatMessage) -> Unit)? = null
+        var requestSentAt = 0L
+        var requestStartElapsed = 0L
+        var firstResponseElapsed: Long? = null
+        var turnInputTokens = 0
+        var turnOutputTokens = 0
+        var turnCachedInputTokens = 0
+        var calculateNextWindowSize: (suspend () -> Int?)? = null
+        var cancellationToPropagate: kotlinx.coroutines.CancellationException? = null
+        var terminalFailureMessage: String? = null
+        var assistantMessageTimestampForTurn: Long? = null
+        var compactionGenerationForTurn: Long? = null
+        var turnInPlaceCompactionChatId: String? = null
+        val toolBoundaryContentSnapshot =
+            AtomicReference<EnhancedAIService.ToolExecutionBoundarySnapshot?>(null)
+        // Final merged content produced by the stream-collection exit. resolveFinalContent()
+        // prefers the raw replay cache when no revision event exists, so the finalizer must
+        // not rebuild the content from that unmerged replay after the boundary merge ran.
+        val boundaryMergedContent = AtomicReference<String?>(null)
+    }
+
+    // In an Orbit chat a message the owner typed that never reached the model gets a red
+    // sign to send it again, as in a messenger, instead of an error dialog.
+    private fun SendTurn.marksUnsentOrbitMessage(): Boolean =
+        chatId != null && userMessageAdded && firstResponseElapsed == null &&
+            !effectiveHideUserMessage && !turnOptions.isSubTask && !turnOptions.deliveredByTool &&
+            com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context)
+                .snapshot.orbitForChat(chatId) != null
+
+    private suspend fun SendTurn.prepareSend() {
+        sendUserMessageStartTime = messageTimingNow()
+        // 检查这是否是聊天中的第一条用户消息（忽略AI的开场白）
+        val isFirstMessage = !hasUserMessage(chatId)
+        val titleFallback =
+            if (
+                effectivePersistTurn &&
+                    isFirstMessage &&
+                    chatId != null &&
+                    !turnOptions.isSubTask
+            ) {
+            fallbackConversationTitle(originalMessageText, attachments).also { fallbackTitle ->
+                updateChatTitle(chatId, fallbackTitle)
+            }
+        } else {
+            null
+        }
+
+        AppLogger.d(TAG, "开始处理用户消息：附件数量=${attachments.size}")
+
+        // 图片附件始终按需读取；音频和视频是否直传由当前模型的独立能力决定。
+        val chatConfigMapping =
+            functionalConfigManager.getConfigMappingForFunction(FunctionType.CHAT)
+        val overrideConfigId = chatModelConfigIdOverride?.takeIf { it.isNotBlank() }
+        val configId = overrideConfigId ?: chatConfigMapping.configId
+        val modelIndex =
+            if (overrideConfigId != null) {
+                chatModelIndexOverride ?: 0
+            } else {
+                chatConfigMapping.modelIndex
+            }
+        val loadModelConfigStartTime = messageTimingNow()
+        val currentModelConfig = modelConfigManager.getModelConfigFlow(configId).first()
+        multimodalCapabilities =
+            currentModelConfig.multimodalCapabilitiesForModel(modelIndex)
+        AppLogger.d(
+            TAG,
+            "图片附件按需读取，当前模型多模态能力: $multimodalCapabilities (配置ID: $configId, 模型索引: $modelIndex)"
+        )
+        logMessageTiming(
+            stage = "delegate.loadModelConfig",
+            startTimeMs = loadModelConfigStartTime,
+            details = "chatId=$chatId, configId=$configId"
+        )
+
+        // 1. 使用 AIMessageManager 构建最终消息
+        val buildUserMessageStartTime = messageTimingNow()
+        finalMessageContent = prebuiltUserMessage?.content ?: AIMessageManager.buildUserMessageContent(
+            context = context,
+            messageText = messageText,
+            proxySenderName = proxySenderNameOverride,
+            attachments = attachments,
+            workspacePath = workspacePath,
+            workspaceEnv = workspaceEnv,
+            replyToMessage = replyToMessage,
+            enableDirectAudioProcessing = multimodalCapabilities.audio,
+            enableDirectVideoProcessing = multimodalCapabilities.video,
+            chatId = chatId,
+            roleCardId = roleCardId,
+            isSubTask = turnOptions.isSubTask,
+            promptHooksEnabled = turnOptions.promptHooksEnabled,
+        )
+        logMessageTiming(
+            stage = "delegate.buildUserMessageContent",
+            startTimeMs = buildUserMessageStartTime,
+            details = "chatId=$chatId, attachments=${attachments.size}, finalLength=${finalMessageContent.length}"
+        )
+
+        // 自动继续且原本消息为空时，不添加到聊天历史（虽然会发送"继续"给AI）
+        // 群组编排模式下，空消息也不添加到聊天历史
+        val shouldAddUserMessageToChat =
+            effectivePersistTurn &&
+            !suppressUserMessageInHistory &&
+            !(isAutoContinuation &&
+                    originalMessageText.isBlank() &&
+                    attachments.isEmpty()) &&
+            !(isGroupOrchestrationTurn &&
+                    originalMessageText.isBlank() &&
+                    attachments.isEmpty())
+        userMessage = ChatMessage(
+            sender = "user",
+            content = finalMessageContent,
+            timestamp = turnOptions.userMessageTimestamp ?: ChatMessageTimestampAllocator.next(),
+            roleName =
+                resolveTranscriptRoleName(
+                    override = turnOptions.userRoleNameOverride,
+                    fallback = context.getString(R.string.message_role_user),
+                ),
+            displayMode = turnOptions.userTurnDisplayMode(hidden = effectiveHideUserMessage)
+        )
+
+        if (shouldAddUserMessageToChat && chatId != null) {
+            // 等待消息添加到聊天历史完成，确保getChatHistory()包含新消息
+            val addUserMessageStartTime = messageTimingNow()
+            addMessageToChat(chatId, userMessage)
+            userMessageAdded = true
+            // A message sent again is saved under its own time: it is on its way now.
+            com.ai.assistance.operit.core.chat.ChatSendFailures.clear(context, chatId, userMessage.timestamp)
+            // Sent again: the new copy is saved as the latest message, so the old one goes.
+            turnOptions.resendsMessageTimestamp?.let { old ->
+                removeResentOriginal(chatId, old)
+                com.ai.assistance.operit.core.chat.ChatSendFailures.clear(context, chatId, old)
+            }
+            logMessageTiming(
+                stage = "delegate.addUserMessageToChat",
+                startTimeMs = addUserMessageStartTime,
+                details = "chatId=$chatId, contentLength=${userMessage.content.length}"
+            )
+            titleFallback?.let { fallbackTitle ->
+                launchConversationTitleGeneration(
+                    chatId = chatId,
+                    userText = originalMessageText,
+                    attachments = attachments,
+                    fallbackTitle = fallbackTitle
+                )
+            }
+        }
+    }
+
+    private suspend fun SendTurn.runSend() {
+        // if (!NetworkUtils.isNetworkAvailable(context)) {
+        //     withContext(Dispatchers.Main) { showErrorMessage("网络连接不可用") }
+        //     _isLoading.value = false
+        //     setChatInputProcessingState(activeChatId, EnhancedInputProcessingState.Idle)
+        //     return@launch
+        // }
+
+        val acquireServiceStartTime = messageTimingNow()
+        val chatScopedService = EnhancedAIService.getChatInstance(context, activeChatId)
+        val service =
+            (chatScopedService
+                ?: getEnhancedAiService())
+                ?: run {
+                    withContext(Dispatchers.Main) { showErrorMessage(context.getString(R.string.message_ai_service_not_initialized)) }
+                    chatRuntime.isLoading.value = false
+                    updateGlobalLoadingState()
+                    setChatInputProcessingState(activeChatId, EnhancedInputProcessingState.Idle)
+                    return
+                }
+        logMessageTiming(
+            stage = "delegate.acquireService",
+            startTimeMs = acquireServiceStartTime,
+            details = "chatId=$activeChatId, reusedChatInstance=${chatScopedService != null}"
+        )
+        serviceForTurnComplete = service
+
+        // 清除上一次可能残留的 Error 状态，避免 StateFlow 重放导致新一轮发送立即再次触发弹窗
+        service.setInputProcessingState(EnhancedInputProcessingState.Processing(context.getString(R.string.message_processing)))
+
+        // 监听此 chat 对应的 EnhancedAIService 状态，映射到 per-chat state
+        chatRuntime.stateCollectionJob?.cancel()
+        chatRuntime.stateCollectionJob =
+            coroutineScope.launch {
+                var lastErrorMessage: String? = null
+                service.inputProcessingState.collect { state ->
+                    setChatInputProcessingState(activeChatId, state)
+
+                    if (state is EnhancedInputProcessingState.Error) {
+                        val msg = state.message
+                        if (state.unreachable && marksUnsentOrbitMessage()) {
+                            lastErrorMessage = msg
+                            activeChatId?.let {
+                                com.ai.assistance.operit.core.chat.ChatSendFailures
+                                    .mark(context, it, userMessage.timestamp)
+                            }
+                        } else if (msg != lastErrorMessage) {
+                            lastErrorMessage = msg
+                            withContext(Dispatchers.Main) {
+                                showErrorMessage(msg)
+                            }
+                        }
+                    } else {
+                        lastErrorMessage = null
+                    }
+                }
+            }
+
+        val responseStartTime = messageTimingNow()
+
+        val userPreferencesManager = UserPreferencesManager.getInstance(context)
+
+        // 获取角色信息用于通知
+        val loadRoleInfoStartTime = messageTimingNow()
+        val (characterName, avatarUri) =
+            effectiveRoleCardId?.let { cardId ->
+                try {
+                    val roleCard =
+                        characterCardManager.getCharacterCardFlow(cardId).first()
+                    val avatar =
+                        userPreferencesManager
+                            .getAiAvatarForCharacterCardFlow(roleCard.id)
+                            .first()
+                    Pair(roleCard.name, avatar)
+                } catch (e: Exception) {
+                    AppLogger.e(TAG, "获取角色信息失败: ${e.message}", e)
+                    Pair(null, null)
+                }
+            } ?: Pair(null, null)
+        val orbitOfChat = com.ai.assistance.operit.data.preferences.OrbitPreferences
+            .getInstance(context)
+            .current()
+            .orbitForChat(activeChatId)
+        val currentRoleName =
+            resolveTranscriptRoleName(
+                // An Orbit signs its replies with the name it chose for itself.
+                override =
+                    turnOptions.assistantRoleNameOverride
+                        ?: orbitOfChat?.name?.takeIf { it.isNotBlank() },
+                fallback = characterName ?: "Operit",
+            )
+        logMessageTiming(
+            stage = "delegate.loadRoleInfo",
+            startTimeMs = loadRoleInfoStartTime,
+            details = "chatId=$activeChatId, roleCardId=$effectiveRoleCardId, roleName=$currentRoleName"
+        )
+        calculateNextWindowSize = {
+            runCatching {
+                AIMessageManager.calculateStableContextWindow(
+                    enhancedAiService = service,
+                    chatId = activeChatId,
+                    messageContent = "",
+                    chatHistory = getRuntimeChatHistory(activeChatId),
+                    workspacePath = workspacePath,
+                    workspaceEnv = workspaceEnv,
+                    promptFunctionType = promptFunctionType,
+                    roleCardId = effectiveRoleCardId,
+                    currentRoleName = currentRoleName,
+                    splitHistoryByRole = true,
+                    groupOrchestrationMode = isGroupOrchestrationTurn,
+                    groupParticipantNamesText = groupParticipantNamesText,
+                    chatModelConfigIdOverride = chatModelConfigIdOverride,
+                    chatModelIndexOverride = chatModelIndexOverride,
+                    memorySpaceIdOverride = memorySpaceIdOverride,
+                    publishEstimate = false
+                )
+            }.onFailure {
+                AppLogger.w(TAG, "回合结束后重算上下文窗口失败", it)
+            }.getOrNull()
+        }
+
+        val loadChatHistoryStartTime = messageTimingNow()
+        // A message sent again is sent once: its old copy is already gone, kept out here too.
+        val chatHistory = getRuntimeChatHistory(activeChatId).let { history ->
+            turnOptions.resendsMessageTimestamp?.let { old -> history.filterNot { it.timestamp == old } }
+                ?: history
+        }
+        logMessageTiming(
+            stage = "delegate.loadChatHistory",
+            startTimeMs = loadChatHistoryStartTime,
+            details = "chatId=$activeChatId, size=${chatHistory.size}"
+        )
+
+        // 关闭总结时仍保留真实 limits，避免下游插件收到 0/Infinity 这类无效 JSON 值。
+        val effectiveMaxTokens = maxTokens
+        val effectiveEnableSummary = enableSummary && effectivePersistTurn
+        // An Orbit turn that cannot run the normal summary (a hidden notice, or a chat that is
+        // not on screen) compacts its context in place and goes on, so a long-running Orbit
+        // chat never outgrows the model's window while the user is away.
+        if (orbitOfChat != null && !effectiveEnableSummary && effectivePersistTurn &&
+            !turnOptions.isCollaborationAgent && activeChatId != null &&
+            !com.ai.assistance.operit.api.chat.enhance.InPlaceCompaction.contains(activeChatId)
+        ) {
+            com.ai.assistance.operit.api.chat.enhance.InPlaceCompaction.register(activeChatId, keepsLatestUserTurn = true)
+            turnInPlaceCompactionChatId = activeChatId
+        }
+        val effectiveTokenUsageThreshold =
+            if (effectiveEnableSummary || turnOptions.isCollaborationAgent ||
+                // Background reading runs compact themselves in place instead of stopping.
+                com.ai.assistance.operit.api.chat.enhance.InPlaceCompaction.contains(activeChatId)
+            ) tokenUsageThreshold else Double.MAX_VALUE
+        val effectiveOnTokenLimitExceeded = if (effectiveEnableSummary) {
+            suspend {
+                onTokenLimitExceeded(
+                    activeChatId,
+                    effectiveRoleCardId,
+                    isGroupOrchestrationTurn,
+                    groupParticipantNamesText
+                )
+            }
+        } else {
+            null
+        }
+
+        // 2. 使用 AIMessageManager 发送消息
+        // 群组编排模式下，只有当消息内容不为空时才添加 [From user] 前缀
+        val requestMessageContent =
+            if (isGroupOrchestrationTurn &&
+                finalMessageContent.trimStart().isNotEmpty() &&
+                !finalMessageContent.trimStart().startsWith("[From user]")
+            ) {
+                "[From user]\n$finalMessageContent"
+            } else {
+                finalMessageContent
+            }
+
+        requestSentAt = System.currentTimeMillis()
+        requestStartElapsed = messageTimingNow()
+        chatRuntime.requestSentAt = requestSentAt
+        chatRuntime.requestStartElapsed = requestStartElapsed
+        chatRuntime.firstResponseElapsed = null
+        if (userMessageAdded && chatId != null) {
+            userMessage = userMessage.copy(sentAt = requestSentAt)
+            addMessageToChat(chatId, userMessage)
+        }
+
+        val prepareResponseStreamStartTime = messageTimingNow()
+        val aiMessageTimestamp = ChatMessageTimestampAllocator.next()
+        assistantMessageTimestampForTurn = aiMessageTimestamp
+        // The previous turn's request no longer ends this chat, even if this turn fails.
+        if (chatId != null) {
+            compactionGenerationForTurn =
+                com.ai.assistance.operit.api.chat.compaction.CompactionSnapshots.begin(chatId)
+        }
+        val toolBoundaryMessageReady = CompletableDeferred<ChatMessage?>()
+        coroutineContext[Job]?.invokeOnCompletion {
+            toolBoundaryMessageReady.complete(null)
+        }
+        val responseStream = try {
+            AIMessageManager.sendMessage(
+            enhancedAiService = service,
+            chatId = activeChatId,
+            messageContent = requestMessageContent,
+            // 仅在群组编排中去掉当前用户消息，避免重复拼接。
+            chatHistory = if (isGroupOrchestrationTurn && (userMessageAdded || prebuiltUserMessage != null)) {
+                // The orchestrator already persisted this turn. Remove only that message;
+                // concurrent history updates may have appended other messages after it.
+                val sentTimestamp = prebuiltUserMessage?.timestamp ?: userMessage.timestamp
+                chatHistory.filterNot { it.sender == "user" && it.timestamp == sentTimestamp }
+            } else {
+                turnOptions.collaborationHistoryCutoff?.let { cutoff ->
+                    chatHistory.filter { it.timestamp > cutoff }
+                } ?: chatHistory
+            },
+            workspacePath = workspacePath,
+            workspaceEnv = workspaceEnv,
+            promptFunctionType = promptFunctionType,
+            functionType = turnOptions.functionType,
+            providerSessionId = turnOptions.providerSessionId,
+            enableThinking = enableThinking,
+            enableMemoryAutoUpdate = enableMemoryAutoUpdate,
+            maxTokens = effectiveMaxTokens,
+            tokenUsageThreshold = effectiveTokenUsageThreshold,
+            onNonFatalError = { error ->
+                _nonFatalErrorEvent.emit(error)
+            },
+            onTokenLimitExceeded = effectiveOnTokenLimitExceeded,
+            // Everything this turn adds starts at its user message, or at its reply when it has none.
+            turnCompactor = if (effectiveOnTokenLimitExceeded != null && activeChatId != null &&
+                !isGroupOrchestrationTurn && !turnOptions.isCollaborationAgent
+            ) {
+                turnCompactorFor(activeChatId, if (userMessageAdded) userMessage.timestamp else aiMessageTimestamp)
+            } else {
+                null
+            },
+            characterName = characterName,
+            avatarUri = avatarUri,
+            roleCardId = effectiveRoleCardId,
+            currentRoleName = currentRoleName,
+            // An Orbit chat has one companion whose name can change; every reply in it is its own,
+            // so replies signed with an earlier name must not be read back as someone else's.
+            splitHistoryByRole = orbitOfChat == null,
+            groupOrchestrationMode = isGroupOrchestrationTurn,
+            groupParticipantNamesText = groupParticipantNamesText,
+            proxySenderName = proxySenderNameOverride,
+            onToolInvocation = { toolName ->
+                recordCurrentTurnToolInvocation(chatId, toolName)
+            },
+            onToolExecutionBoundary = boundary@ { boundarySnapshot ->
+                val snapshotMessage = toolBoundaryMessageReady.await() ?: return@boundary
+                val targetChatId = chatId ?: return@boundary
+                chatRuntime.transcriptMutex.withLock {
+                    toolBoundaryContentSnapshot.set(boundarySnapshot)
+                    chatRuntime.toolBoundarySnapshot = boundarySnapshot
+                    chatRuntime.steeredTranscript.project(
+                        snapshotMessage.copy(content = boundarySnapshot.displayContent.toString()),
+                    ).forEach { addMessageToChat(targetChatId, it) }
+                }
+            },
+            turnInputInbox = chatRuntime.inputInbox,
+            onTurnInput = { texts, boundary ->
+                val snapshotMessage = requireNotNull(toolBoundaryMessageReady.await())
+                chatRuntime.transcriptMutex.withLock {
+                    toolBoundaryContentSnapshot.set(boundary)
+                    chatRuntime.toolBoundarySnapshot = boundary
+                    chatRuntime.steeringBoundarySnapshot = boundary
+                    chatRuntime.steeredTranscript.project(snapshotMessage.copy(
+                        content = boundary.displayContent.toString(), contentStream = null,
+                        displayMode = ChatMessageDisplayMode.ASSISTANT_INTERMEDIATE,
+                    )).forEach { row -> sentAsMessages(chatId, row).forEach { addMessageToChat(chatId, it) } }
+                    texts.forEach { input ->
+                        val row = ChatMessage(
+                            sender = "user", content = input.text,
+                            roleName = input.agentPath ?: context.getString(R.string.message_role_user),
+                            displayMode = when {
+                                input.agentPath == null -> ChatMessageDisplayMode.NORMAL
+                                input.startsAgentTurn -> ChatMessageDisplayMode.COLLABORATION_TASK
+                                else -> ChatMessageDisplayMode.COLLABORATION_EVENT
+                            },
+                            // The row is ordered when the model takes it; for a user row,
+                            // completedAt keeps when the user sent it. (sentAt stays empty:
+                            // that is what marks a message slipped into a running reply.)
+                            completedAt = input.sentAt,
+                        )
+                        // The sender's stand-in bubble steps aside once this row is shown.
+                        input.saved(row.timestamp)
+                        addMessageToChat(chatId, row)
+                    }
+                    val nextAssistantTimestamp = ChatMessageTimestampAllocator.next()
+                    chatRuntime.steeredTranscript.add(
+                        boundary.displayContent.toString(), nextAssistantTimestamp,
+                        snapshotMessage.timestamp,
+                    )
+                    nextAssistantTimestamp.toString()
+                }
+            },
+            notifyReplyOverride = turnOptions.notifyReply,
+            chatModelConfigIdOverride = chatModelConfigIdOverride,
+            chatModelIndexOverride = chatModelIndexOverride,
+            chatReasoningLevelOverride = turnOptions.chatReasoningLevel,
+            memorySpaceIdOverride = memorySpaceIdOverride,
+            toolTimingScopeId = aiMessageTimestamp.toString(),
+            disableWarning = turnOptions.disableWarning,
+            isSubTask = turnOptions.isSubTask,
+            toolsEnabled = turnOptions.toolsEnabled,
+            isolatedToolPrompts = turnOptions.isolatedToolPrompts,
+            terminalToolNames = turnOptions.terminalToolNames,
+            promptHooksEnabled = turnOptions.promptHooksEnabled,
+            systemPromptOverride = turnOptions.systemPromptOverride,
+            collaborationHistory = turnOptions.collaborationHistory,
+            collaborationInput = turnOptions.isCollaborationAgent,
+            perfStart = perfStart,
+        )
+        } catch (error: Throwable) {
+            toolBoundaryMessageReady.complete(null)
+            throw error
+        }
+        logMessageTiming(
+            stage = "delegate.prepareResponseStream",
+            startTimeMs = prepareResponseStreamStartTime,
+            details = "chatId=$activeChatId, requestLength=${requestMessageContent.length}, history=${chatHistory.size}"
+        )
+
+        // AIMessageManager 已返回可重放的共享流，这里直接复用，避免在 viewModelScope 上再包一层。
+        val sharedCharStream = responseStream
+
+        // 更新当前响应流，使其可以被其他组件（如悬浮窗）访问
+        chatRuntime.responseStream = sharedCharStream
+
+        // 获取当前使用的provider和model信息
+        val loadProviderModelStartTime = messageTimingNow()
+        val (provider, modelName) = try {
+            service.getDisplayProviderAndModelForFunction(
+                functionType = turnOptions.functionType,
+                chatModelConfigIdOverride = chatModelConfigIdOverride,
+                chatModelIndexOverride = chatModelIndexOverride
+            )
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "获取provider和model信息失败: ${e.message}", e)
+            Pair("", "")
+        }
+        logMessageTiming(
+            stage = "delegate.loadProviderModel",
+            startTimeMs = loadProviderModelStartTime,
+            details = "chatId=$activeChatId, provider=$provider, model=$modelName"
+        )
+
+        aiMessage = ChatMessage(
+            sender = "ai",
+            contentStream = sharedCharStream,
+            timestamp = aiMessageTimestamp,
+            roleName = currentRoleName,
+            provider = provider,
+            modelName = modelName,
+            sentAt = requestSentAt
+        )
+        chatRuntime.streamingAiMessage = aiMessage
+        AppLogger.d(
+            TAG,
+            "创建带流的AI消息, stream is null: ${aiMessage.contentStream == null}, timestamp: ${aiMessage.timestamp}"
+        )
+
+        // 检查是否启用waifu模式来决定是否显示流式过程
+        val waifuPreferences = WaifuPreferences.getInstance(context)
+        // The main app's waifu mode (split sentences, typing delay, emotion stickers) is not an Orbit's.
+        isWaifuModeEnabled = waifuPreferences.enableWaifuModeFlow.first() &&
+            runCatching { com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context, chatId) }
+                .getOrNull() == null
+        val collaborationEnabled =
+            com.ai.assistance.operit.core.agent.collaboration.CollaborationToolPolicy
+                .visibility(context, chatId, turnOptions.isSubTask)["spawn_agent"] == true
+        chatRuntime.prepareSteeringInput = { text, inputAttachments, reply ->
+            AIMessageManager.buildUserMessageContent(
+                context = context, messageText = text, attachments = inputAttachments,
+                workspacePath = workspacePath, workspaceEnv = workspaceEnv,
+                replyToMessage = reply,
+                enableDirectAudioProcessing = multimodalCapabilities.audio,
+                enableDirectVideoProcessing = multimodalCapabilities.video,
+                chatId = chatId, roleCardId = roleCardId,
+                isSubTask = turnOptions.isSubTask, promptHooksEnabled = turnOptions.promptHooksEnabled,
+            )
+        }
+        chatRuntime.canSteer = effectivePersistTurn && (!isWaifuModeEnabled || collaborationEnabled) &&
+            (!turnOptions.isSubTask || turnOptions.isCollaborationAgent) && !isGroupOrchestrationTurn
+        if (chatRuntime.canSteer) {
+            com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator
+                .getInstance(context).deliverPending(chatId)
+        }
+        toolBoundaryMessageReady.complete(
+            aiMessage.takeIf {
+                effectivePersistTurn && chatId != null && (!isWaifuModeEnabled || collaborationEnabled)
+            }
+        )
+        val waifuCharDelay = waifuPreferences.waifuCharDelayFlow.first()
+        val waifuRemovePunctuation =
+            if (isWaifuModeEnabled) {
+                waifuPreferences.waifuRemovePunctuationFlow.first()
+            } else {
+                false
+            }
+
+        suspend fun emitWaifuSegment(segment: String) {
+            if (segment.isBlank()) return
+
+            val interrupt = waifuEmittedMessages.isEmpty()
+            val segmentMessage =
+                ChatMessage(
+                    sender = "ai",
+                    content = segment,
+                    contentStream = null,
+                    timestamp = ChatMessageTimestampAllocator.next(),
+                    roleName = currentRoleName,
+                    provider = provider,
+                    modelName = modelName,
+                    sentAt = requestSentAt
+                )
+
+            withContext(Dispatchers.Main) {
+                waifuEmittedMessages += segmentMessage
+                if (effectivePersistTurn && chatId != null) {
+                    addMessageToChat(chatId, segmentMessage)
+                }
+                if (effectivePersistTurn && !com.ai.assistance.operit.ui.permissions.UnattendedChats.contains(chatId) && getIsAutoReadEnabled()) {
+                    didStreamAutoRead = true
+                    AppLogger.d(
+                        TAG,
+                        "autoRead[waifuStream] interrupt=$interrupt len=${segment.length} preview=\"${speechPreview(segment)}\""
+                    )
+                    speakMessageHandler(segment, interrupt)
+                }
+                tryEmitScrollToBottomThrottled(chatId)
+            }
+        }
+
+        suspend fun syncWaifuMessageMetrics(sourceMessage: ChatMessage) {
+            if (!effectivePersistTurn || chatId == null || waifuEmittedMessages.isEmpty()) return
+
+            withContext(Dispatchers.Main) {
+                waifuEmittedMessages.indices.forEach { index ->
+                    val updatedMessage =
+                        waifuEmittedMessages[index].copy(
+                            inputTokens = sourceMessage.inputTokens,
+                            outputTokens = sourceMessage.outputTokens,
+                            cachedInputTokens = sourceMessage.cachedInputTokens,
+                            sentAt = sourceMessage.sentAt,
+                            outputDurationMs = sourceMessage.outputDurationMs,
+                            waitDurationMs = sourceMessage.waitDurationMs,
+                            completedAt = sourceMessage.completedAt,
+                        )
+                    waifuEmittedMessages[index] = updatedMessage
+                    addMessageToChat(chatId, updatedMessage)
+                }
+            }
+        }
+        syncWaifuMessageMetricsHandler = { sourceMessage ->
+            syncWaifuMessageMetrics(sourceMessage)
+        }
+
+        // 只有在非waifu模式下才添加初始的AI消息
+        if (!isWaifuModeEnabled) {
+            withContext(Dispatchers.Main) {
+                if (effectivePersistTurn && chatId != null) {
+                    val initialContent =
+                        preferToolBoundarySnapshot(
+                            toolBoundaryContentSnapshot.get(),
+                            aiMessage.content,
+                        )
+                    aiMessage.content = initialContent
+                    persistAssistantMessage(chatId, aiMessage.copy(content = initialContent))
+                }
+            }
+        }
+
+        // 启动一个独立的协程来收集流内容并持续更新数据库
+        val streamCollectionResult = CompletableDeferred<Throwable?>()
+        // A failed trailing save, reported once the collector has finished its own ending.
+        val trailingSaveFailure = java.util.concurrent.atomic.AtomicReference<Throwable?>(null)
+        chatRuntime.streamCollectionJob =
+            coroutineScope.launch(Dispatchers.IO + CoroutineName("ChatStreamPersistence")) {
+                try {
+                    var hasLoggedFirstChunk = false
+                    val lastStreamingPersistAt = java.util.concurrent.atomic.AtomicLong(0L)
+                    val revisionTracker = TextStreamRevisionTracker()
+                    // The trailing save below reads the reply from another coroutine.
+                    val revisionLock = Any()
+                    // Guarded by revisionLock: how often the reply changed, which change the
+                    // record holds, and whether the trailing save is running.
+                    var appendedVersion = 0L
+                    var savedVersion = 0L
+                    var trailingRunning = false
+                    // Set once the reply is ending; no saver starts after it, and none clears it.
+                    var trailingClosed = false
+                    var trailingPersistJob: Job? = null
+                    val collectorJob = coroutineContext[Job]
+                    var processedRevisionEventCount = 0
+                    var processedReplayCharCount = 0
+                    val autoReadBuffer = StringBuilder()
+                    var isFirstAutoReadSegment = true
+                    val autoReadStream =
+                        if (!isWaifuModeEnabled) {
+                            WaifuMessageProcessor.streamTtsText(sharedCharStream)
+                        } else {
+                            null
+                        }
+                    val revisableStream = sharedCharStream as? TextStreamEventCarrier
+
+                    fun flushAutoReadSegment(segment: String, interrupt: Boolean) {
+                        val trimmed = segment.trim()
+                        if (trimmed.isNotEmpty()) {
+                            didStreamAutoRead = true
+                            AppLogger.d(
+                                TAG,
+                                "autoRead[flush] interrupt=$interrupt didStreamAutoRead=$didStreamAutoRead len=${trimmed.length} preview=\"${speechPreview(trimmed)}\""
+                            )
+                            speakMessageHandler(trimmed, interrupt)
+                        } else if (segment.isNotEmpty()) {
+                            AppLogger.d(
+                                TAG,
+                                "autoRead[flush.skipBlank] rawLen=${segment.length}"
+                            )
+                        }
+                    }
+
+                    fun tryFlushAutoRead() {
+                        // A turn that never enters the chat is not read aloud either.
+                        if (!effectivePersistTurn || com.ai.assistance.operit.ui.permissions.UnattendedChats.contains(chatId) || !getIsAutoReadEnabled()) return
+                        if (isWaifuModeEnabled) return
+                        while (true) {
+                            val bufferBefore = autoReadBuffer.length
+                            val cutIdx = TtsSegmenter.nextSegmentEnd(autoReadBuffer)
+                            if (cutIdx < 0) return
+
+                            val seg = autoReadBuffer.substring(0, cutIdx)
+                            autoReadBuffer.delete(0, cutIdx)
+                            AppLogger.d(
+                                TAG,
+                                "autoRead[cut] cutIdx=$cutIdx bufferBefore=$bufferBefore bufferAfter=${autoReadBuffer.length} firstSegment=$isFirstAutoReadSegment rawLen=${seg.length} preview=\"${speechPreview(seg)}\""
+                            )
+
+                            flushAutoReadSegment(seg, interrupt = isFirstAutoReadSegment)
+                            isFirstAutoReadSegment = false
+                        }
+                    }
+
+                    fun claimStreamingSnapshot(): Boolean {
+                        if (!effectivePersistTurn || isWaifuModeEnabled || chatId == null) return false
+                        while (true) {
+                            val last = lastStreamingPersistAt.get()
+                            val now = messageTimingNow()
+                            if (now - last < STREAM_PERSIST_INTERVAL_MS) return false
+                            if (lastStreamingPersistAt.compareAndSet(last, now)) return true
+                        }
+                    }
+
+                    /** The reply as it is now, marked as the version the record will hold. */
+                    fun readForSave(): String = synchronized(revisionLock) {
+                        savedVersion = appendedVersion
+                        revisionTracker.currentContent().toString()
+                    }
+
+                    suspend fun persistStreamingSnapshotLocked(contentSnapshot: String) {
+                        val targetChatId = chatId ?: return
+                        val current = preferToolBoundarySnapshot(
+                            toolBoundaryContentSnapshot.get(), contentSnapshot,
+                        )
+                        aiMessage.content = current
+                        chatRuntime.steeredTranscript.project(aiMessage.copy(content = current))
+                            .forEach { addMessageToChat(targetChatId, it) }
+                    }
+
+                    /** Saves the reply as it is now; read under the lock, so a save never puts back older text. */
+                    suspend fun persistStreamingSnapshot() {
+                        chatRuntime.transcriptMutex.withLock {
+                            persistStreamingSnapshotLocked(readForSave())
+                        }
+                    }
+
+                    /**
+                     * A change that came too soon after the last save is saved a moment later, and
+                     * again until the record holds the newest text. Without this, a tool's result
+                     * (several quick chunks) reached the record only when the model wrote again, so
+                     * pages reading the record missed it until then. One saver runs at a time.
+                     */
+                    fun scheduleTrailingSnapshot() {
+                        if (!effectivePersistTurn || isWaifuModeEnabled || chatId == null) return
+                        synchronized(revisionLock) {
+                            if (trailingClosed || trailingRunning) return
+                            trailingRunning = true
+                        }
+                        trailingPersistJob = launch {
+                            try {
+                                while (true) {
+                                    // Stops only when nothing is left unsaved, decided with the
+                                    // lock held so a change made meanwhile starts a new saver.
+                                    val pending = synchronized(revisionLock) {
+                                        (savedVersion < appendedVersion).also { if (!it) trailingRunning = false }
+                                    }
+                                    if (!pending) break
+                                    val wait = lastStreamingPersistAt.get() + STREAM_PERSIST_INTERVAL_MS - messageTimingNow()
+                                    if (wait > 0) {
+                                        kotlinx.coroutines.delay(wait)
+                                        continue
+                                    }
+                                    if (claimStreamingSnapshot()) persistStreamingSnapshot()
+                                }
+                            } catch (e: kotlinx.coroutines.CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                // Fails the reply the way a save in the collector does, after the
+                                // collector has wrapped up (see its catch below).
+                                trailingSaveFailure.compareAndSet(null, e)
+                                collectorJob?.cancel()
+                            }
+                        }
+                    }
+
+                    suspend fun drainRevisionEvents() {
+                        val events = revisableStream?.eventChannel
+                            ?.replayAfter(processedRevisionEventCount).orEmpty()
+                        for (event in events) {
+                            if (event.replayCharCount?.let { it > processedReplayCharCount } == true) {
+                                break
+                            }
+                            processedRevisionEventCount++
+                            when (event.eventType) {
+                                TextStreamEventType.SAVEPOINT ->
+                                    synchronized(revisionLock) { revisionTracker.savepoint(event.id) }
+
+                                TextStreamEventType.ROLLBACK -> {
+                                    // Provider rollback applies to the new response, not
+                                    // the already persisted pre-steer assistant prefix.
+                                    val snapshot =
+                                        synchronized(revisionLock) {
+                                            revisionTracker.rollback(event.id)?.toString()?.also { appendedVersion++ }
+                                        }
+                                            ?: continue
+                                    chatRuntime.transcriptMutex.withLock {
+                                        // The producer may already have published a boundary
+                                        // that includes this delayed rollback event.
+                                        val sealedBoundary = boundaryAfterRollback(
+                                            toolBoundaryContentSnapshot.get(),
+                                            chatRuntime.steeringBoundarySnapshot,
+                                            processedRevisionEventCount,
+                                        )
+                                        toolBoundaryContentSnapshot.set(sealedBoundary)
+                                        chatRuntime.toolBoundarySnapshot = sealedBoundary
+                                        aiMessage.content = snapshot
+                                        if (claimStreamingSnapshot()) {
+                                            // Only this coroutine changes the reply, so this is the snapshot.
+                                            persistStreamingSnapshotLocked(readForSave())
+                                        } else {
+                                            scheduleTrailingSnapshot()
+                                        }
+                                    }
+                                    if (!isWaifuModeEnabled) {
+                                        tryEmitScrollToBottomThrottled(chatId)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    val autoReadJob =
+                        autoReadStream?.let { stream ->
+                            launch {
+                                try {
+                                    stream.collect { char ->
+                                        autoReadBuffer.append(char)
+                                        tryFlushAutoRead()
+                                    }
+                                } catch (e: kotlinx.coroutines.CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    // The primary collector reports the turn failure.
+                                    AppLogger.d(TAG, "自动朗读流结束: ${e.message}")
+                                }
+                            }
+                        }
+                    val waifuSegmentsJob =
+                        if (isWaifuModeEnabled) {
+                            launch {
+                                try {
+                                    WaifuMessageProcessor.streamSegmentsWithTypingQueue(
+                                        sourceStream = sharedCharStream,
+                                        removePunctuation = waifuRemovePunctuation,
+                                        charDelayMs = waifuCharDelay
+                                    ).collect { segment ->
+                                        emitWaifuSegment(segment)
+                                    }
+                                } catch (e: kotlinx.coroutines.CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    AppLogger.d(TAG, "Waifu 展示流结束: ${e.message}")
+                                }
+                            }
+                        } else {
+                            null
+                        }
+
+                    try {
+                        sharedCharStream.collect { chunk ->
+                            drainRevisionEvents()
+                            if (!hasLoggedFirstChunk) {
+                                hasLoggedFirstChunk = true
+                                if (firstResponseElapsed == null) {
+                                    firstResponseElapsed = messageTimingNow()
+                                    chatRuntime.firstResponseElapsed = firstResponseElapsed
+                                    // The model got this chat's history, earlier unsent messages included.
+                                    activeChatId?.let {
+                                        com.ai.assistance.operit.core.chat.ChatSendFailures.clearChat(context, it)
+                                    }
+                                }
+                                logMessageTiming(
+                                    stage = "delegate.firstResponseChunk",
+                                    startTimeMs = responseStartTime,
+                                    details = "chatId=$activeChatId, firstChunkLength=${chunk.length}"
+                                )
+                            }
+                            synchronized(revisionLock) {
+                                revisionTracker.append(chunk)
+                                appendedVersion++
+                            }
+                            processedReplayCharCount += chunk.length
+                            if (claimStreamingSnapshot()) {
+                                persistStreamingSnapshot()
+                            } else {
+                                scheduleTrailingSnapshot()
+                            }
+                            if (!isWaifuModeEnabled) {
+                                tryEmitScrollToBottomThrottled(chatId)
+                            }
+                        }
+                    } finally {
+                        // The reply is saved whole when it ends; a pending partial save is not
+                        // needed, and none may start now (it could land after the final one).
+                        synchronized(revisionLock) { trailingClosed = true }
+                        trailingPersistJob?.cancel()
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                            trailingPersistJob?.join()
+                        }
+                        drainRevisionEvents()
+                        // The finalizer uses aiMessage.content when revision events exist,
+                        // so publish one immutable snapshot on every collection exit.
+                        val replaySnapshot = revisionTracker.currentContent().toString()
+                        val mergedContent =
+                            preferToolBoundarySnapshot(
+                                toolBoundaryContentSnapshot.get(),
+                                replaySnapshot,
+                            )
+                        aiMessage.content = mergedContent
+                        // The boundary merge is not idempotent: reapplying it against the
+                        // already-merged content would duplicate the boundary region (the
+                        // tail of the last tool call) whenever the round-manager display
+                        // content is longer than the emitted replay prefix. Record the
+                        // merged result and drop the raw snapshot so the finalizer keeps
+                        // exactly this content instead of re-merging or falling back to
+                        // the unmerged replay cache.
+                        boundaryMergedContent.set(mergedContent)
+                        toolBoundaryContentSnapshot.set(null)
+                    }
+
+                    autoReadJob?.join()
+                    waifuSegmentsJob?.join()
+
+                    if (effectivePersistTurn && !com.ai.assistance.operit.ui.permissions.UnattendedChats.contains(chatId) && getIsAutoReadEnabled() && !isWaifuModeEnabled) {
+                        val remaining = autoReadBuffer.toString()
+                        autoReadBuffer.clear()
+                        AppLogger.d(
+                            TAG,
+                            "autoRead[remaining] firstSegment=$isFirstAutoReadSegment rawLen=${remaining.length} trimmedLen=${remaining.trim().length} preview=\"${speechPreview(remaining)}\""
+                        )
+                        flushAutoReadSegment(remaining, interrupt = isFirstAutoReadSegment)
+                    }
+                } catch (t: Throwable) {
+                    // A failed trailing save cancels the collector; report that failure itself.
+                    val failure = trailingSaveFailure.get() ?: t
+                    if (!streamCollectionResult.isCompleted) {
+                        streamCollectionResult.complete(failure)
+                    }
+                    // The sending coroutine awaits this result and owns failure reporting
+                    // and partial-message persistence. Do not also crash this launch.
+                    if (t is kotlinx.coroutines.CancellationException && failure === t) throw t
+                } finally {
+                    if (!streamCollectionResult.isCompleted) {
+                        // Ended without noticing the cancel: a failed trailing save still counts.
+                        streamCollectionResult.complete(trailingSaveFailure.get())
+                    }
+                }
+            }
+
+        val streamCollectionError = streamCollectionResult.await()
+        if (streamCollectionError != null) {
+            throw streamCollectionError
+        }
+        logMessageTiming(
+            stage = "delegate.sharedStreamComplete",
+            startTimeMs = responseStartTime,
+            details = "chatId=$activeChatId"
+        )
+
+        runCatching {
+            turnInputTokens = service.getCurrentInputTokenCount()
+            turnOutputTokens = service.getCurrentOutputTokenCount()
+            turnCachedInputTokens = service.getCurrentCachedInputTokenCount()
+        }.onFailure {
+            AppLogger.w(TAG, "读取本轮 token 统计失败", it)
+        }
+
+        val waitDurationMs =
+            if (requestStartElapsed > 0L && firstResponseElapsed != null) {
+                (firstResponseElapsed!! - requestStartElapsed).coerceAtLeast(0L)
+            } else {
+                0L
+            }
+        val outputDurationMs =
+            if (firstResponseElapsed != null) {
+                (messageTimingNow() - firstResponseElapsed!!).coerceAtLeast(0L)
+            } else {
+                0L
+            }
+
+        if (requestSentAt > 0L) {
+            if (userMessageAdded && chatId != null) {
+                userMessage =
+                    userMessage.withTurnMetrics(
+                        inputTokens = turnInputTokens,
+                        outputTokens = turnOutputTokens,
+                        cachedInputTokens = turnCachedInputTokens,
+                        sentAt = requestSentAt,
+                        outputDurationMs = outputDurationMs,
+                        waitDurationMs = waitDurationMs
+                    )
+                addMessageToChat(chatId, userMessage)
+            }
+
+            aiMessage =
+                aiMessage.withTurnMetrics(
+                    inputTokens = turnInputTokens,
+                    outputTokens = turnOutputTokens,
+                    cachedInputTokens = turnCachedInputTokens,
+                    sentAt = requestSentAt,
+                    outputDurationMs = outputDurationMs,
+                    waitDurationMs = waitDurationMs
+                )
+        }
+        aiMessage = aiMessage.copy(completedAt = System.currentTimeMillis())
+
+        if (isWaifuModeEnabled) {
+            syncWaifuMessageMetricsHandler?.invoke(aiMessage)
+        }
+
+        val stateAfterStream =
+            _inputProcessingStateByChatId.value[chatKey(chatId)]
+        if (stateAfterStream !is EnhancedInputProcessingState.Error) {
+            shouldNotifyTurnComplete = true
+            finalInputStateAfterSend = EnhancedInputProcessingState.Completed
+        }
+
+        if (pendingAsyncSummaryUiByChatId.containsKey(chatId)) {
+            setSuppressIdleCompletedStateForChat(chatId, true)
+            finalInputStateAfterSend =
+                EnhancedInputProcessingState.Summarizing(
+                    context.getString(R.string.message_summarizing)
+                )
+        }
+
+        logMessageTiming(
+            stage = "delegate.responseProcessingComplete",
+            startTimeMs = responseStartTime,
+            details = "chatId=$activeChatId, waifu=$isWaifuModeEnabled, autoRead=$didStreamAutoRead"
+        )
+    }
+
+    private suspend fun SendTurn.failSend(e: Exception) {
+        if (e is kotlinx.coroutines.CancellationException) {
+            AppLogger.d(TAG, "消息发送被取消")
+            finalInputStateAfterSend = EnhancedInputProcessingState.Idle
+            shouldNotifyTurnComplete = false
+            cancellationToPropagate = e
+        } else {
+            AppLogger.e(TAG, "发送消息时出错", e)
+            val rawFailureMessage = e.message ?: e.javaClass.simpleName
+            // A permission denial carries a long English instruction for the model. Showing
+            // it verbatim would put that internal text in the error dialog, so report the
+            // same short conclusion the tool result shows.
+            val userVisibleFailureMessage =
+                permissionDenialSummary(context, rawFailureMessage) ?: rawFailureMessage
+            // The turn terminal signal also carries this text to a subagent's caller, where the
+            // model needs the original instruction (it explains what to do next), so only the
+            // dialog and the input state get the short conclusion.
+            terminalFailureMessage = rawFailureMessage
+            setChatInputProcessingState(
+                chatId,
+                EnhancedInputProcessingState.Error(
+                    context.getString(R.string.message_send_failed, userVisibleFailureMessage)
+                )
+            )
+            val unsentOrbitMessage =
+                com.ai.assistance.operit.core.chat.ChatSendFailures.isUnreachable(e) &&
+                    marksUnsentOrbitMessage()
+            if (unsentOrbitMessage && chatId != null) {
+                com.ai.assistance.operit.core.chat.ChatSendFailures.mark(context, chatId, userMessage.timestamp)
+            } else {
+                withContext(Dispatchers.Main) {
+                    showErrorMessage(
+                        context.getString(R.string.message_send_failed, userVisibleFailureMessage)
+                    )
+                }
+            }
+        }
+    }
+
+    private suspend fun SendTurn.finishSend() {
+        chatRuntime.canSteer = false
+        chatRuntime.prepareSteeringInput = null
+        turnInPlaceCompactionChatId?.let {
+            com.ai.assistance.operit.api.chat.enhance.InPlaceCompaction.unregister(it)
+        }
+        val returnedForSummary = chatRuntime.inputInbox?.sealedForSummary == true
+        val unconsumedInputs = chatRuntime.inputInbox?.close().orEmpty()
+        unconsumedInputs.forEach {
+            if (returnedForSummary) (it.returnedForSummary ?: it.returned)() else it.returned()
+        }
+        val finalizeMessageStartTime = messageTimingNow()
+        val deferTurnCompleteToAsyncJob =
+            if (cancellationToPropagate == null) {
+                try {
+                    finalizeMessageAndNotify(
+                        chatId = chatId,
+                        activeChatId = activeChatId,
+                        aiMessageProvider = { aiMessage },
+                        isWaifuModeEnabled = isWaifuModeEnabled,
+                        skipFinalAutoRead = didStreamAutoRead && !isWaifuModeEnabled,
+                        syncWaifuMessageMetrics = { sourceMessage ->
+                            syncWaifuMessageMetricsHandler?.invoke(sourceMessage)
+                        },
+                        calculateNextWindowSize = calculateNextWindowSize,
+                        finalContentTransform = { replayContent ->
+                            // The stream-collection exit already merged the tool-boundary
+                            // snapshot; reuse it so the raw replay cache (preferred by
+                            // resolveFinalContent when no revision event exists) can never
+                            // replace the merged content with a shorter unmerged prefix.
+                            boundaryMergedContent.get()
+                                ?: preferToolBoundarySnapshot(
+                                    toolBoundaryContentSnapshot.get(),
+                                    replayContent,
+                                )
+                        },
+                        turnOptions = turnOptions,
+                        dropWhenEmpty = returnedForSummary,
+                    )
+                } finally {
+                    // The finalizer rethrows a cancellation raised while it was finishing, and
+                    // that would skip the cleanup below: this conversation would then stay
+                    // marked as generating for the rest of the process lifetime, which blocks
+                    // both its background extraction and a manual one.
+                    com.ai.assistance.operit.api.chat.library.MemoryLearningCoordinator
+                        .foregroundEnded(context, chatId)
+                }
+            } else {
+                AppLogger.d(TAG, "取消回合不执行消息收尾: chatId=$activeChatId")
+                false
+            }
+        logMessageTiming(
+            stage = "delegate.finalizeMessage",
+            startTimeMs = finalizeMessageStartTime,
+            details = "chatId=$activeChatId, notifyTurnComplete=$shouldNotifyTurnComplete"
+        )
+
+        // cleanup permits another turn to clear the shared transcript before terminal bookkeeping.
+        val completedAssistantTimestamp = assistantMessageTimestampForTurn?.let {
+            chatRuntime.steeredTranscript.finalTimestamp(it)
+        }
+        val cleanupRuntimeStartTime = messageTimingNow()
+        // A stopped turn still saves its partial reply after this (cancelMessageInternal),
+        // so its text is let go there instead.
+        cleanupRuntimeAfterSend(chatId, chatRuntime, releaseTranscript = cancellationToPropagate == null)
+        logMessageTiming(
+            stage = "delegate.cleanupRuntime",
+            startTimeMs = cleanupRuntimeStartTime,
+            details = "chatId=$activeChatId"
+        )
+
+        if (!deferTurnCompleteToAsyncJob) {
+            finalInputStateAfterSend?.let { terminalState ->
+                setChatInputProcessingState(chatId, terminalState)
+            }
+        }
+
+        if (shouldNotifyTurnComplete && !deferTurnCompleteToAsyncJob) {
+            val service = serviceForTurnComplete
+            if (service != null) {
+                // Kept before the turn-complete callback, which may start a background
+                // summary that resends this request to read it from the cache.
+                try {
+                    val compactionSnapshot = assistantMessageTimestampForTurn?.toString()
+                        ?.let(service::takeCompactionSnapshot)
+                    val compactionGeneration = compactionGenerationForTurn
+                    if (compactionSnapshot != null && chatId != null && compactionGeneration != null &&
+                        finalInputStateAfterSend is com.ai.assistance.operit.data.model.InputProcessingState.Completed &&
+                        turnOptions.persistTurn && !turnOptions.isSubTask &&
+                        !turnOptions.isCollaborationAgent && !isGroupOrchestrationTurn
+                    ) {
+                        com.ai.assistance.operit.api.chat.compaction.CompactionSnapshots.put(
+                            chatId, compactionSnapshot, assistantMessageTimestampForTurn ?: Long.MAX_VALUE,
+                            // A newer turn started after loading was released, or an edit, bumps it.
+                            compactionGeneration,
+                        )
+                    }
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    AppLogger.w(TAG, "Unable to keep the turn's request for compaction", error)
+                }
+                notifyTurnComplete(
+                    chatId,
+                    activeChatId,
+                    service,
+                    calculateNextWindowSize,
+                    turnOptions
+                )
+                try {
+                    // Persistence and all tool rounds have settled. Group orchestration and
+                    // internal/delivered turns do not represent a completed owner conversation.
+                    val prediction = assistantMessageTimestampForTurn?.toString()?.let(service::takeComposerPredictionSnapshot)
+                        ?.let { snapshot ->
+                            getRuntimeChatHistory(chatId).lastOrNull()?.takeIf {
+                                it.sender == "ai" && it.contentStream == null && it.completedAt > 0L &&
+                                    it.timestamp >= (assistantMessageTimestampForTurn ?: Long.MAX_VALUE)
+                            }?.let { snapshot.copy(sourceMessageId = it.timestamp.toString()) }
+                        }
+                    if (prediction != null && composerPredictionGenerations[chatId] == composerPredictionGeneration &&
+                        com.ai.assistance.operit.api.chat.prediction.isComposerPredictionCompletion(
+                            finalInputStateAfterSend, turnOptions, isGroupOrchestrationTurn,
+                        )
+                    ) {
+                        _composerPredictionSnapshots.update {
+                            if (composerPredictionGenerations[chatId] == composerPredictionGeneration)
+                                it + (chatId to prediction) else it
+                        }
+                    }
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    AppLogger.w(TAG, "Unable to prepare auxiliary composer prediction", error)
+                }
+            }
+        }
+
+        turnOptions.turnId?.let { turnId ->
+            val terminalSignal =
+                when {
+                    cancellationToPropagate != null ->
+                        ChatTurnTerminalSignal.Cancelled(
+                            turnId = turnId,
+                            chatId = activeChatId,
+                        )
+                    shouldNotifyTurnComplete && assistantMessageTimestampForTurn != null ->
+                        ChatTurnTerminalSignal.Completed(
+                            turnId = turnId,
+                            chatId = activeChatId,
+                            assistantMessageTimestamp =
+                                requireNotNull(completedAssistantTimestamp),
+                        )
+                    else ->
+                        ChatTurnTerminalSignal.Failed(
+                            turnId = turnId,
+                            chatId = activeChatId,
+                            error =
+                                terminalFailureMessage
+                                    ?: "Turn ended without a final assistant result",
+                        )
+                }
+            onTurnTerminated(terminalSignal)
+        }
+
+        logMessageTiming(
+            stage = "delegate.sendUserMessage.total",
+            startTimeMs = sendUserMessageStartTime,
+            details = "chatId=$activeChatId, addedUserMessage=$userMessageAdded, enableSummary=$enableSummary, persistTurn=${turnOptions.persistTurn}"
+        )
+        val currentJob = coroutineContext[Job]
+        if (currentJob != null && chatRuntime.sendJob === currentJob) {
+            chatRuntime.sendJob = null
+        }
     }
 
     suspend fun regenerateAiMessageVariant(
