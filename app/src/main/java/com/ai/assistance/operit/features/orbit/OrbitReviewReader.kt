@@ -1,12 +1,15 @@
 package com.ai.assistance.operit.features.orbit
 
 import android.content.Context
+import com.ai.assistance.operit.api.chat.protocol.ExecutableToolProtocolParser
 import com.ai.assistance.operit.data.dao.OrbitWindowMessage
 import com.ai.assistance.operit.data.db.AppDatabase
 import com.ai.assistance.operit.data.model.ToolParameterSchema
 import com.ai.assistance.operit.data.model.ToolPrompt
 import com.ai.assistance.operit.data.preferences.OrbitPreferences
+import com.ai.assistance.operit.util.ChatMarkupRegex
 import com.ai.assistance.operit.util.ChatUtils
+import com.ai.assistance.operit.util.findMarkupTagEnd
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
@@ -96,6 +99,7 @@ internal class OrbitReviewReader private constructor(private val context: Contex
             unread(session)
             save(state)
         }
+        session?.let { upgrade(state, it) }
         if (session == null) {
             val reviewed = state.optLong("reviewed_until", 0).takeIf { it in 1 until now }
             // The first review (or the first after the old excerpt review) looks back a few days.
@@ -117,6 +121,7 @@ internal class OrbitReviewReader private constructor(private val context: Contex
             val users = dao.reviewCount(ids, since, until, listOf("user"))
             if (users == 0) return@locked null
             session = JSONObject().put("since", since).put("until", until)
+                .put("text_version", TEXT_VERSION)
                 .put("forgotten_before", state.optLong("forgotten_before"))
                 .put("chats", JSONObject(labels as Map<*, *>))
                 .put("total", dao.reviewCount(ids, since, until, listOf("user", "ai"))).put("user_total", users)
@@ -146,6 +151,10 @@ internal class OrbitReviewReader private constructor(private val context: Contex
             if (resumed) append("resumed: an earlier run already read and wrote down ${progress.getInt("committed")} of them; " +
                 "your notes so far are in ${OrbitFiles.REVIEW_NOTES}\n")
             append("latest_dream: ${latestDream ?: "none"}\n")
+            append("Your own tool calls and results show as one line each ([tool call: ...] / [tool result: ...]). " +
+                "A result line only says the step came back; whether the command or request worked is in its output, " +
+                "so before noting that something failed or worked, action=look message_id=... count=1 shows the message in full " +
+                "(a long one in pieces: follow its more_with).\n")
             append("The messages are not shown here. Read them yourself with $TOOL, from where the review stands to the end.")
         })
     }
@@ -250,6 +259,7 @@ internal class OrbitReviewReader private constructor(private val context: Contex
         val session = state.optJSONObject("session")
             ?: error("No alignment review is open; this tool only works inside the nightly alignment review")
         flushNotes(state, session)
+        upgrade(state, session)
         when (val action = args["action"]?.trim().orEmpty()) {
             "next" -> next(state, session)
             "commit" -> commit(state, session, runId, args["notes"].orEmpty(), args["ruptures"].orEmpty())
@@ -336,7 +346,8 @@ internal class OrbitReviewReader private constructor(private val context: Contex
             .put("position", progress(session).let { "read ${it.getInt("read")} of ${it.getInt("total")} messages" })
             .put("uncommitted_pages", session.getInt("pending_pages"))
             .put("next", if (session.getInt("pending_pages") >= MAX_UNCOMMITTED_PAGES || !more)
-                "Write down what these pages show with action=commit before anything else."
+                "Before reading on or finishing, write down what these pages show with action=commit. To check a " +
+                    "tool step first, action=look message_id=... count=1 (a long message goes on with its more_with)."
             else "Write down what this page shows with action=commit (you may read up to " +
                 "$MAX_UNCOMMITTED_PAGES pages before committing when a matter runs across pages).")
             .apply { if (first.off > 0) put("continues", "The first message goes on from where the last page stopped.") }
@@ -414,10 +425,10 @@ internal class OrbitReviewReader private constructor(private val context: Contex
         val time = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US)
         return JSONObject().put("messages", JSONArray(rows.mapIndexed { i, raw ->
             val m = full(raw)
-            val text = clean(m)
+            val text = whole(m)
             val from = if (i == 0) (start - 1).coerceIn(0, text.length) else 0
             val end = minOf(text.length, from + LOOK_CHARS)
-            entry(m, chats, reactions, time).put("text", text.substring(from, end)).apply {
+            entry(m, chats, reactions, time).put("text", text.slice(from, end)).apply {
                 if (from > 0 || end < text.length) put("part", "chars ${from + 1}-$end of ${text.length}")
                     .put("more_with", "look message_id=${m.timestamp} count=1 start_char=${end + 1}".takeIf { end < text.length })
             }
@@ -443,8 +454,88 @@ internal class OrbitReviewReader private constructor(private val context: Contex
         emptyMap()
     }
 
-    private fun clean(m: OrbitWindowMessage) =
-        (if (m.sender == "ai") ChatUtils.removeThinkingContent(m.content) else m.content).trim()
+    /**
+     * A review begun before pages shortened tool steps keeps character positions into the old,
+     * longer text of a reply it stopped inside; that reply is read again from its start (it was
+     * not counted yet, and the notes already written stay). A user's message reads as before.
+     */
+    private suspend fun upgrade(state: JSONObject, session: JSONObject) {
+        if (session.optInt("text_version") >= TEXT_VERSION) return
+        for (key in listOf("committed", "read")) {
+            val p = Pos.parse(session.getJSONObject(key))
+            // Just before that message: the window query takes the next id at the same time.
+            if (p.off > 0 && dao.reviewMessage(p.id)?.sender != "user") session.put(key, Pos(p.ts, p.id - 1).json())
+        }
+        session.put("text_version", TEXT_VERSION)
+        lastLong = null
+        save(state)
+    }
+
+    /** A message as the pages show it: Orbit's replies with each tool step shortened to one line. */
+    private fun clean(m: OrbitWindowMessage) = if (m.sender == "ai") condense(m.content) else m.content.trim()
+
+    /**
+     * A message as look shows it: in full, only the thinking left out. Tool blocks are kept as
+     * they are, so an unclosed `<think>` in a tool's output (a log) cannot hide what follows.
+     * Only the spans are kept: look returns a few thousand characters of it at a time.
+     */
+    private fun whole(m: OrbitWindowMessage): Visible {
+        if (m.sender != "ai") return Visible(m.content, intArrayOf(0, m.content.length))
+        val content = m.content
+        val spans = ArrayList<Int>()
+        fun add(start: Int, end: Int) {
+            if (start >= end) return
+            if (spans.isNotEmpty() && spans[spans.size - 1] == start) spans[spans.size - 1] = end
+            else { spans += start; spans += end }
+        }
+        ChatUtils.visitOutsideThinking(content, object : ChatUtils.OutsideThinkingVisitor {
+            override fun text(start: Int, end: Int) = add(start, end)
+            override fun toolBlock(start: Int, end: Int) = add(start, end)
+        })
+        return Visible(content, spans.toIntArray())
+    }
+
+    /** The text made of [spans] (start, end pairs) of [content], trimmed, read a slice at a time. */
+    private class Visible(private val content: String, spans: IntArray) {
+        private val spans = spans.copyOf()
+        val length: Int
+
+        init {
+            var first = 0
+            while (first < this.spans.size) {
+                while (this.spans[first] < this.spans[first + 1] && content[this.spans[first]].isWhitespace()) this.spans[first]++
+                if (this.spans[first] < this.spans[first + 1]) break
+                first += 2
+            }
+            var last = this.spans.size - 2
+            while (last >= first) {
+                while (this.spans[last + 1] > this.spans[last] && content[this.spans[last + 1] - 1].isWhitespace()) this.spans[last + 1]--
+                if (this.spans[last + 1] > this.spans[last]) break
+                last -= 2
+            }
+            // Spans left empty by the trim count as nothing.
+            for (k in 0 until first step 2) this.spans[k + 1] = this.spans[k]
+            for (k in last + 2 until this.spans.size step 2) this.spans[k + 1] = this.spans[k]
+            var total = 0
+            for (k in this.spans.indices step 2) total += this.spans[k + 1] - this.spans[k]
+            length = total
+        }
+
+        /** Characters [from] until [to] of the visible text. */
+        fun slice(from: Int, to: Int): String {
+            val out = StringBuilder(maxOf(0, to - from))
+            var at = 0
+            for (k in spans.indices step 2) {
+                val size = spans[k + 1] - spans[k]
+                val a = maxOf(from, at)
+                val b = minOf(to, at + size)
+                if (a < b) out.append(content, spans[k] + a - at, spans[k] + b - at)
+                at += size
+                if (at >= to) break
+            }
+            return out.toString()
+        }
+    }
 
     /** A message too large for one row is read back in 32 KB pieces. */
     private suspend fun full(m: OrbitWindowMessage): OrbitWindowMessage {
@@ -487,13 +578,118 @@ internal class OrbitReviewReader private constructor(private val context: Contex
 
         fun of(context: Context, orbitId: String) = OrbitReviewReader(context.applicationContext, orbitId)
 
+        /** Pages before this version showed Orbit's replies with their tool steps in full. */
+        private const val TEXT_VERSION = 2
+        private const val ERROR_CHARS = 200
+
+        /**
+         * Orbit's reply without its thinking, each tool call or tool result in it one line: a
+         * patrol's results can run to tens of thousands of characters while what Orbit said is a
+         * few hundred, and the review is about what Orbit said and did. A failed step keeps the
+         * start of its error. Runs of blank lines become one.
+         */
+        internal fun condense(content: String): String {
+            val out = StringBuilder()
+            ChatUtils.visitOutsideThinking(content, object : ChatUtils.OutsideThinkingVisitor {
+                override fun text(start: Int, end: Int) {
+                    out.append(content, start, end)
+                }
+
+                override fun toolBlock(start: Int, end: Int) {
+                    out.append('\n').append(step(content, start, end)).append('\n')
+                }
+            })
+            return tidy(out)
+        }
+
+        /** The line for the tool block [start] until [end] of [content]; nothing past it is read. */
+        private fun step(content: String, start: Int, end: Int): String {
+            val tagEnd = findMarkupTagEnd(content, start, end)
+            if (tagEnd < 0) return "[tool step]"
+            val opening = content.substring(start, tagEnd + 1)
+            val name = ExecutableToolProtocolParser.extractAttributeValue(opening, "name")?.trim()?.ifEmpty { null } ?: "?"
+            if (!ChatMarkupRegex.isToolResultTagName(ChatMarkupRegex.extractOpeningTagName(opening))) {
+                return "[tool call: $name]"
+            }
+            val status = ExecutableToolProtocolParser.extractAttributeValue(opening, "status")?.trim()?.ifEmpty { null }
+                ?: "success"
+            // The output sits between the opening and the block's own closing tag, in <content> as the app writes it.
+            var from = tagEnd + 1
+            var to = content.lastIndexOf("</", end - 1).takeIf { it >= from } ?: end
+            fun unwrap(open: String, close: String) {
+                while (from < to && content[from].isWhitespace()) from++
+                while (to > from && content[to - 1].isWhitespace()) to--
+                if (to - from >= open.length + close.length && content.startsWith(open, from, ignoreCase = true) &&
+                    content.regionMatches(to - close.length, close, 0, close.length, ignoreCase = true)) {
+                    from += open.length
+                    to -= close.length
+                }
+            }
+            unwrap("<content>", "</content>")
+            if (status.equals("success", ignoreCase = true)) {
+                while (from < to && content[from].isWhitespace()) from++
+                while (to > from && content[to - 1].isWhitespace()) to--
+                return "[tool result: $name, ${to - from} chars of output folded]"
+            }
+            unwrap("<error>", "</error>")
+            while (from < to && content[from].isWhitespace()) from++
+            while (to > from && content[to - 1].isWhitespace()) to--
+            val shown = StringBuilder()
+            var i = from
+            var cut = false
+            while (i < to) {
+                if (content[i].isWhitespace()) {
+                    // A run of spaces is one, and only with room for the character after it (the end is trimmed).
+                    while (content[i].isWhitespace()) i++
+                    if (shown.length + 2 > ERROR_CHARS) { cut = true; break }
+                    shown.append(' ')
+                    continue
+                }
+                if (shown.length >= ERROR_CHARS) { cut = true; break }
+                shown.append(content[i++])
+            }
+            if (cut) {
+                // The mark counts in the 200, and a character in two halves is not cut in the middle.
+                if (shown.length > ERROR_CHARS - 1) shown.setLength(ERROR_CHARS - 1)
+                if (shown.isNotEmpty() && shown[shown.length - 1].isHighSurrogate()) shown.setLength(shown.length - 1)
+                while (shown.isNotEmpty() && shown[shown.length - 1] == ' ') shown.setLength(shown.length - 1)
+                shown.append('…')
+            }
+            return "[tool result: $name, $status: $shown]"
+        }
+
+        /** [text] with line ends as LF, runs of blank lines as one and no trailing spaces, trimmed. */
+        private fun tidy(text: CharSequence): String {
+            val out = StringBuilder(text.length)
+            val pad = StringBuilder()
+            var newlines = 0
+            for (c in text) {
+                when (c) {
+                    '\r' -> Unit
+                    '\n' -> { newlines++; pad.setLength(0) }
+                    ' ', '\t' -> pad.append(c)
+                    else -> {
+                        if (out.isNotEmpty()) {
+                            repeat(minOf(newlines, 2)) { out.append('\n') }
+                            out.append(pad)
+                        }
+                        out.append(c)
+                        pad.setLength(0)
+                        newlines = 0
+                    }
+                }
+            }
+            return out.toString()
+        }
+
         val prompt = ToolPrompt(
             name = TOOL,
             description = "Read the alignment review's window yourself, page by page, and write down what you learn as you go. " +
-                "The app keeps your position: next always continues where you are.",
+                "The app keeps your position: next always continues where you are. On pages your own tool calls and " +
+                "results are one line each; look shows a message in full.",
             parametersStructured = listOf(
                 ToolParameterSchema("action", "string", "next (the next page), commit (write down the pages read since the " +
-                    "last commit), look (re-read earlier messages without moving your position) or status", true),
+                    "last commit), look (re-read messages in full, without moving your position) or status", true),
                 ToolParameterSchema("notes", "string", "commit: what these pages show about working with the user: " +
                     "frictions and corrections with message ids, new rules, what went well, open matters. \"nothing new\" " +
                     "is fine. At most $MAX_NOTES characters", false),
