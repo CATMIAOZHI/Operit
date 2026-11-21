@@ -17,6 +17,7 @@ import com.ai.assistance.operit.data.model.TokenStatResetCutoffEntity
 import com.ai.assistance.operit.data.model.TokenStatRestoreGenerationEntity
 import com.ai.assistance.operit.data.stats.TokenStatIdentityResolver
 import com.ai.assistance.operit.data.stats.TokenActivityEventRow
+import com.ai.assistance.operit.data.stats.TokenStatCacheSplitRow
 import com.ai.assistance.operit.data.stats.TokenStatsGroupMetadataSnapshot
 import com.ai.assistance.operit.data.stats.TokenStatsLifetimeRead
 import com.ai.assistance.operit.data.stats.TokenStatsRangeRead
@@ -71,6 +72,30 @@ abstract class TokenStatsDao {
 
     @Query("SELECT COUNT(*) FROM token_stat_events")
     abstract suspend fun countEvents(): Int
+
+    /**
+     * 指定连接在 [startMs, endMs) 内**结束**的请求的缓存命中合计（与 Orbit 按结束时间归日一致）。
+     * 与 Orbit 记录口径相同，只算缓存命中已知、且总输入能确定的请求：上报了 totalInputTokens，
+     * 或 uncached 与缓存写入都已知（总输入 = uncached + cached + 写入）。
+     * 供没记下缓存的调用按同模型的实际命中率估价。
+     */
+    @Query(
+        "SELECT statIdentityId, SUM(cachedInputTokens) AS cachedInputTokens, " +
+            "SUM(COALESCE(totalInputTokens, " +
+            "uncachedInputTokens + cachedInputTokens + cacheWriteTokens)) AS inputTokens " +
+            "FROM token_stat_events " +
+            "WHERE statIdentityId IN (:identityIds) " +
+            "AND endedAtMs >= :startMs AND endedAtMs < :endMs " +
+            "AND cachedInputTokens IS NOT NULL " +
+            "AND (totalInputTokens IS NOT NULL OR " +
+            "(uncachedInputTokens IS NOT NULL AND cacheWriteTokens IS NOT NULL)) " +
+            "GROUP BY statIdentityId"
+    )
+    abstract suspend fun getCacheSplitByIdentity(
+        identityIds: List<String>,
+        startMs: Long,
+        endMs: Long,
+    ): List<TokenStatCacheSplitRow>
 
     /** Bounded range page ordered by the stable `(startedAtMs, eventId)` keyset. */
     @Query(

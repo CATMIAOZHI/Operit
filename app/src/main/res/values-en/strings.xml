@@ -9214,7 +9214,7 @@
     <string name="orbit_usage_cost_model_line">%1$s tokens · %2$d calls</string>
     <string name="orbit_usage_cost_unknown_total">Cost unknown</string>
     <string name="orbit_usage_cost_unpriced">Another %1$d call(s) have an unknown cost and aren\'t in the total.</string>
-    <string name="orbit_usage_cost_note">Worked out from the prices under Model pricing; calls with no recorded cost are estimated at the latest prices where possible. Only a guide; your provider\'s bill is what counts.</string>
+    <string name="orbit_usage_cost_note">Worked out from the prices under Model pricing; calls with no recorded cost are estimated at the latest prices where possible, using the same model\'s cache hit rate where cache reads were not recorded. Only a guide; your provider\'s bill is what counts.</string>
     <string name="orbit_usage_cost_rate">US dollars and yuan are converted at 1 : %1$s.</string>
     <string name="orbit_usage_cost_rate_default">US dollars and yuan are converted at 1 : %1$s (the default rate; change it on the all-app costs page).</string>
     <string name="orbit_usage_cost_set_prices">Set model prices</string>

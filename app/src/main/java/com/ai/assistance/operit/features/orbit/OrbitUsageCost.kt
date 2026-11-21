@@ -3,6 +3,7 @@ package com.ai.assistance.operit.features.orbit
 import android.content.Context
 import com.ai.assistance.operit.data.collects.DefaultModelPricingCollect
 import com.ai.assistance.operit.data.collects.PricingCurrency
+import com.ai.assistance.operit.data.dao.TokenStatsDao
 import com.ai.assistance.operit.data.db.AppDatabase
 import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.BillingMode
@@ -24,6 +25,7 @@ import com.ai.assistance.operit.data.stats.TokenUsageInput
 import com.ai.assistance.operit.plugins.toolpkg.ToolPkgAiProviderRegistry
 import com.ai.assistance.operit.util.AppLogger
 import java.time.LocalDate
+import java.time.ZoneId
 import java.util.Locale
 import kotlin.math.roundToLong
 import kotlinx.coroutines.CancellationException
@@ -38,6 +40,11 @@ import kotlinx.coroutines.withContext
  * shown as estimated: calls that got none (no price yet, or no usage reported) at their model's
  * price, and calls from before costs were kept, which kept no model, at the price of the model
  * the Orbit that made them uses now for that kind of work.
+ *
+ * Calls whose cache reads are not known are taken to read from cache as much as calls on the same
+ * model did: in the app's ledger for these days, else Orbit's own calls that reported it. Pricing
+ * their whole input as uncached would make a model that mostly reads from cache look many times
+ * dearer than it is.
  */
 internal object OrbitUsageCost {
     private const val TAG = "OrbitUsageCost"
@@ -92,10 +99,14 @@ internal object OrbitUsageCost {
     /** A price with the model it is for, so older calls can be listed under that model. */
     class NamedPrice(val model: String, val price: ModelPrice)
 
-    /** Today's prices for every call without a cost: by model, and for older calls by [OlderKey]. */
+    /**
+     * Today's prices for every call without a cost: by model, and for older calls by [OlderKey];
+     * and by normalized model, the share of input read from cache in the app's ledger for these days.
+     */
     class Prices(
         val models: Map<String, ModelPrice> = emptyMap(),
         val older: Map<OlderKey, NamedPrice> = emptyMap(),
+        val cacheRates: Map<String, Double> = emptyMap(),
     )
 
     private fun normalize(model: String) = TokenStatIdentityResolver.normalizeModelName(model)
@@ -143,6 +154,10 @@ internal object OrbitUsageCost {
         val olderKeys = data.rows.filter { it.day >= from && it.day <= to && it.legacyCalls > 0L }
             .mapTo(HashSet()) { OlderKey.of(it) }
         if (wanted.isEmpty() && olderKeys.isEmpty()) return Prices()
+        // Models with calls to price whose input did not all say what it read from cache.
+        val unsplit = data.models
+            .filter { it.day >= from && it.day <= to && it.calls > it.pricedCalls && it.cacheKnownInput < it.input }
+            .mapTo(HashSet()) { normalize(it.model) }
         return try {
             withContext(Dispatchers.IO) {
                 val appContext = context.applicationContext
@@ -155,7 +170,9 @@ internal object OrbitUsageCost {
                         ModelPrice(byModel[normalize(model)].orEmpty().map { connection(it, overrides, legacy) })
                     }
                 }
-                if (olderKeys.isEmpty()) return@withContext Prices(models)
+                if (olderKeys.isEmpty()) {
+                    return@withContext Prices(models, cacheRates = ledgerCacheRates(dao, unsplit, first, last))
+                }
                 val configs = try {
                     ModelConfigManager(appContext).getAllConfigSummaries().associateBy { it.id }
                 } catch (e: CancellationException) {
@@ -163,7 +180,7 @@ internal object OrbitUsageCost {
                 } catch (e: Exception) {
                     // Older calls stay unknown; the other prices still count.
                     AppLogger.w(TAG, "Could not read the model connections: ${e.message}")
-                    return@withContext Prices(models)
+                    return@withContext Prices(models, cacheRates = ledgerCacheRates(dao, unsplit, first, last))
                 }
                 val preferences = OrbitModelPreferences(appContext)
                 val settings = HashMap<String, OrbitModelSettings?>()
@@ -204,7 +221,8 @@ internal object OrbitUsageCost {
                     }
                     key to NamedPrice(model, price)
                 }.toMap()
-                Prices(models, older)
+                val needRates = unsplit + older.values.map { normalize(it.model) }
+                Prices(models, older, ledgerCacheRates(dao, needRates, first, last))
             }
         } catch (e: CancellationException) {
             throw e
@@ -215,15 +233,53 @@ internal object OrbitUsageCost {
     }
 
     /**
+     * The share of input read from cache in the app's ledger for [models] (normalized names), over
+     * its calls that ended from [first] to [last], as Orbit counts its days. Only calls whose cache
+     * reads and whole input are known count, as Orbit counts them. Empty when it cannot be read:
+     * Orbit's own calls on the model then give the rate.
+     */
+    private suspend fun ledgerCacheRates(
+        dao: TokenStatsDao,
+        models: Set<String>,
+        first: LocalDate,
+        last: LocalDate,
+    ): Map<String, Double> {
+        if (models.isEmpty()) return emptyMap()
+        return try {
+            val modelOf = dao.getAllIdentities().mapNotNull { identity ->
+                normalize(identity.model).takeIf { it in models }?.let { identity.identityId to it }
+            }.toMap()
+            if (modelOf.isEmpty()) return emptyMap()
+            val zone = ZoneId.systemDefault()
+            val start = first.atStartOfDay(zone).toInstant().toEpochMilli()
+            val end = last.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+            modelOf.keys.chunked(500)
+                .flatMap { ids -> dao.getCacheSplitByIdentity(ids, start, end) }
+                .groupBy { modelOf[it.statIdentityId] }
+                .mapNotNull { (model, rows) ->
+                    val input = rows.sumOf { it.inputTokens }
+                    if (model == null || input <= 0L) return@mapNotNull null
+                    val rate = rows.sumOf { it.cachedInputTokens }.toDouble() / input
+                    if (rate.isFinite()) model to rate.coerceIn(0.0, 1.0) else null
+                }.toMap()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            AppLogger.w(TAG, "Could not read the ledger's cache reads: ${e.message}")
+            emptyMap()
+        }
+    }
+
+    /**
      * What [unpriced] of [calls] calls come to at today's [price], in its currency, with its
      * currency, given the tokens of all [calls] together: the price tier is picked by the average
-     * input per call. Cache writes are not kept apart and count as ordinary input. Null when it
-     * cannot be worked out.
+     * input per call. [cacheRate] of the input is taken as read from cache. Cache writes are not
+     * kept apart and count as ordinary input. Null when it cannot be worked out.
      */
     internal fun estimate(
         input: Long,
         output: Long,
-        cached: Long,
+        cacheRate: Double,
         calls: Long,
         unpriced: Long,
         price: ModelPrice,
@@ -231,7 +287,8 @@ internal object OrbitUsageCost {
         if (unpriced <= 0L || calls <= 0L) return null
         val inTokens = input.coerceAtLeast(0L)
         val pricing = price.at(inTokens / calls) ?: return null
-        val cachedIn = cached.coerceIn(0L, inTokens)
+        val rate = cacheRate.takeIf { it.isFinite() }?.coerceIn(0.0, 1.0) ?: 0.0
+        val cachedIn = (inTokens * rate).roundToLong().coerceIn(0L, inTokens)
         val usage = TokenUsageInput(
             uncachedInputTokens = inTokens - cachedIn,
             cachedInputTokens = cachedIn,
@@ -251,19 +308,34 @@ internal object OrbitUsageCost {
         return if (share.isFinite()) share to pricing.currency else null
     }
 
-    /** [row]'s calls that got no cost when they ended, at today's [price]; a row's priced calls get their share by count. */
-    internal fun backfill(row: OrbitQuota.ModelUsage, price: ModelPrice): Pair<Double, PricingCurrency>? =
-        estimate(row.input, row.output, row.cached, row.calls, row.calls - row.pricedCalls, price)
+    /**
+     * [row]'s calls that got no cost when they ended, at today's [price]; a row's priced calls get
+     * their share by count. The cache reads the row's calls reported are kept; the input of calls
+     * that did not say reads [fallbackCacheRate] of it from cache, so it does not count as all uncached.
+     */
+    internal fun backfill(
+        row: OrbitQuota.ModelUsage,
+        price: ModelPrice,
+        fallbackCacheRate: Double = 0.0,
+    ): Pair<Double, PricingCurrency>? {
+        val input = row.input.coerceAtLeast(0L)
+        val known = row.cacheKnownInput.coerceIn(0L, input)
+        val fallback = fallbackCacheRate.takeIf { it.isFinite() }?.coerceIn(0.0, 1.0) ?: 0.0
+        val cached = row.cached.coerceIn(0L, known) + (input - known) * fallback
+        val rate = if (input > 0L) cached / input else 0.0
+        return estimate(row.input, row.output, rate, row.calls, row.calls - row.pricedCalls, price)
+    }
 
     /**
      * [row]'s calls from before costs were kept, at today's [price]. They kept only their tokens
-     * together, so these are split into input and output like the whole row's, with no cache reads.
+     * together, so these are split into input and output like the whole row's, with [cacheRate] of
+     * the input read from cache.
      */
-    internal fun older(row: OrbitQuota.Usage, price: ModelPrice): Pair<Double, PricingCurrency>? {
+    internal fun older(row: OrbitQuota.Usage, price: ModelPrice, cacheRate: Double = 0.0): Pair<Double, PricingCurrency>? {
         val tokens = row.legacyTokens
         val all = row.input.coerceAtLeast(0L) + row.output.coerceAtLeast(0L)
         val input = if (all > 0L) (tokens * (row.input.coerceAtLeast(0L).toDouble() / all)).roundToLong() else 0L
-        return estimate(input, tokens - input, 0L, row.legacyCalls, row.legacyCalls, price)
+        return estimate(input, tokens - input, cacheRate, row.legacyCalls, row.legacyCalls, price)
     }
 
     class ModelCost(
@@ -358,6 +430,19 @@ internal object OrbitUsageCost {
         val byModel = LinkedHashMap<String, ModelSum>()
         fun modelSum(model: String) = byModel.getOrPut(normalize(model)) { ModelSum(model) }
 
+        // Share of input read from cache, by model, for calls that did not say: the app's ledger
+        // for these days first, else every Orbit call on the model that reported it.
+        val ownCacheRates by lazy {
+            data.models.groupBy { normalize(it.model) }.mapNotNull { (model, rows) ->
+                val known = rows.sumOf { it.cacheKnownInput }
+                if (known <= 0L) return@mapNotNull null
+                val rate = rows.sumOf { it.cached }.toDouble() / known
+                if (rate.isFinite()) model to rate.coerceIn(0.0, 1.0) else null
+            }.toMap()
+        }
+        fun cacheRateOf(model: String): Double =
+            normalize(model).let { prices.cacheRates[it] ?: ownCacheRates[it] } ?: 0.0
+
         val rows = data.rows.filter { it.day >= from && it.day <= to }
         rows.forEach { row ->
             val key = lineOf(row)
@@ -377,7 +462,7 @@ internal object OrbitUsageCost {
             val sum = modelSum(named.model)
             sum.tokens += row.legacyTokens
             sum.calls += row.legacyCalls
-            val value = older(row, named.price)?.let { amount(it) }
+            val value = older(row, named.price, cacheRateOf(named.model))?.let { amount(it) }
             if (value == null) {
                 // Listed under its model, with no cost.
                 unpriced += row.legacyCalls
@@ -401,7 +486,10 @@ internal object OrbitUsageCost {
             sum.priced += row.pricedCalls
             val missing = (row.calls - row.pricedCalls).coerceAtLeast(0L)
             if (missing == 0L) return@forEach
-            val value = prices.models[row.model]?.let { backfill(row, it) }?.let { amount(it) } ?: return@forEach
+            val price = prices.models[row.model] ?: return@forEach
+            // Only input that did not say what it read from cache needs the model's rate.
+            val fallback = if (row.cacheKnownInput >= row.input) 0.0 else cacheRateOf(row.model)
+            val value = backfill(row, price, fallback)?.let { amount(it) } ?: return@forEach
             sum.cost += value
             sum.estimated += missing
             estimated += value

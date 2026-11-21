@@ -214,4 +214,36 @@ class OrbitUsageCostTest {
         assertEquals("¥3.42", OrbitUsageCost.format(3.4249, PricingCurrency.CNY))
         assertEquals("¥12,346", OrbitUsageCost.format(12345.6, PricingCurrency.CNY))
     }
+
+    @Test
+    fun callsWithoutKnownCacheReadsReadFromCacheLikeTheirModel() {
+        val today = com.ai.assistance.operit.data.stats.ResolvedPricing(
+            billingMode = com.ai.assistance.operit.data.model.BillingMode.TOKEN, currency = PricingCurrency.CNY,
+            inputPricePerMillion = 1.0, cachedInputPricePerMillion = 0.1, outputPricePerMillion = 2.0,
+            source = com.ai.assistance.operit.data.stats.PricingSource.DEFAULT, known = true,
+        )
+        val price = OrbitUsageCost.ModelPrice(listOf { _: Long? -> today })
+        // An older day's 1,000,000 input with no cache reads kept, and Orbit's own calls on the
+        // model another day, which said 800 of 1,000 came from cache.
+        val data = OrbitQuota.UsageData(
+            rows = listOf(row("2026-11-19", input = 1_000_000, output = 0, calls = 2)),
+            hours = emptyList(),
+            models = listOf(OrbitQuota.ModelUsage("2026-11-18", me, "Flash", 1000, 0, 1, 800, 0.001, 0.0, 1,
+                cacheKnownInput = 1000)),
+        )
+        val older = mapOf(OrbitUsageCost.OlderKey(me, chat = true) to OrbitUsageCost.NamedPrice("flash", price))
+        // The ledger's rate for these days comes first: 100k uncached + 900k cached, not 1.0 all uncached.
+        assertEquals(0.19, OrbitUsageCost.view(data, day2, day2, me, cny,
+            OrbitUsageCost.Prices(older = older, cacheRates = mapOf("flash" to 0.9))).total, 1e-9)
+        // Without it, Orbit's own calls on the model: 200k uncached + 800k cached.
+        assertEquals(0.28, OrbitUsageCost.view(data, day2, day2, me, cny, OrbitUsageCost.Prices(older = older)).total, 1e-9)
+
+        // Only half the input said what it read from cache (450k of 500k): that is kept, and the
+        // other 500k reads the model's rate, 90%, not none: 100k uncached + 900k cached.
+        val partly = OrbitQuota.ModelUsage("2026-11-19", me, "flash", 1_000_000, 0, 2, 450_000, 0.0, 0.0, 0,
+            cacheKnownInput = 500_000)
+        assertEquals(0.19, OrbitUsageCost.backfill(partly, price, fallbackCacheRate = 0.9)!!.first, 1e-9)
+        // With no rate for the model, the other half counts as uncached: 550k uncached + 450k cached.
+        assertEquals(0.595, OrbitUsageCost.backfill(partly, price)!!.first, 1e-9)
+    }
 }
