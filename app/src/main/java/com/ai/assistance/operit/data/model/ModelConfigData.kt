@@ -88,7 +88,7 @@ enum class ApiProviderType {
 }
 
 object ModelConfigDefaults {
-        const val DEFAULT_CONTEXT_LENGTH = 400.0f
+        const val DEFAULT_CONTEXT_LENGTH = 500.0f
         const val DEFAULT_MAX_CONTEXT_LENGTH = 1000.0f
         const val DEFAULT_ENABLE_MAX_CONTEXT_MODE = false
         const val DEFAULT_SUMMARY_TOKEN_THRESHOLD = 0.90f

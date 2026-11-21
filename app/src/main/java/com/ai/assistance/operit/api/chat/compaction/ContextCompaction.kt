@@ -132,7 +132,7 @@ object ContextCompaction {
 
     private val overflowPattern = Regex(
         "context[_ ]length|maximum context|context window|context limit|too many tokens|" +
-            "prompt is too long|input is too long|too long for|request too large|exceeds? the (?:maximum|max|context)|" +
+            "(?:prompt|input)(?: is)? too long|too long for|request too large|exceeds? the (?:maximum|max|context)|" +
             "reduce the length|input token count|上下文.{0,8}(?:超|过长|上限)|超.{0,6}上下文",
         RegexOption.IGNORE_CASE,
     )
