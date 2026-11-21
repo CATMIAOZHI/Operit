@@ -24,13 +24,17 @@ import com.ai.assistance.operit.data.stats.TokenStatIdentityResolver
 import com.ai.assistance.operit.data.stats.TokenUsageInput
 import com.ai.assistance.operit.plugins.toolpkg.ToolPkgAiProviderRegistry
 import com.ai.assistance.operit.util.AppLogger
+import java.lang.ref.WeakReference
 import java.time.LocalDate
 import java.time.ZoneId
 import java.util.Locale
+import kotlin.math.floor
 import kotlin.math.roundToLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -38,16 +42,19 @@ import kotlinx.coroutines.withContext
  *
  * Calls that got a cost when they ended keep it. Every other call is priced at today's price and
  * shown as estimated: calls that got none (no price yet, or no usage reported) at their model's
- * price, and calls from before costs were kept, which kept no model, at the price of the model
- * the Orbit that made them uses now for that kind of work.
+ * price, and calls from before costs were kept, which kept no model, shared out over the models
+ * the app's ledger shows in use that day, each at its own price; on days the ledger has nothing,
+ * at the price of the model the Orbit that made them uses now for that kind of work.
  *
  * Calls whose cache reads are not known are taken to read from cache as much as calls on the same
- * model did: in the app's ledger for these days, else Orbit's own calls that reported it. Pricing
- * their whole input as uncached would make a model that mostly reads from cache look many times
- * dearer than it is.
+ * model did: for older calls in the ledger that day, else in the ledger for these days, else
+ * Orbit's own calls that reported it. Pricing their whole input as uncached would make a model
+ * that mostly reads from cache look many times dearer than it is.
  */
 internal object OrbitUsageCost {
     private const val TAG = "OrbitUsageCost"
+    private const val LEDGER_FRESH_MS = 5 * 60_000L
+    private const val MAX_LEDGER_READS = 4
 
     /** The currency and USD to CNY rate the app's own usage page shows costs in. */
     class Money(val currency: PricingCurrency, val rate: Double, val rateEstimated: Boolean) {
@@ -82,6 +89,7 @@ internal object OrbitUsageCost {
          */
         fun at(contextTokens: Long?): ResolvedPricing? {
             if (connections.isEmpty()) return null
+            if (connections.size == 1) return connections[0](contextTokens).takeIf { it.known }
             val prices = connections.map { it(contextTokens) }
             if (prices.any { !it.known }) return null
             // Where a price came from does not matter, only what it is.
@@ -100,13 +108,21 @@ internal object OrbitUsageCost {
     class NamedPrice(val model: String, val price: ModelPrice)
 
     /**
+     * A model the app's ledger shows in use on a day, on one connection: [share] of that day's
+     * input, its price today, and the share of its input read from cache that day when known.
+     */
+    class DayModel(val model: String, val price: ModelPrice, val share: Double, val cacheRate: Double?)
+
+    /**
      * Today's prices for every call without a cost: by model, and for older calls by [OlderKey];
-     * and by normalized model, the share of input read from cache in the app's ledger for these days.
+     * by normalized model, the share of input read from cache in the app's ledger for these days;
+     * and by day, the models the ledger shows in use, which older calls on that day are shared out over.
      */
     class Prices(
         val models: Map<String, ModelPrice> = emptyMap(),
         val older: Map<OlderKey, NamedPrice> = emptyMap(),
         val cacheRates: Map<String, Double> = emptyMap(),
+        val olderDays: Map<String, List<DayModel>> = emptyMap(),
     )
 
     private fun normalize(model: String) = TokenStatIdentityResolver.normalizeModelName(model)
@@ -137,7 +153,8 @@ internal object OrbitUsageCost {
     }
 
     /**
-     * Today's [Prices] for the calls from [first] to [last] that have no cost. An older call's
+     * Today's [Prices] for the calls from [first] to [last] that have no cost. Older calls go by the
+     * models the app's ledger shows in use on their day. On a day it has none, an older call's
      * Orbit is priced at its chat model for chat and at its assistant model for everything else,
      * as it is set now, with the connection's current provider, whether or not it has been used yet.
      */
@@ -151,27 +168,44 @@ internal object OrbitUsageCost {
         val to = last.toString()
         val wanted = data.models.filter { it.day >= from && it.day <= to && it.calls > it.pricedCalls }
             .mapTo(HashSet()) { it.model }
-        val olderKeys = data.rows.filter { it.day >= from && it.day <= to && it.legacyCalls > 0L }
-            .mapTo(HashSet()) { OlderKey.of(it) }
-        if (wanted.isEmpty() && olderKeys.isEmpty()) return Prices()
-        // Models with calls to price whose input did not all say what it read from cache.
-        val unsplit = data.models
-            .filter { it.day >= from && it.day <= to && it.calls > it.pricedCalls && it.cacheKnownInput < it.input }
-            .mapTo(HashSet()) { normalize(it.model) }
+        val olderRows = data.rows.filter { it.day >= from && it.day <= to && it.legacyCalls > 0L }
+        if (wanted.isEmpty() && olderRows.isEmpty()) return Prices()
+        // The ledger is read only for calls that kept no model, or did not all say what they read from cache.
+        val needLedger = olderRows.isNotEmpty() || data.models.any {
+            it.day >= from && it.day <= to && it.calls > it.pricedCalls && it.cacheKnownInput < it.input
+        }
         return try {
             withContext(Dispatchers.IO) {
                 val appContext = context.applicationContext
                 val legacy = ApiPreferences.getInstance(appContext).allLegacyPriceSettings()
                 val dao = AppDatabase.getDatabase(appContext).tokenStatsDao()
                 val overrides = dao.getAllPriceOverrides()
+                val identities = try {
+                    dao.getAllIdentities()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // Older calls then go by the Orbit's models; calls with a model stay unknown.
+                    AppLogger.w(TAG, "Could not read the ledger's connections: ${e.message}")
+                    emptyList()
+                }
+                val byId = identities.associateBy { it.identityId }
                 val models = if (wanted.isEmpty()) emptyMap() else {
-                    val byModel = dao.getAllIdentities().groupBy { normalize(it.model) }
+                    val byModel = identities.groupBy { normalize(it.model) }
                     wanted.associateWith { model ->
                         ModelPrice(byModel[normalize(model)].orEmpty().map { connection(it, overrides, legacy) })
                     }
                 }
+                val use = if (needLedger && byId.isNotEmpty()) ledgerUse(dao, first, last) else emptyMap()
+                val cacheRates = cacheRates(use, identities.associate { it.identityId to normalize(it.model) })
+                // Each connection is priced once, however many days it was in use.
+                val priceOf = HashMap<String, ModelPrice>()
+                val olderDays = olderDays(use, olderRows.mapTo(HashSet()) { it.day }, byId) { identity ->
+                    priceOf.getOrPut(identity.identityId) { ModelPrice(listOf(connection(identity, overrides, legacy))) }
+                }
+                val olderKeys = olderRows.filter { it.day !in olderDays }.mapTo(HashSet()) { OlderKey.of(it) }
                 if (olderKeys.isEmpty()) {
-                    return@withContext Prices(models, cacheRates = ledgerCacheRates(dao, unsplit, first, last))
+                    return@withContext Prices(models, cacheRates = cacheRates, olderDays = olderDays)
                 }
                 val configs = try {
                     ModelConfigManager(appContext).getAllConfigSummaries().associateBy { it.id }
@@ -180,7 +214,7 @@ internal object OrbitUsageCost {
                 } catch (e: Exception) {
                     // Older calls stay unknown; the other prices still count.
                     AppLogger.w(TAG, "Could not read the model connections: ${e.message}")
-                    return@withContext Prices(models, cacheRates = ledgerCacheRates(dao, unsplit, first, last))
+                    return@withContext Prices(models, cacheRates = cacheRates, olderDays = olderDays)
                 }
                 val preferences = OrbitModelPreferences(appContext)
                 val settings = HashMap<String, OrbitModelSettings?>()
@@ -221,8 +255,7 @@ internal object OrbitUsageCost {
                     }
                     key to NamedPrice(model, price)
                 }.toMap()
-                val needRates = unsplit + older.values.map { normalize(it.model) }
-                Prices(models, older, ledgerCacheRates(dao, needRates, first, last))
+                Prices(models, older, cacheRates, olderDays)
             }
         } catch (e: CancellationException) {
             throw e
@@ -232,43 +265,120 @@ internal object OrbitUsageCost {
         }
     }
 
+    /** One connection's calls on one day in the app's ledger, counted as the ledger query counts them. */
+    private class DayUse(val calls: Long, val inputCalls: Long, val input: Double, val cached: Double, val cacheKnown: Double)
+
     /**
-     * The share of input read from cache in the app's ledger for [models] (normalized names), over
-     * its calls that ended from [first] to [last], as Orbit counts its days. Only calls whose cache
-     * reads and whole input are known count, as Orbit counts them. Empty when it cannot be read:
-     * Orbit's own calls on the model then give the rate.
+     * A read of the ledger, good while it is fresh and the ledger is the same one, with nothing
+     * cleared since: a restore opens a new database, and every clearing moves the generation on.
      */
-    private suspend fun ledgerCacheRates(
-        dao: TokenStatsDao,
-        models: Set<String>,
-        first: LocalDate,
-        last: LocalDate,
-    ): Map<String, Double> {
-        if (models.isEmpty()) return emptyMap()
+    private class LedgerRead(
+        val atMs: Long,
+        val dao: WeakReference<TokenStatsDao>,
+        val generation: Long,
+        val days: Map<String, Map<String, DayUse>>,
+    )
+
+    /** Recent reads of the ledger, by range and time zone; the page offers four ranges. Only under [ledgerLock]. */
+    private val ledgerReads = LinkedHashMap<Triple<Long, Long, String>, LedgerRead>()
+
+    /** One read of the ledger at a time, so the page and the usage tool do not both read it, nor an older read replace a newer one. */
+    private val ledgerLock = Mutex()
+
+    /**
+     * The app's ledger from [first] to [last], by day and connection. Days are as Orbit counts
+     * them, by when calls ended, here in the device's current time zone; older calls kept the day
+     * of the zone they were made in, so after a change of zone the two can be some hours apart.
+     *
+     * Reading it goes through every call the ledger has, so a read is reused for a few minutes:
+     * the page works its numbers out again each time a call ends. Days gone by only change when the
+     * ledger is cleared or restored, which ends the reuse at once; calls since a read show up the
+     * first time the numbers are worked out after it is a few minutes old. Empty when it cannot be read.
+     */
+    private suspend fun ledgerUse(dao: TokenStatsDao, first: LocalDate, last: LocalDate): Map<String, Map<String, DayUse>> {
+        val zone = ZoneId.systemDefault()
+        val start = first.atStartOfDay(zone).toInstant().toEpochMilli()
+        val end = last.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+        val key = Triple(start, end, zone.id)
         return try {
-            val modelOf = dao.getAllIdentities().mapNotNull { identity ->
-                normalize(identity.model).takeIf { it in models }?.let { identity.identityId to it }
-            }.toMap()
-            if (modelOf.isEmpty()) return emptyMap()
-            val zone = ZoneId.systemDefault()
-            val start = first.atStartOfDay(zone).toInstant().toEpochMilli()
-            val end = last.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
-            modelOf.keys.chunked(500)
-                .flatMap { ids -> dao.getCacheSplitByIdentity(ids, start, end) }
-                .groupBy { modelOf[it.statIdentityId] }
-                .mapNotNull { (model, rows) ->
-                    val input = rows.sumOf { it.inputTokens }
-                    if (model == null || input <= 0L) return@mapNotNull null
-                    val rate = rows.sumOf { it.cachedInputTokens }.toDouble() / input
-                    if (rate.isFinite()) model to rate.coerceIn(0.0, 1.0) else null
-                }.toMap()
+            ledgerLock.withLock {
+                val generation = dao.currentResetGeneration()
+                ledgerReads[key]?.takeIf {
+                    it.dao.get() === dao && it.generation == generation &&
+                        System.nanoTime() / 1_000_000L - it.atMs in 0L until LEDGER_FRESH_MS
+                }?.let { return@withLock it.days }
+                val days = HashMap<String, HashMap<String, DayUse>>()
+                dao.getUseByIdentityAndLocalDay(start, end).forEach { row ->
+                    days.getOrPut(row.day) { HashMap() }[row.statIdentityId] = DayUse(row.calls, row.inputCalls,
+                        row.inputTokens, row.cachedInputTokens, row.cacheKnownInputTokens)
+                }
+                ledgerReads.remove(key)
+                ledgerReads[key] = LedgerRead(System.nanoTime() / 1_000_000L, WeakReference(dao), generation, days)
+                while (ledgerReads.size > MAX_LEDGER_READS) ledgerReads.remove(ledgerReads.keys.first())
+                days
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            AppLogger.w(TAG, "Could not read the ledger's cache reads: ${e.message}")
+            AppLogger.w(TAG, "Could not read the ledger: ${e.message}")
             emptyMap()
         }
     }
+
+    /**
+     * By normalized model, the share of input read from cache in [use], over the calls whose cache
+     * reads and whole input are known, as Orbit counts them. [modelOf] is each connection's normalized model.
+     */
+    private fun cacheRates(use: Map<String, Map<String, DayUse>>, modelOf: Map<String, String>): Map<String, Double> {
+        val cached = HashMap<String, Double>()
+        val known = HashMap<String, Double>()
+        use.values.forEach { day ->
+            day.forEach { (id, dayUse) ->
+                val model = modelOf[id] ?: return@forEach
+                cached.merge(model, dayUse.cached, Double::plus)
+                known.merge(model, dayUse.cacheKnown, Double::plus)
+            }
+        }
+        return known.mapNotNull { (model, input) ->
+            if (!(input > 0.0)) return@mapNotNull null
+            val rate = (cached[model] ?: 0.0) / input
+            if (rate.isFinite()) model to rate.coerceIn(0.0, 1.0) else null
+        }.toMap()
+    }
+
+    /**
+     * For each of [days], the models in use that day in [use], by connection. A model's share is
+     * its share of the day's input; a call that kept no input counts as the day's average call,
+     * and on a day with no input kept at all every call counts the same. Days with no use are left
+     * out: their older calls go by the Orbit's models.
+     */
+    private fun olderDays(
+        use: Map<String, Map<String, DayUse>>,
+        days: Set<String>,
+        byId: Map<String, TokenStatIdentityEntity>,
+        priceOf: (TokenStatIdentityEntity) -> ModelPrice,
+    ): Map<String, List<DayModel>> = days.mapNotNull { day ->
+        // In a fixed order, so the same day always splits the same way.
+        val rows = use[day].orEmpty().filter { (id, dayUse) -> id in byId && dayUse.calls > 0L }
+            .toSortedMap().toList()
+        val inputCalls = rows.sumOf { it.second.inputCalls }
+        val average = if (inputCalls > 0L) rows.sumOf { it.second.input } / inputCalls else 0.0
+        val byInput = rows.map { (_, u) -> u.input + (u.calls - u.inputCalls).coerceAtLeast(0L) * average }
+        val weights = if (byInput.sum().let { it > 0.0 && it.isFinite() }) byInput
+            else rows.map { it.second.calls.toDouble() }
+        val total = weights.sum()
+        if (!(total > 0.0) || !total.isFinite()) return@mapNotNull null
+        val models = rows.mapIndexedNotNull { index, (id, u) ->
+            val share = weights[index] / total
+            if (!(share > 0.0)) return@mapIndexedNotNull null
+            val identity = byId.getValue(id)
+            val cacheRate = if (u.cacheKnown > 0.0) {
+                (u.cached / u.cacheKnown).takeIf { it.isFinite() }?.coerceIn(0.0, 1.0)
+            } else null
+            DayModel(identity.model, priceOf(identity), share, cacheRate)
+        }
+        if (models.isEmpty()) null else day to models
+    }.toMap()
 
     /**
      * What [unpriced] of [calls] calls come to at today's [price], in its currency, with its
@@ -332,10 +442,89 @@ internal object OrbitUsageCost {
      * the input read from cache.
      */
     internal fun older(row: OrbitQuota.Usage, price: ModelPrice, cacheRate: Double = 0.0): Pair<Double, PricingCurrency>? {
+        val (input, output) = olderTokens(row)
+        return estimate(input, output, cacheRate, row.legacyCalls, row.legacyCalls, price)
+    }
+
+    /** [row]'s older tokens as input and output, split like the whole row's. */
+    private fun olderTokens(row: OrbitQuota.Usage): Pair<Long, Long> {
         val tokens = row.legacyTokens
         val all = row.input.coerceAtLeast(0L) + row.output.coerceAtLeast(0L)
-        val input = if (all > 0L) (tokens * (row.input.coerceAtLeast(0L).toDouble() / all)).roundToLong() else 0L
-        return estimate(input, tokens - input, cacheRate, row.legacyCalls, row.legacyCalls, price)
+        val input = if (all > 0L) (tokens * (row.input.coerceAtLeast(0L).toDouble() / all)).roundToLong()
+            .coerceIn(0L, tokens) else 0L
+        return input to tokens - input
+    }
+
+    /**
+     * [total] split by [shares] into whole parts that add up to it, the largest remainders
+     * rounding up. Shares need not add up to 1; with none above 0 the parts are all 0. The parts
+     * always add up to [total]; worked out in doubles, so with very large totals or remainders
+     * nearly alike, which part rounds up can be off by one.
+     */
+    internal fun split(total: Long, shares: List<Double>): List<Long> {
+        val usable = shares.map { if (it.isFinite() && it > 0.0) it else 0.0 }
+        // Scaled to the largest first, so huge shares cannot add up past the largest double.
+        val top = usable.maxOrNull() ?: 0.0
+        val weights = if (top > 0.0) usable.map { it / top } else usable
+        val sum = weights.sum()
+        if (total <= 0L || !(sum > 0.0) || !sum.isFinite()) return shares.map { 0L }
+        val raw = weights.map { total * (it / sum) }
+        val parts = LongArray(raw.size) { floor(raw[it]).toLong().coerceIn(0L, total) }
+        var left = total - parts.sum()
+        val order = raw.indices.filter { weights[it] > 0.0 }.sortedByDescending { raw[it] - parts[it] }
+        // Rounding leaves less than one per part; anything more is spread evenly first.
+        if (left >= order.size) {
+            val each = left / order.size
+            order.forEach { parts[it] += each }
+            left -= each * order.size
+        }
+        var next = 0
+        while (left > 0L) {
+            parts[order[next++ % order.size]]++
+            left--
+        }
+        while (left < 0L) {
+            val most = parts.indices.maxBy { parts[it] }
+            parts[most]--
+            left++
+        }
+        return parts.toList()
+    }
+
+    /**
+     * A day's [calls] older calls split over [parts] in whole calls: first by model, so a model on
+     * several connections is not passed over for one with less on its own, then by connection.
+     */
+    internal fun olderCalls(calls: Long, parts: List<DayModel>): List<Long> {
+        val groups = parts.indices.groupBy { normalize(parts[it].model) }.values.toList()
+        val byModel = split(calls, groups.map { group -> group.sumOf { parts[it].share } })
+        val out = LongArray(parts.size)
+        groups.forEachIndexed { index, group ->
+            split(byModel[index], group.map { parts[it].share }).forEachIndexed { at, part -> out[group[at]] = part }
+        }
+        return out.toList()
+    }
+
+    /**
+     * [parts]' shares for their tokens: one that got none of [callsOf] hands its share to the
+     * connection with the most calls on its model, or overall when its model got none, so no
+     * tokens go where no call went.
+     */
+    internal fun tokenShares(parts: List<DayModel>, callsOf: List<Long>): List<Double> {
+        val shares = DoubleArray(parts.size) { if (callsOf[it] > 0L) parts[it].share else 0.0 }
+        val most = parts.indices.maxByOrNull { callsOf[it] } ?: return shares.toList()
+        val models = parts.map { normalize(it.model) }
+        // Each model's connection with the most calls.
+        val busiest = HashMap<String, Int>()
+        parts.indices.forEach { index ->
+            if (callsOf[index] <= 0L) return@forEach
+            val best = busiest[models[index]]
+            if (best == null || callsOf[index] > callsOf[best]) busiest[models[index]] = index
+        }
+        parts.indices.forEach { index ->
+            if (callsOf[index] <= 0L) shares[busiest[models[index]] ?: most] += parts[index].share
+        }
+        return shares.toList()
     }
 
     class ModelCost(
@@ -420,7 +609,7 @@ internal object OrbitUsageCost {
         }
 
         /** Each model's totals as the model list shows them, by normalized name. */
-        class ModelSum(val name: String) {
+        class ModelSum(var name: String) {
             var cost = 0.0
             var tokens = 0L
             var calls = 0L
@@ -444,6 +633,11 @@ internal object OrbitUsageCost {
             normalize(model).let { prices.cacheRates[it] ?: ownCacheRates[it] } ?: 0.0
 
         val rows = data.rows.filter { it.day >= from && it.day <= to }
+        val olderDayModels = prices.olderDays.mapValues { (_, parts) ->
+            parts.filter { it.share.isFinite() && it.share > 0.0 }
+        }.filterValues { it.isNotEmpty() }
+        // Older calls on a day the ledger shows models for are shared out a whole day at a time, below.
+        val olderByDay = LinkedHashMap<String, MutableList<OrbitQuota.Usage>>()
         rows.forEach { row ->
             val key = lineOf(row)
             val rowKnown = amount(row.costCny, row.costUsd)
@@ -454,6 +648,10 @@ internal object OrbitUsageCost {
             byLine[key] = (byLine[key] ?: 0.0) + rowKnown
             unpriced += (row.trackedCalls - row.pricedCalls).coerceAtLeast(0L)
             if (row.legacyCalls <= 0L) return@forEach
+            if (row.day in olderDayModels) {
+                olderByDay.getOrPut(row.day) { mutableListOf() } += row
+                return@forEach
+            }
             val named = prices.older[OlderKey.of(row)]
             if (named == null) {
                 unpriced += row.legacyCalls
@@ -474,12 +672,63 @@ internal object OrbitUsageCost {
             sum.cost += value
             sum.estimated += row.legacyCalls
         }
+        olderByDay.forEach { (day, dayRows) ->
+            val parts = olderDayModels[day] ?: return@forEach
+            // Each model is priced for its own whole calls and its tokens, so prices per request
+            // and price tiers go by what it got.
+            val callsOf = olderCalls(dayRows.sumOf { it.legacyCalls }, parts)
+            val shares = tokenShares(parts, callsOf)
+            val tokens = dayRows.map { olderTokens(it) }
+            val inputOf = split(tokens.sumOf { it.first }, shares)
+            val outputOf = split(tokens.sumOf { it.second }, shares)
+            // What the day's models cost by the token, and by the request.
+            var byTokenValue = 0.0
+            var byCallValue = 0.0
+            var dayEstimated = false
+            parts.forEachIndexed { index, part ->
+                val partCalls = callsOf[index]
+                if (partCalls <= 0L) return@forEachIndexed
+                val sum = modelSum(part.model)
+                sum.tokens += inputOf[index] + outputOf[index]
+                sum.calls += partCalls
+                val value = estimate(inputOf[index], outputOf[index], part.cacheRate ?: cacheRateOf(part.model),
+                    partCalls, partCalls, part.price)?.let { amount(it) }
+                if (value == null) {
+                    // Listed under its model, with no cost.
+                    unpriced += partCalls
+                    return@forEachIndexed
+                }
+                estimated += value
+                estimatedCalls += partCalls
+                sum.cost += value
+                sum.estimated += partCalls
+                val perRequest = part.price.at(inputOf[index] / partCalls)?.billingMode == BillingMode.COUNT
+                if (perRequest) byCallValue += value else byTokenValue += value
+                dayEstimated = true
+            }
+            // The day's amount goes to its lines: what is paid by the request by their older calls,
+            // what is paid by the token by their older tokens (by calls when none were counted).
+            // Every line of a day with an estimate is estimated, even at nothing.
+            if (dayEstimated) {
+                val byCalls = dayRows.map { it.legacyCalls.toDouble() }
+                val byTokens = dayRows.map { it.legacyTokens.toDouble() }
+                val tokenWeights = if (byTokens.sum() > 0.0) byTokens else byCalls
+                val callWeight = byCalls.sum()
+                val tokenWeight = tokenWeights.sum()
+                dayRows.forEachIndexed { index, line ->
+                    addEstimate(lineOf(line), byCallValue * byCalls[index] / callWeight +
+                        byTokenValue * tokenWeights[index] / tokenWeight)
+                }
+            }
+        }
 
         val modelRows = data.models.filter { it.day >= from && it.day <= to }
         // Each amount is shared out over that day's lines of the same Orbit by their calls without a cost.
         val linesByDay by lazy { rows.groupBy { it.day to it.orbitId } }
         modelRows.forEach { row ->
             val sum = modelSum(row.model)
+            // The name Orbit kept wins over the ledger's spelling for older calls.
+            sum.name = row.model
             sum.cost += amount(row.costCny, row.costUsd)
             sum.tokens += row.tokens
             sum.calls += row.calls
