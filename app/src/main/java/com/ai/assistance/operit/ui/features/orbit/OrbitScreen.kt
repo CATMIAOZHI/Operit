@@ -15,6 +15,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.captionBar
+import androidx.compose.foundation.layout.exclude
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
@@ -320,6 +322,7 @@ private fun OrbitScreenContent(
                 )
             }
             OrbitCoverPage(visible = showRoleCards, onDismiss = { showRoleCards = false }, dim = 0.1f) {
+                com.ai.assistance.operit.ui.theme.FillsCaptionStrips(MaterialTheme.colorScheme.background)
                 // As wide as Orbit's other pages on a tablet, with the list hidden at the sides.
                 Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
                     Box(readableWidth.fillMaxHeight()) {
@@ -1284,11 +1287,15 @@ private fun OrbitChatPage(
             }
             // The keyboard slides over the tabs: as it rises the tab bar shrinks under it, and as it
             // goes down the bar comes back with it, frame by frame, so the input never jumps.
+            // In a small (freeform) window the app already stands clear of the handle bar under
+            // it (MainActivity), so only the keyboard above that bar covers the tabs.
             if (!devView) {
                 OrbitBottomBar(selected = tab, onSelect = {
                     if (it != OrbitTab.CHAT) pageTab = it
                     tab = it
-                }, modifier = Modifier.tuckUnderKeyboard(androidx.compose.foundation.layout.WindowInsets.ime))
+                }, modifier = Modifier.tuckUnderKeyboard(
+                    androidx.compose.foundation.layout.WindowInsets.ime
+                        .exclude(androidx.compose.foundation.layout.WindowInsets.captionBar)))
             }
         }
         // Orbit's own menu, opened only by the round button at the top left.

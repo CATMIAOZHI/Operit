@@ -69,6 +69,27 @@ val LocalBackgroundPlaybackEnabled = staticCompositionLocalOf { true }
 internal data class OpaquePageAppearance(val background: Color, val dark: Boolean)
 internal val LocalOpaquePageAppearance = staticCompositionLocalOf<MutableState<OpaquePageAppearance?>?> { null }
 
+/**
+ * The color of a solid page now covering the app, for the strips a small window's title bar and
+ * handle bar leave above and below the pages (see MainActivity). Only those strips take it; the
+ * system bars keep theirs. Holds the page that said so last, with its color.
+ */
+internal val LocalCaptionStripColor = staticCompositionLocalOf<MutableState<Pair<Any, Color>?>?> { null }
+
+/** Paints a small window's bar strips with [color] while this page shows (see [LocalCaptionStripColor]). */
+@Composable
+internal fun FillsCaptionStrips(color: Color) {
+    val strip = LocalCaptionStripColor.current ?: return
+    val page = remember { Any() }
+    DisposableEffect(strip, page) {
+        onDispose { if (strip.value?.first === page) strip.value = null }
+    }
+    SideEffect {
+        val now = strip.value
+        if (now?.first !== page || now.second != color) strip.value = page to color
+    }
+}
+
 @SuppressLint("UnusedBoxWithConstraintsScope")
 @Composable
 fun OperitTheme(updateSystemBars: Boolean = true, content: @Composable () -> Unit) {
@@ -82,6 +103,7 @@ fun OperitTheme(updateSystemBars: Boolean = true, content: @Composable () -> Uni
     val darkTheme = appThemeStyle.darkTheme
     val pageAppearanceState = remember { mutableStateOf<OpaquePageAppearance?>(null) }
     val pageAppearance = pageAppearanceState.value
+    val captionStripState = remember { mutableStateOf<Pair<Any, Color>?>(null) }
 
     // 获取背景图片设置
     val useBackgroundImage by preferencesManager.useBackgroundImage.collectAsState(initial = false)
@@ -290,6 +312,7 @@ fun OperitTheme(updateSystemBars: Boolean = true, content: @Composable () -> Uni
 
         CompositionLocalProvider(
             LocalOpaquePageAppearance provides pageAppearanceState,
+            LocalCaptionStripColor provides captionStripState,
             LocalLiquidGlassBackdrop provides liquidGlassBackdrop,
             LocalWaterGlassState provides waterGlassState,
         ) {

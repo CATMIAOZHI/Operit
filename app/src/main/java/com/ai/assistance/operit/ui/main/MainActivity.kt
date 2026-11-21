@@ -20,9 +20,12 @@ import androidx.core.content.ContextCompat
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.captionBar
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -31,11 +34,13 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
@@ -1203,7 +1208,31 @@ class MainActivity : ComponentActivity(), com.ai.assistance.operit.ui.components
         appContentReady = true
         setContent {
             OperitTheme {
-                Box {
+                // In a small (freeform) window the system draws its own title bar over the top of
+                // the app and a handle bar over the bottom; pages only make room for the status
+                // and navigation bars, so the whole app steps clear of those here. Full screen
+                // has no such bars and nothing moves. The bars' strips get the color under the
+                // pages: a solid page's own (Orbit's chat, setup, lock), else the app's background;
+                // with a wallpaper they show it, as the pages do.
+                val opaquePage = com.ai.assistance.operit.ui.theme.LocalOpaquePageAppearance.current
+                val solidPage = com.ai.assistance.operit.ui.theme.LocalCaptionStripColor.current
+                val userPreferences = com.ai.assistance.operit.data.preferences.UserPreferencesManager.getInstance(this)
+                val useWallpaper by userPreferences.useBackgroundImage.collectAsState(initial = false)
+                val wallpaperUri by userPreferences.backgroundImageUri.collectAsState(initial = null)
+                val appBackground = MaterialTheme.colorScheme.background.takeUnless { useWallpaper && wallpaperUri != null }
+                val caption = WindowInsets.captionBar
+                Box(
+                    Modifier
+                        .drawBehind {
+                            val strips = caption.getTop(this) > 0 || caption.getBottom(this) > 0 ||
+                                caption.getLeft(this, layoutDirection) > 0 || caption.getRight(this, layoutDirection) > 0
+                            if (strips) {
+                                (solidPage?.value?.second ?: opaquePage?.value?.background ?: appBackground)
+                                    ?.let { drawRect(it) }
+                            }
+                        }
+                        .windowInsetsPadding(caption)
+                ) {
                     // 检查是否需要显示用户协议
                         if (!agreementPreferences.isAgreementAccepted()) {
                             MarkLaunchReadyAfterFrame()

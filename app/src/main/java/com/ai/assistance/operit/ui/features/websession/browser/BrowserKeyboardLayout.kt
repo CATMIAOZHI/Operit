@@ -1,6 +1,8 @@
 package com.ai.assistance.operit.ui.features.websession.browser
 
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.captionBar
+import androidx.compose.foundation.layout.exclude
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
@@ -26,7 +28,8 @@ internal fun BrowserKeyboardLayout(
     body: @Composable () -> Unit,
     bottomBar: @Composable () -> Unit,
 ) {
-    val keyboard = WindowInsets.ime
+    // Measured from the page's bottom, which sits above a small window's handle bar.
+    val keyboard = WindowInsets.ime.exclude(WindowInsets.captionBar)
     val followsKeyboard = LocalBrowserFollowsKeyboard.current
     Layout(contents = listOf(body, bottomBar), modifier = modifier) { (bodyParts, barParts), constraints ->
         val width = constraints.maxWidth
