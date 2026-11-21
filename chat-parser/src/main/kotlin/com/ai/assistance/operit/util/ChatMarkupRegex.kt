@@ -310,8 +310,8 @@ object ChatMarkupRegex {
 
     fun removeGeminiThoughtSignatureMeta(content: String): String {
         var removed = false
-        val result = metaTag.replace(content) { match ->
-            val provider = extractMetaProvider(match.value)
+        val result = replaceMetaBlocks(content) { block ->
+            val provider = extractMetaProvider(block)
             if (
                 provider.equals(GEMINI_THOUGHT_SIGNATURE_PROVIDER, ignoreCase = true) ||
                     provider.equals(GEMINI_CONTENT_PROVIDER, ignoreCase = true)
@@ -319,7 +319,7 @@ object ChatMarkupRegex {
                 removed = true
                 ""
             } else {
-                match.value
+                block
             }
         }
         return if (removed) result.trimEnd() else result
@@ -327,16 +327,78 @@ object ChatMarkupRegex {
 
     fun removeOpenAiResponsesReasoningMeta(content: String): String {
         var removed = false
-        val result = metaTag.replace(content) { match ->
-            val provider = extractMetaProvider(match.value)
+        val result = replaceMetaBlocks(content) { block ->
+            val provider = extractMetaProvider(block)
             if (provider.equals(OPENAI_RESPONSES_REASONING_PROVIDER, ignoreCase = true)) {
                 removed = true
                 ""
             } else {
-                match.value
+                block
             }
         }
         return if (removed) result.trimEnd() else result
+    }
+
+    private const val META_OPEN = "<meta"
+    private const val META_CLOSE = "</meta>"
+
+    /**
+     * [content] with each [metaTag] block replaced by [transform] of it, the blocks matched exactly
+     * as `metaTag.replace` matches them, in one pass. The pattern reads on from every opening to
+     * the end of the text when no `>` or `</meta>` follows it, which a reply streamed many times
+     * over cannot afford; here each of those is looked for once.
+     */
+    private fun replaceMetaBlocks(content: String, transform: (String) -> String): String {
+        if (!content.contains(META_OPEN, ignoreCase = true)) return content
+        // The first of each at or after the last place asked about, which only moves forward;
+        // -1 once there is none, as then there is none further on either.
+        var gt = -2
+        var close = -2
+        var opening = -2
+        fun gtFrom(from: Int): Int {
+            if (gt != -1 && gt < from) gt = content.indexOf('>', from)
+            return gt
+        }
+        fun closeFrom(from: Int): Int {
+            if (close != -1 && close < from) close = content.indexOf(META_CLOSE, from, ignoreCase = true)
+            return close
+        }
+        // `<meta` as a whole name, as `<meta\b` reads it.
+        fun openingFrom(from: Int): Int {
+            if (opening != -1 && opening < from) {
+                var at = content.indexOf(META_OPEN, from, ignoreCase = true)
+                while (at >= 0) {
+                    val next = content.getOrNull(at + META_OPEN.length)
+                    if (next == null || !(next.isLetterOrDigit() || next == '_')) break
+                    at = content.indexOf(META_OPEN, at + 1, ignoreCase = true)
+                }
+                opening = at
+            }
+            return opening
+        }
+        var out: StringBuilder? = null
+        var copied = 0
+        var start = openingFrom(0)
+        while (start >= 0) {
+            // The opening tag ends at the first `>`; the body at the first `</meta>`, unless
+            // another opening comes first. Openings before that `>` share its body, so they fail
+            // with this one, and the next try is the opening after it.
+            val tagEnd = gtFrom(start + META_OPEN.length)
+            if (tagEnd < 0) break
+            val end = closeFrom(tagEnd + 1)
+            if (end < 0) break
+            val nextOpening = openingFrom(tagEnd + 1)
+            if (nextOpening in 0 until end) {
+                start = nextOpening
+                continue
+            }
+            val blockEnd = end + META_CLOSE.length
+            if (out == null) out = StringBuilder(content.length)
+            out.append(content, copied, start).append(transform(content.substring(start, blockEnd)))
+            copied = blockEnd
+            start = openingFrom(blockEnd)
+        }
+        return out?.append(content, copied, content.length)?.toString() ?: content
     }
 
     private fun extractMetaProvider(metaTagContent: String): String? {

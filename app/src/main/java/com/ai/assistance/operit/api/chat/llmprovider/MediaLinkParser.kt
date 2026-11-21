@@ -36,12 +36,21 @@ data class ImageLinkTag(
 object MediaLinkParser {
     // id 之后可能还有别的属性（例如 src），所以用 [^<>]*> 收尾，而不是只允许 \s*>。
     // 收尾段排除 '<'：模型写出缺 '>' 的畸形标签时，不会一路吞掉后面的 <link> 标签。
+    private const val IMAGE_LINK_OPENING_SOURCE =
+        """<link\b(?=[^<>]*(?<![-\w])type\s*=\s*\\*["']?image\\*["']?(?=[\s/>]))(?=[^<>]*(?<![-\w])id\s*=\s*\\*["']?([^"'\\\s/>]+)\\*["']?)[^<>]*?"""
+
     private val IMAGE_LINK_PATTERN_PLAIN = Regex(
-        """<link\b(?=[^<>]*(?<![-\w])type\s*=\s*\\*["']?image\\*["']?(?=[\s/>]))(?=[^<>]*(?<![-\w])id\s*=\s*\\*["']?([^"'\\\s/>]+)\\*["']?)[^<>]*?(?:/>|>.*?</link>)""",
+        IMAGE_LINK_OPENING_SOURCE + """(?:/>|>.*?</link>)""",
         setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)
     )
 
     private val IMAGE_LINK_PATTERN_ESCAPED = IMAGE_LINK_PATTERN_PLAIN
+
+    // The same link when it can only end as `/>`: after the text's last `</link>`.
+    private val SELF_CLOSING_IMAGE_LINK_PATTERN = Regex(
+        IMAGE_LINK_OPENING_SOURCE + "/>",
+        setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)
+    )
 
     // (?<![-\w]) 而不是 \b：data-src 之类的属性不算 src。
     // 取值用惰性匹配，好让转义形态（src=\"…\"）的收尾反斜杠被 \\? 吃掉，不留在路径里。
@@ -129,9 +138,24 @@ object MediaLinkParser {
     }
 
     fun removeImageLinks(message: String): String {
-        return message
-            .replace(IMAGE_LINK_PATTERN_PLAIN, "")
-            .replace(IMAGE_LINK_PATTERN_ESCAPED, "")
+        // The plain and the escaped pattern are one; the second pass is kept for what the first
+        // one's removals join up.
+        return removeImageLinksOnce(removeImageLinksOnce(message))
+    }
+
+    /**
+     * [message] without the links [IMAGE_LINK_PATTERN_PLAIN] finds. After the last `</link>` a link
+     * can only end as `/>`, and looking for a `</link>` there from every opening would read on to
+     * the end each time, so that part is read for `/>` alone. No link spans the split: a tag holds
+     * no `<`, and a link ending in `</link>` ends by the last one.
+     */
+    private fun removeImageLinksOnce(message: String): String {
+        if (!message.contains("<link", ignoreCase = true)) return message
+        val last = message.lastIndexOf("</link>", ignoreCase = true)
+        if (last < 0) return message.replace(SELF_CLOSING_IMAGE_LINK_PATTERN, "")
+        val split = last + "</link>".length
+        return message.substring(0, split).replace(IMAGE_LINK_PATTERN_PLAIN, "") +
+            message.substring(split).replace(SELF_CLOSING_IMAGE_LINK_PATTERN, "")
     }
 
     fun replaceImageLinks(message: String, replacer: (id: String) -> String): String {
