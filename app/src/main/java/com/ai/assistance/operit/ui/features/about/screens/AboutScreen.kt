@@ -54,6 +54,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import com.ai.assistance.operit.ui.components.CustomScaffold
 import com.ai.assistance.operit.ui.features.orbit.OrbitDialogAction
+import com.ai.assistance.operit.ui.features.orbit.LocalOrbitPageActive
+import com.ai.assistance.operit.ui.main.components.LocalIsCurrentScreen
 import com.ai.assistance.operit.ui.features.settings.components.LocalSettingsDialogStyle
 import com.ai.assistance.operit.ui.features.settings.components.SettingsAlertDialog
 import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogButton
@@ -528,19 +530,25 @@ private fun AboutScreenContent(
         }
     }
 
-    // 观察更新状态变化
-    LaunchedEffect(updateStatus) {
-        when (updateStatus) {
-            is UpdateStatus.Available, is UpdateStatus.PatchAvailable, is UpdateStatus.UpToDate, is UpdateStatus.Error -> {
-                showUpdateDialog = true
-            }
-            else -> {}
+    // 检查更新：每次点都真的去查。从列表行点的，查完弹结果框；从失败框里点“重试”的，
+    // 结果直接显示在那个框里，用户中途关掉框就不再弹回来（结果看列表行）。
+    // 进页面时不再自动弹出上次的结果。
+    var checkUpdateJob by remember { mutableStateOf<Job?>(null) }
+    // 这页不在最前面时（上面盖了别的页、正在离场）不再等结果，免得结果框弹到别的页上；
+    // 检查本身由 UpdateManager 继续跑完，结果显示在列表行里。
+    val inFront = LocalIsCurrentScreen.current && LocalOrbitPageActive.current
+    LaunchedEffect(inFront) {
+        if (!inFront) {
+            checkUpdateJob?.cancel()
+            showUpdateDialog = false
         }
     }
-
-    // 检查更新
-    fun checkForUpdates() {
-        scope.launch { updateManager.checkForUpdates(appVersion) }
+    fun checkForUpdates(fromDialog: Boolean = false) {
+        if (checkUpdateJob?.isActive == true) return
+        checkUpdateJob = scope.launch {
+            updateManager.checkForUpdates(appVersion)
+            if (!fromDialog) showUpdateDialog = true
+        }
     }
 
     // 从指定源下载
@@ -859,7 +867,7 @@ private fun AboutScreenContent(
     }
 
     // 更新对话框
-    if (showUpdateDialog) {
+    if (inFront && showUpdateDialog) {
         UpdateDialog(
             updateStatus = updateStatus,
             appVersion = appVersion,
@@ -867,6 +875,8 @@ private fun AboutScreenContent(
             onConfirm = {
                 if (updateStatus is UpdateStatus.Available || updateStatus is UpdateStatus.PatchAvailable) {
                     handleDownload()
+                } else if (updateStatus is UpdateStatus.Error) {
+                    checkForUpdates(fromDialog = true)
                 } else if (updateStatus !is UpdateStatus.Checking) {
                     showUpdateDialog = false
                 }
@@ -952,14 +962,14 @@ private fun AboutScreenContent(
                                 )
                             }
                         },
-                        onClick = {
-                            when (updateStatus) {
-                                is UpdateStatus.Available,
-                                is UpdateStatus.PatchAvailable,
-                                is UpdateStatus.UpToDate,
-                                is UpdateStatus.Error -> showUpdateDialog = true
-                                is UpdateStatus.Checking -> Unit
-                                else -> checkForUpdates()
+                        // 检查中不可点；还没查过、已是最新、上次失败：都重新检查一次。
+                        onClick = if (updateStatus is UpdateStatus.Checking) null else {
+                            {
+                                when (updateStatus) {
+                                    is UpdateStatus.Available,
+                                    is UpdateStatus.PatchAvailable -> showUpdateDialog = true
+                                    else -> checkForUpdates()
+                                }
                             }
                         }
                     )
@@ -1177,6 +1187,7 @@ fun UpdateDialog(
                     when (updateStatus) {
                         is UpdateStatus.Available -> stringResource(id = R.string.download)
                         is UpdateStatus.PatchAvailable -> stringResource(id = R.string.patch_update)
+                        is UpdateStatus.Error -> stringResource(id = R.string.action_retry)
                         else -> stringResource(id = R.string.ok)
                     }
                 )

@@ -157,6 +157,9 @@ class GitHubApiService(private val context: Context) {
         // 用户紧接着点击安装时不应再重复消耗一次全量 API 配额。缓存只保留很短时间，
         // 避免长期持有陈旧列表。
         private const val RELEASES_CACHE_TTL_MS = 60_000L
+        // 拉 release 列表的一次请求最多等这么久（含读响应体）。只有读/连超时的话，
+        // 慢网一直零星来数据时会一直等下去，检查更新就一直停在“检查中”。
+        private const val RELEASES_CALL_TIMEOUT_SECONDS = 60L
         private val releasesCache = ConcurrentHashMap<String, CachedReleases>()
 
         private data class CachedReleases(
@@ -408,11 +411,12 @@ class GitHubApiService(private val context: Context) {
             authPreferences.getAuthorizationHeader()?.let { authHeader ->
                 requestBuilder.addHeader("Authorization", authHeader)
             }
-            
-            val response = client.newCall(requestBuilder.build()).execute()
-            
+
+            val call = client.newCall(requestBuilder.build())
+            call.timeout().timeout(RELEASES_CALL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            val response = fetchCancellable(call)
             if (response.isSuccessful) {
-                val responseBody = response.body?.string()
+                val responseBody = response.body
                 if (responseBody != null) {
                     val releases = json.decodeFromString<List<GitHubRelease>>(responseBody)
                     Result.success(releases)
@@ -422,6 +426,8 @@ class GitHubApiService(private val context: Context) {
             } else {
                 Result.failure(Exception("HTTP ${response.code}: ${response.message}"))
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -478,24 +484,25 @@ class GitHubApiService(private val context: Context) {
 
                 coroutineContext.ensureActive()
                 val call = client.newCall(requestBuilder.build())
-                val pageResponse = executeCancellable(call)
-                pageResponse.use { response ->
+                call.timeout().timeout(RELEASES_CALL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                val response = fetchCancellable(call)
+                run page@{
                     if (!response.isSuccessful) {
                         return@withContext Result.failure(
                             Exception("HTTP ${response.code}: ${response.message}")
                         )
                     }
                     if (lastPage == null) {
-                        lastPage = parseLastPageFromLinkHeader(response.header("Link"))
+                        lastPage = parseLastPageFromLinkHeader(response.linkHeader)
                     }
-                    val responseBody = response.body?.string()
+                    val responseBody = response.body
                     if (responseBody.isNullOrBlank()) {
                         return@withContext Result.failure(Exception("Empty response body"))
                     }
                     val pageReleases = json.decodeFromString<List<GitHubRelease>>(responseBody)
                     if (pageReleases.isEmpty()) {
                         finished = true
-                        return@use
+                        return@page
                     }
                     for (release in pageReleases) {
                         if (seenIds.add(release.id)) {
@@ -504,11 +511,11 @@ class GitHubApiService(private val context: Context) {
                     }
                     if (pageReleases.size < perPage) {
                         finished = true
-                        return@use
+                        return@page
                     }
                     if (lastPage != null && page >= lastPage) {
                         finished = true
-                        return@use
+                        return@page
                     }
                 }
                 if (finished) break
@@ -546,33 +553,50 @@ class GitHubApiService(private val context: Context) {
         return null
     }
 
+    /** 一次请求读完后的结果：成功时响应体已经读完；响应都已关闭。 */
+    private class FetchedResponse(
+        val isSuccessful: Boolean,
+        val code: Int,
+        val message: String,
+        val linkHeader: String?,
+        val body: String?,
+    )
+
     /**
-     * 以可取消的方式执行 OkHttp 请求：协程取消时同步取消底层 Call，
-     * 避免分页循环在用户取消更新后仍继续占用网络。
+     * 以可取消的方式执行 OkHttp 请求，并在回调里读完响应体再交回：协程取消（包括检查更新的
+     * 整体超时）时取消底层 Call，连正在读的响应体也会被打断，不用等这次请求自己的超时。
      */
-    private suspend fun executeCancellable(call: Call): okhttp3.Response =
+    private suspend fun fetchCancellable(call: Call): FetchedResponse =
         suspendCancellableCoroutine { continuation ->
+            continuation.invokeOnCancellation {
+                call.cancel()
+            }
             call.enqueue(object : Callback {
                 override fun onFailure(call: Call, e: IOException) {
-                    if (continuation.isCancelled) return
+                    // 已取消时恢复会被忽略。
                     continuation.resumeWithException(e)
                 }
 
                 override fun onResponse(call: Call, response: okhttp3.Response) {
-                    // resume 的 onCancellation 参数会在协程取消导致值无法交付时回调，
-                    // 此时必须关闭 Response，否则连接会泄漏（isCancelled 预检与 resume
-                    // 之间仍存在竞态窗口，不能只靠预检）。
-                    // resume 的 onCancellation 参数在协程取消导致值无法交付时回调，
-                    // 此时必须关闭 Response，否则连接会泄漏（isCancelled 预检与
-                    // resume 之间仍存在竞态窗口，不能只靠预检）。
-                    continuation.resume(response) {
-                        response.close()
-                    }
+                    val fetched =
+                        try {
+                            response.use {
+                                FetchedResponse(
+                                    isSuccessful = it.isSuccessful,
+                                    code = it.code,
+                                    message = it.message,
+                                    linkHeader = it.header("Link"),
+                                    // 失败只用状态码；不读错误正文，免得慢的错误正文拖延或盖掉 HTTP 状态。
+                                    body = if (it.isSuccessful) it.body?.string() else null,
+                                )
+                            }
+                        } catch (e: Exception) {
+                            continuation.resumeWithException(e)
+                            return
+                        }
+                    continuation.resume(fetched)
                 }
             })
-            continuation.invokeOnCancellation {
-                call.cancel()
-            }
         }
 
     suspend fun createRepository(
