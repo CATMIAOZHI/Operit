@@ -1324,7 +1324,7 @@ class MessageCoordinationDelegate(
                 chatId,
                 InputProcessingState.Error(message)
             )
-            attachmentDelegate.clearAttachments()
+            attachmentDelegate.clearAttachments(chatId)
             uiBridge.resetAttachmentPanelState()
             uiBridge.clearReplyToMessage()
             return true
@@ -1332,7 +1332,7 @@ class MessageCoordinationDelegate(
 
         if (plannedRounds.rounds.isEmpty() || plannedRounds.rounds.all { round -> round.all { !it.speak } }) {
             AppLogger.d(TAG, "回答规划本轮全部跳过发言")
-            attachmentDelegate.clearAttachments()
+            attachmentDelegate.clearAttachments(chatId)
             uiBridge.resetAttachmentPanelState()
             uiBridge.clearReplyToMessage()
             messageProcessingDelegate.setInputProcessingStateForChat(
@@ -1437,7 +1437,7 @@ class MessageCoordinationDelegate(
 
         AppLogger.d(TAG, "群组编排结束: chatId=$chatId, timelineSize=${timeline.size}")
         maybeSummarizeAfterGroupRound(chatId, promptFunctionType)
-        attachmentDelegate.clearAttachments()
+        attachmentDelegate.clearAttachments(chatId)
         uiBridge.resetAttachmentPanelState()
         uiBridge.clearReplyToMessage()
         return true
@@ -2198,9 +2198,9 @@ class MessageCoordinationDelegate(
                 androidx.compose.ui.text.input.TextFieldValue(merged, androidx.compose.ui.text.TextRange(merged.length)),
             )
         }
-        // Attachments and the reply belong to the one input box, not to a chat; switching chats
-        // never cleared them, so they come back even when another chat is open now.
-        attachmentDelegate.addAttachments(attachments)
+        // Attachments come back to the chat they were sent from, like its text; each chat keeps
+        // its own unsent files.
+        attachmentDelegate.addAttachments(attachments, chatId)
         if (reply != null && uiBridge.getReplyToMessage() == null) uiBridge.restoreReplyToMessage(reply)
     }
 

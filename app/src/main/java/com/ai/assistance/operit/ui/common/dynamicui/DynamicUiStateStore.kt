@@ -29,8 +29,16 @@ internal object DynamicUiStateStore {
 
     fun file(context: Context, owner: DynamicUiOwner, source: String, surface: String): File {
         val chat = DynamicUiProtocol.fingerprint(owner.chatId)
-        val key = DynamicUiProtocol.fingerprint("${owner.timestamp}:${owner.variant}:$surface:$source")
-        return File(context.filesDir, "dynamic_ui/$chat/$key.json")
+        fun at(time: Long) = File(context.filesDir,
+            "dynamic_ui/$chat/${DynamicUiProtocol.fingerprint("$time:${owner.variant}:$surface:$source")}.json")
+        val current = at(owner.timestamp)
+        // A card saved before its message's time was repaired is under the old time; it moves to
+        // the new one, so a branch copied from this chat later finds it too.
+        if (!current.exists()) {
+            com.ai.assistance.operit.data.db.MessageTimeRepair.original(owner.chatId, owner.timestamp)
+                ?.let(::at)?.takeIf { it.exists() }?.let { old -> return if (old.renameTo(current)) current else old }
+        }
+        return current
     }
 
     suspend fun read(file: File): JsonObject? = withContext(Dispatchers.IO) {

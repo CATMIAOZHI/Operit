@@ -738,6 +738,11 @@ private fun TaskListRow(task: OrbitTaskEntity, tasks: List<OrbitTaskEntity>, due
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(task.title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium,
                 maxLines = 2, overflow = TextOverflow.Ellipsis)
+            // A task made in a side chat runs and reports there; say which.
+            rememberSideChatTitle(task.chatId)?.let { side ->
+                Text(stringResource(R.string.orbit_task_in_side_chat, side), style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
             Text(if (task.state == "ACTIVE") taskSchedule(task, tasks, dueAt) else taskState(task),
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -845,6 +850,10 @@ private fun TaskDetail(
             TaskCard(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp), spacing = 0.dp) {
                 val (icon, whenText) = taskIconAndSchedule(task, tasks)
                 InfoRow(taskIconName(task, icon), stringResource(R.string.orbit_task_row_when), whenText, divider, first = true)
+                // The chat it runs and reports in; tapping opens it.
+                InfoRow("messages-square", stringResource(R.string.orbit_task_row_chat),
+                    rememberSideChatTitle(task.chatId) ?: stringResource(R.string.orbit_chats_main), divider,
+                    onClick = { com.ai.assistance.operit.features.orbit.OrbitNavigation.openChat(task.chatId) })
                 if (task.state == "ACTIVE" && task.scheduleMode != "EVENT" &&
                     (task.kind != OrbitGeofence.KIND || dueAt != null)) {
                     val next = dueAt ?: task.nextRunAt
@@ -1145,16 +1154,31 @@ private fun CardLabel(text: String) {
 
 /** One fact about the task: round icon, a small label and its value. */
 @Composable
-private fun InfoRow(icon: String, label: String, value: String, divider: Color, first: Boolean = false) {
+private fun InfoRow(icon: String, label: String, value: String, divider: Color, first: Boolean = false,
+    onClick: (() -> Unit)? = null) {
     if (!first) HorizontalDivider(Modifier.padding(start = 50.dp), color = divider)
-    Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().then(if (onClick != null) Modifier.clickable(role = Role.Button, onClick = onClick) else Modifier)
+        .padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
         TaskIcon(icon, size = 36.dp, iconSize = 18.dp)
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(value, style = MaterialTheme.typography.bodyLarge)
         }
+        if (onClick != null) Icon(orbitIcon("chevron-right"), null, Modifier.size(20.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
     }
+}
+
+/** The title of the side chat [chatId] is; null for an Orbit's main chat or a chat it no longer has. */
+@Composable
+private fun rememberSideChatTitle(chatId: String): String? {
+    val preferences = com.ai.assistance.operit.data.preferences.OrbitPreferences
+        .getInstance(androidx.compose.ui.platform.LocalContext.current.applicationContext)
+    val settings by preferences.settingsFlow.collectAsState(initial = preferences.snapshot)
+    val untitled = stringResource(R.string.orbit_chats_side_section)
+    return settings.orbits.firstNotNullOfOrNull { orbit -> orbit.sideChats.firstOrNull { it.chatId == chatId } }
+        ?.let { it.title.ifBlank { untitled } }
 }
 
 /** A round pill button; the main action is dark like Orbit's send button, the other is gray. */

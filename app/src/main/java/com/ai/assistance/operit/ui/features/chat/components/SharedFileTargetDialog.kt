@@ -291,13 +291,26 @@ fun SharedIncomingContentHandler(
         onOpenOrbit?.invoke()
     }
 
+    /**
+     * Sends [text] to Orbit; when it cannot take a message now, the text waits in its input box,
+     * after anything already there (an earlier share that also had to wait).
+     */
+    fun deliverToOrbit(orbit: OrbitProfile, text: String) {
+        if (!com.ai.assistance.operit.ui.features.orbit.sendToOrbit(context, orbit, text)) {
+            val core = com.ai.assistance.operit.api.chat.ChatRuntimeHolder.getInstance(context.applicationContext)
+                .getCore(com.ai.assistance.operit.api.chat.ChatRuntimeSlot.MAIN)
+            val draft = core.draftForChat(orbit.chatId).trimEnd()
+            core.setDraftForChat(orbit.chatId, if (draft.isBlank()) text else "$draft\n\n$text")
+        }
+        openOrbit(orbit)
+    }
+
     fun shareTextToOrbit(orbit: OrbitProfile) {
         val text = pendingSharedTextForSelection?.trim()
         pendingSharedTextForSelection = null
         onClearSharedText()
         if (text.isNullOrBlank()) return
-        com.ai.assistance.operit.ui.features.orbit.sendToOrbit(context, orbit, text)
-        openOrbit(orbit)
+        deliverToOrbit(orbit, text)
     }
 
     /** Files go into Orbit's own folder first, then Orbit is told where they are. */
@@ -321,8 +334,7 @@ fun SharedIncomingContentHandler(
                 }
                 val message = listOf(note, resources.getString(R.string.orbit_share_files_message, paths.size,
                     paths.joinToString("\n") { "- $it" })).filter { it.isNotBlank() }.joinToString("\n\n")
-                com.ai.assistance.operit.ui.features.orbit.sendToOrbit(context, orbit, message)
-                openOrbit(orbit)
+                deliverToOrbit(orbit, message)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {

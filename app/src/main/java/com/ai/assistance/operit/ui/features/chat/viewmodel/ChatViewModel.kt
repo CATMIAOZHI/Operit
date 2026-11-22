@@ -2847,6 +2847,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
      * Handles shared files from external apps
      * Attaches files to the selected chat or a newly created chat, then pre-fills the message
      */
+    /** The draft of [chatId] with [text] added after what is already typed, cursor at the end. */
+    private fun mergeIntoDraft(chatId: String, text: String): TextFieldValue {
+        val draft = messageProcessingDelegate.draftForChat(chatId).trimEnd()
+        val merged = if (draft.isBlank() || draft.trim() == text) text else "$draft\n\n$text"
+        return TextFieldValue(merged, androidx.compose.ui.text.TextRange(merged.length))
+    }
+
     fun handleSharedText(text: String, targetChatId: String? = null) {
         val sharedText = text.trim()
         if (sharedText.isBlank()) return
@@ -2862,9 +2869,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     return@launch
                 }
 
-                messageProcessingDelegate.updateUserMessage(
-                    TextFieldValue(sharedText)
-                )
+                // What the user had typed there stays, with the shared text after it.
+                messageProcessingDelegate.setDraftForChat(chatId, mergeIntoDraft(chatId, sharedText))
             } catch (e: Exception) {
                 AppLogger.e(TAG, "处理分享文本失败", e)
                 uiStateDelegate.showErrorMessage(
@@ -2904,23 +2910,19 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 uris.forEachIndexed { index, uri ->
                     val filePath = uri.toString()
                     AppLogger.d(TAG, "Attaching file [$index]: $filePath")
-                    attachmentDelegate.handleAttachment(filePath)
+                    // The whole batch goes to the chat chosen, even if another is opened meanwhile.
+                    attachmentDelegate.handleAttachment(filePath, chatId)
                     delay(100) // Small delay between files
                 }
                 AppLogger.d(TAG, "All files attached successfully")
                 
-                if (messageProcessingDelegate.userMessage.value.text.isBlank()) {
+                val text = sharedText?.trim()
+                if (!text.isNullOrBlank()) {
+                    messageProcessingDelegate.setDraftForChat(chatId, mergeIntoDraft(chatId, text))
+                } else if (messageProcessingDelegate.draftForChat(chatId).isBlank()) {
                     AppLogger.d(TAG, "Setting pre-filled message")
-                    val text = sharedText?.trim()
-                    if (!text.isNullOrBlank()) {
-                        messageProcessingDelegate.updateUserMessage(
-                            TextFieldValue(text)
-                        )
-                    } else {
-                        messageProcessingDelegate.updateUserMessage(
-                            TextFieldValue(context.getString(R.string.chat_prefill_check_file))
-                        )
-                    }
+                    messageProcessingDelegate.setDraftForChat(
+                        chatId, TextFieldValue(context.getString(R.string.chat_prefill_check_file)))
                 }
 
                 // Clear processing state

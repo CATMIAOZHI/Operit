@@ -159,7 +159,8 @@ internal object OrbitWeixin {
     // ---- saved state ----
 
     private fun decode(text: String): State {
-        val o = JSONObject(text)
+        // Message times saved before their repair read as the times the messages have now.
+        val o = JSONObject(com.ai.assistance.operit.data.db.MessageTimeRepair.fix(text))
         fun files(a: JSONArray?) = (0 until (a?.length() ?: 0)).mapNotNull { a?.optJSONObject(it) }.map {
             AttachmentInfo(it.optString("path"), it.optString("name"), it.optString("mime"), it.optLong("size"))
         }
@@ -206,7 +207,7 @@ internal object OrbitWeixin {
 
     private fun readLocked(context: Context, orbitId: String): State? {
         cache?.takeIf { it.first == orbitId }?.let { return it.second }
-        val state = runCatching { store(context, orbitId).read()?.let(::decode) }
+        val state = runCatching { store(context, orbitId).read()?.let { com.ai.assistance.operit.data.db.MessageTimeRepair.ensure(context); decode(it) } }
             .onFailure { AppLogger.w(TAG, "WeChat link could not be read: ${it.message}") }.getOrNull()
         cache = orbitId to state
         return state

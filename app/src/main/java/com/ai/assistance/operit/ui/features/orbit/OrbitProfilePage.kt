@@ -264,7 +264,7 @@ internal fun OrbitProfilePage(
                         onClick = onOpenRawChat,
                     )
                 }
-                activitySection(who, activity, chatTurns, liveTurns, liveAgents, onOpenProcess)
+                activitySection(who, activity, chatTurns, liveTurns, liveAgents, orbit.talkChatIds, onOpenProcess)
             }
             OrbitProfileTab.APPROVALS -> approvalsSection(tasks, approvals, vaultUsage, recordsShown,
                 { recordsShown += APPROVAL_PAGE }, onOpenTask) { openApproval = it }
@@ -906,6 +906,7 @@ private fun LazyListScope.activitySection(
     chat: OrbitChatTurns?,
     live: List<OrbitProcess.LiveTurn>,
     agents: List<OrbitSubagents.LiveOwner>,
+    talkChatIds: Collection<String>,
     onOpenProcess: (OrbitProcess) -> Unit,
 ) {
     if (runs == null) return loading()
@@ -931,7 +932,21 @@ private fun LazyListScope.activitySection(
     val runningRuns = runs.filter { it.state == "RUNNING" || runHasAgents(it) }
     // chat.turns already leaves out the turn being written, so an earlier turn of a busy chat stays here.
     val waitingTurns = chat?.turns.orEmpty().filter { it.usedTools && turnHasAgents(it) }
-    if (runningRuns.isNotEmpty() || live.isNotEmpty() || waitingTurns.isNotEmpty()) {
+    // Agents of Orbit's chats that no listed work owns: their turn ended quietly (a scheduled turn
+    // with nothing to say) or is not listed. They are still going on, so they show on their own.
+    val ownedAgents = agents.filter { owner ->
+        // A reply being written owns what was asked for since it began, the way its record lists them.
+        live.any { it.chatId == owner.chatId && owner.startedAt >= it.since } ||
+            runningRuns.any { OrbitProcess.TaskRun(it.id, it.generation, it.taskId, "", 0L).chatId == owner.chatId } ||
+            waitingTurns.any { turn ->
+                val from = turn.process.timestamps.minOrNull() ?: return@any false
+                val until = turnStarts[turn.process.chatId].orEmpty().firstOrNull { it > from } ?: Long.MAX_VALUE
+                turn.process.chatId == owner.chatId && owner.startedAt >= from && owner.startedAt < until
+            }
+    }.toSet()
+    val loneAgents = agents.filter { it !in ownedAgents && it.chatId in talkChatIds }
+        .mapNotNull { it.agent }.distinctBy { it.chatId }
+    if (runningRuns.isNotEmpty() || live.isNotEmpty() || waitingTurns.isNotEmpty() || loneAgents.isNotEmpty()) {
         item(key = "running-title") { SectionTitle(stringResource(R.string.orbit_profile_running)) }
         items(live, key = { "live-${it.chatId}" }) { turn ->
             Box(Modifier.animateItem()) {
@@ -960,6 +975,18 @@ private fun LazyListScope.activitySection(
             )
             }
         }
+        items(loneAgents, key = { "agent-${it.chatId}" }) { agent ->
+            Box(Modifier.animateItem()) {
+            OrbitListRow(
+                icon = orbitIcon("loader"),
+                title = agent.title.ifBlank { agent.path },
+                detail = stringResource(R.string.orbit_profile_running_agents),
+                meta = clockTime(agent.time),
+                showChevron = true,
+                onClick = { onOpenProcess(agent) },
+            )
+            }
+        }
     }
     // Background runs show at once; the chat turns, read from every chat, join them when ready.
     if (chat == null) loading()
@@ -975,7 +1002,7 @@ private fun LazyListScope.activitySection(
         .take(200)
     if (chat == null && rows.isEmpty()) return
     if (rows.isEmpty() && chat?.failed != true) {
-        if (runningRuns.isEmpty() && live.isEmpty() && waitingTurns.isEmpty()) {
+        if (runningRuns.isEmpty() && live.isEmpty() && waitingTurns.isEmpty() && loneAgents.isEmpty()) {
             item(key = "empty") { EmptyHint(stringResource(R.string.orbit_profile_activity_empty)) }
         }
         return
