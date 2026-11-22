@@ -970,7 +970,7 @@ internal object PhoneBackgroundControl {
             val saved = runCatching {
                 val file = File(app.filesDir, CARDS_FILE)
                 if (!file.exists()) return@runCatching emptyList()
-                val array = JSONArray(file.readText())
+                val array = JSONArray(com.ai.assistance.operit.data.db.MessageTimeRepair.fix(app, file.readText()))
                 (0 until array.length()).map { index ->
                     val o = array.getJSONObject(index)
                     Card(o.getString("talk"), o.getString("screen"), o.getLong("at"), o.optString("app"),

@@ -17,10 +17,11 @@ class AgreementPreferences(context: Context) {
     private val _agreementAcceptedFlow = MutableStateFlow(isAgreementAccepted())
     val agreementAcceptedFlow: StateFlow<Boolean> = _agreementAcceptedFlow.asStateFlow()
 
-    /** Check whether the user has accepted the current agreement version. */
-    fun isAgreementAccepted(): Boolean {
-        return prefs.getString(KEY_ACCEPTED_AGREEMENT_VERSION, null) == CURRENT_AGREEMENT_VERSION
-    }
+    /**
+     * Whether the user has accepted the agreement. Accepting once is enough: a later version of the
+     * agreement is not asked again.
+     */
+    fun isAgreementAccepted(): Boolean = hasAcceptedAnyAgreement()
 
     fun hasAcceptedAnyAgreement(): Boolean =
             !prefs.getString(KEY_ACCEPTED_AGREEMENT_VERSION, null).isNullOrBlank()
@@ -34,7 +35,7 @@ class AgreementPreferences(context: Context) {
     }
 
     companion object {
-        /** Bump this value whenever the user agreement changes substantively. */
+        /** The agreement version shown at first launch; recorded when the user accepts it. */
         const val CURRENT_AGREEMENT_VERSION = "2026-11-20"
     }
 }

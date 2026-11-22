@@ -119,6 +119,12 @@ fun AttachmentChip(
             )
         }
     } else {
+        // A file still waiting to be sent can be looked at too, in the app's own viewers.
+        var previewing by remember(attachmentInfo.filePath) { mutableStateOf(false) }
+        val previewFile = remember(attachmentInfo.filePath) {
+            File(attachmentInfo.filePath).takeIf { it.isAbsolute && it.isFile }
+        }
+        val canOpen = openable && previewFile != null
         Surface(
             modifier =
                 Modifier.height(26.dp)
@@ -126,6 +132,17 @@ fun AttachmentChip(
                         width = 1.dp,
                         color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
                         shape = chipShape,
+                    )
+                    .clip(chipShape)
+                    .then(
+                        if (canOpen) Modifier.clickable(onClickLabel = context.getString(R.string.attachment_edit_open)) {
+                            val file = previewFile ?: return@clickable
+                            val name = attachmentInfo.fileName.ifBlank { file.name }
+                            val preview = com.ai.assistance.operit.ui.features.orbit.OrbitMediaPreview
+                            // The viewer goes by the stored copy's own name; both must agree.
+                            if (preview.canPreview(name) && preview.canPreview(file.name)) previewing = true
+                            else com.ai.assistance.operit.ui.features.orbit.openOrbitFile(context) { file }
+                        } else Modifier
                     ),
             shape = chipShape,
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
@@ -162,6 +179,9 @@ fun AttachmentChip(
                     )
                 }
             }
+        }
+        if (previewing && previewFile != null) {
+            com.ai.assistance.operit.ui.features.orbit.OrbitMediaPreview.Screen(previewFile) { previewing = false }
         }
     }
 }

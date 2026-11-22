@@ -284,6 +284,20 @@ object OrbitDelivery {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
     }
 
+    const val EXTRA_OPEN_ORBIT = "orbit_open_page"
+
+    /** Opens the Orbit page at the chat the user was on last, whichever it is. */
+    fun openOrbitIntent(context: Context): PendingIntent {
+        val intent = Intent(context, MainActivity::class.java).apply {
+            action = PetTasks.ACTION_OPEN_CHAT
+            data = Uri.parse("operit://orbit-delivery/ongoing-page")
+            putExtra(EXTRA_OPEN_ORBIT, true)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        return PendingIntent.getActivity(context, 0, intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+    }
+
     private const val NOTIFY_BLOCKED = "notify_blocked"
 
     private fun tellBlocked(context: Context, orbitId: String) = OrbitNotices.once(context, orbitId, NOTIFY_BLOCKED,

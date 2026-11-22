@@ -134,7 +134,7 @@ internal object OrbitBrowserWatch {
             val saved = runCatching {
                 val file = java.io.File(app.filesDir, CARDS_FILE)
                 if (!file.exists()) return@runCatching emptyList()
-                val array = org.json.JSONArray(file.readText())
+                val array = org.json.JSONArray(com.ai.assistance.operit.data.db.MessageTimeRepair.fix(app, file.readText()))
                 (0 until array.length()).mapNotNull { i ->
                     val o = array.optJSONObject(i) ?: return@mapNotNull null
                     Card(

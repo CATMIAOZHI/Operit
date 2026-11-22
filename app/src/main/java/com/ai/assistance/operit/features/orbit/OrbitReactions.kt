@@ -24,7 +24,7 @@ import org.json.JSONObject
  * chat and bubble, so the chat history itself is not changed. A bubble key is the message time
  * for the message's words, or [pieceKey] for a card inside it.
  */
-internal class OrbitReactions private constructor(private val file: File) {
+internal class OrbitReactions private constructor(private val context: Context, private val file: File) {
     private val mutex = Mutex()
     private val state = MutableStateFlow<Map<String, Map<String, String>>?>(null)
     private val placed = MutableSharedFlow<String>(extraBufferCapacity = 8)
@@ -67,13 +67,25 @@ internal class OrbitReactions private constructor(private val file: File) {
     }
 
     private suspend fun read(): Map<String, Map<String, String>> = state.value ?: withContext(Dispatchers.IO) {
+        // Keys are message times; the database repair must have run before they are translated.
+        com.ai.assistance.operit.data.db.MessageTimeRepair.ensure(context)
         val json = runCatching { JSONObject(file.readText()) }.getOrNull() ?: JSONObject()
         json.keys().asSequence().toList().associateWith { chatId ->
             val chat = json.optJSONObject(chatId) ?: JSONObject()
-            chat.keys().asSequence().toList().map { key -> key to chat.optString(key) }
+            chat.keys().asSequence().toList().map { key -> fixKey(chatId, key) to chat.optString(key) }
                 .filter { it.second.isNotEmpty() }.toMap()
         }
     }.also { state.value = it }
+
+    /** `<time>`, `card:<time>:<n>` or `ui:<time>:<n>` with the message time as it is now. */
+    private fun fixKey(chatId: String, key: String): String {
+        val repair = com.ai.assistance.operit.data.db.MessageTimeRepair
+        key.toLongOrNull()?.let { return repair.fix(chatId, it).toString() }
+        val parts = key.split(':')
+        val time = parts.getOrNull(1)?.toLongOrNull() ?: return key
+        if (parts.size != 3) return key
+        return "${parts[0]}:${repair.fix(chatId, time)}:${parts[2]}"
+    }
 
     private suspend fun write(all: Map<String, Map<String, String>>) {
         val json = JSONObject()
@@ -105,12 +117,12 @@ internal class OrbitReactions private constructor(private val file: File) {
 
         /** Orbit's reactions on the user's messages. */
         fun of(context: Context, orbitId: String): OrbitReactions = instances.computeIfAbsent(orbitId) {
-            OrbitReactions(File(OrbitPreferences.getInstance(context).orbitDir(orbitId), "reactions.json"))
+            OrbitReactions(context.applicationContext, File(OrbitPreferences.getInstance(context).orbitDir(orbitId), "reactions.json"))
         }
 
         /** The user's reactions on Orbit's messages, kept apart from Orbit's own. */
         fun ofUser(context: Context, orbitId: String): OrbitReactions = instances.computeIfAbsent("$orbitId:user") {
-            OrbitReactions(File(OrbitPreferences.getInstance(context).orbitDir(orbitId), "user_reactions.json"))
+            OrbitReactions(context.applicationContext, File(OrbitPreferences.getInstance(context).orbitDir(orbitId), "user_reactions.json"))
         }
 
         /** Forgets the cached copy after the Orbit folder is deleted. */

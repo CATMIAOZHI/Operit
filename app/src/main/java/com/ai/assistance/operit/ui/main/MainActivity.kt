@@ -659,6 +659,10 @@ class MainActivity : ComponentActivity(), com.ai.assistance.operit.ui.components
 
     private fun handleIntent(intent: Intent?): Boolean {
         if (intent?.action == com.ai.assistance.operit.pet.PetTasks.ACTION_OPEN_CHAT) {
+            if (intent.getBooleanExtra(com.ai.assistance.operit.features.orbit.OrbitDelivery.EXTRA_OPEN_ORBIT, false)) {
+                requestMainNavItem(NavItem.Orbit)
+                return true
+            }
             val chatId = intent.getStringExtra(com.ai.assistance.operit.pet.PetTasks.EXTRA_CHAT_ID)
             if (!chatId.isNullOrBlank()) {
                 // An Orbit report opens on the Orbit page; its chats never go into the normal chat screen.
@@ -754,7 +758,12 @@ class MainActivity : ComponentActivity(), com.ai.assistance.operit.ui.components
             }
         }
         if (pendingSharedFileUris != null || !pendingSharedText.isNullOrBlank()) {
-            requestMainNavItem(NavItem.AiChat)
+            // In Orbit mode with a running Orbit, the share lands in the chat open there.
+            val toOrbit = launchModePreferences.mode == AppLaunchMode.ORBIT && runCatching {
+                com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(this)
+                    .loadedSettingsBlocking().active != null
+            }.getOrDefault(false)
+            requestMainNavItem(if (toOrbit) NavItem.Orbit else NavItem.AiChat)
             return true
         }
         return false

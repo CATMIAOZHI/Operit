@@ -2346,8 +2346,8 @@ class AIForegroundService : Service() {
         // The service's own resources follow the phone; the words follow the app's chosen language.
         val text = orbitNoticeText ?: applicationContext
         val flags = PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        // Opens the Orbit at its chat, even when the main app was on screen last.
-        val open = com.ai.assistance.operit.features.orbit.OrbitDelivery.openChatIntent(this, orbit.chatId, "ongoing")
+        // Opens the Orbit, even when the main app was on screen last, at the chat the user was on.
+        val open = com.ai.assistance.operit.features.orbit.OrbitDelivery.openOrbitIntent(this)
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_orbit)
             .setContentTitle(orbit.name.ifBlank { text.getString(R.string.service_app_running, com.ai.assistance.operit.core.application.AppLauncherIdentity.displayName(text)) })

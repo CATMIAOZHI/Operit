@@ -244,13 +244,20 @@ class OrbitChatLinks(
 @Composable
 private fun OrbitRestoresPreviousChat(orbitId: String) {
     val context = LocalContext.current
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
     DisposableEffect(orbitId) {
         val core = ChatRuntimeHolder.getInstance(context.applicationContext).getCore(ChatRuntimeSlot.MAIN)
         val orbitPreferences = OrbitPreferences.getInstance(context.applicationContext)
         fun isThisOrbit(chatId: String?) = orbitPreferences.snapshot.orbitForChat(chatId)?.id == orbitId
-        val previousChatId = core.currentChatId.value?.takeIf { !isThisOrbit(it) }
+        // A page rebuilt without the user leaving it still owes the chat the first one took over.
+        val previousChatId = (core.currentChatId.value?.takeIf { !isThisOrbit(it) } ?: orbitHandBack[orbitId])
+            ?.also { orbitHandBack[orbitId] = it }
         onDispose {
-            if (previousChatId != null) {
+            // Only when the user leaves the page in the app. A page torn down with the screen (the
+            // app in the background, the activity rebuilt) comes back on the same chat; switching
+            // away and back would reload it.
+            if (previousChatId != null && lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
+                orbitHandBack.remove(orbitId)
                 CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate).launch {
                     // Read the settings fresh: a side chat made a moment ago may not be in the snapshot yet.
                     val shown = core.currentChatId.value
@@ -262,6 +269,9 @@ private fun OrbitRestoresPreviousChat(orbitId: String) {
         }
     }
 }
+
+/** The chat each Orbit page took over from the app, kept while the page is only rebuilt. */
+private val orbitHandBack = java.util.concurrent.ConcurrentHashMap<String, String>()
 
 @Composable
 private fun OrbitScreenContent(
@@ -531,12 +541,18 @@ private fun OrbitChatPage(
     var openVaultEntryId by rememberSaveable(orbit.id) { mutableStateOf<String?>(null) }
     // Not saved across process death; the page then just closes back to the profile.
     var openProcess by remember(orbit.id) { mutableStateOf<OrbitProcess?>(null) }
-    // Which of Orbit's chats is shown: the main chat or a side chat. A deleted side chat falls back to main.
-    var talkChatId by rememberSaveable(orbit.id) { mutableStateOf(orbit.chatId) }
+    // Which of Orbit's chats is shown: the main chat or a side chat, at first the one shown last.
+    // A deleted side chat falls back to main.
+    var talkChatId by rememberSaveable(orbit.id) {
+        mutableStateOf(com.ai.assistance.operit.features.orbit.OrbitLastChat.get(context, orbit.id) ?: orbit.chatId)
+    }
     // A side chat made a moment ago may not be in the settings yet; keep showing it meanwhile.
     var justCreatedChatId by remember(orbit.id) { mutableStateOf<String?>(null) }
     LaunchedEffect(orbit.talkChatIds) { if (justCreatedChatId in orbit.talkChatIds) justCreatedChatId = null }
     val currentChatId = talkChatId.takeIf { it in orbit.talkChatIds || it == justCreatedChatId } ?: orbit.chatId
+    LaunchedEffect(orbit.id, currentChatId) {
+        com.ai.assistance.operit.features.orbit.OrbitLastChat.set(context, orbit.id, currentChatId)
+    }
     val currentSide = orbit.sideChats.firstOrNull { it.chatId == currentChatId }
     // Entering the chat, its messages stay hidden until they are loaded, prepared and at the newest
     // one, then show together instead of one by one. On launch the mark opens on them instead.
@@ -774,6 +790,33 @@ private fun OrbitChatPage(
     }
     // The bottom tabs. The chat stays composed under the other tabs so going back never reloads it.
     var tab by rememberSaveable(orbit.id) { mutableStateOf(OrbitTab.CHAT) }
+    // A file or text shared to the app from elsewhere goes into the input box of the chat open
+    // here, as if the user had picked it; they finish the message and decide whether to send.
+    val sharedFiles by com.ai.assistance.operit.ui.main.SharedFileHandler.sharedFiles.collectAsState()
+    val sharedText by com.ai.assistance.operit.ui.main.SharedFileHandler.sharedText.collectAsState()
+    LaunchedEffect(sharedFiles, sharedText) {
+        val handler = com.ai.assistance.operit.ui.main.SharedFileHandler
+        // The chat comes to the front, closing any page over it, so the filled box is in view.
+        fun showChat() {
+            tab = OrbitTab.CHAT
+            com.ai.assistance.operit.features.orbit.OrbitNavigation.openChat(currentChatId)
+        }
+        val files = sharedFiles
+        if (!files.isNullOrEmpty()) {
+            val note = handler.sharedFileText.value
+            handler.clearSharedFiles()
+            handler.clearSharedText()
+            showChat()
+            chatViewModel.handleSharedFiles(files, currentChatId, note)
+            return@LaunchedEffect
+        }
+        val text = sharedText?.trim()
+        if (!text.isNullOrBlank()) {
+            handler.clearSharedText()
+            showChat()
+            chatViewModel.handleSharedText(text, currentChatId)
+        }
+    }
     // A button that asks Orbit for something: its prompt waits in the main chat's input box, and
     // every page over the chat closes so the user can finish it and decide whether to send.
     fun draftToChat(text: String) {
@@ -796,6 +839,9 @@ private fun OrbitChatPage(
             devChatView = false
             devSubChatId = null
             talkChatId = id
+            // A task's "chat" row opens its chat from the task page; the page closes for it.
+            openTaskId = null
+            openSystemTasks = false
             tab = OrbitTab.CHAT
             showProfile = false
             stackNames = ""
@@ -1276,8 +1322,8 @@ private fun OrbitChatPage(
                                 tab = OrbitTab.CHAT
                             },
                             onQuoteFiles = { files ->
-                                // In the main chat's input box, as files the user picked; only their places are sent.
-                                talkChatId = orbit.chatId
+                                // In the input box of the chat the user was last in (main or side), as
+                                // files the user picked; only their places are sent.
                                 tab = OrbitTab.CHAT
                                 chatViewModel.attachOrbitFiles(files)
                             },

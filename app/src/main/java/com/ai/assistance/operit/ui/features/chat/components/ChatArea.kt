@@ -746,7 +746,8 @@ fun ChatArea(
                         val at = item.savedAt ?: maxOf(item.steeringAt, steeringNow)
                         val timeLine = at.takeIf { previous.let { p -> p == null || at - p >= ORBIT_CHAT_TIME_GAP_MS } }
                         previous = at
-                        Triple(item.id, ChatMessage(sender = "user", content = content, timestamp = -2L - item.id), timeLine)
+                        Triple(item.id, ChatMessage(sender = "user", content = content,
+                            timestamp = com.ai.assistance.operit.data.model.ChatMessageTimestampAllocator.placeholder(item.id)), timeLine)
                     }
                 }
             }

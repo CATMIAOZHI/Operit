@@ -52,6 +52,11 @@ import kotlinx.coroutines.flow.collect
 open class DebuggerFileSystemTools(context: Context) : AccessibilityFileSystemTools(context) {
     companion object {
         private const val TAG = "DebuggerFileSystemTools"
+        /** What grep_code copies out through the shell at most when the app cannot read the files itself. */
+        private const val STAGE_MAX_FILES = 2000
+        private const val STAGE_MAX_BYTES = 64L * 1024 * 1024
+        /** Each copy is read whole into memory; larger files are left out. */
+        private const val STAGE_MAX_FILE_KB = 16 * 1024
         internal fun isOperitInternalPath(path: String): Boolean {
             val normalizedPath = path.trim()
             val appPackage = BuildConfig.APPLICATION_ID
@@ -520,6 +525,87 @@ open class DebuggerFileSystemTools(context: Context) : AccessibilityFileSystemTo
 
     /** Read file content */
     override suspend fun readFile(tool: AITool): ToolResult {
+        return readFileInternal(tool)
+    }
+
+    /**
+     * Searching runs in the app's own process, which cannot open what only the shell may read
+     * (another app's Android/data, for one), though read_file reads it through the shell. Then the
+     * files are copied out through the shell and searched the same way, under their own paths.
+     */
+    override suspend fun grepCode(tool: AITool): ToolResult {
+        val result = super.grepCode(tool)
+        if (result.success || !isPermissionDenied(result.error)) return result
+        val environment = tool.parameters.find { it.name == "environment" }?.value
+        if (isLinuxEnvironment(environment) || isSafEnvironment(environment)) return result
+        val path = tool.parameters.find { it.name == "path" }?.value?.trim().orEmpty().trimEnd('/')
+        if (path.isBlank() || isOperitInternalPath(path)) return result
+        val stage = File(context.cacheDir, "grep_stage/${java.util.UUID.randomUUID()}")
+        return try {
+            val staged = stageThroughShell(path, stage,
+                tool.parameters.find { it.name == "file_pattern" }?.value?.trim().orEmpty()) ?: return result
+            val searched = grepCodeWithNativeRipgrep(
+                toolName = tool.name,
+                path = staged.absolutePath,
+                pattern = tool.parameters.find { it.name == "pattern" }?.value.orEmpty(),
+                filePattern = tool.parameters.find { it.name == "file_pattern" }?.value ?: "*",
+                caseInsensitive = tool.parameters.find { it.name == "case_insensitive" }?.value?.toBoolean() ?: false,
+                contextLines = tool.parameters.find { it.name == "context_lines" }?.value?.toIntOrNull() ?: 3,
+                maxResults = tool.parameters.find { it.name == "max_results" }?.value?.toIntOrNull() ?: 100,
+                envLabel = environment.orEmpty().trim().ifBlank { "android" },
+            )
+            val data = searched.result as? com.ai.assistance.operit.core.tools.GrepResultData ?: return searched
+            // The copies' paths read as the files' own.
+            fun original(p: String) = if (staged.isFile) path else path + p.removePrefix(staged.absolutePath)
+            searched.copy(result = data.copy(searchPath = path,
+                matches = data.matches.map { it.copy(filePath = original(it.filePath)) }))
+        } finally {
+            stage.deleteRecursively()
+        }
+    }
+
+    private fun isPermissionDenied(error: String?): Boolean =
+        error != null && (error.contains("Permission denied", ignoreCase = true) || error.contains("os error 13"))
+
+    private fun shellQuote(text: String) = "'" + text.replace("'", "'\\''") + "'"
+
+    /** Copies [path] (a file, or the files under a folder) into [stage]; null when the shell cannot read it. */
+    private suspend fun stageThroughShell(path: String, stage: File, filePattern: String): File? {
+        val quoted = shellQuote(path)
+        val kind = AndroidShellExecutor.executeShellCommand(
+            "if [ -f $quoted ]; then echo f; elif [ -d $quoted ]; then echo d; fi").stdout.trim()
+        // A plain name pattern (*.txt) narrows the copy before the file limit, so matches are not cut.
+        val byName = filePattern.takeIf { it.isNotEmpty() && it != "*" && it.none { c -> c in "/{}," } }
+            ?.let { " -name ${shellQuote(it)}" }.orEmpty()
+        val files = when (kind) {
+            "f", "d" -> AndroidShellExecutor.executeShellCommand(
+                "find $quoted -type f$byName -size -${STAGE_MAX_FILE_KB}k 2>/dev/null | head -n $STAGE_MAX_FILES").stdout
+                .lineSequence().map { it.trim() }
+                .filter { if (kind == "f") it == path else it.startsWith("$path/") }
+                .take(STAGE_MAX_FILES).toList()
+            else -> return null
+        }
+        if (files.isEmpty()) return null
+        var total = 0L
+        for (file in files) {
+            val read = AndroidShellExecutor.executeShellCommand("cat ${shellQuote(file)}")
+            if (!read.success) continue
+            val bytes = read.stdout.toByteArray(Charsets.UTF_8)
+            // Past the total, the rest is left out rather than written.
+            if (total + bytes.size > STAGE_MAX_BYTES) break
+            val target = if (kind == "f") File(stage, File(file).name) else File(stage, file.removePrefix("$path/"))
+            target.parentFile?.mkdirs()
+            target.writeBytes(bytes)
+            total += bytes.size
+        }
+        return when {
+            kind == "f" -> File(stage, File(path).name).takeIf { it.isFile }
+            stage.isDirectory -> stage
+            else -> null
+        }
+    }
+
+    private suspend fun readFileInternal(tool: AITool): ToolResult {
         val environment = tool.parameters.find { it.name == "environment" }?.value
         if (environment == "linux") {
             return super.readFile(tool)
