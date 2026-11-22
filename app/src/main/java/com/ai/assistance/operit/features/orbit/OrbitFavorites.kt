@@ -77,7 +77,9 @@ internal object OrbitFavorites {
     private fun read(context: Context, orbitId: String): List<Favorite> {
         val f = file(context, orbitId)
         if (!f.isFile) return emptyList()
-        val array = runCatching { JSONObject(f.readText()).optJSONArray("items") }.getOrNull() ?: return emptyList()
+        val array = runCatching {
+            JSONObject(com.ai.assistance.operit.data.db.MessageTimeRepair.fix(context, f.readText())).optJSONArray("items")
+        }.getOrNull() ?: return emptyList()
         return (0 until array.length()).mapNotNull { i ->
             val o = array.optJSONObject(i) ?: return@mapNotNull null
             val id = o.optString("id").takeIf { it.isNotEmpty() } ?: return@mapNotNull null

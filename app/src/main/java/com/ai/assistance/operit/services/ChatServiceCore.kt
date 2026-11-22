@@ -146,6 +146,7 @@ class ChatServiceCore(
                 if (::messageProcessingDelegate.isInitialized) {
                     messageProcessingDelegate.setActiveDraftChat(chatId)
                 }
+                attachmentDelegate.setActiveChat(chatId)
                 if (chatId != null) {
                     tokenStatisticsDelegate.bindChatService(
                         chatId,

@@ -533,8 +533,25 @@ internal fun openOrbitFile(context: android.content.Context, fileOf: () -> java.
         val intent = android.content.Intent(android.content.Intent.ACTION_VIEW)
             .setDataAndType(orbitFileUri(context, file), mimeOf(file))
             .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        // Started directly so a phone with no app for this kind of file reports it to us.
-        context.startActivity(intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        // This app takes any file too ("open with"); opening one here would only bring it back as a
+        // share. When the phone would ask or pick this app, the choice leaves this app out.
+        val pm = context.packageManager
+        val own = context.packageName
+        val chosen = pm.resolveActivity(intent, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo?.packageName
+        // "android" / the intent resolver: no default yet, the phone would ask, listing this app.
+        if (chosen == own || chosen == "android" || chosen?.contains("intentresolver") == true) {
+            val handlers = pm.queryIntentActivities(intent, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)
+            if (handlers.none { it.activityInfo.packageName != own }) throw android.content.ActivityNotFoundException()
+            val mine = handlers.filter { it.activityInfo.packageName == own }
+                .map { android.content.ComponentName(own, it.activityInfo.name) }.toTypedArray()
+            context.startActivity(android.content.Intent.createChooser(intent, file.name)
+                .putExtra(android.content.Intent.EXTRA_EXCLUDE_COMPONENTS, mine)
+                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+        } else {
+            // Started directly so a phone with no app for this kind of file reports it to us.
+            context.startActivity(intent)
+        }
     } catch (e: android.content.ActivityNotFoundException) {
         toast(context, R.string.orbit_file_no_app)
     } catch (e: Exception) {

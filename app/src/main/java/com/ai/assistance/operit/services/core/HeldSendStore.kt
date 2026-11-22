@@ -73,7 +73,7 @@ internal object HeldSendStore {
         prefs.edit().apply { left.keys.forEach(::remove) }.commit()
         return left.values.mapNotNull { value ->
             runCatching {
-                val entry = JSONObject(value as String)
+                val entry = JSONObject(com.ai.assistance.operit.data.db.MessageTimeRepair.fix(context, value as String))
                 val list = entry.optJSONArray("attachments") ?: JSONArray()
                 Saved(
                     chatId = entry.getString("chatId"),

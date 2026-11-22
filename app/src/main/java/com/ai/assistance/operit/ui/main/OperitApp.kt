@@ -225,7 +225,12 @@ fun OperitApp(
         val targetEntry = AppRouteCatalog.initialEntry(requestNavItem)
         isNavigatingBack = false
         navigationTransitionSource = NavigationTransitionSource.DEFAULT
-        routerState.resetTo(targetEntry)
+        // Already showing that page: keep it as it is. A new entry would rebuild the page and lose
+        // what it shows (an Orbit's side chat goes back to its main chat, with a reload).
+        if (!(routerState.backStack.size == 1 && currentRouteEntry.routeId == targetEntry.routeId &&
+                currentRouteEntry.args == targetEntry.args)) {
+            routerState.resetTo(targetEntry)
+        }
         lastHandledShortcutRequestId = shortcutNavRequestId
         onShortcutNavHandled(shortcutNavRequestId)
     }

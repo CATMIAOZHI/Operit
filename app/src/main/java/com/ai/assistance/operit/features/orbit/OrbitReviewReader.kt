@@ -54,7 +54,7 @@ internal class OrbitReviewReader private constructor(private val context: Contex
     }
 
     private suspend fun state(): JSONObject {
-        val state = if (file.isFile) runCatching { JSONObject(file.readText()) }
+        val state = if (file.isFile) runCatching { JSONObject(com.ai.assistance.operit.data.db.MessageTimeRepair.fix(context, file.readText())) }
             .getOrElse { JSONObject() } else JSONObject()
         val space = OrbitPreferences.getInstance(context).current().orbits.firstOrNull { it.id == orbitId }?.memorySpaceId
         val cutoff = space?.let { OrbitLearningBoundary.guard(context, it).cutoffTimestamp } ?: 0L

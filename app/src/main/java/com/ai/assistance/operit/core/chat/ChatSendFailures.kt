@@ -89,9 +89,13 @@ object ChatSendFailures {
             val p = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             val loaded = runCatching {
                 val json = JSONObject(p.getString(KEY, null) ?: "{}")
+                com.ai.assistance.operit.data.db.MessageTimeRepair.ensure(context)
                 json.keys().asSequence().associateWith { chat ->
                     val times = json.getJSONArray(chat)
-                    (0 until times.length()).map { times.getLong(it) }.toSet()
+                    // Times saved before their messages' repair read as the times they have now.
+                    (0 until times.length()).map {
+                        com.ai.assistance.operit.data.db.MessageTimeRepair.fix(chat, times.getLong(it))
+                    }.toSet()
                 }.filterValues { it.isNotEmpty() }
             }.getOrDefault(emptyMap())
             _failed.value = loaded

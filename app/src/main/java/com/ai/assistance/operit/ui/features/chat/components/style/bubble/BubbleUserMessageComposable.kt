@@ -720,11 +720,23 @@ fun BubbleUserMessageComposable(
 
     // 内容预览对话框
     if (enableDialogs && showContentPreview.value) {
-        AttachmentViewerDialog(
-            visible = true,
-            attachment = selectedChatAttachment.value,
-            onDismiss = { showContentPreview.value = false }
-        )
+        // In Orbit a file the user sent opens in Orbit's own viewers, like the files Orbit sends.
+        val selected = selectedChatAttachment.value
+        val orbitFile = remember(selected, orbitLook) {
+            selected?.takeIf { orbitLook }?.let { java.io.File(it.id) }?.takeIf {
+                it.isAbsolute && it.isFile &&
+                    com.ai.assistance.operit.ui.features.orbit.OrbitMediaPreview.canPreview(it.name)
+            }
+        }
+        if (orbitFile != null) {
+            com.ai.assistance.operit.ui.features.orbit.OrbitMediaPreview.Screen(orbitFile) { showContentPreview.value = false }
+        } else {
+            AttachmentViewerDialog(
+                visible = true,
+                attachment = selected,
+                onDismiss = { showContentPreview.value = false }
+            )
+        }
     }
 
     // 图片预览对话框

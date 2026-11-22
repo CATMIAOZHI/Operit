@@ -251,7 +251,12 @@ internal object OrbitSubagents {
      * agent asked for the work it is doing (see CollaborationAgent.workSince). Each live agent counts
      * on its own, since a follow-up can set any agent of the tree going from a later turn.
      */
-    data class LiveOwner(val chatId: String, val startedAt: Long)
+    data class LiveOwner(
+        val chatId: String,
+        val startedAt: Long,
+        /** The agent itself, so one no listed work owns can still be shown and opened. */
+        val agent: OrbitProcess.Subagent? = null,
+    )
 
     /**
      * Every subagent still working, traced up to the chat its tree began in (a talk chat or a
@@ -264,7 +269,7 @@ internal object OrbitSubagents {
         val collaboration = com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(context)
         live.map { run ->
             val since = collaboration.workSince(run.childChatId) ?: run.startedAt ?: run.createdAt
-            LiveOwner(topChat(dao, run), since)
+            LiveOwner(topChat(dao, run), since, OrbitProcess.Subagent(run.childChatId, pathOf(run), nameOf(run), since, running = true))
         }.distinct()
     }
 

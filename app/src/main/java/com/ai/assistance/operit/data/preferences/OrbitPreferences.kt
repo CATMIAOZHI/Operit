@@ -93,7 +93,10 @@ data class OrbitSideChat(
     val pinned: Boolean get() = pinnedAt > 0L
 }
 
-data class OrbitChatOrigin(val chatId: String, val messageId: Long)
+data class OrbitChatOrigin(val chatId: String, private val savedMessageId: Long) {
+    /** Read each time: settings may load before the database's time repair has run. */
+    val messageId: Long get() = com.ai.assistance.operit.data.db.MessageTimeRepair.fix(chatId, savedMessageId)
+}
 
 /** The side chats still in the menu, which the side chat limit counts. */
 val OrbitProfile.openSideChats: List<OrbitSideChat> get() = sideChats.filterNot { it.archived }

@@ -67,16 +67,21 @@ object OrbitChatFork {
     }
 
     suspend fun read(context: Context, origin: OrbitChatOrigin, english: Boolean = true): List<Excerpt> = withContext(Dispatchers.IO) {
+        // The database opens (and repairs message times) first; the anchor is read once after.
+        com.ai.assistance.operit.data.db.MessageTimeRepair.ensure(context)
+        val at = origin.messageId
         val sources = AppDatabase.getDatabase(context).messageDao()
-            .getOrbitForkSources(origin.chatId, origin.messageId, SCAN_ROWS)
-        collectExcerpts(sources, origin.messageId, english) { load(context, origin.chatId, it) }
+            .getOrbitForkSources(origin.chatId, at, SCAN_ROWS)
+        collectExcerpts(sources, at, english) { load(context, origin.chatId, it) }
     }
 
     suspend fun source(context: Context, origin: OrbitChatOrigin, english: Boolean): Excerpt? = withContext(Dispatchers.IO) {
+        com.ai.assistance.operit.data.db.MessageTimeRepair.ensure(context)
+        val at = origin.messageId
         val source = AppDatabase.getDatabase(context).messageDao()
-            .getOrbitForkSources(origin.chatId, origin.messageId, 1).firstOrNull { it.timestamp == origin.messageId }
+            .getOrbitForkSources(origin.chatId, at, 1).firstOrNull { it.timestamp == at }
             ?: return@withContext null
-        load(context, origin.chatId, source)?.let { excerpts(listOf(it), origin.messageId, english).firstOrNull() }
+        load(context, origin.chatId, source)?.let { excerpts(listOf(it), at, english).firstOrNull() }
     }
 
     /** A pure card row may be hidden after its card moved to the end of the reply on screen. */

@@ -8,6 +8,8 @@
     <string name="orbit_task_row_watch">关注</string>
     <string name="orbit_task_row_report">汇报方式</string>
     <string name="orbit_task_row_run">怎么执行</string>
+    <string name="orbit_task_row_chat">所在聊天</string>
+    <string name="orbit_task_in_side_chat">在侧聊「%1$s」</string>
     <string name="orbit_task_pause">暂停任务</string>
     <string name="orbit_task_resume">恢复任务</string>
     <string name="orbit_tasks_group_attention">需要你处理</string>

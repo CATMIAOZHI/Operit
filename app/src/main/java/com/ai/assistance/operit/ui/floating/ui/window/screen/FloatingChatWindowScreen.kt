@@ -817,7 +817,10 @@ internal fun ChatMessagesView(
                 it.chatId == currentChatId && (it.savedAt == null || it.savedAt !in times) &&
                     (it.sentSince == null || newestUser < it.sentSince)
             }
-                .map { FloatingSendingItem(it.id, it.at, ChatMessage(sender = "user", content = it.content, timestamp = -2L - it.id)) }
+                .map {
+                    FloatingSendingItem(it.id, it.at, ChatMessage(sender = "user", content = it.content,
+                        timestamp = com.ai.assistance.operit.data.model.ChatMessageTimestampAllocator.placeholder(it.id)))
+                }
         }
     }
     // Orbit's chat has no per-message totals; like a messenger, a time line shows above a message

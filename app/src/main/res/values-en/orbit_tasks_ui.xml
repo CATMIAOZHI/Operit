@@ -8,6 +8,8 @@
     <string name="orbit_task_row_watch">Watches</string>
     <string name="orbit_task_row_report">Reports</string>
     <string name="orbit_task_row_run">How it runs</string>
+    <string name="orbit_task_row_chat">Chat</string>
+    <string name="orbit_task_in_side_chat">In side chat “%1$s”</string>
     <string name="orbit_task_pause">Pause task</string>
     <string name="orbit_task_resume">Resume task</string>
     <string name="orbit_tasks_group_attention">Needs you</string>

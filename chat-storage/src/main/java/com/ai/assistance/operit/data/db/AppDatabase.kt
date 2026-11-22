@@ -1220,6 +1220,7 @@ abstract class AppDatabase : RoomDatabase() {
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE
                 ?: synchronized(this) {
+                    MessageTimeRepair.attach(context.applicationContext.filesDir)
                     val instance =
                         Room.databaseBuilder(
                             context.applicationContext,
@@ -1274,6 +1275,13 @@ abstract class AppDatabase : RoomDatabase() {
                             // personal/dev briefly shipped experimental schemas 21-23. Only those
                             // development inputs are intentionally rebuilt; stable v20 is migrated.
                             .fallbackToDestructiveMigrationFrom(true, 21, 22, 23)
+                            .addCallback(object : RoomDatabase.Callback() {
+                                override fun onOpen(db: SupportSQLiteDatabase) {
+                                    // Never keeps the app from opening its chats; tried again next time.
+                                    runCatching { MessageTimeRepair.repair(db) }
+                                        .onFailure { android.util.Log.e("AppDatabase", "Message time repair failed", it) }
+                                }
+                            })
                             .build()
                     INSTANCE = instance
                     instance

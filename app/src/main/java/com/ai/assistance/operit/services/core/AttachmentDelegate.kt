@@ -46,6 +46,40 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
     val attachments: StateFlow<List<AttachmentInfo>> = _attachments
     private val attachmentListLock = Any()
 
+    /**
+     * Each chat keeps its own unsent attachments, like its typed draft: [_attachments] holds the
+     * open chat's, the others wait here until their chat opens again. A file picked in a side chat
+     * then never goes out with the main chat's next message.
+     */
+    private var activeChatId: String? = null
+    private val otherChats = HashMap<String, List<AttachmentInfo>>()
+
+    /** The chat now open is [chatId]; its attachments show and the previous chat's are kept for it. */
+    fun setActiveChat(chatId: String?) {
+        synchronized(attachmentListLock) {
+            val previous = activeChatId
+            if (previous == chatId) return
+            val current = _attachments.value
+            if (previous != null) {
+                if (current.isEmpty()) otherChats.remove(previous) else otherChats[previous] = current
+            }
+            activeChatId = chatId
+            // Picked before any chat was known: they belong to the first one opened.
+            _attachments.value = chatId?.let { otherChats.remove(it) } ?: if (previous == null) current else emptyList()
+        }
+    }
+
+    /** The chat an attachment being prepared now goes to, even if another chat opens meanwhile. */
+    private fun targetChat(): String? = synchronized(attachmentListLock) { activeChatId }
+
+    private fun listFor(target: String?): List<AttachmentInfo> =
+        if (target == activeChatId) _attachments.value else otherChats[target].orEmpty()
+
+    private fun setList(target: String?, list: List<AttachmentInfo>) {
+        if (target == activeChatId) _attachments.value = list
+        else if (target != null) { if (list.isEmpty()) otherChats.remove(target) else otherChats[target] = list }
+    }
+
     // Events
     private val _toastEvent = MutableSharedFlow<String>(extraBufferCapacity = 1)
     val toastEvent: SharedFlow<String> = _toastEvent
@@ -55,14 +89,15 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
      * the one kept is a quote if either is: a quoted Orbit file must never lose that mark, or its ✕
      * would delete it as an unsent upload.
      */
-    fun addAttachments(attachments: List<AttachmentInfo>): List<AttachmentInfo> {
+    fun addAttachments(attachments: List<AttachmentInfo>, target: String? = targetChat()): List<AttachmentInfo> {
         if (attachments.isEmpty()) return emptyList()
         synchronized(attachmentListLock) {
             val quoted = attachments.filter { it.orbitReference }.mapTo(mutableSetOf()) { it.filePath }
             // An older copy of the same attachment (a queued message, say) still thinks it is an
             // unsent upload; marking it here keeps its ✕ and other cleanups from deleting it.
             quoted.forEach { com.ai.assistance.operit.features.orbit.OrbitUploads.markReferenced(it) }
-            val currentList = _attachments.value.map {
+            val before = listFor(target)
+            val currentList = before.map {
                 if (it.filePath in quoted && !it.orbitReference) it.copy(orbitReference = true) else it
             }
             val existingPaths = currentList.mapTo(mutableSetOf()) { it.filePath }
@@ -81,16 +116,16 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
                             }
                         }
                     }
-            if (toAdd.isNotEmpty() || currentList != _attachments.value) {
-                _attachments.value = currentList + toAdd
+            if (toAdd.isNotEmpty() || currentList != before) {
+                setList(target, currentList + toAdd)
             }
             return toAdd
         }
     }
 
-    private fun appendAttachment(attachment: AttachmentInfo): AttachmentInfo {
+    private fun appendAttachment(attachment: AttachmentInfo, target: String? = targetChat()): AttachmentInfo {
         synchronized(attachmentListLock) {
-            val currentList = _attachments.value
+            val currentList = listFor(target)
             val usedFileNames = currentList.mapTo(mutableSetOf()) { it.fileName }
             val uniqueFileName = uniqueAttachmentFileName(attachment.fileName, usedFileNames)
             val attachmentToAdd =
@@ -99,7 +134,7 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
                     } else {
                         attachment.copy(fileName = uniqueFileName)
                     }
-            _attachments.value = currentList + attachmentToAdd
+            setList(target, currentList + attachmentToAdd)
             return attachmentToAdd
         }
     }
@@ -165,9 +200,10 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
     /** Handles a photo taken by the camera */
     suspend fun handleTakenPhoto(uri: Uri) =
             withContext(Dispatchers.IO) {
+                val target = targetChat()
                 try {
                     val fileName = "camera_${System.currentTimeMillis()}.jpg"
-                    val tempFile = createTempFileFromUri(uri, fileName)
+                    val tempFile = createTempFileFromUri(uri, fileName, chatId = target)
 
                     if (tempFile != null) {
                         AppLogger.d(TAG, "Successfully created temp file from camera URI: ${tempFile.absolutePath}")
@@ -180,7 +216,7 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
                                         fileSize = tempFile.length()
                                 )
 
-                        val addedAttachment = appendAttachment(attachmentInfo)
+                        val addedAttachment = appendAttachment(attachmentInfo, target)
 
                         _toastEvent.emit(context.getString(R.string.attachment_photo_added, addedAttachment.fileName))
                     } else {
@@ -202,6 +238,7 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
      */
     suspend fun attachOrbitFiles(files: List<java.io.File>) =
             withContext(Dispatchers.IO) {
+                val target = targetChat()
                 val found = files.filter { it.isFile }
                 found.forEach {
                     com.ai.assistance.operit.features.orbit.OrbitUploads.retainReference(context, it.absolutePath)
@@ -215,26 +252,28 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
                             fileSize = file.length(),
                             orbitReference = true,
                     )
-                })
+                }, target)
                 val missing = files.size - found.size
                 if (missing > 0) _toastEvent.emit(context.getString(R.string.orbit_quote_files_missing, missing))
             }
 
     /** Handles a file or image attachment selected by the user 确保在IO线程执行所有文件操作 */
-    suspend fun handleAttachment(filePath: String) =
+    suspend fun handleAttachment(filePath: String, targetChatId: String? = null) =
             withContext(Dispatchers.IO) {
+                // Copying can take a while; the file goes to the chat it was picked in.
+                val target = targetChatId ?: targetChat()
                 try {
                     when {
                         filePath == "screen_capture" -> {
-                            captureScreenContent()
+                            captureScreenContent(target)
                             return@withContext
                         }
                         filePath == "notifications_capture" -> {
-                            captureNotifications()
+                            captureNotifications(target = target)
                             return@withContext
                         }
                         filePath == "location_capture" -> {
-                            captureLocation()
+                            captureLocation(target = target)
                             return@withContext
                         }
                         filePath.startsWith(PACKAGE_ATTACHMENT_PREFIX) -> {
@@ -284,7 +323,7 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
                     }
 
                     AppLogger.d(TAG, "Copying attachment source to a local temporary file: $resolvedUri")
-                    val tempFile = createTempFileFromUri(resolvedUri, resolvedFileName)
+                    val tempFile = createTempFileFromUri(resolvedUri, resolvedFileName, chatId = target)
                     pastedCopy?.let {
                         com.ai.assistance.operit.ui.features.chat.components.style.input.common.releaseStagedPaste(context, it)
                     }
@@ -301,7 +340,7 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
                                     mimeType = resolvedMimeType,
                                     fileSize = tempFile.length()
                             )
-                    val addedAttachment = appendAttachment(attachmentInfo)
+                    val addedAttachment = appendAttachment(attachmentInfo, target)
 
                     _toastEvent.emit(context.getString(R.string.attachment_added, addedAttachment.fileName))
                 } catch (e: Exception) {
@@ -311,9 +350,9 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
             }
 
     /** The Orbit whose chat is open, or null for an ordinary chat. Reads settings; call off the main thread. */
-    private fun orbitForCurrentChat(): String? =
+    private fun orbitForCurrentChat(chatId: String? = chatIdProvider()): String? =
         try {
-            com.ai.assistance.operit.features.orbit.OrbitUploads.orbitFor(context, chatIdProvider())
+            com.ai.assistance.operit.features.orbit.OrbitUploads.orbitFor(context, chatId)
         } catch (e: Exception) {
             AppLogger.w(TAG, "Could not tell whether this is an Orbit chat: ${e.message}")
             null
@@ -324,10 +363,12 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
             uri: Uri,
             fileName: String,
             deferTrim: Boolean = false,
+            /** The chat the file is for; its Orbit, if any, keeps the copy. */
+            chatId: String? = chatIdProvider(),
     ): java.io.File? =
             withContext(Dispatchers.IO) {
                 // In an Orbit chat the file goes to that Orbit's own folder, so it lasts.
-                val orbitId = orbitForCurrentChat()
+                val orbitId = orbitForCurrentChat(chatId)
                 if (orbitId != null) {
                     return@withContext try {
                         context.contentResolver.openInputStream(uri)?.use { input ->
@@ -747,10 +788,10 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
         }
     }
 
-    /** Clear all attachments */
-    fun clearAttachments() {
+    /** Clears the attachments of [chatId], by default the chat on screen. */
+    fun clearAttachments(chatId: String? = null) {
         synchronized(attachmentListLock) {
-            _attachments.value = emptyList()
+            setList(chatId ?: activeChatId, emptyList())
         }
     }
 
@@ -762,7 +803,7 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
     }
 
     /** Captures the screen as an image attachment, using the same image path as selected regions. */
-    suspend fun captureScreenContent() = withContext(Dispatchers.IO) {
+    suspend fun captureScreenContent(target: String? = targetChat()) = withContext(Dispatchers.IO) {
         var capturedFile: File? = null
         var attachmentFile: File? = null
         try {
@@ -789,7 +830,7 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
             // Some capture backends reuse short filenames. An attachment must keep its own
             // snapshot until the model reads it, even after subsequent screen captures.
             // In an Orbit chat it goes to that Orbit's Library instead, so it lasts.
-            val orbitId = orbitForCurrentChat()
+            val orbitId = orbitForCurrentChat(target)
             val snapshot = if (orbitId != null) {
                 file.inputStream().use { input ->
                     com.ai.assistance.operit.features.orbit.OrbitUploads.save(context, orbitId, "screenshot.png", input)
@@ -809,7 +850,7 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
                 fileName = "screenshot.png",
                 mimeType = "image/png",
                 fileSize = snapshot.length()
-            ))
+            ), target)
             attachmentFile = null
             _toastEvent.emit(context.getString(R.string.attachment_screen_content_added))
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
@@ -824,7 +865,7 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
     }
 
     /** 获取设备当前通知并作为附件添加到消息 使用get_notifications AITool获取通知数据 确保在IO线程中执行 */
-    suspend fun captureNotifications(limit: Int = 10) =
+    suspend fun captureNotifications(limit: Int = 10, target: String? = targetChat()) =
             withContext(Dispatchers.IO) {
                 try {
                     // 创建工具参数
@@ -856,7 +897,7 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
                                         content = notificationsContent
                                 )
 
-                        appendAttachment(attachmentInfo)
+                        appendAttachment(attachmentInfo, target)
 
                         _toastEvent.emit(context.getString(R.string.attachment_notifications_added))
                     } else {
@@ -869,7 +910,7 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
             }
 
     /** 获取设备当前位置并作为附件添加到消息 使用get_device_location AITool获取位置数据 确保在IO线程中执行 */
-    suspend fun captureLocation(highAccuracy: Boolean = true) =
+    suspend fun captureLocation(highAccuracy: Boolean = true, target: String? = targetChat()) =
             withContext(Dispatchers.IO) {
                 try {
                     // 创建工具参数
@@ -901,7 +942,7 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
                                         content = locationContent
                                 )
 
-                        appendAttachment(attachmentInfo)
+                        appendAttachment(attachmentInfo, target)
 
                         _toastEvent.emit(context.getString(R.string.attachment_location_added))
                     } else {
