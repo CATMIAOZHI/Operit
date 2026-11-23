@@ -26,7 +26,7 @@ internal object OrbitVoiceTools {
 
     val prompt = ToolPrompt(
         name = NAME,
-        description = "把文字做成语音消息（用你的朗读声音，用户在设置里可改成手机系统语音），或用手机自带的语音合成把多人台词做成一段播客式对话，存进 files/voice/，返回可以直接放进回复的 markdown（聊天里会显示成播放器）。" +
+        description = "把文字做成语音消息，或把多人台词做成一段播客式对话，都用云端声音（用户在设置里选了手机自带声音时才用手机语音），存进 files/voice/，返回可以直接放进回复的 markdown（聊天里会显示成播放器）。" +
             "也能查看 App 的语音配置（朗读 tts / 语音输入 stt），并申请换用、新建、删除配置或换密钥（都要用户在卡片上批准，密钥由用户在卡片里填）。" +
             "还能按文字描述用小米 MiMo 设计一个新声音给用户试听，用户满意后申请把它定为你自己的声音。",
         parametersStructured = listOf(
@@ -36,9 +36,9 @@ internal object OrbitVoiceTools {
             ToolParameterSchema("text", description = "speak：要读的文字，最多6000字（约20分钟）；design：试听说的话，最多${OrbitVoice.MAX_SAMPLE_TEXT}字", required = false),
             ToolParameterSchema("description", description = "design：声音描述，如“二十多岁的女生，声音温柔，语速偏慢”，最多${OrbitVoice.MAX_DESCRIPTION}字", required = false),
             ToolParameterSchema("sample", description = "request_own_voice：照着复刻的录音，files/ 里的 mp3 或 wav 路径（design 返回的 path，或用户发来的录音）", required = false),
-            ToolParameterSchema("voice", description = "speak：手机系统声音名（来自 voices，可省略；写了就改用手机系统语音；写了不存在的名字会报错）", required = false),
+            ToolParameterSchema("voice", description = "speak：手机声音名（来自 voices），只在用户选了手机自带声音时能写，可省略", required = false),
             ToolParameterSchema("script", description = "podcast：JSON 数组，如 [{\"speaker\":\"A\",\"text\":\"…\"},{\"speaker\":\"B\",\"text\":\"…\"}]", required = false),
-            ToolParameterSchema("voices", description = "podcast：JSON 对象，说话人到声音名，如 {\"A\":\"zh-cn-x-…\"}；可省略，自动给每人分不同声音", required = false),
+            ToolParameterSchema("voices", description = "podcast：JSON 对象，说话人到声音名（来自 voices），如 {\"A\":\"orbit\",\"B\":\"MiMo·苏打\"}；可省略，自动给每人分不同声音", required = false),
             ToolParameterSchema("title", description = "speak / podcast / design：文件名（不含扩展名），可省略", required = false),
             ToolParameterSchema("kind", description = "request_*：tts（朗读）或 stt（语音输入）", required = false),
             ToolParameterSchema("profile", description = "request_switch / request_key / request_delete：profiles 里的 select；" +
@@ -55,8 +55,10 @@ internal object OrbitVoiceTools {
         ),
         details = """
   - 用户想听而不是看时（比如通勤路上的简报、睡前故事、练口语），或者用户要语音消息时用。
-  - speak 默认用你的朗读声音（profiles 的 orbit_voice，null 表示和 App 的朗读一样）；那个服务做不了文件或出错时，会改用手机系统语音，结果里的 engine 和 note 会写明。用户也可以在 Orbit 设置→语音里把语音消息改成一直用手机系统语音。
-  - podcast 和写了 voice 的 speak 用手机系统的语音引擎，效果取决于手机；中文内容会自动选中文声音。
+  - speak 用你的朗读声音（profiles 的 orbit_voice，null 表示和 App 的朗读一样）。podcast 里第一个说话人默认用你的朗读声音（名字 orbit），其他人自动分到能和它拼成一个文件的云端声音：同一服务的其他朗读配置，你的声音是 MiMo 时还有 MiMo 预置声音。想指定就先用 voices 看有哪些。
+  - 你还没有云端声音时（朗读声音是手机自带的），speak 和 podcast 会报错。这时推荐用户配一个云端声音（最省事的是小米 MiMo），具体怎么配照报错里写的步骤来：你单独选了声音时，在 App 里新建配置不会改到你。用户就想用手机自带声音的话，放 request_settings 卡片，让用户自己打开「发语音用手机自带的声音」。别自己改用手机声音。
+  - 云端声音出错时会直接报错，不会改用手机声音；用一句话告诉用户原因。
+  - 用户选了手机自带声音时，speak 和 podcast 都用手机的语音引擎，效果取决于手机；voice / voices 写手机声音名（来自 voices）。
   - 一个文件最多6000字（podcast 是所有台词加起来）。更长就拆成几段分别生成。
   - 生成后把返回的 markdown 放进回复，用户就能在聊天里直接播放；文件也会出现在构建页的文件里。
   - podcast 的台词要像真人对话：短句、有来有回，每人一段不要太长。
@@ -64,7 +66,7 @@ internal object OrbitVoiceTools {
   - 换用另一个配置用 request_switch；新建用 request_create（新建后马上换用它；从正在用的配置复制设置，换了服务就从空白开始）；换密钥用 request_key；删除用 request_delete（正在用的不能删）。这些都会在聊天里放一张批准卡片，要填密钥时用户在卡片里填，你看不到。放完用一句话结束这一轮，用户批准后你会收到一条隐藏消息说明结果。
   - 服务地址、模型名、音色 ID 按服务商官方文档填，别靠猜；不确定就省略，用户可以之后在设置页里补。VITS 本地模型要从手机文件里选模型包，没法在聊天里配。
   - 语速、音调、请求头这类细项，或者用户想自己慢慢调，用 request_settings 放一张语音设置卡片，用户点它打开设置页。放完用一句话结束这一轮。
-  - 你可以有自己的声音：用于你聊天里的朗读；用户开着「语音消息用朗读声音」时，speak 的语音消息也用它。App 别处不变。
+  - 你可以有自己的声音：用于你聊天里的朗读、speak 的语音消息和 podcast 里的 orbit。App 别处不变。
   - 用户要你换声音或设计声音时（包括用户安排的任务里）：用 design 按描述做一段试听（用 App 里已存的小米 MiMo 密钥，每段都花用户一点钱），把 markdown 放进回复。在聊天里做完就结束这一轮等用户听完；一次只做一段，用户说要改再改描述重做。用户没要求时别自己做。
   - 用户说满意后用 request_own_voice：sample 写那段试听的 path，name 起个名字；批准后照这段录音复刻，之后用它朗读。用户发来的真人录音只在用户明确要求时当 sample。
   - request_own_voice 也可以写 profile 换成已有的朗读配置，或写 follow_app=true 改回和 App 一样。放完卡片用一句话结束这一轮。
@@ -246,9 +248,19 @@ internal object OrbitVoiceTools {
                         .put(com.ai.assistance.operit.features.orbit.OrbitChatCards.KEY,
                             com.ai.assistance.operit.features.orbit.OrbitChatCards.speechSettings(orbit.id)).toString()
                 }
-                "voices" -> JSONArray(OrbitVoice.voices(context).map {
-                    JSONObject().put("name", it.name).put("locale", it.locale).put("needs_network", it.needsNetwork)
-                }).toString()
+                "voices" -> if (OrbitVoice.usesReadAloud(context, orbit.id)) {
+                    val cloud = OrbitVoice.cloudVoices(context, orbit.id)
+                    check(cloud.isNotEmpty()) { OrbitVoice.notSetUp(context, orbit.id) }
+                    JSONObject().put("uses", "cloud").put("voices", JSONArray(cloud.map { v ->
+                        JSONObject().put("name", v.name)
+                            .apply { if (v.locale.isNotEmpty()) put("locale", v.locale) }
+                            .apply { if (v.gender.isNotEmpty()) put("gender", v.gender.lowercase()) }
+                    })).toString()
+                } else {
+                    JSONObject().put("uses", "phone").put("voices", JSONArray(OrbitVoice.voices(context).map {
+                        JSONObject().put("name", it.name).put("locale", it.locale).put("needs_network", it.needsNetwork)
+                    })).toString()
+                }
                 "speak", "podcast" -> {
                     val lines = if (args["action"] == "speak") {
                         listOf(OrbitVoice.Line("voice", args["text"]?.takeIf { it.isNotBlank() } ?: error("speak needs text")))
@@ -276,30 +288,36 @@ internal object OrbitVoiceTools {
                     val stamp = SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(Date())
                     val name = fileTitle(args["title"].orEmpty()) ?: (if (args["action"] == "speak") "voice-$stamp" else "podcast-$stamp")
                     val files = OrbitFiles.of(context, orbit.id)
-                    // A plain voice message is made with the read-aloud voice the user chose, unless
-                    // they set Orbit to the phone's voice or Orbit named a phone voice.
-                    var note: String? = null
-                    // A phone-voice read-aloud profile's own voice, language, speed and pitch.
-                    var style: OrbitVoice.PhoneStyle? = null
-                    if (args["action"] == "speak" && voices.isEmpty() && OrbitVoice.usesReadAloud(context, orbit.id)) {
+                    // Audio is made with cloud voices; the phone's built-in voice only when the user chose it.
+                    if (OrbitVoice.usesReadAloud(context, orbit.id)) {
+                        require(args["action"] == "podcast" || voices.isEmpty()) {
+                            "voice names a phone voice, which is only used when the user chose the phone's own voice; leave it out"
+                        }
                         val made = File(context.cacheDir, "orbit-voice-${UUID.randomUUID()}.audio")
                         try {
-                            when (val r = OrbitVoice.synthesizeWithReadAloud(context, lines[0].text, made, orbit.id)) {
-                                is OrbitVoice.ServiceResult.Made -> {
-                                    val entry = made.inputStream().use { files.saveBytes("files/voice/$name.${r.extension}", it) }
-                                    return@withContext ToolResult(tool.name, true, StringResultData(
-                                        JSONObject().put("path", entry.path).put("chars", lines[0].text.length)
-                                            .put("bytes", entry.size).put("engine", "read_aloud").put("service", r.profile)
-                                            .put("markdown", OrbitFileTools.mediaMarkdown(files.fileFor(entry.path))).toString()))
+                            val (extension, details) = if (args["action"] == "speak") {
+                                when (val r = OrbitVoice.synthesizeWithReadAloud(context, lines[0].text, made, orbit.id)) {
+                                    is OrbitVoice.ServiceResult.Made -> r.extension to JSONObject().put("service", r.profile)
+                                    OrbitVoice.ServiceResult.NotSetUp -> error(OrbitVoice.notSetUp(context, orbit.id))
+                                    is OrbitVoice.ServiceResult.Failed -> error("No audio was made: ${r.reason}. " +
+                                        "Tell the user in one line; do not make it with the phone's voice instead")
                                 }
-                                is OrbitVoice.ServiceResult.Failed -> note = "Made with the phone's own voice because ${r.reason}. " +
-                                    "If the user expected their chosen voice, tell them in one line."
-                                is OrbitVoice.ServiceResult.PhoneVoice -> style = r.style
+                            } else {
+                                val podcast = OrbitVoice.synthesizePodcast(context, lines, voices, made, orbit.id)
+                                podcast.extension to JSONObject().put("lines", lines.size).put("voices", JSONObject(podcast.voices))
+                                    .apply { if (podcast.shared) put("note", "There were not enough different voices, so some speakers share one. Tell the user in one line if it matters.") }
                             }
+                            val entry = made.inputStream().use { files.saveBytes("files/voice/$name.$extension", it) }
+                            return@withContext ToolResult(tool.name, true, StringResultData(
+                                details.put("path", entry.path).put("chars", lines.sumOf { it.text.length })
+                                    .put("bytes", entry.size).put("engine", "cloud")
+                                    .put("markdown", OrbitFileTools.mediaMarkdown(files.fileFor(entry.path))).toString()))
                         } finally {
                             made.delete()
                         }
                     }
+                    // The user chose the phone's voice: a plain message keeps their phone voice settings.
+                    val style = if (args["action"] == "speak" && voices.isEmpty()) OrbitVoice.phoneStyle(context, orbit.id) else null
                     val temp = File(context.cacheDir, "orbit-voice-${UUID.randomUUID()}.wav")
                     try {
                         val used = OrbitVoice.synthesize(context, lines, voices, temp, style)
@@ -308,13 +326,11 @@ internal object OrbitVoiceTools {
                             .put("lines", lines.size).put("bytes", entry.size)
                             .put("engine", "phone")
                             .put("voices", JSONObject(used.mapValues { it.value.ifEmpty { "default" } }))
-                            .apply { note?.let { put("note", it) } }
                             .put("markdown", OrbitFileTools.mediaMarkdown(files.fileFor(entry.path))).toString()
                     } finally {
                         temp.delete()
                     }
-                }
-                else -> error("Unknown action \"${args["action"].orEmpty()}\". Use voices, speak, podcast, profiles, request_switch, " +
+                }                else -> error("Unknown action \"${args["action"].orEmpty()}\". Use voices, speak, podcast, profiles, request_switch, " +
                     "request_create, request_key, request_delete, request_settings, design or request_own_voice.")
             }
             ToolResult(tool.name, true, StringResultData(result))

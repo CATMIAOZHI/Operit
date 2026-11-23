@@ -381,12 +381,21 @@ internal fun OrbitSpeechSettingsPage(orbitId: String, onBack: () -> Unit) {
                 searchable = false,
             )
             com.ai.assistance.operit.ui.features.settings.components.SettingsSwitchRow(
-                title = stringResource(R.string.orbit_voice_read_aloud_title),
-                subtitle = stringResource(if (readAloud) R.string.orbit_voice_read_aloud_on else R.string.orbit_voice_read_aloud_off),
-                checked = readAloud,
+                // Off by default: voice messages use a cloud voice; the phone's only when the user picks it.
+                title = stringResource(R.string.orbit_voice_phone_title),
+                // Nothing about the voice until it has been read, so a missing one never flashes as fine.
+                subtitle = when {
+                    !readAloud -> R.string.orbit_voice_phone_on
+                    voiceState == null -> null
+                    voiceState?.noAudioVoice != true -> R.string.orbit_voice_phone_off
+                    // Chosen for this Orbit alone: setting up the app's voice below would not change it.
+                    voiceState?.own != null -> R.string.orbit_voice_phone_missing_own
+                    else -> R.string.orbit_voice_phone_missing
+                }?.let { stringResource(it) },
+                checked = !readAloud,
                 onCheckedChange = {
-                    readAloud = it
-                    com.ai.assistance.operit.features.orbit.OrbitVoice.setUsesReadAloud(context, orbitId, it)
+                    readAloud = !it
+                    com.ai.assistance.operit.features.orbit.OrbitVoice.setUsesReadAloud(context, orbitId, !it)
                 },
                 searchable = false,
             )

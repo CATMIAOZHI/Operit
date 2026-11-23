@@ -98,17 +98,20 @@ internal object OrbitVoiceProfiles {
         else voice.take(MAX_FIELD)
 
     /** How Orbit names each profile: its name, or name#1, name#2 … when several share one. */
-    fun selectors(all: List<Profile>): Map<String, String> {
-        val counts = all.groupingBy { it.name }.eachCount()
+    fun selectors(all: List<Profile>): Map<String, String> = selectors(all, { it.id }, { it.name })
+
+    /** [selectors] for any list of things with an id and a name, such as already-read read-aloud profiles. */
+    fun <T> selectors(all: List<T>, id: (T) -> String, name: (T) -> String): Map<String, String> {
+        val counts = all.groupingBy(name).eachCount()
         val picks = LinkedHashMap<String, String>()
-        all.filter { counts[it.name] == 1 }.forEach { picks[it.id] = it.name }
+        all.filter { counts[name(it)] == 1 }.forEach { picks[id(it)] = name(it) }
         val used = picks.values.toMutableSet()
-        all.filter { counts[it.name] != 1 }.groupBy { it.name }.forEach { (name, same) ->
+        all.filter { counts[name(it)] != 1 }.groupBy(name).forEach { (shared, same) ->
             var n = 1
             same.forEach { profile ->
-                while ("$name#$n" in used) n++
-                picks[profile.id] = "$name#$n"
-                used += "$name#$n"
+                while ("$shared#$n" in used) n++
+                picks[id(profile)] = "$shared#$n"
+                used += "$shared#$n"
             }
         }
         return picks
