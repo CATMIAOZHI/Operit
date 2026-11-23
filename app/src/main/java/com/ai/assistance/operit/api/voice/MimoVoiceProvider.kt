@@ -277,8 +277,14 @@ class MimoVoiceProvider(
     override suspend fun stop(): Boolean = delegate.stop()
 
     override suspend fun synthesizeToFile(text: String, out: File): Boolean {
+        return synthesizeToFile(text, out, null, null)
+    }
+
+    override suspend fun synthesizeToFile(text: String, out: File, rate: Float?, pitch: Float?): Boolean {
         ensureConfigured()
-        return delegate.synthesizeAudio(text, out, sentenceParams(speechRate, pitch, null), speechRate, pitch)
+        val r = rate ?: speechRate
+        val p = pitch ?: this.pitch
+        return delegate.synthesizeAudio(text, out, sentenceParams(r, p, null), r, p)
     }
 
     override suspend fun pause(): Boolean = delegate.pause()

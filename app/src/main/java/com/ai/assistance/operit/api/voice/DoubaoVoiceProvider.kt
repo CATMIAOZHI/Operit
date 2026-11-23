@@ -63,8 +63,12 @@ class DoubaoVoiceProvider(
     override suspend fun getAvailableVoices(): List<VoiceService.Voice> = AVAILABLE_VOICES
 
     override suspend fun synthesizeToFile(text: String, out: java.io.File): Boolean {
+        return synthesizeToFile(text, out, null, null)
+    }
+
+    override suspend fun synthesizeToFile(text: String, out: java.io.File, rate: Float?, pitch: Float?): Boolean {
         setConfiguration(buildHttpConfig())
-        return synthesizeAudio(text, out, mapOf("voice" to selectedVoiceId, "cluster" to DEFAULT_CLUSTER))
+        return synthesizeAudio(text, out, mapOf("voice" to selectedVoiceId, "cluster" to DEFAULT_CLUSTER), rate, pitch)
     }
 
     override suspend fun setVoice(voiceId: String): Boolean {

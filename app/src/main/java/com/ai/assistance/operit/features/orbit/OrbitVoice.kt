@@ -3,7 +3,22 @@ package com.ai.assistance.operit.features.orbit
 import android.content.Context
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import com.ai.assistance.operit.api.voice.MimoVoiceProvider
+import com.ai.assistance.operit.data.preferences.SpeechServiceProfilesPreferences
+import com.ai.assistance.operit.data.preferences.SpeechServicesPreferences
+import com.ai.assistance.operit.ui.features.settings.screens.FoundSpeechKey
+import com.ai.assistance.operit.ui.features.settings.screens.SpeechKeyFamily
+import com.ai.assistance.operit.ui.features.settings.screens.chatKeySources
+import com.ai.assistance.operit.ui.features.settings.screens.keyEndpointFor
+import com.ai.assistance.operit.ui.features.settings.screens.profileKeySources
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -45,32 +60,141 @@ object OrbitVoice {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean("read_aloud_$orbitId", value).apply()
     }
 
+    /**
+     * The read-aloud profile this Orbit speaks with, chosen for it alone; empty means it uses the
+     * app's read-aloud voice like everything else.
+     */
+    fun ownVoice(context: Context, orbitId: String): String =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("tts_profile_$orbitId", "").orEmpty()
+
+    /** Sets [orbitId]'s own voice and returns the one it had, in one step. */
+    fun setOwnVoice(context: Context, orbitId: String, profileId: String): String = synchronized(ownVoiceLock) {
+        val before = ownVoice(context, orbitId)
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().apply {
+            if (profileId.isEmpty()) remove("tts_profile_$orbitId") else putString("tts_profile_$orbitId", profileId)
+        }.apply()
+        before
+    }
+
+    /** Sets [orbitId]'s own voice to [profileId] only while it still is [expected]. */
+    fun replaceOwnVoice(context: Context, orbitId: String, expected: String, profileId: String): Boolean = synchronized(ownVoiceLock) {
+        if (ownVoice(context, orbitId) != expected) return@synchronized false
+        setOwnVoice(context, orbitId, profileId)
+        true
+    }
+
+    private val ownVoiceLock = Any()
+
+    /** [ownVoice] now and after every change, so a page shows what an approved card just set. */
+    fun ownVoiceFlow(context: Context, orbitId: String): Flow<String> = callbackFlow {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == null || key == "tts_profile_$orbitId") trySend(ownVoice(context, orbitId))
+        }
+        prefs.registerOnSharedPreferenceChangeListener(listener)
+        trySend(ownVoice(context, orbitId))
+        awaitClose { prefs.unregisterOnSharedPreferenceChangeListener(listener) }
+    }.distinctUntilChanged()
+
+    /** A read-aloud profile as a settings page lists it. */
+    data class VoiceChoice(val id: String, val name: String)
+
+    /** What an Orbit's voice row shows: every read-aloud profile, the app's, and the Orbit's own if it still exists. */
+    data class VoiceState(val choices: List<VoiceChoice>, val appVoice: String, val own: VoiceChoice?)
+
+    /**
+     * [orbitId]'s voice for its settings, read in the background and kept current: only names and
+     * ids, so the page never decodes every profile on the main thread.
+     */
+    fun voiceStateFlow(context: Context, orbitId: String): Flow<VoiceState> {
+        val prefs = SpeechServiceProfilesPreferences(context.applicationContext)
+        return combine(prefs.ttsProfilesFlow, prefs.currentTtsProfileIdFlow, ownVoiceFlow(context, orbitId)) { all, app, own ->
+            val choices = all.map { VoiceChoice(it.id, it.name) }
+            VoiceState(choices, choices.firstOrNull { it.id == app }?.name.orEmpty(), choices.firstOrNull { it.id == own })
+        }.distinctUntilChanged().flowOn(Dispatchers.Default)
+    }
+
+    /** [orbitId]'s own read-aloud profile while that profile still exists; null means it uses the app's. */
+    suspend fun ownTtsProfile(context: Context, orbitId: String?): SpeechServiceProfilesPreferences.TtsProfile? {
+        val own = orbitId?.let { ownVoice(context, it) }.orEmpty()
+        if (own.isEmpty()) return null
+        return SpeechServiceProfilesPreferences(context.applicationContext).ttsProfilesFlow.first().firstOrNull { it.id == own }
+    }
+
+    /** The own voice of the Orbit [chatId] belongs to; null for any other chat, or an Orbit using the app's. */
+    suspend fun ownTtsProfileForChat(context: Context, chatId: String?): SpeechServiceProfilesPreferences.TtsProfile? =
+        ownTtsProfile(context, chatId?.let {
+            com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context).snapshot.orbitForChat(it)?.id
+        })
+
+    /** At most this long: a voice description, and the sentence a designed voice says. */
+    const val MAX_DESCRIPTION = 500
+    const val MAX_SAMPLE_TEXT = 200
+
+    /**
+     * A MiMo key already saved in the app, for the address it works at: voice profiles first (the
+     * one in use first), then chat model configs. With [owner], only that saved place counts, so an
+     * approved card uses the very key it named. Returns where the key is saved and the key.
+     */
+    internal suspend fun mimoKey(context: Context, owner: String? = null): Pair<String, FoundSpeechKey>? {
+        val prefs = SpeechServiceProfilesPreferences(context.applicationContext)
+        val current = prefs.currentTtsProfileIdFlow.first()
+        val tts = prefs.ttsProfilesFlow.first().sortedByDescending { it.id == current }
+        fun pick(sources: List<com.ai.assistance.operit.ui.features.settings.screens.SpeechKeySource>): Pair<String, FoundSpeechKey>? {
+            for (s in sources) {
+                if (s.family != SpeechKeyFamily.MIMO || (owner != null && s.owner != owner)) continue
+                val endpoint = keyEndpointFor(SpeechKeyFamily.MIMO, s.url, "") ?: continue
+                return s.owner to FoundSpeechKey(s.key, endpoint, s.name)
+            }
+            return null
+        }
+        // Chat model configs are read only when no voice profile has a key.
+        return pick(profileKeySources(tts, prefs.sttProfilesFlow.first()))
+            ?: if (owner == null || owner.startsWith("chat:")) pick(chatKeySources(context)) else null
+    }
+
+    /** Says [text] into [out] (WAV) in a new voice MiMo makes from [description]. */
+    internal suspend fun designVoice(context: Context, key: FoundSpeechKey, description: String, text: String, out: File) {
+        val config = SpeechServicesPreferences.TtsHttpConfig(
+            urlTemplate = key.endpoint, apiKey = key.key, headers = emptyMap(),
+            modelName = MimoVoiceProvider.Mode.DESIGN.model, instruction = description,
+        )
+        val provider = MimoVoiceProvider(context.applicationContext, config)
+        try {
+            check(provider.synthesizeToFile(text, out) && out.length() > 0) { "MiMo sent no audio" }
+        } finally {
+            provider.shutdown()
+        }
+    }
+
     /** What happened when a voice message was made with the read-aloud service. */
     sealed interface ServiceResult {
         /** Made; [extension] is the audio's file type (mp3, wav, …). [profile] is the service's name. */
         class Made(val extension: String, val profile: String) : ServiceResult
-        /** The read-aloud service is the phone's own voice, so the phone's voice path is used as it is. */
-        object PhoneVoice : ServiceResult
+        /** The read-aloud service is the phone's own voice; [style] is what its profile set. */
+        class PhoneVoice(val style: PhoneStyle) : ServiceResult
         /** The service cannot make files or failed; [reason] says why in a sentence for Orbit. */
         class Failed(val profile: String, val reason: String) : ServiceResult
     }
 
     /**
-     * Speaks [text] into [out] with the app's current read-aloud service, in pieces the service
-     * accepts, joined into one file. Only MP3 and WAV pieces can be joined; a longer text in another
-     * format fails and the caller falls back to the phone's voice.
+     * Speaks [text] into [out] with [orbitId]'s read-aloud voice (its own, else the app's), in pieces
+     * the service accepts, joined into one file. Only MP3 and WAV pieces can be joined; a longer text
+     * in another format fails and the caller falls back to the phone's voice.
      */
-    suspend fun synthesizeWithReadAloud(context: Context, text: String, out: File): ServiceResult {
+    suspend fun synthesizeWithReadAloud(context: Context, text: String, out: File, orbitId: String?): ServiceResult {
         require(text.isNotBlank()) { "Nothing to say" }
         require(text.length <= MAX_CHARS) { "The text has ${text.length} characters; one file allows at most $MAX_CHARS. Split it into several parts" }
-        val profile = com.ai.assistance.operit.data.preferences.SpeechServiceProfilesPreferences(context.applicationContext)
-            .getCurrentTtsProfile()
+        val profile = ownTtsProfile(context, orbitId)
+            ?: SpeechServiceProfilesPreferences(context.applicationContext).getCurrentTtsProfile()
         if (profile.serviceType == com.ai.assistance.operit.api.voice.VoiceServiceFactory.VoiceServiceType.SIMPLE_TTS) {
-            return ServiceResult.PhoneVoice
+            return ServiceResult.PhoneVoice(PhoneStyle(profile.httpConfig.voiceId.trim(), profile.httpConfig.localeTag.trim(),
+                profile.speechRate, profile.pitch))
         }
         val name = profile.name.ifBlank { profile.serviceType.name }
-        // A separate instance: making a file must not stop or replace what is being read aloud.
-        val service = com.ai.assistance.operit.api.voice.VoiceServiceFactory.createVoiceService(context.applicationContext, profile)
+        // A separate instance: making a file must not stop or replace what is being read aloud. It
+        // keeps this profile's own speed and pitch, which some engines would otherwise take from the app's.
+        val service = com.ai.assistance.operit.api.voice.VoiceServiceFactory.createProfileVoiceService(context.applicationContext, profile)
         val temp = File(context.cacheDir, "orbit-voice-${UUID.randomUUID()}").apply { mkdirs() }
         return try {
             val parts = mutableListOf<File>()
@@ -326,8 +450,23 @@ object OrbitVoice {
      * otherwise a different installed voice for the text's language; with only one voice on the
      * phone, speakers are told apart by pitch.
      */
-    /** Returns the voice each speaker got (empty name: the engine's default for the language). */
-    suspend fun synthesize(context: Context, lines: List<Line>, voices: Map<String, String>, out: File): Map<String, String> {
+    /**
+     * How a phone-voice read-aloud profile speaks: its voice (used only if the phone still has it),
+     * language, speed and pitch. Empty voice or language means the automatic choice.
+     */
+    data class PhoneStyle(val voice: String, val locale: String, val rate: Float, val pitch: Float)
+
+    /** Same language and country; engines report either two- or three-letter codes. */
+    private fun sameRegion(a: Locale, b: Locale): Boolean = runCatching {
+        a.isO3Language == b.isO3Language && a.isO3Country == b.isO3Country
+    }.getOrElse { a.language == b.language && a.country.equals(b.country, ignoreCase = true) }
+
+    /**
+     * Returns the voice each speaker got (empty name: the engine's default for the language).
+     * [style] is a read-aloud profile's own way of speaking, for a plain voice message.
+     */
+    suspend fun synthesize(context: Context, lines: List<Line>, voices: Map<String, String>, out: File,
+        style: PhoneStyle? = null): Map<String, String> {
         require(lines.isNotEmpty() && lines.all { it.text.isNotBlank() }) { "Nothing to say" }
         val length = lines.sumOf { it.text.length }
         require(length <= MAX_CHARS) { "The text has $length characters; one file allows at most $MAX_CHARS. Split it into several parts" }
@@ -335,9 +474,15 @@ object OrbitVoice {
             val installed = tts.voices.orEmpty().filter {
                 !it.features.orEmpty().contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) && !it.isNetworkConnectionRequired
             }
-            val language = if (lines.any { line -> line.text.any { Character.UnicodeScript.of(it.code) == Character.UnicodeScript.HAN } })
-                "zh" else Locale.getDefault().language
+            val styleLocale = style?.locale?.takeIf { it.isNotEmpty() }?.let { Locale.forLanguageTag(it) }
+            val language = styleLocale?.language?.takeIf { it.isNotEmpty() }
+                ?: if (lines.any { line -> line.text.any { Character.UnicodeScript.of(it.code) == Character.UnicodeScript.HAN } })
+                    "zh" else Locale.getDefault().language
             val sameLanguage = installed.filter { it.locale.language == language }.sortedBy { it.name }
+            // A profile set to a region (zh-TW, pt-BR) only picks that region's voices; with none
+            // installed the engine chooses one for that exact locale.
+            val pool = if (styleLocale != null && styleLocale.country.isNotEmpty())
+                installed.filter { sameRegion(it.locale, styleLocale) }.sortedBy { it.name } else sameLanguage
             val speakers = lines.map { it.speaker }.distinct()
             voices.forEach { (speaker, wanted) ->
                 require(tts.voices.orEmpty().any { it.name == wanted }) {
@@ -346,7 +491,11 @@ object OrbitVoice {
             }
             val assigned = speakers.mapIndexed { index, speaker ->
                 val named = voices[speaker]?.let { wanted -> tts.voices.orEmpty().firstOrNull { it.name == wanted } }
-                speaker to (named ?: sameLanguage.getOrNull(index % sameLanguage.size.coerceAtLeast(1)))
+                    // The profile's voice, if this phone still has it; otherwise the automatic one.
+                    ?: style?.voice?.takeIf { it.isNotEmpty() }?.let { wanted ->
+                        tts.voices.orEmpty().firstOrNull { it.name == wanted && !it.features.orEmpty().contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) }
+                    }
+                speaker to (named ?: pool.getOrNull(index % pool.size.coerceAtLeast(1)))
             }.toMap()
             val pitches = speakers.mapIndexed { index, speaker ->
                 // Only needed when two speakers share a voice.
@@ -356,12 +505,13 @@ object OrbitVoice {
             val parts = mutableListOf<File>()
             val temp = File(context.cacheDir, "orbit-voice-${UUID.randomUUID()}").apply { mkdirs() }
             try {
+                tts.setSpeechRate(style?.rate ?: 1f)
                 val total = lines.sumOf { it.text.length }.coerceAtLeast(1)
                 var spoken = 0
                 var bytes = 0L
                 lines.forEach { line ->
-                    assigned[line.speaker]?.let { tts.voice = it } ?: tts.setLanguage(Locale.forLanguageTag(language))
-                    tts.setPitch(pitches[line.speaker] ?: 1f)
+                    assigned[line.speaker]?.let { tts.voice = it } ?: tts.setLanguage(styleLocale ?: Locale.forLanguageTag(language))
+                    tts.setPitch((pitches[line.speaker] ?: 1f) * (style?.pitch ?: 1f))
                     chunks(line.text, minOf(CHUNK_CHARS, TextToSpeech.getMaxSpeechInputLength() - 50)).forEach { chunk ->
                         val file = File(temp, "${parts.size}.wav")
                         speakTo(tts, chunk, file)

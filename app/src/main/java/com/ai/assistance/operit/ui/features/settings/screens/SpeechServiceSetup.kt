@@ -412,17 +412,22 @@ internal fun SpeechPreviewButton(enabled: Boolean, busy: Boolean, onClick: () ->
 /** "wav" or "mp3" from a file's first bytes; MiMo takes nothing else. */
 internal fun voiceSampleFormat(head: ByteArray): String? = MimoVoiceProvider.sampleFormat(head)
 
+/** The recording is no longer the one that was approved. */
+internal class SampleChangedException : IllegalStateException("The recording changed")
+
 /**
  * Copies a picked recording into the app so the profile only has to remember its file name.
  * Older recordings no profile or draft still names are removed afterwards.
+ * With [expectedSha256], the copy is kept only if its bytes hash to it (checked on the same read).
  */
-internal suspend fun keepVoiceSample(context: Context, uri: Uri): File = withContext(Dispatchers.IO) {
+internal suspend fun keepVoiceSample(context: Context, uri: Uri, expectedSha256: String? = null): File = withContext(Dispatchers.IO) {
     val dir = MimoVoiceProvider.sampleDir(context).apply { mkdirs() }
     val id = UUID.randomUUID().toString()
     val part = File(dir, "$id.part")
     try {
         val head = ByteArray(12)
         var headSize = 0
+        val digest = expectedSha256?.let { java.security.MessageDigest.getInstance("SHA-256") }
         context.contentResolver.openInputStream(uri)?.use { input ->
             part.outputStream().use { output ->
                 val buffer = ByteArray(64 * 1024)
@@ -439,10 +444,14 @@ internal suspend fun keepVoiceSample(context: Context, uri: Uri): File = withCon
                     if (total > MimoVoiceProvider.MAX_SAMPLE_BYTES) {
                         throw IllegalArgumentException(context.getString(R.string.mimo_tts_error_voice_sample_too_large))
                     }
+                    digest?.update(buffer, 0, n)
                     output.write(buffer, 0, n)
                 }
             }
         } ?: throw IllegalArgumentException(context.getString(R.string.mimo_tts_error_voice_sample_missing))
+        if (digest != null && digest.digest().joinToString("") { "%02x".format(it) } != expectedSha256) {
+            throw SampleChangedException()
+        }
         val ext = voiceSampleFormat(head.copyOf(headSize))
             ?: throw IllegalArgumentException(context.getString(R.string.mimo_clone_sample_format))
         val out = File(dir, "$id.$ext")

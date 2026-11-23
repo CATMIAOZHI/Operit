@@ -186,9 +186,9 @@ class SpeechServiceProfilesPreferences(private val context: Context) {
     }
 
     /**
-     * Creates a TTS profile from an optional existing profile and makes it active.
+     * Creates a TTS profile from an optional existing profile and, with [select], makes it active.
      */
-    suspend fun createTtsProfile(name: String, template: TtsProfile? = null): TtsProfile {
+    suspend fun createTtsProfile(name: String, template: TtsProfile? = null, select: Boolean = true): TtsProfile {
         val normalizedName = requireProfileName(name)
         val now = System.currentTimeMillis()
         val profile = (template ?: getCurrentTtsProfile()).copy(
@@ -200,7 +200,7 @@ class SpeechServiceProfilesPreferences(private val context: Context) {
         dataStore.edit { preferences ->
             val profiles = decodeTtsProfiles(preferences[TTS_PROFILES]) + profile
             preferences[TTS_PROFILES] = json.encodeToString(profiles)
-            preferences[CURRENT_TTS_PROFILE_ID] = profile.id
+            if (select) preferences[CURRENT_TTS_PROFILE_ID] = profile.id
         }
         return profile
     }

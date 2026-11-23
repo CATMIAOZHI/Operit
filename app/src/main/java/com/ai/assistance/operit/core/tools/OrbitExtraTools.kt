@@ -28,7 +28,7 @@ internal object OrbitExtraTools {
         listOf(
             Spec(OrbitFileTools.prompt, true, OrbitFileTools::execute, OrbitFileTools::run),
             Spec(OrbitLogTools.prompt, true, OrbitLogTools::execute),
-            Spec(OrbitVoiceTools.prompt, true, OrbitVoiceTools::execute),
+            Spec(OrbitVoiceTools.prompt, true, OrbitVoiceTools::execute, OrbitVoiceTools::run),
             Spec(OrbitGoalNoteTools.prompt, true, OrbitGoalNoteTools::execute),
             Spec(OrbitDeviceTools.prompt, true, OrbitDeviceTools::execute),
             Spec(OrbitChannelTools.prompt, true, OrbitChannelTools::execute),

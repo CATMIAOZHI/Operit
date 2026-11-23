@@ -707,7 +707,7 @@ class FloatingChatService : Service(), FloatingWindowCallback {
                         } catch (_: Exception) {
                         }
                         try {
-                            VoiceServiceFactory.getInstance(applicationContext).stop()
+                            VoiceServiceFactory.stopAll()
                         } catch (_: Exception) {
                         }
                     } catch (_: Exception) {
@@ -767,7 +767,7 @@ class FloatingChatService : Service(), FloatingWindowCallback {
                         SpeechServiceFactory.getInstance(applicationContext).cancelRecognition()
                     } catch (_: Exception) {
                     }
-                    VoiceServiceFactory.getInstance(applicationContext).stop()
+                    VoiceServiceFactory.stopAll()
                 } catch (_: Exception) {
                 }
             }

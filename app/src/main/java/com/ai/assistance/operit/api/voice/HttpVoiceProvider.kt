@@ -239,6 +239,9 @@ open class HttpVoiceProvider(
 
     override suspend fun synthesizeToFile(text: String, out: File): Boolean = synthesizeAudio(text, out, emptyMap())
 
+    override suspend fun synthesizeToFile(text: String, out: File, rate: Float?, pitch: Float?): Boolean =
+        synthesizeAudio(text, out, emptyMap(), rate, pitch)
+
     /** The audio for [text] written to [out], with [extraParams] filled into the request like [speak]'s. */
     internal suspend fun synthesizeAudio(
         text: String,

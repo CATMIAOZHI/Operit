@@ -183,12 +183,20 @@ class VitsVoiceProvider(
     private val initializeMutex = Mutex()
     private val playbackMutex = Mutex()
     private val stateLock = Any()
+    /**
+     * Held while the model runs and while a session is replaced or closed, so a session is never
+     * closed under a running inference. Always taken before [stateLock], never inside it.
+     */
+    private val sessionLock = Any()
     private val providerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val speakQueue = Channel<SpeakRequest>(Channel.UNLIMITED)
     private val playbackQueue = Channel<PreparedSpeech>(capacity = 1)
     private val stopGeneration = AtomicLong(0)
 
     private var session: OrtSession? = null
+    /** Set once by [shutdown]; written with [stateLock] held. */
+    @Volatile
+    private var closed = false
     private var runtimeConfig: RuntimeConfig? = null
     private var inputBindings: InputBindings? = null
     private var currentSpeakerId: String = config.speakerId.trim()
@@ -272,11 +280,24 @@ class VitsVoiceProvider(
                     throw e
                 }
 
-                session?.close()
-                session = createdSession
-                runtimeConfig = parsedConfig
-                inputBindings = bindings
-                _isInitialized.value = true
+                // Published together with the shutdown check, so a session made while the
+                // provider was being shut down is closed here instead of left open.
+                val published = synchronized(sessionLock) { synchronized(stateLock) {
+                    if (closed) {
+                        false
+                    } else {
+                        session?.close()
+                        session = createdSession
+                        runtimeConfig = parsedConfig
+                        inputBindings = bindings
+                        _isInitialized.value = true
+                        true
+                    }
+                } }
+                if (!published) {
+                    createdSession.close()
+                    return@withLock false
+                }
 
                 AppLogger.d(
                     TAG,
@@ -334,8 +355,8 @@ class VitsVoiceProvider(
             ?: throw TtsException(context.getString(R.string.vits_tts_error_init_failed))
 
         try {
-            val profile = com.ai.assistance.operit.data.preferences.SpeechServiceProfilesPreferences(context.applicationContext).getCurrentTtsProfile()
-            val effectiveRate = request.rate ?: profile.speechRate
+            val effectiveRate = request.rate
+                ?: com.ai.assistance.operit.data.preferences.SpeechServiceProfilesPreferences(context.applicationContext).getCurrentTtsProfile().speechRate
             val ids = tokenize(request.text, activeConfig, request.extraParams)
             if (ids.isEmpty()) {
                 throw TtsException(context.getString(R.string.vits_tts_error_tokenize_failed, "empty token ids"))
@@ -346,7 +367,11 @@ class VitsVoiceProvider(
                 "speak len=${request.text.length} preview=\"${speechPreview(request.text)}\" ids=${ids.size} rate=$effectiveRate pitch=${request.pitch} speaker=$currentSpeakerId"
             )
 
-            val pcm = runModel(activeSession, activeConfig, bindings, ids, effectiveRate)
+            // The session is used only while it is still this provider's, and is not closed meanwhile.
+            val pcm = synchronized(sessionLock) {
+                if (closed || session !== activeSession) throw TtsException(context.getString(R.string.vits_tts_error_init_failed))
+                runModel(activeSession, activeConfig, bindings, ids, effectiveRate)
+            }
             if (pcm.isEmpty()) {
                 throw TtsException(context.getString(R.string.vits_tts_error_output_empty))
             }
@@ -610,6 +635,7 @@ class VitsVoiceProvider(
     }
 
     override fun shutdown() {
+        synchronized(stateLock) { closed = true }
         stopGeneration.incrementAndGet()
         providerScope.cancel()
         clearPendingRequests()
@@ -626,15 +652,18 @@ class VitsVoiceProvider(
         _isSpeaking.value = false
         _isInitialized.value = false
 
-        try {
-            session?.close()
-        } catch (e: Exception) {
-            AppLogger.e(TAG, "Close VITS TTS session failed", e)
-        } finally {
-            session = null
-            runtimeConfig = null
-            inputBindings = null
-        }
+        // Waits for an inference already running (it is not stopped by cancelling the scope).
+        synchronized(sessionLock) { synchronized(stateLock) {
+            try {
+                session?.close()
+            } catch (e: Exception) {
+                AppLogger.e(TAG, "Close VITS TTS session failed", e)
+            } finally {
+                session = null
+                runtimeConfig = null
+                inputBindings = null
+            }
+        } }
     }
 
     override suspend fun getAvailableVoices(): List<VoiceService.Voice> = withContext(Dispatchers.IO) {
