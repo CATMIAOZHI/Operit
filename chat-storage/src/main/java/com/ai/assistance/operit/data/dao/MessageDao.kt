@@ -146,15 +146,14 @@ interface MessageDao {
     @Query("SELECT EXISTS(SELECT 1 FROM messages WHERE chatId = :chatId LIMIT 1)")
     suspend fun existsAnyMessage(chatId: String): Boolean
 
+    /** The chat's newest message time, found at the end of its time index. */
+    @Query("SELECT MAX(timestamp) FROM messages WHERE chatId = :chatId")
+    suspend fun newestTimestamp(chatId: String): Long?
+
     @Query(
         """
         SELECT
-            (
-                SELECT COUNT(*)
-                FROM messages AS earlier
-                WHERE earlier.chatId = messages.chatId
-                    AND earlier.timestamp < messages.timestamp
-            ) AS messageIndex,
+            NULL AS messageIndex,
             timestamp AS timestamp,
             sender AS sender,
             CASE
@@ -172,10 +171,31 @@ interface MessageDao {
         ORDER BY timestamp ASC
         """
     )
-    suspend fun getLocatorPreviewsForChat(
+    suspend fun getLocatorPreviewsForChatUnranked(
         chatId: String,
         previewCharCount: Int,
     ): List<ChatMessageLocatorPreview>
+
+    /**
+     * Every message's preview with its place in the chat: how many messages come before it in time
+     * (rows sharing a time share a place). Counted in one pass over the time-ordered rows; asking
+     * SQLite to count the earlier rows for each row grew with the square of the chat's length.
+     */
+    suspend fun getLocatorPreviewsForChat(
+        chatId: String,
+        previewCharCount: Int,
+    ): List<ChatMessageLocatorPreview> {
+        val rows = getLocatorPreviewsForChatUnranked(chatId, previewCharCount)
+        var place = 0
+        var placeTime = Long.MIN_VALUE
+        return rows.mapIndexed { index, row ->
+            if (index == 0 || row.timestamp != placeTime) {
+                place = index
+                placeTime = row.timestamp
+            }
+            row.copy(messageIndex = place)
+        }
+    }
 
     @Query(
         """

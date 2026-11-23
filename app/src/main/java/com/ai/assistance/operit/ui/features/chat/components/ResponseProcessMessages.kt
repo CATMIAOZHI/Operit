@@ -140,11 +140,7 @@ internal fun windowResponseProcessGroups(
     val structuralMessages = metadata.associateBy { it.timestamp }.toMutableMap()
     // A live/finalized row in memory is newer than the persisted metadata snapshot.
     messages.forEach { message ->
-        structuralMessages[message.timestamp] = ChatMessageProcessMetadata(
-            message.timestamp, message.sender, message.displayMode.name, message.sentAt,
-            if (message.contentStream == null) message.completedAt else 0L,
-            message.waitDurationMs, message.outputDurationMs,
-        )
+        structuralMessages[message.timestamp] = message.processShape()
     }
     val structure = com.ai.assistance.operit.services.core.TranscriptStructure(
         structuralMessages.values.sortedBy { it.timestamp })
@@ -165,6 +161,13 @@ internal fun windowResponseProcessGroups(
     }
 }
 
+/** The fields of a row that decide how replies group; its text plays no part. */
+private fun ChatMessage.processShape() = ChatMessageProcessMetadata(
+    timestamp, sender, displayMode.name, sentAt,
+    if (contentStream == null) completedAt else 0L,
+    waitDurationMs, outputDurationMs,
+)
+
 @Composable
 internal fun rememberResponseProcessState(
     messages: List<ChatMessage>,
@@ -181,11 +184,16 @@ internal fun rememberResponseProcessState(
     collapsePreference?.let { lastCollapsePreference = it }
     val collapse = collapsePreference ?: true
     val snapshot = messages.toList()
-    val allGroups = remember(snapshot, metadata) {
+    // Keyed on the rows' shape, not their text: a reply being written changes its text many times
+    // a second, and regrouping the whole conversation for each change would cost every frame.
+    // A few fields per loaded row, made on each pass; the rows may be a list changed in place, so
+    // its identity cannot tell whether they changed.
+    val shape = snapshot.map { it.processShape() }
+    val allGroups = remember(shape, metadata) {
         windowResponseProcessGroups(snapshot, metadata)
     }
     val groups = allGroups
-    val missingKeys = remember(metadata, snapshot) {
+    val missingKeys = remember(metadata, shape) {
         val present = snapshot.mapTo(hashSetOf()) { it.timestamp }
         com.ai.assistance.operit.services.core.TranscriptStructure(metadata).turns
             .filter { turn -> turn.memberTimestamps.any { it !in present } }

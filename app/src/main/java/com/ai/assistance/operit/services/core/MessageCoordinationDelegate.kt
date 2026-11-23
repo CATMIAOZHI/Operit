@@ -938,11 +938,17 @@ class MessageCoordinationDelegate(
             if (!turnOptions.isCollaborationAgent && !summaryDisabled && turnOptions.persistTurn && !isBackgroundSend &&
                 chatHistoryDelegate.currentChatId.value == chatId && !isContinuation && !skipSummaryCheck &&
                 !otherChatSendSummarizing) {
-                val currentMessages = chatHistoryDelegate.getRuntimeChatHistory(chatId)
+                // The conversation's text is read only when it is needed: to count messages for the
+                // summary check, or to write a summary. Most sends need neither, and a long chat's
+                // text is the costliest thing to read.
+                var loadedMessages: List<ChatMessage>? = null
+                suspend fun currentMessages(): List<ChatMessage> =
+                    loadedMessages ?: chatHistoryDelegate.getRuntimeChatHistory(chatId).also { loadedMessages = it }
                 val currentTokens = pendingWindowSize
 
                 val isShouldGenerateSummary = AIMessageManager.shouldGenerateSummary(
-                    messages = currentMessages,
+                    messages = if (chatContextSettings.enableSummary && chatContextSettings.enableSummaryByMessageCount)
+                        currentMessages() else emptyList(),
                     currentTokens = currentTokens.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
                     maxTokens = maxTokensForSend,
                     tokenUsageThreshold = tokenUsageThresholdForSend,
@@ -969,7 +975,7 @@ class MessageCoordinationDelegate(
                     // Until the summary job takes the slot over, leaving this block gives it back.
                     var slotHandedOver = false
                     try {
-                    val snapshotMessages = currentMessages.toList()
+                    val snapshotMessages = currentMessages().toList()
                     // A summary already written in the background is swapped in when it still fits.
                     val heldSummary = if (isGroupOrchestrationTurn || isGroupChatSession(chatId)) {
                         discardHeldSummary(chatId)

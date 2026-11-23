@@ -9335,7 +9335,7 @@
     <string name="orbit_ideas_empty">%1$s 会按定时任务里的计划，想几个能为你做的点子放在这里。</string>
     <string name="orbit_ideas_ask">现在想几个</string>
     <string name="orbit_idea_build">就这么办</string>
-    <string name="orbit_idea_build_message">就按这个点子来：「%1$s」\n\n%2$s</string>
+    <string name="orbit_idea_quote_sender">点子</string>
     <string name="orbit_idea_expires">%1$d 天后下架</string>
     <string name="orbit_idea_dismiss">关掉这个点子？</string>
     <string name="orbit_idea_dismiss_message">关掉后它不会再出现。</string>
@@ -9938,6 +9938,7 @@
     <string name="orbit_hook_vault_detail">后台检查「%1$s」每次运行时会拿到这些密钥的真实值：%2$s。\n脚本里出现的网址：%3$s\n脚本文件：%4$s\n只允许这次：只放行这个脚本，脚本改了还会再问。始终允许：以后任何 hook 用这些密钥都不再问。</string>
     <string name="orbit_hook_vault_separator">、</string>
     <string name="orbit_vault_usage_title">密钥使用记录</string>
+    <string name="orbit_vault_usage_more">显示其余密钥（还有 %1$d 个）</string>
     <string name="orbit_vault_usage_meta">用了 %1$d 次 · 最近 %2$s</string>
     <string name="orbit_vault_usage_more_callers">等 %1$d 处</string>
     <string name="orbit_vault_usage_caller">%1$s · %2$d 次 · %3$s</string>

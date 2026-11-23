@@ -601,6 +601,15 @@ abstract class ChatContentDao {
     open suspend fun getMessageByTimestamp(chatId: String, timestamp: Long): MessageEntity? =
         queryMessageByTimestamp(chatId, timestamp)?.let { materializeMessage(it) }
 
+    /** Where a stored message sits, without its text: what saving a newer copy of it needs. */
+    data class MessageSlot(val messageId: Long, val orderIndex: Int, val contentEmpty: Boolean)
+
+    @Query(
+        "SELECT messageId, orderIndex, (content IS NULL OR content = '') AS contentEmpty FROM messages " +
+            "WHERE chatId = :chatId AND timestamp = :timestamp LIMIT 1"
+    )
+    abstract suspend fun getMessageSlotByTimestamp(chatId: String, timestamp: Long): MessageSlot?
+
     @Transaction
     open suspend fun getVariantsForChat(chatId: String): List<MessageVariantEntity> =
         materializeVariants(queryVariantsForChat(chatId))

@@ -48,6 +48,8 @@ internal class QueuedTtsPlayback(
     private val isPaused = AtomicBoolean(false)
     private val _isSpeaking = MutableStateFlow(false)
     private var mediaPlayer: MediaPlayer? = null
+    /** Completes when the current player finishes, fails or is stopped; playback waits on it. */
+    private var playerEnded: CompletableDeferred<Unit>? = null
     @Volatile private var preparing: Job? = null
     private val playerLock = Any()
     val isPlayingThroughHeadphones get() = synchronized(playerLock) {
@@ -223,6 +225,8 @@ internal class QueuedTtsPlayback(
         } catch (e: Exception) {
             AppLogger.e(tag, "停止TTS播放失败", e)
             false
+        } finally {
+            playerEnded?.complete(Unit)
         } }
     }
 
@@ -240,6 +244,8 @@ internal class QueuedTtsPlayback(
         }
 
         var ownedPlayer: MediaPlayer? = null
+        val ended = CompletableDeferred<Unit>()
+        var started = false
         return try {
             withContext(Dispatchers.IO) {
                 isPaused.set(false)
@@ -253,24 +259,26 @@ internal class QueuedTtsPlayback(
                                 .setUsage(AudioAttributes.USAGE_MEDIA)
                                 .build()
                         )
+                        setOnCompletionListener { ended.complete(Unit) }
+                        setOnErrorListener { _, _, _ -> ended.complete(Unit); true }
                         setDataSource(fis.fd)
                         prepare()
                     }
                     synchronized(playerLock) {
                         if (isCurrent(request)) {
                             mediaPlayer = mp
+                            playerEnded = ended
                             mp.start()
                             _isSpeaking.value = true
+                            started = true
                         }
                     }
                 }
             }
 
-            ownedPlayer?.let {
-                while (synchronized(playerLock) { isCurrent(request) && (it.isPlaying || isPaused.get()) }) {
-                    delay(100)
-                }
-            }
+            // Waits for the player's own end (or a stop) instead of asking it ten times a second;
+            // a pause simply keeps waiting, as before.
+            if (started) ended.await()
             isCurrent(request)
         } catch (e: CancellationException) { throw e
         } catch (e: Exception) {
@@ -283,6 +291,7 @@ internal class QueuedTtsPlayback(
                 isPaused.set(false)
                 mediaPlayer = null
             }
+            if (playerEnded === ended) playerEnded = null
             ownedPlayer?.apply {
                 try {
                     if (isPlaying) {

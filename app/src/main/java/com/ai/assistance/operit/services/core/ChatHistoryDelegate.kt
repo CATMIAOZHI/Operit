@@ -99,6 +99,7 @@ class ChatHistoryDelegate(
         _chatHistory.value = emptyList()
         _displayedChatId.value = null
         _processMetadata.value = emptyList()
+        structureMemo = null
         currentChatWindow.reset()
     }
 
@@ -139,7 +140,7 @@ class ChatHistoryDelegate(
     }
 
     private fun topLevelMessages(messages: List<ChatMessage>): List<ChatMessage> {
-        val structure = TranscriptStructure(_processMetadata.value)
+        val structure = currentStructure()
         return messages.filter { message ->
             structure.turnByTimestamp[message.timestamp]?.let {
                 it.finalTimestamp == message.timestamp
@@ -149,10 +150,54 @@ class ChatHistoryDelegate(
 
     private fun retainLoadedProcessBodies(logical: List<ChatMessage>): List<ChatMessage> {
         val loaded = _chatHistory.value
-        val retained = TranscriptStructure(_processMetadata.value).retainedTimestamps(
+        val retained = currentStructure().retainedTimestamps(
             logical.mapTo(hashSetOf()) { it.timestamp }, loaded.map { it.timestamp })
         return (logical + loaded.filter { it.timestamp in retained })
             .distinctBy { it.timestamp }.sortedBy { it.timestamp }
+    }
+
+    /**
+     * The structure of the conversation's metadata now shown. Built once per metadata snapshot: it
+     * goes through the whole conversation, and the window is updated on every new message.
+     */
+    @Volatile private var structureMemo: Pair<List<com.ai.assistance.operit.data.model.ChatMessageProcessMetadata>, TranscriptStructure>? = null
+
+    private fun currentStructure(): TranscriptStructure {
+        val metadata = _processMetadata.value
+        structureMemo?.let { (of, structure) -> if (of === metadata) return structure }
+        return TranscriptStructure(metadata).also { structureMemo = metadata to it }
+    }
+
+    /** Pages read for the window, with the metadata snapshot they were picked from. */
+    private class TranscriptPages(val messages: List<ChatMessage>, val known: KnownMetadata)
+
+    /**
+     * The whole conversation's metadata as read once, with the store's message-write count from
+     * just before. A load reuses it for the window it picked instead of reading it a second time.
+     */
+    private class KnownMetadata(
+        val metadata: List<com.ai.assistance.operit.data.model.ChatMessageProcessMetadata>,
+        val writes: Long,
+    )
+
+    private suspend fun readMetadata(chatId: String): KnownMetadata {
+        val writes = chatHistoryManager.messageWriteCount()
+        return KnownMetadata(chatHistoryManager.loadChatMessageProcessMetadata(chatId), writes)
+    }
+
+    /**
+     * Whether [known] still describes [chatId]: no message was saved since it was read, and the
+     * newest message is still its newest (checked in the store itself, since a save is reported to
+     * the write count a moment after it lands). Otherwise the metadata is read again, as before.
+     */
+    private suspend fun stillCurrent(chatId: String, known: KnownMetadata): Boolean {
+        if (chatHistoryManager.messageWriteCount() != known.writes) return false
+        val newest = chatHistoryManager.newestMessageTimestamp(chatId)
+        // Checked again after the lookup: a save reported while it ran counts too. Rows the window
+        // holds are grouped by their own in-memory fields anyway (ResponseProcessMessages), so a
+        // save not yet reported can only leave rows outside the window briefly out of date.
+        return newest == known.metadata.lastOrNull()?.timestamp &&
+            chatHistoryManager.messageWriteCount() == known.writes
     }
 
     private suspend fun refreshCurrentChatDisplayFlags(
@@ -196,8 +241,12 @@ class ChatHistoryDelegate(
         expectedMessages: List<ChatMessage>? = null,
         generation: Long = currentChatWindow.generation(),
         mergePage: Boolean = false,
+        // The snapshot the pages were picked from, when they were just read: the whole
+        // conversation's metadata is not read a second time for the same load.
+        known: KnownMetadata? = null,
     ): List<ChatMessage>? {
-        val metadata = chatHistoryManager.loadChatMessageProcessMetadata(chatId)
+        val metadata = known?.takeIf { stillCurrent(chatId, it) }?.metadata
+            ?: chatHistoryManager.loadChatMessageProcessMetadata(chatId)
         val structure = TranscriptStructure(metadata)
         val present = messages.mapTo(mutableSetOf()) { it.timestamp }
         val missingFinals = messages.mapNotNull { structure.turnByTimestamp[it.timestamp]?.finalTimestamp }
@@ -214,6 +263,9 @@ class ChatHistoryDelegate(
         if (!currentChatWindow.tryApplyLoadResult(
                 committed, _chatHistory, generation, expectedMessages)) return null
         _processMetadata.value = metadata
+        // Only when this very list was kept: an equal list leaves the older one (and its own
+        // structure, if built) in place, and this structure must not hold the other list alive.
+        if (_processMetadata.value === metadata) structureMemo = metadata to structure
         if (_currentChatId.value == chatId) {
             _displayedChatId.value = chatId
             rememberDisplayBounds(chatId, committed.messages)
@@ -235,7 +287,7 @@ class ChatHistoryDelegate(
         chatId: String,
         pageCount: Int,
         endTimestampInclusive: Long? = null,
-    ): List<ChatMessage> {
+    ): TranscriptPages {
         return loadTranscriptPages(chatId, pageCount, upTo = endTimestampInclusive)
     }
 
@@ -243,7 +295,7 @@ class ChatHistoryDelegate(
         chatId: String,
         beforeTimestampExclusive: Long,
         pageCount: Int,
-    ): List<ChatMessage> {
+    ): TranscriptPages {
         return loadTranscriptPages(chatId, pageCount, before = beforeTimestampExclusive)
     }
 
@@ -251,7 +303,7 @@ class ChatHistoryDelegate(
         chatId: String,
         afterTimestampExclusive: Long,
         pageCount: Int,
-    ): List<ChatMessage> {
+    ): TranscriptPages {
         return loadTranscriptPages(chatId, pageCount, after = afterTimestampExclusive)
     }
 
@@ -261,8 +313,10 @@ class ChatHistoryDelegate(
         before: Long? = null,
         after: Long? = null,
         upTo: Long? = null,
-    ): List<ChatMessage> {
-        val structure = TranscriptStructure(chatHistoryManager.loadChatMessageProcessMetadata(chatId))
+        known: KnownMetadata? = null,
+    ): TranscriptPages {
+        val snapshot = known ?: readMetadata(chatId)
+        val structure = TranscriptStructure(snapshot.metadata)
         val candidates = structure.topLevelRows.filter {
             (before == null || it.timestamp < before) && (after == null || it.timestamp > after) &&
                 (upTo == null || it.timestamp <= upTo)
@@ -284,7 +338,7 @@ class ChatHistoryDelegate(
             val finals = timestamps.toHashSet()
             timestamps + structure.turns.filter { it.finalTimestamp in finals }.flatMap { it.memberTimestamps }
         }
-        return chatHistoryManager.loadChatMessagesByTimestamps(chatId, withProcess)
+        return TranscriptPages(chatHistoryManager.loadChatMessagesByTimestamps(chatId, withProcess), snapshot)
     }
 
     suspend fun loadTranscriptProcess(key: Long) {
@@ -314,10 +368,12 @@ class ChatHistoryDelegate(
         pageCount: Int = 1,
     ): List<ChatMessage> {
         val generation = currentChatWindow.generation()
+        val pages = collectNewestDisplayPages(chatId, pageCount.coerceIn(1, MAX_DISPLAY_PAGE_COUNT))
         return applyCurrentChatDisplayWindow(
             chatId = chatId,
-            messages = collectNewestDisplayPages(chatId, pageCount.coerceIn(1, MAX_DISPLAY_PAGE_COUNT)),
+            messages = pages.messages,
             generation = generation,
+            known = pages.known,
         ) ?: _chatHistory.value
     }
 
@@ -333,7 +389,7 @@ class ChatHistoryDelegate(
             // Storage stays authoritative for edits/deletions. A concurrent page/process
             // load invalidates this snapshot; retry rather than discard newly opened rows.
             val reloadedMessages = chatHistoryManager.loadChatMessagesByTimestamps(chatId, timestamps)
-                .ifEmpty { collectNewestDisplayPages(chatId, 1) }
+                .ifEmpty { collectNewestDisplayPages(chatId, 1).messages }
             val committed = applyCurrentChatDisplayWindow(
                 chatId, reloadedMessages, expectedMessages = currentMessages, generation = generation,
             )
@@ -433,16 +489,17 @@ class ChatHistoryDelegate(
             return false
         }
         return try {
-            val structure = TranscriptStructure(chatHistoryManager.loadChatMessageProcessMetadata(chatId))
+            val known = readMetadata(chatId)
+            val structure = TranscriptStructure(known.metadata)
             if (structure.rows.none { it.timestamp == targetTimestamp }) {
                 currentChatWindow.finishLoadingDisplayWindowFailure()
                 return false
             }
             val finalTimestamp = structure.turnByTimestamp[targetTimestamp]?.finalTimestamp ?: targetTimestamp
-            val page = loadTranscriptPages(chatId, 1, upTo = finalTimestamp)
+            val page = loadTranscriptPages(chatId, 1, upTo = finalTimestamp, known = known)
             val target = chatHistoryManager.loadChatMessagesByTimestamps(chatId, listOf(targetTimestamp))
-            val revealedMessages = (page + target).distinctBy { it.timestamp }.sortedBy { it.timestamp }
-            applyCurrentChatDisplayWindow(chatId, revealedMessages, generation = generation)
+            val revealedMessages = (page.messages + target).distinctBy { it.timestamp }.sortedBy { it.timestamp }
+            applyCurrentChatDisplayWindow(chatId, revealedMessages, generation = generation, known = page.known)
             _chatHistory.value.any { it.timestamp == targetTimestamp }
         } catch (e: Exception) {
             currentChatWindow.finishLoadingDisplayWindowFailure(generation)
@@ -468,15 +525,16 @@ class ChatHistoryDelegate(
                     beforeTimestampExclusive = displayStartTimestamp,
                     pageCount = 1,
                 )
-            if (olderPage.isEmpty()) {
+            if (olderPage.messages.isEmpty()) {
                 currentChatWindow.finishLoadingDisplayWindowFailure(generation)
                 false
             } else {
                 applyCurrentChatDisplayWindow(
                     chatId = chatId,
-                    messages = olderPage,
+                    messages = olderPage.messages,
                     generation = generation,
                     mergePage = true,
+                    known = olderPage.known,
                 )
                 true
             }
@@ -514,12 +572,12 @@ class ChatHistoryDelegate(
                             pageCount = 1,
                         )
                     } else {
-                        emptyList()
+                        null
                     }
-                }.orEmpty()
+                }
 
-            applyCurrentChatDisplayWindow(chatId, newerPage, generation = generation,
-                mergePage = true)
+            applyCurrentChatDisplayWindow(chatId, newerPage?.messages.orEmpty(), generation = generation,
+                mergePage = true, known = newerPage?.known)
             true
         } catch (e: CancellationException) {
             currentChatWindow.finishLoadingDisplayWindowFailure(generation)
@@ -700,14 +758,20 @@ class ChatHistoryDelegate(
             chatHistoryManager.repairRepeatedIntermediateMessages(chatId)
             val initialPageCount = latestDisplayPageCountByChatId[chatId] ?: 1
             val bounds = displayBoundsByChatId[chatId]
+            // The rows the chat showed when it was left, when it was left with any. Their exact
+            // times were kept; the whole conversation is gone through only when they were not.
+            var restoredMetadata: KnownMetadata? = null
             val restoredMessages = bounds?.let {
-                val rows = TranscriptStructure(chatHistoryManager.loadChatMessageProcessMetadata(chatId))
-                    .topLevelRows.filter { row -> row.timestamp >= it.first && row.timestamp <= it.second }
-                val timestamps = displayTimestampsByChatId[chatId] ?: rows.map { row -> row.timestamp }
+                val timestamps = displayTimestampsByChatId[chatId] ?: run {
+                    val metadata = readMetadata(chatId).also { m -> restoredMetadata = m }.metadata
+                    TranscriptStructure(metadata).topLevelRows
+                        .filter { row -> row.timestamp >= it.first && row.timestamp <= it.second }
+                        .map { row -> row.timestamp }
+                }
                 chatHistoryManager.loadChatMessagesByTimestamps(chatId, timestamps)
             }.orEmpty()
             val messages = if (restoredMessages.isNotEmpty()) {
-                applyCurrentChatDisplayWindow(chatId, restoredMessages) ?: _chatHistory.value
+                applyCurrentChatDisplayWindow(chatId, restoredMessages, known = restoredMetadata) ?: _chatHistory.value
             } else {
                 loadLatestCurrentChatDisplayWindow(chatId, pageCount = initialPageCount)
             }
@@ -1830,15 +1894,12 @@ class ChatHistoryDelegate(
                 currentDisplayEndTimestamp != null &&
                 persistedSummaryMessage.timestamp > currentDisplayEndTimestamp
             ) {
-                applyCurrentChatDisplayWindow(
+                val pages = collectNewestDisplayPages(
                     chatId = chatId,
-                    messages =
-                        collectNewestDisplayPages(
-                            chatId = chatId,
-                            pageCount = currentPageCount,
-                            endTimestampInclusive = persistedSummaryMessage.timestamp,
-                        ),
+                    pageCount = currentPageCount,
+                    endTimestampInclusive = persistedSummaryMessage.timestamp,
                 )
+                applyCurrentChatDisplayWindow(chatId = chatId, messages = pages.messages, known = pages.known)
             } else if (
                 currentDisplayStartTimestamp != null &&
                 persistedSummaryMessage.timestamp < currentDisplayStartTimestamp

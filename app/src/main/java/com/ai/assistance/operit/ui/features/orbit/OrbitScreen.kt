@@ -1466,11 +1466,15 @@ private fun OrbitChatPage(
             }
         }
         // Above the profile, under pages pushed from it: Orbit's picture always stays on top.
-        // The one avatar plays only while one of its places is in view.
+        // The one avatar plays only while one of its places is in view. With the avatar size set to
+        // hidden the chat and tab headers have no place for it, so there it rests.
+        val headerAvatar = orbit.appearance.avatarSize != com.ai.assistance.operit.data.preferences.OrbitAvatarSize.HIDDEN
+        // The profile stays in view until its closing motion ends; the picture keeps playing so far.
+        val profileOnScreen by remember(sharedAvatar) { androidx.compose.runtime.derivedStateOf { sharedAvatar.profile.value < 1f } }
         OrbitSharedAvatarLayer(
             orbit, sharedAvatar,
-            playing = chatOnScreen || (profileShown && subPage == null) ||
-                (tab != OrbitTab.CHAT && !showProfile && !showChats && stackNames.isEmpty() &&
+            playing = (headerAvatar && chatOnScreen) || ((profileShown || profileOnScreen) && subPage == null) ||
+                (headerAvatar && tab != OrbitTab.CHAT && !showProfile && !showChats && stackNames.isEmpty() &&
                     editingFile == null && !showImport &&
                     lifecycleState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)),
         )

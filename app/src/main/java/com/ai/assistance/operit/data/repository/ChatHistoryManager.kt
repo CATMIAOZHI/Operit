@@ -2403,6 +2403,12 @@ class ChatHistoryManager private constructor(private val context: Context) {
         archivedFavorite: Boolean? = null,
         preserveStructure: Boolean = true,
     ) {
+        // The chat's rows are replaced (an import may carry repeats old versions wrote): it is checked
+        // again. Dropped before the new rows go in, so no check can be skipped in between.
+        synchronized(repairedRuntimeChats) {
+            chatReplacements[history.id] = (chatReplacements[history.id] ?: 0L) + 1
+            repairedRuntimeChats.remove(history.id)
+        }
         val resolvedHistory =
             (
                 if (archiveFormatVersion != null) {
@@ -2923,7 +2929,10 @@ class ChatHistoryManager private constructor(private val context: Context) {
         chatMutex(chatId).withLock {
             try {
                 database.withTransaction {
-                    val existingMessage = chatContentDao.getMessageByTimestamp(chatId, message.timestamp)
+                    // Only the stored row's place and whether it was empty are needed; a reply being
+                    // written is saved about once a second, and reading back its whole text each
+                    // time grew with the reply.
+                    val existingMessage = chatContentDao.getMessageSlotByTimestamp(chatId, message.timestamp)
 
                     if (existingMessage != null) {
                         if (message.selectedVariantIndex > 0) {
@@ -2967,7 +2976,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
 
                         val shouldUpdateChatMetadata =
                             message.contentStream == null ||
-                                (existingMessage.content.isEmpty() && message.content.isNotEmpty())
+                                (existingMessage.contentEmpty && message.content.isNotEmpty())
                         val updatedMessageEntity =
                             MessageEntity.fromChatMessage(
                                 chatId = chatId,
@@ -4355,26 +4364,71 @@ class ChatHistoryManager private constructor(private val context: Context) {
         }
     }
 
-    suspend fun repairRepeatedIntermediateMessages(chatId: String): Int =
-        chatMutex(chatId).withLock {
-            database.withTransaction {
-                messageDao.deleteExactDuplicateIntermediateMessages(chatId)
+    /**
+     * Removes repeated rows old versions wrote. It scans the whole chat, and nothing writes such rows
+     * any more, so it runs once per chat since the app started (or since the last import), whether the
+     * chat is opened or sent in; a failed run is tried again next time.
+     */
+    /**
+     * Counts every committed change to any message or message variant, by anyone (Orbit's own task
+     * code writes messages too). Unchanged since a read means nothing that read could have changed.
+     * Room reports a change shortly after its transaction ends, so a read made in that moment may
+     * not see the count move yet; callers use it to skip repeated work, never to decide what is true.
+     */
+    private val messageWrites = java.util.concurrent.atomic.AtomicLong()
+    @Volatile private var messageWritesTracked = false
+    /** Handed out before tracking starts: never equal to one another, so nothing is reused then. */
+    private val untrackedWrites = java.util.concurrent.atomic.AtomicLong()
+
+    init {
+        // Registering waits for the database (it may open it), so it is done off the caller's thread.
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO).launch {
+            try {
+                database.invalidationTracker.addObserver(
+                    object : androidx.room.InvalidationTracker.Observer(arrayOf("messages", "message_variants")) {
+                        override fun onInvalidated(tables: Set<String>) {
+                            messageWrites.incrementAndGet()
+                        }
+                    }
+                )
+                messageWritesTracked = true
+            } catch (e: Exception) {
+                AppLogger.w(TAG, "Message writes are not tracked: ${e.message}")
             }
         }
+    }
 
-    /**
-     * Chats already checked for old repeated rows since the app started. The repair scans the whole
-     * chat, and nothing writes such rows any more, so it runs once per chat rather than every send.
-     */
+    fun messageWriteCount(): Long =
+        if (messageWritesTracked) messageWrites.get() else -untrackedWrites.incrementAndGet()
+
+    suspend fun newestMessageTimestamp(chatId: String): Long? =
+        withContext(Dispatchers.IO) { messageDao.newestTimestamp(chatId) }
+
+    suspend fun repairRepeatedIntermediateMessages(chatId: String): Int {
+        if (chatId in repairedRuntimeChats) return 0
+        return chatMutex(chatId).withLock {
+            if (chatId in repairedRuntimeChats) return@withLock 0
+            // An import that replaces the chat's rows meanwhile (it may not take this lock) makes
+            // this run not count: the replaced rows are checked again next time.
+            val seen = synchronized(repairedRuntimeChats) { chatReplacements[chatId] ?: 0L }
+            database.withTransaction {
+                messageDao.deleteExactDuplicateIntermediateMessages(chatId)
+            }.also {
+                synchronized(repairedRuntimeChats) {
+                    if ((chatReplacements[chatId] ?: 0L) == seen) repairedRuntimeChats.add(chatId)
+                }
+            }
+        }
+    }
+
     private val repairedRuntimeChats = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    /** How many times each chat's rows were replaced whole since the app started. */
+    private val chatReplacements = HashMap<String, Long>()
 
     suspend fun loadRuntimeChatMessages(chatId: String): List<ChatMessage> {
         return withContext(Dispatchers.IO) {
             try {
-                if (chatId !in repairedRuntimeChats) {
-                    repairRepeatedIntermediateMessages(chatId)
-                    repairedRuntimeChats.add(chatId)
-                }
+                repairRepeatedIntermediateMessages(chatId)
                 val latestSummaryTimestamp = messageDao.getLatestSummaryTimestamp(chatId)
                 val messageEntities =
                     if (latestSummaryTimestamp != null) {
