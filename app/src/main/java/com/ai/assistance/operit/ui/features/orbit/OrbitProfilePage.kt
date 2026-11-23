@@ -163,6 +163,7 @@ internal fun OrbitProfilePage(
     }.collectAsState(initial = emptyList())
     // The approval list keeps every answer; it is shown a page at a time.
     var recordsShown by rememberSaveable(orbit.id) { mutableIntStateOf(APPROVAL_PAGE) }
+    var allKeyUse by rememberSaveable(orbit.id) { mutableStateOf(false) }
     val tasks by remember(orbit.id) { dao.observeTasks(orbit.id).catch { emit(emptyList()) } }
         .collectAsState(initial = null)
     // Work done while chatting. Read when the profile comes into view, then now and then while open.
@@ -266,7 +267,7 @@ internal fun OrbitProfilePage(
                 }
                 activitySection(who, activity, chatTurns, liveTurns, liveAgents, orbit.talkChatIds, onOpenProcess)
             }
-            OrbitProfileTab.APPROVALS -> approvalsSection(tasks, approvals, vaultUsage, recordsShown,
+            OrbitProfileTab.APPROVALS -> approvalsSection(tasks, approvals, vaultUsage, allKeyUse, { allKeyUse = true }, recordsShown,
                 { recordsShown += APPROVAL_PAGE }, onOpenTask) { openApproval = it }
             OrbitProfileTab.BROWSER -> browserSection(who, pages, apps, onOpenApp = { screen ->
                 com.ai.assistance.operit.core.tools.phone.PhoneBackgroundControl.watch(screen.id)
@@ -1100,6 +1101,8 @@ private fun LazyListScope.approvalsSection(
     tasks: List<OrbitTaskEntity>?,
     approvals: List<com.ai.assistance.operit.features.orbit.OrbitApprovals.Approval>?,
     usage: List<com.ai.assistance.operit.features.orbit.OrbitVaultUsage.Key>,
+    allKeyUse: Boolean,
+    onMoreKeyUse: () -> Unit,
     recordsShown: Int,
     onMoreRecords: () -> Unit,
     onOpenTask: (String) -> Unit,
@@ -1141,9 +1144,17 @@ private fun LazyListScope.approvalsSection(
         }
     }
     // Which saved keys were used, one row per key, most recently used first; kept apart from the approvals.
+    // Only the latest few show at first, so the approval records below stay in reach.
     if (usage.isNotEmpty()) {
         item(key = "usage-title") { SectionTitle(stringResource(R.string.orbit_vault_usage_title)) }
-        items(usage, key = { "usage-${it.entryId}" }) { key -> VaultUsageRow(key) }
+        items(if (allKeyUse) usage else usage.take(KEY_USE_SHOWN), key = { "usage-${it.entryId}" }) { key -> VaultUsageRow(key) }
+        if (!allKeyUse && usage.size > KEY_USE_SHOWN) {
+            item(key = "usage-more") {
+                TextButton(onClick = onMoreKeyUse, modifier = Modifier.padding(start = 4.dp)) {
+                    Text(stringResource(R.string.orbit_vault_usage_more, usage.size - KEY_USE_SHOWN))
+                }
+            }
+        }
     }
     if (records.isNotEmpty()) {
         item(key = "actions-title") { SectionTitle(stringResource(R.string.orbit_profile_approval_records)) }
@@ -1172,6 +1183,7 @@ private fun LazyListScope.approvalsSection(
 }
 
 private const val APPROVAL_PAGE = 50
+private const val KEY_USE_SHOWN = 3
 
 /** One saved key's use: tap to see everyone who used it. */
 @Composable

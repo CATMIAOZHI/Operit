@@ -58,11 +58,13 @@ internal object OrbitBoardTools {
         ),
         ToolPrompt(
             name = IDEA,
-            description = "在用户「点子」标签页提出你可以为他做的事或做的东西。用户点「就这么办」只会把 plan 放进他的输入框，" +
-                "他发出来你才收到，由你去做。create 新建；list 查看；update 改图标或分类；done 在你真的做完后把卡片标成已做。你不能替用户关掉卡片。",
+            description = "在用户「点子」标签页提出你可以为他做的事或做的东西。用户点「开始吧」只会把这个点子引用到他的输入框上方，" +
+                "他写好发出来你才收到（reply_to sender=点子，只含标题和说明）；用 read 加 quoted_time=那个 reply_to 的 timestamp 直接拿到这张卡和 plan，再去做。" +
+                "create 新建；list 查看；read 看完整内容含 plan；update 改图标或分类；done 在你真的做完后把卡片标成已做。你不能替用户关掉卡片。",
             parametersStructured = listOf(
                 ToolParameterSchema("action", description = "create/list/read/update/done", required = true),
-                ToolParameterSchema("idea_id", description = "list 返回的 idea_id，read/update/done 必填", required = false),
+                ToolParameterSchema("idea_id", description = "list 返回的 idea_id，update/done 必填；read 时与 quoted_time 二选一", required = false),
+                ToolParameterSchema("quoted_time", description = "read：用户从点子页引用的卡片，填 reply_to 的 timestamp", required = false),
                 ToolParameterSchema("title", description = "create：卡片标题，一句话、15字左右为宜，最多80字符", required = false),
                 ToolParameterSchema("emoji", description = "create 必填、update 可选：标题旁显示的一个 emoji，贴合内容，如 📦 🛡️ 🎁", required = false),
                 ToolParameterSchema("category", description = "create 必填、update 可选：分类，productivity 效率提升、money 财务管理、relationships 人际关系、health 健康与健身、shopping 购物、other 更多点子", required = false),
@@ -244,7 +246,16 @@ internal object OrbitBoardTools {
                                 .put("past_total", pastPage.getInt("total"))
                                 .put("past_next_offset", pastPage.get("next_offset"))
                         }
-                        "read" -> json(item(ideas, "idea_id"), Board.IDEAS)
+                        "read" -> {
+                            // A card the user quoted from the Ideas tab carries its creation time.
+                            val quoted = args["quoted_time"]?.trim()?.takeIf { it.isNotEmpty() }
+                            val idea = if (quoted == null || !args["idea_id"].isNullOrBlank()) item(ideas, "idea_id") else {
+                                val at = quoted.toLongOrNull() ?: error("quoted_time must be the reply_to timestamp, a whole number; got \"$quoted\"")
+                                ideas.listAll().filter { it.createdAt == at }.singleOrNull()
+                                    ?: error("No single idea made at $at; call ${tool.name} with action=list to find it")
+                            }
+                            json(idea, Board.IDEAS)
+                        }
                         "update" -> {
                             val emoji = args["emoji"]?.takeIf { it.isNotBlank() }
                             val category = args["category"]?.takeIf { it.isNotBlank() }

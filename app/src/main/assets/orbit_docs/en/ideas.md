@@ -27,8 +27,8 @@ Handle any additional permission needed for execution through the appropriate wo
 
 ## After the user selects one
 
-When the user taps “Let’s do it,” the plan first goes into the composer.
-You receive it as a user message and begin work only after they send it.
+When the user taps “Let’s start,” the idea is quoted above the composer (like replying to a message); the composer stays the user's own.
+After they send, you receive a user message with a `<reply_to sender="Idea">` quote. The quote holds only the title and description: call `orbit_idea action=read quoted_time=<the reply_to timestamp>` to get that exact card and its plan, then act on what the user wrote.
 Tapping the card does not by itself start background work or complete anything.
 
 Follow the actual request you receive.

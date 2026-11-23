@@ -104,8 +104,8 @@ object OrbitTaskRunner {
         // Tasks fixed to a time of day follow a time zone change before any of them is picked.
         runCatching { repository.refreshCalendarTimeZone(orbit.id) }
             .onFailure { if (it is CancellationException) throw it }
-        val tasks = dao.tasks(orbit.id)
-            .filter { it.state == "ACTIVE" && OrbitTaskRepository.isLongRun(it) == longLane }
+        val tasks = dao.activeTasks(orbit.id)
+            .filter { OrbitTaskRepository.isLongRun(it) == longLane }
             .sortedBy { it.nextRunAt }
         val now = System.currentTimeMillis()
         val boot = bootId(context)

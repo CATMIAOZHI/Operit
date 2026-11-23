@@ -72,6 +72,10 @@ class SiliconFlowVoiceProvider(
 
     // MediaPlayer用于播放音频
     private var mediaPlayer: MediaPlayer? = null
+    /** Guards [mediaPlayer] with [playbackEnded] when a playback starts or is stopped. */
+    private val playbackLock = Any()
+    /** Completes when the current player finishes, fails or is stopped; playback waits on it. */
+    @Volatile private var playbackEnded: kotlinx.coroutines.CompletableDeferred<Unit>? = null
     private var currentPlaybackFile: File? = null
 
     private val speakScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -349,7 +353,7 @@ class SiliconFlowVoiceProvider(
             return false
         }
 
-        return playAudioFileAndAwait(prepared.audioFile)
+        return playAudioFileAndAwait(prepared.audioFile, prepared.request.generation)
     }
 
     private fun clearPendingRequests() {
@@ -368,28 +372,40 @@ class SiliconFlowVoiceProvider(
     }
 
     private fun stopPlaybackOnly(): Boolean {
-        return try {
+        // Under the playback lock the playback is only taken over and its wait ended, so a player
+        // being set up sees the stop before it starts; stopping the player and removing its file
+        // happen after, without holding up anyone waiting for the lock.
+        val (player, file) = synchronized(playbackLock) {
             isPaused.set(false)
-            mediaPlayer?.apply {
-                AppLogger.d(TAG, "stopPlaybackOnly playerExists=true isPlaying=$isPlaying")
-                if (isPlaying) {
-                    stop()
-                }
-                reset()
-                release()
-            }
-            mediaPlayer = null
             _isSpeaking.value = false
-            currentPlaybackFile?.delete()
-            currentPlaybackFile = null
-            true
-        } catch (e: Exception) {
-            AppLogger.e(TAG, "停止播放失败", e)
-            false
+            playbackEnded?.complete(Unit)
+            (mediaPlayer to currentPlaybackFile).also {
+                mediaPlayer = null
+                currentPlaybackFile = null
+            }
         }
+        // Each step stands alone: a player that fails to stop is still released, and its file
+        // still removed, since nothing else holds them any more.
+        var stopped = true
+        if (player != null) {
+            try {
+                AppLogger.d(TAG, "stopPlaybackOnly playerExists=true isPlaying=${player.isPlaying}")
+                if (player.isPlaying) {
+                    player.stop()
+                }
+                player.reset()
+            } catch (e: Exception) {
+                AppLogger.e(TAG, "停止播放失败", e)
+                stopped = false
+            } finally {
+                try { player.release() } catch (e: Exception) { AppLogger.w(TAG, "释放播放器失败", e) }
+            }
+        }
+        try { file?.delete() } catch (e: Exception) { AppLogger.w(TAG, "删除播放文件失败", e) }
+        return stopped
     }
 
-    private suspend fun playAudioFileAndAwait(file: File): Boolean {
+    private suspend fun playAudioFileAndAwait(file: File, generation: Long): Boolean {
         if (!file.exists() || file.length() == 0L) {
             AppLogger.e(TAG, "Audio file is invalid: ${file.absolutePath}")
             return false
@@ -398,12 +414,14 @@ class SiliconFlowVoiceProvider(
         currentPlaybackFile?.delete()
         currentPlaybackFile = file
 
+        val ended = kotlinx.coroutines.CompletableDeferred<Unit>()
         return try {
             AppLogger.d(TAG, "playAudioFileAndAwait start path=${file.absolutePath} size=${file.length()} paused=${isPaused.get()}")
             isPaused.set(false)
-            withContext(Dispatchers.Main) {
-                mediaPlayer?.release()
-                mediaPlayer = MediaPlayer().apply {
+            synchronized(playbackLock) { playbackEnded = ended }
+            val started = withContext(Dispatchers.Main) {
+                synchronized(playbackLock) { mediaPlayer.also { mediaPlayer = null } }?.release()
+                val player = MediaPlayer().apply {
                     setAudioAttributes(
                         AudioAttributes.Builder()
                             .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
@@ -413,33 +431,41 @@ class SiliconFlowVoiceProvider(
                     setDataSource(file.absolutePath)
                     setOnErrorListener { _, what, extra ->
                         AppLogger.e(TAG, "MediaPlayer错误: what=$what, extra=$extra")
+                        ended.complete(Unit)
                         true
                     }
+                    setOnCompletionListener { ended.complete(Unit) }
                     prepare()
-                    start()
                 }
+                // Stopped while it was being set up (or before, once picked from the queue): it is
+                // not started at all.
+                val begun = synchronized(playbackLock) {
+                    if (ended.isCompleted || generation != stopGeneration.get()) false
+                    else { mediaPlayer = player; player.start(); true }
+                }
+                if (!begun) player.release()
+                begun
             }
 
-            _isSpeaking.value = true
-            while (true) {
-                val player = mediaPlayer ?: break
-                if (!player.isPlaying && !isPaused.get()) {
-                    break
-                }
-                delay(100)
+            // Waits for the player's own end (or a stop) instead of asking it ten times a second;
+            // a pause simply keeps waiting, as before.
+            if (started && !ended.isCompleted) {
+                _isSpeaking.value = true
+                ended.await()
             }
             AppLogger.d(TAG, "playAudioFileAndAwait waitLoopExit paused=${isPaused.get()} speaking=${_isSpeaking.value}")
-            true
+            // A playback stopped before its player started did not play.
+            started
         } catch (e: Exception) {
             AppLogger.e(TAG, "播放音频失败", e)
             false
         } finally {
+            synchronized(playbackLock) { if (playbackEnded === ended) playbackEnded = null }
             _isSpeaking.value = false
             isPaused.set(false)
             AppLogger.d(TAG, "playAudioFileAndAwait finally paused=${isPaused.get()} speaking=${_isSpeaking.value}")
             withContext(Dispatchers.Main) {
-                mediaPlayer?.release()
-                mediaPlayer = null
+                synchronized(playbackLock) { mediaPlayer.also { mediaPlayer = null } }?.release()
             }
             currentPlaybackFile?.delete()
             currentPlaybackFile = null

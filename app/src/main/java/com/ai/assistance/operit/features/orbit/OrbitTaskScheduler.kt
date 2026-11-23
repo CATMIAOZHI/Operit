@@ -37,7 +37,7 @@ object OrbitTaskScheduler {
         }
         val repo = OrbitTaskRepository(context)
         val zoneChanged = repo.refreshCalendarTimeZone(active.id)
-        val tasks = repo.dao.tasks(active.id).filter { it.state == "ACTIVE" }
+        val tasks = repo.dao.activeTasks(active.id)
         val now = System.currentTimeMillis()
         var due: Long? = null
         for (task in tasks) {

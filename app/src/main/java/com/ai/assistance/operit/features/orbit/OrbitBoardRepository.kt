@@ -306,7 +306,11 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
             require(list.size <= MAX_SOURCES) { "At most $MAX_SOURCES sources" }
             require(list.all { it.length <= MAX_SOURCE }) { "A source is at most $MAX_SOURCE characters" }
         }
-        val now = System.currentTimeMillis()
+        // No two items of a board share a creation time: a quoted idea is found again by it.
+        val now = System.currentTimeMillis().let { t ->
+            val taken = items.mapTo(HashSet()) { it.createdAt }
+            generateSequence(t) { it + 1 }.first { it !in taken }
+        }
         val imageNames = images.mapIndexed { index, picture -> "${index + 1}.${picture.second}" }
         val item = Item(id, checkTitle(title), checkBody(body), checkExtra(extra), state ?: initialState(), 0, now, now,
             if (board == Board.IDEAS) (expiresAt.takeIf { it > now } ?: (now + IDEA_LIFETIME_MS)) else 0L, emptyList(),

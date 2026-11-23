@@ -311,7 +311,7 @@ internal fun OrbitTabPage(
                             when (tab) {
                                 OrbitTab.CHAT -> Unit
                                 OrbitTab.FEED -> OrbitFeedPage(orbit, data, onDraft, onQuote)
-                                OrbitTab.IDEAS -> OrbitIdeasPage(orbit, data, onDraft)
+                                OrbitTab.IDEAS -> OrbitIdeasPage(orbit, data, onDraft, onQuote)
                                 OrbitTab.GOALS -> OrbitGoalsPage(orbit, data, onOpenTask = { openTaskId = it }, onDraft = onDraft)
                                 OrbitTab.BUILDS -> OrbitBuildsPage(orbit, data, filesVersion, onOpenTask = { openTaskId = it }, onOpenFile = onOpenFile,
                                     onDraft = onDraft, onQuoteFiles = onQuoteFiles)
@@ -1483,10 +1483,16 @@ private const val RECENT_IDEAS = 5
  * New ideas come from the Ideas routine every morning; the button asks it for some now.
  */
 @Composable
-private fun OrbitIdeasPage(orbit: OrbitProfile, data: OrbitTabData, onDraft: (String) -> Unit) {
+private fun OrbitIdeasPage(
+    orbit: OrbitProfile,
+    data: OrbitTabData,
+    onDraft: (String) -> Unit,
+    onQuote: (com.ai.assistance.operit.data.model.ChatMessage) -> Unit,
+) {
     val who = orbitName(orbit)
     val context = LocalContext.current
     val resources = LocalResources.current
+    val quoteSender = stringResource(R.string.orbit_idea_quote_sender)
     val action = rememberAction()
     val repository = data.ideasRepository
     val ideas by data.ideas.collectAsState()
@@ -1573,10 +1579,16 @@ private fun OrbitIdeasPage(orbit: OrbitProfile, data: OrbitTabData, onDraft: (St
         IdeaSheet(
             idea = opened,
             onDismiss = { openedId = null },
-            // Only fills the chat input. The idea stays open until Orbit has really done it.
+            // Quoted above the main chat's input box, like discussing a feed post; the input stays
+            // the user's. The idea stays open until Orbit has really done it.
             onStart = {
                 openedId = null
-                onDraft(resources.getString(R.string.orbit_idea_build_message, opened.title, opened.extra.ifBlank { opened.body }))
+                onQuote(
+                    com.ai.assistance.operit.data.model.ChatMessage(
+                        sender = "ai", content = opened.title + "\n\n" + opened.body,
+                        timestamp = opened.createdAt, roleName = quoteSender,
+                    ),
+                )
             },
             onVote = { vote(opened, it) },
             // Orbit changes the icon: the request waits in the chat input for the user to finish.
@@ -1856,6 +1868,8 @@ private fun OrbitGoalsPage(orbit: OrbitProfile, data: OrbitTabData, onOpenTask: 
     val action = rememberAction()
     val goals by data.goals.collectAsState()
     val tasks by data.tasks.collectAsState()
+    // Each goal's steps in the tasks' own order, found once rather than once per goal row.
+    val stepsByGoal = remember(tasks) { tasks.orEmpty().groupBy { it.goalId } }
     val trackingRepository = data.trackingRepository
     val tracking by data.tracking.collectAsState()
     val notesRepository = data.notesRepository
@@ -1877,7 +1891,7 @@ private fun OrbitGoalsPage(orbit: OrbitProfile, data: OrbitTabData, onOpenTask: 
             goalList == null -> item(key = "loading") { LinearProgressIndicator(Modifier.fillMaxWidth()) }
             goalList.isEmpty() -> item(key = "goalsEmpty") { Hint(stringResource(R.string.orbit_goals_empty)) }
             else -> items(goalList, key = { it.id }) { goal ->
-                val steps = tasks.orEmpty().filter { it.goalId == goal.id }
+                val steps = stepsByGoal[goal.id].orEmpty()
                 OrbitListRow(
                     icon = orbitIcon(if (goal.state == "ACTIVE") "target" else "circle-pause"),
                     title = goal.title,
@@ -1933,7 +1947,7 @@ private fun OrbitGoalsPage(orbit: OrbitProfile, data: OrbitTabData, onOpenTask: 
                         }
                     }) { Text(stringResource(if (goal.state == "ACTIVE") R.string.pause else R.string.orbit_resume)) }
                 }
-                val steps = tasks.orEmpty().filter { it.goalId == goal.id }
+                val steps = stepsByGoal[goal.id].orEmpty()
                 Text(stringResource(R.string.orbit_goal_steps), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 if (steps.isEmpty()) {
                     Text(

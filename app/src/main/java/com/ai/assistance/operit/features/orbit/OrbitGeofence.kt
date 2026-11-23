@@ -134,7 +134,7 @@ object OrbitGeofence {
         val active = com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context)
             .current().active?.takeUnless { it.deleting } ?: return emptyList()
         val dao = OrbitTaskRepository(context).dao
-        return dao.tasks(active.id).filter { it.kind == KIND && it.state == "ACTIVE" &&
+        return dao.activeTasks(active.id).filter { it.kind == KIND &&
             (it.goalId.isEmpty() || dao.goal(it.goalId)?.state == "ACTIVE") }
     }
 

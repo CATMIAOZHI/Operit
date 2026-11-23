@@ -173,11 +173,28 @@ class OrbitPreferences private constructor(context: Context) {
     private val appContext = context.applicationContext
     private val dataStore = appContext.orbitDataStore
 
+    /**
+     * The last decoded Orbit list and chat owners, with the stored text they came from. Every reader
+     * of the settings (pages, the snapshot, a task's heartbeat every 20 seconds) maps the same stored
+     * text; it is decoded once until it changes. The decoded values are never changed in place.
+     */
+    @Volatile private var decodedOrbits: Pair<String?, List<OrbitProfile>>? = null
+    @Volatile private var decodedOwners: Pair<String?, Map<String, String>>? = null
+
+    private fun orbitsOf(raw: String?): List<OrbitProfile> =
+        decodedOrbits?.takeIf { it.first == raw }?.second ?: decodeOrbits(raw).also { decodedOrbits = raw to it }
+
+    private fun ownersOf(raw: String?): Map<String, String> =
+        decodedOwners?.takeIf { it.first == raw }?.second ?: raw?.let {
+            val json = JSONObject(it)
+            json.keys().asSequence().associateWith { key -> json.getString(key) }
+        }.orEmpty().also { decodedOwners = raw to it }
+
     val settingsFlow: Flow<OrbitSettings> = dataStore.data.map { preferences ->
         val activeId = preferences[ACTIVE_ORBIT_ID]
         val daily = activeId?.let { dailySettings(preferences, it) } ?: JSONObject()
         OrbitSettings(
-            orbits = decodeOrbits(preferences[ORBITS]),
+            orbits = orbitsOf(preferences[ORBITS]),
             activeOrbitId = preferences[ACTIVE_ORBIT_ID]?.takeIf { it.isNotBlank() },
             proactiveEnabled = daily.optBoolean("enabled", false),
             checkInMinuteOfDay =
@@ -190,10 +207,7 @@ class OrbitPreferences private constructor(context: Context) {
                     OrbitRunOutcome.entries.firstOrNull { it.name == name }
                 },
             lastRunDetail = daily.optString("detail", ""),
-            chatOwners = preferences[CHAT_OWNERS]?.let { raw ->
-                val json = JSONObject(raw)
-                json.keys().asSequence().associateWith { json.getString(it) }
-            }.orEmpty(),
+            chatOwners = ownersOf(preferences[CHAT_OWNERS]),
             developerMode = preferences[DEVELOPER_MODE] ?: false,
             appLock = preferences[APP_LOCK] ?: false,
             webWaitSeconds = (preferences[WEB_WAIT_SECONDS] ?: OrbitSettings.DEFAULT_WEB_WAIT_SECONDS)

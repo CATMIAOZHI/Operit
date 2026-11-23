@@ -126,10 +126,23 @@ internal object OrbitWork {
         val cardOnly = context.getString(com.ai.assistance.operit.R.string.orbit_sent_card)
         // Chats with a reply being written right now; that reply has no complete record yet.
         val streaming = streamingChats(context)
+        // Read before the chats are gone through: a change made meanwhile moves it past what is kept.
+        val writes = manager.messageWriteCount()
         var failed = false
-        val turns = chatIds.distinct().flatMap { chatId ->
+        val ids = chatIds.distinct()
+        // Only the chats asked for now stay cached: an Orbit deleted or switched away is dropped.
+        turnsCache.keys.retainAll(ids.toSet())
+        val turns = ids.flatMap { chatId ->
             try {
-                turnsOf(manager, chatId, attachmentOnly, reactionTitle, scheduledTitle, cardOnly, writingNow = chatId in streaming)
+                val writingNow = chatId in streaming
+                // While no message or variant was saved anywhere since the last read, every chat
+                // gives the same turns; the activity list reads every 15 seconds, and a long chat is
+                // costly to go through. Any saved change reads them all again, as before.
+                val stamp = listOf(writes, writingNow, attachmentOnly, reactionTitle, scheduledTitle, cardOnly)
+                    .joinToString("\u0000")
+                turnsCache[chatId]?.takeIf { it.first == stamp }?.second
+                    ?: turnsOf(manager, chatId, attachmentOnly, reactionTitle, scheduledTitle, cardOnly, writingNow)
+                        .also { turnsCache[chatId] = stamp to it }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -140,6 +153,9 @@ internal object OrbitWork {
         }.sortedByDescending { it.process.time }
         return OrbitChatTurns(turns, failed)
     }
+
+    /** Each chat's turns from its last read, with the change stamp they were read at. */
+    private val turnsCache = java.util.concurrent.ConcurrentHashMap<String, Pair<String, List<OrbitChatTurn>>>()
 
     /** Chats in which a reply is being written right now. */
     fun streamingChats(context: Context): Set<String> =

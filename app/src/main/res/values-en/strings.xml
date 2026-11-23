@@ -9359,7 +9359,7 @@
     <string name="orbit_ideas_empty">On the plan in your schedules, %1$s thinks of a few things it could do for you and puts them here.</string>
     <string name="orbit_ideas_ask">Think of some now</string>
     <string name="orbit_idea_build">Let’s do it</string>
-    <string name="orbit_idea_build_message">Let us do this idea: \"%1$s\"\n\n%2$s</string>
+    <string name="orbit_idea_quote_sender">Idea</string>
     <string name="orbit_idea_expires">Retires in %1$d days</string>
     <string name="orbit_idea_dismiss">Dismiss this idea?</string>
     <string name="orbit_idea_dismiss_message">It will not show again.</string>
@@ -9963,6 +9963,7 @@
     <string name="orbit_hook_vault_detail">Each time the background check \"%1$s\" runs, it gets the real values of these keys: %2$s.\nAddresses in the script: %3$s\nScript file: %4$s\nAllow once: only this script; you are asked again if it changes. Always allow: any hook may use these keys without asking.</string>
     <string name="orbit_hook_vault_separator">", "</string>
     <string name="orbit_vault_usage_title">Key use</string>
+    <string name="orbit_vault_usage_more">Show other keys (%1$d more)</string>
     <string name="orbit_vault_usage_meta">Used %1$d× · last %2$s</string>
     <string name="orbit_vault_usage_more_callers">" and %1$d more"</string>
     <string name="orbit_vault_usage_caller">%1$s · %2$d× · %3$s</string>
