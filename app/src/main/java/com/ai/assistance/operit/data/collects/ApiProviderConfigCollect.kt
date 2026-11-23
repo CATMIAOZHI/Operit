@@ -157,7 +157,7 @@ object ApiProviderConfigs {
         ),
         ProviderApiConfig(
             providerType = ApiProviderType.MIMO,
-            defaultModelName = "mimo-v2.5-pro",
+            defaultModelName = "mimo-v2.6-pro",
             defaultApiEndpoint = "https://api.xiaomimimo.com/v1/chat/completions"
         ),
         ProviderApiConfig(

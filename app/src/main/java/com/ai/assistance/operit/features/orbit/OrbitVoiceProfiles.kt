@@ -5,9 +5,12 @@ import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.speech.LocalVoiceModels
 import com.ai.assistance.operit.api.speech.SpeechServiceFactory.SpeechServiceType
 import com.ai.assistance.operit.api.voice.DoubaoVoiceProvider
+import com.ai.assistance.operit.api.voice.MimoVoiceProvider
 import com.ai.assistance.operit.api.voice.VoiceServiceFactory.VoiceServiceType
 import com.ai.assistance.operit.data.preferences.SpeechServiceProfilesPreferences
 import com.ai.assistance.operit.data.preferences.SpeechServicesPreferences
+import com.ai.assistance.operit.data.preferences.SpeechOrigin
+import com.ai.assistance.operit.ui.features.settings.screens.SpeechKeyFamily
 import kotlinx.coroutines.flow.first
 import org.json.JSONArray
 import org.json.JSONObject
@@ -62,6 +65,7 @@ internal object OrbitVoiceProfiles {
             SpeechServiceType.SHERPA_NCNN.name -> R.string.speech_services_stt_type_sherpa
             SpeechServiceType.OPENAI_STT.name -> R.string.speech_services_stt_type_openai
             SpeechServiceType.DEEPGRAM_STT.name -> R.string.speech_services_stt_type_deepgram
+            SpeechServiceType.MIMO_STT.name -> R.string.speech_services_stt_type_mimo
             else -> R.string.voice_local_engine
         }
     )
@@ -74,7 +78,7 @@ internal object OrbitVoiceProfiles {
         return if (kind == TTS) {
             p.ttsProfilesFlow.first().map {
                 Profile(it.id, it.name, it.serviceType.name, it.serviceType in localTts, it.httpConfig.apiKey.isNotBlank(),
-                    it.httpConfig.urlTemplate, it.httpConfig.modelName, it.httpConfig.voiceId,
+                    it.httpConfig.urlTemplate, it.httpConfig.modelName, listedVoice(it.httpConfig.voiceId),
                     if (it.serviceType == VoiceServiceType.SHERPA_ONNX) it.localModelId else "")
             } to p.currentTtsProfileIdFlow.first()
         } else {
@@ -85,6 +89,11 @@ internal object OrbitVoiceProfiles {
             } to p.currentSttProfileIdFlow.first()
         }
     }
+
+    /** A cloned voice is a recording (a path, or inline audio from older versions), never shown in full. */
+    private fun listedVoice(voice: String): String =
+        if (voice.trim().startsWith("/") || MimoVoiceProvider.isRecording(voice)) "(voice sample)"
+        else voice.take(MAX_FIELD)
 
     /** How Orbit names each profile: its name, or name#1, name#2 … when several share one. */
     fun selectors(all: List<Profile>): Map<String, String> {
@@ -240,6 +249,14 @@ internal object OrbitVoiceProfiles {
         val local = localModel(kind, action.optString("local_model"))
         require(!action.optBoolean("needs_key") || key.isNotEmpty()) { "API key missing" }
         val localModelId: String
+        // Copying a profile to another server leaves its key, headers and voice recording behind.
+        var leftKey = false
+        fun sameServer(old: String, family: SpeechKeyFamily?): Boolean {
+            if (endpoint.isEmpty()) return true
+            val fallback = family?.officialUrl.orEmpty()
+            val a = SpeechOrigin.of(old.ifBlank { fallback })
+            return a != null && a == SpeechOrigin.of(endpoint)
+        }
         if (kind == TTS) {
             val type = VoiceServiceType.valueOf(service)
             val template = p.getCurrentTtsProfile()
@@ -248,6 +265,11 @@ internal object OrbitVoiceProfiles {
             var http = if (same) template.httpConfig else SpeechServicesPreferences.TtsHttpConfig("", "", emptyMap()).let {
                 if (type == VoiceServiceType.DOUBAO_TTS) it.copy(urlTemplate = DoubaoVoiceProvider.DEFAULT_ENDPOINT_URL,
                     voiceId = DoubaoVoiceProvider.DEFAULT_VOICE_ID) else it
+            }
+            if (same && !sameServer(http.urlTemplate, SpeechKeyFamily.of(type))) {
+                val sample = MimoVoiceProvider.isRecording(http.voiceId)
+                leftKey = http.apiKey.isNotEmpty()
+                http = http.copy(apiKey = "", headers = emptyMap(), voiceId = if (sample) "" else http.voiceId)
             }
             if (endpoint.isNotEmpty()) http = http.copy(urlTemplate = endpoint)
             if (model.isNotEmpty()) http = http.copy(modelName = model)
@@ -268,6 +290,10 @@ internal object OrbitVoiceProfiles {
             val template = p.getCurrentSttProfile()
             val same = template.serviceType == type
             var http = if (same) template.httpConfig else SpeechServicesPreferences.SttHttpConfig("", "", "")
+            if (same && !sameServer(http.endpointUrl, SpeechKeyFamily.of(type))) {
+                leftKey = http.apiKey.isNotEmpty()
+                http = http.copy(apiKey = "")
+            }
             if (endpoint.isNotEmpty()) http = http.copy(endpointUrl = endpoint)
             if (model.isNotEmpty()) http = http.copy(modelName = model)
             if (key.isNotEmpty()) http = http.copy(apiKey = key)
@@ -279,12 +305,16 @@ internal object OrbitVoiceProfiles {
             if (english) " Its local model is not downloaded yet; the app asks the user to download it the first time it is used."
             else "它的本机模型还没下载，第一次用时 App 会请用户下载。"
         } else ""
+        val keyNote = if (leftKey && key.isEmpty()) {
+            if (english) " The new address is another server, so the old API key was not carried over; ask the user for its own key."
+            else "新地址和原来的不是同一个服务器，所以没有沿用原来的 API 密钥，需要请用户填这个服务器的密钥。"
+        } else ""
         return if (english) {
             "Added the $what profile \"$name\" ($label)" + (if (key.isNotEmpty()) " with the API key the user typed" else "") +
-                ". It is now the profile in use.$download"
+                ". It is now the profile in use.$download$keyNote"
         } else {
             "已新建${what}配置「$name」（$label）" + (if (key.isNotEmpty()) "，API 密钥是用户亲手填的" else "") +
-                "，现在正在用它。$download"
+                "，现在正在用它。$download$keyNote"
         }
     }
 }

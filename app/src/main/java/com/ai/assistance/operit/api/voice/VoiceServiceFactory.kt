@@ -87,7 +87,9 @@ object VoiceServiceFactory {
                 VoiceServiceType.MIMO_TTS -> {
                     MimoVoiceProvider(
                         context = context,
-                        config = profile.httpConfig
+                        config = profile.httpConfig,
+                        speechRate = profile.speechRate,
+                        pitch = profile.pitch,
                     )
                 }
                 VoiceServiceType.DOUBAO_TTS -> {
