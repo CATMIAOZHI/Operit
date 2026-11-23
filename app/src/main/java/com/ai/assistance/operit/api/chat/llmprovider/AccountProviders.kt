@@ -151,7 +151,7 @@ class AntigravityTransport(private val manager: ProviderAccountManager, private 
             .url("${ProviderAccountManager.CCA}/v1internal:" +
                 if (streaming) "streamGenerateContent?alt=sse" else "generateContent")
             .header("Authorization", "Bearer ${account.accessToken}")
-            .header("User-Agent", ProviderAccountManager.ANTIGRAVITY_UA)
+            .header("User-Agent", ProviderAccountManager.antigravityUserAgent(compiled.first))
             .post(envelope.toString().toRequestBody("application/json".toMediaType())).build()
     }
 
@@ -211,7 +211,10 @@ class AntigravityTransport(private val manager: ProviderAccountManager, private 
             val effort = thinking?.optString("thinkingLevel").orEmpty()
             generation?.remove("thinkingConfig")
             val wire = if (model == "gemini-3.7-flash") "gemini-3.7-flash-tiered" else model
-            if (effort.isNotBlank() && wire !in setOf("gemini-pro-agent", "gemini-3.1-pro-low")) {
+            // A tier-suffixed wire id (gemini-4-argon-low, ...) already names its effort; a second,
+            // possibly contradicting thinkingLevel is not what the real client sends.
+            val tierInName = Regex(".*-(low|medium|high|xhigh)").matches(wire)
+            if (effort.isNotBlank() && !tierInName && wire != "gemini-pro-agent") {
                 generation?.put("thinkingConfig", JSONObject().put("thinkingLevel",
                     when (effort.lowercase()) { "minimal", "low" -> "low"; "medium" -> "medium"; else -> "high" }))
             }
