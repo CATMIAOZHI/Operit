@@ -437,7 +437,7 @@ class ProviderAccountManager private constructor(context: Context, val provider:
                 requestJson("https://daily-cloudcode-pa.googleapis.com/v1internal:onboardUser",
                     JSONObject().put("tier_id", "free-tier").put("metadata", JSONObject()
                         .put("ide_type", "ANTIGRAVITY").put("ide_name", "antigravity")
-                        .put("ide_version", ANTIGRAVITY_UA)).toBody(), token)
+                        .put("ide_version", ANTIGRAVITY_IDE_VERSION)).toBody(), token)
             } catch (failure: AccountHttpException) {
                 if (failure.status != 429 && failure.status < 500) throw failure
                 delay(2000)
@@ -451,8 +451,10 @@ class ProviderAccountManager private constructor(context: Context, val provider:
 
     suspend fun availableModels(): JSONObject {
         val value = validAccount()
+        // Gemini 4 models are listed only to the CLI client; the list is otherwise the IDE one.
         return requestJson("$CCA/v1internal:fetchAvailableModels",
-            JSONObject().put("project", value.projectId).toBody(), value.accessToken)
+            JSONObject().put("project", value.projectId).toBody(), value.accessToken,
+            mapOf("User-Agent" to ANTIGRAVITY_CLI_UA))
     }
 
     suspend fun availableGrokModels(): List<com.ai.assistance.operit.data.model.ModelOption> {
@@ -570,7 +572,15 @@ class ProviderAccountManager private constructor(context: Context, val provider:
     companion object {
         private const val TAG = "ProviderAccountManager"
         const val CCA = "https://cloudcode-pa.googleapis.com"
-        const val ANTIGRAVITY_UA = "antigravity/ide/2.5.5 (aidev_client; os_type=windows; arch=amd64)"
+        const val ANTIGRAVITY_IDE_VERSION = "2.5.5"
+        const val ANTIGRAVITY_UA =
+            "antigravity/ide/$ANTIGRAVITY_IDE_VERSION (os_type=windows; arch=amd64; aidev_client; auth_method=oauth)"
+        const val ANTIGRAVITY_CLI_UA =
+            "antigravity/cli/1.3.4 (os_type=darwin; arch=arm64; aidev_client; auth_method=oauth)"
+        private val GEMINI_4_WIRE_MODEL = Regex("gemini-4-[a-z][a-z0-9]*(-(low|medium|high|xhigh))?")
+        /** CCA serves Gemini 4 only to the CLI client and other agent models only to the IDE client. */
+        fun antigravityUserAgent(wireModel: String) =
+            if (GEMINI_4_WIRE_MODEL.matches(wireModel)) ANTIGRAVITY_CLI_UA else ANTIGRAVITY_UA
         private const val GOOGLE_TOKEN = "https://oauth2.googleapis.com/token"
         private const val COMMAND_CODE_WHOAMI = "https://api.commandcode.ai/alpha/whoami"
         private const val COMMAND_CODE_CREDITS = "https://api.commandcode.ai/alpha/billing/credits"
