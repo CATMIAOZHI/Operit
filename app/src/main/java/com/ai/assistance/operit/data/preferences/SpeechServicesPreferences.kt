@@ -43,7 +43,9 @@ class SpeechServicesPreferences(private val context: Context) {
         val localeTag: String = "", // 通用 TTS 语言标签，如 zh-CN、en-US
         val voiceId: String = "", // 特定于TTS提供商的音色ID
         val modelName: String = "", // TTS模型名称（用于SiliconFlow等）
-        val responsePipeline: List<HttpTtsResponsePipelineStep> = emptyList()
+        val responsePipeline: List<HttpTtsResponsePipelineStep> = emptyList(),
+        /** A plain-language speaking style, or for MiMo voice design the voice description itself. */
+        val instruction: String = "",
     )
 
     @Serializable
@@ -230,7 +232,8 @@ class SpeechServicesPreferences(private val context: Context) {
                 SpeechServiceFactory.SpeechServiceType.OPENAI_STT -> {
                     httpConfig?.let { prefs[STT_HTTP_CONFIG] = serializerJson.encodeToString(it) }
                 }
-                SpeechServiceFactory.SpeechServiceType.DEEPGRAM_STT -> {
+                SpeechServiceFactory.SpeechServiceType.DEEPGRAM_STT,
+                SpeechServiceFactory.SpeechServiceType.MIMO_STT -> {
                     httpConfig?.let { prefs[STT_HTTP_CONFIG] = serializerJson.encodeToString(it) }
                 }
             }

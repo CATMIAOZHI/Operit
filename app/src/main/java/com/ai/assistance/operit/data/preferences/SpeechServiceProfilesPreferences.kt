@@ -208,6 +208,17 @@ class SpeechServiceProfilesPreferences(private val context: Context) {
     /**
      * Replaces one TTS profile while preserving its identity and creation time.
      */
+    /** Swaps one profile's voice in a single write, only if it still is [expected]. */
+    internal suspend fun replaceTtsVoice(profileId: String, expected: String, voice: String) {
+        dataStore.edit { preferences ->
+            val profiles = decodeTtsProfiles(preferences[TTS_PROFILES])
+            if (profiles.none { it.id == profileId && it.httpConfig.voiceId == expected }) return@edit
+            preferences[TTS_PROFILES] = json.encodeToString(profiles.map {
+                if (it.id != profileId) it else it.copy(httpConfig = it.httpConfig.copy(voiceId = voice))
+            })
+        }
+    }
+
     suspend fun updateTtsProfile(profile: TtsProfile): TtsProfile {
         val normalized = profile.copy(
             name = requireProfileName(profile.name),
@@ -274,6 +285,16 @@ class SpeechServiceProfilesPreferences(private val context: Context) {
     internal suspend fun selectLocalVoiceModel(profileId: String, recognition: Boolean, modelId: String) {
         val model = com.ai.assistance.operit.api.speech.LocalVoiceModels.find(modelId)
         require(model.recognition == recognition)
+        // Picking a local model switches the service too; the service it replaces is kept as a draft.
+        if (recognition) {
+            sttProfilesFlow.first().firstOrNull { it.id == profileId }
+                ?.takeIf { it.serviceType != SpeechServiceFactory.SpeechServiceType.SHERPA_ONNX }
+                ?.let { SpeechEngineDrafts.keepStt(context, it) }
+        } else {
+            ttsProfilesFlow.first().firstOrNull { it.id == profileId }
+                ?.takeIf { it.serviceType != VoiceServiceFactory.VoiceServiceType.SHERPA_ONNX }
+                ?.let { SpeechEngineDrafts.keepTts(context, it) }
+        }
         dataStore.edit { preferences ->
             if (recognition) {
                 val profiles = decodeSttProfiles(preferences[STT_PROFILES])
@@ -333,6 +354,7 @@ class SpeechServiceProfilesPreferences(private val context: Context) {
             check(profiles.any { it.id == id }) { "TTS profile does not exist: $id" }
             preferences[TTS_PROFILES] = json.encodeToString(profiles.filterNot { it.id == id })
         }
+        SpeechEngineDrafts.dropProfile(context, "tts", id)
     }
 
     /**
@@ -347,6 +369,7 @@ class SpeechServiceProfilesPreferences(private val context: Context) {
             check(profiles.any { it.id == id }) { "STT profile does not exist: $id" }
             preferences[STT_PROFILES] = json.encodeToString(profiles.filterNot { it.id == id })
         }
+        SpeechEngineDrafts.dropProfile(context, "stt", id)
     }
 
     private suspend fun getTtsProfile(id: String): TtsProfile {

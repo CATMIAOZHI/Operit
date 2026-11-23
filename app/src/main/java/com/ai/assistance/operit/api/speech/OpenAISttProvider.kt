@@ -38,11 +38,11 @@ import org.json.JSONObject
 import kotlin.math.log10
 
 @SuppressLint("MissingPermission")
-class OpenAISttProvider(
-    private val context: Context,
-    private val endpointUrl: String,
-    private val apiKey: String,
-    private val model: String,
+open class OpenAISttProvider(
+    protected val context: Context,
+    protected val endpointUrl: String,
+    protected val apiKey: String,
+    protected val model: String,
 ) : SpeechService {
 
     companion object {
@@ -55,17 +55,22 @@ class OpenAISttProvider(
         private const val MAX_FILE_BYTES = 25L * 1024L * 1024L
     }
 
-    private val httpClient: OkHttpClient by lazy {
+    protected val httpClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
             .connectTimeout(DEFAULT_TIMEOUT_SECONDS.toLong(), TimeUnit.SECONDS)
             .readTimeout(DEFAULT_TIMEOUT_SECONDS.toLong(), TimeUnit.SECONDS)
             .writeTimeout(DEFAULT_TIMEOUT_SECONDS.toLong(), TimeUnit.SECONDS)
+            .followRedirects(followRedirects)
+            .followSslRedirects(followRedirects)
             .build()
     }
 
+    /** Off for services whose key header must never follow a redirect to another server. */
+    protected open val followRedirects: Boolean get() = true
+
     private val scope = CoroutineScope(Dispatchers.Default)
     private var recordingJob: Job? = null
-    private val requestEpoch = SpeechRequestEpoch()
+    internal val requestEpoch = SpeechRequestEpoch()
     override val speechActivityFlow = MutableStateFlow(false)
     private val captureMutex = Mutex()
     @Volatile private var closed = false
@@ -115,11 +120,11 @@ class OpenAISttProvider(
                 if (!endpointUrl.startsWith("http://") && !endpointUrl.startsWith("https://")) {
                     throw IOException(context.getString(R.string.openai_stt_error_url_invalid_scheme))
                 }
-                if (!endpointUrl.contains("/audio/transcriptions")) {
-                    throw IOException(context.getString(R.string.openai_stt_error_url_invalid_path))
+                if (!acceptsEndpoint(endpointUrl)) {
+                    throw IOException(badEndpointMessage())
                 }
                 if (apiKey.isBlank()) {
-                    throw IOException(context.getString(R.string.openai_stt_error_api_key_not_set))
+                    throw IOException(missingKeyMessage())
                 }
                 if (model.isBlank()) {
                     throw IOException(context.getString(R.string.openai_stt_error_model_not_set))
@@ -306,8 +311,8 @@ class OpenAISttProvider(
                                                     }
                                                 }
 
-                                                if (pcmBytesWritten > MAX_FILE_BYTES) {
-                                                    val fileSizeMB = MAX_FILE_BYTES / 1024 / 1024
+                                                if (pcmBytesWritten > maxFileBytes) {
+                                                    val fileSizeMB = maxFileBytes / 1024 / 1024
                                                     throw IOException(context.getString(R.string.openai_stt_error_file_too_large, fileSizeMB))
                                                 }
 
@@ -363,8 +368,8 @@ class OpenAISttProvider(
                 publishFailure(epoch, "No audio recorded")
                 return false
             }
-            if (file.length() > MAX_FILE_BYTES) {
-                publishFailure(epoch, "Recorded audio exceeds ${MAX_FILE_BYTES / 1024 / 1024} MiB")
+            if (file.length() > maxFileBytes) {
+                publishFailure(epoch, "Recorded audio exceeds ${maxFileBytes / 1024 / 1024} MiB")
                 return false
             }
             val text = withContext(Dispatchers.IO) {
@@ -582,7 +587,17 @@ class OpenAISttProvider(
         }
     }
 
-    private fun mapLanguage(languageCode: String?): String? {
+    /** Largest recording this service accepts. */
+    protected open val maxFileBytes: Long get() = MAX_FILE_BYTES
+
+    protected open fun missingKeyMessage(): String = context.getString(R.string.openai_stt_error_api_key_not_set)
+
+    protected open fun badEndpointMessage(): String = context.getString(R.string.openai_stt_error_url_invalid_path)
+
+    /** Whether [url] is an endpoint this service can post recordings to. */
+    protected open fun acceptsEndpoint(url: String): Boolean = url.contains("/audio/transcriptions")
+
+    protected fun mapLanguage(languageCode: String?): String? {
         val code = languageCode?.trim()?.lowercase() ?: return null
         if (code.isBlank()) return null
         return when {
@@ -592,7 +607,7 @@ class OpenAISttProvider(
         }
     }
 
-    private fun transcribeWavFile(file: File, languageCode: String?, epoch: Long): String {
+    protected open fun transcribeWavFile(file: File, languageCode: String?, epoch: Long): String {
         val bodyBuilder = MultipartBody.Builder().setType(MultipartBody.FORM)
         bodyBuilder.addFormDataPart("file", file.name, file.asRequestBody("audio/wav".toMediaType()))
         bodyBuilder.addFormDataPart("model", model)
