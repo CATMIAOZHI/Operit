@@ -181,9 +181,11 @@ class SiliconFlowVoiceProvider(
         completion.await()
     }
 
-    override suspend fun synthesizeToFile(text: String, out: File): Boolean = withContext(Dispatchers.IO) {
+    override suspend fun synthesizeToFile(text: String, out: File): Boolean = synthesizeToFile(text, out, null, null)
+
+    override suspend fun synthesizeToFile(text: String, out: File, rate: Float?, pitch: Float?): Boolean = withContext(Dispatchers.IO) {
         if (!isInitialized && !initialize()) return@withContext false
-        val request = SpeakRequest(text, interrupt = false, rate = null, pitch = null, extraParams = emptyMap(),
+        val request = SpeakRequest(text, interrupt = false, rate = rate, pitch = pitch, extraParams = emptyMap(),
             generation = stopGeneration.get(), completion = CompletableDeferred())
         val prepared = fetchAudioFile(request) ?: return@withContext false
         try {
@@ -209,8 +211,8 @@ class SiliconFlowVoiceProvider(
                 return null
             }
 
-            val profile = com.ai.assistance.operit.data.preferences.SpeechServiceProfilesPreferences(context.applicationContext).getCurrentTtsProfile()
-            val effectiveRate = request.rate ?: profile.speechRate
+            val effectiveRate = request.rate
+                ?: com.ai.assistance.operit.data.preferences.SpeechServiceProfilesPreferences(context.applicationContext).getCurrentTtsProfile().speechRate
 
             val strippedInput = request.text.replace(Regex("<[^>]+>"), "").trim()
             if (strippedInput.isBlank()) {

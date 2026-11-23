@@ -218,7 +218,7 @@ class ChatServiceCore(
             getIsAutoReadEnabled = {
                 apiConfigDelegate.enableAutoRead.value
             },
-            speakMessageHandler = { text, _ ->
+            speakMessageHandler = { text, _, _ ->
                 AppLogger.d(TAG, "朗读消息: $text")
             },
             onTokenLimitExceeded = { chatId, roleCardId, isGroupOrchestrationTurn, groupParticipantNamesText ->
@@ -668,7 +668,7 @@ class ChatServiceCore(
         }
     }
 
-    fun setSpeakMessageHandler(handler: (String, Boolean) -> Unit) {
+    fun setSpeakMessageHandler(handler: (String, Boolean, String?) -> Unit) {
         if (::messageProcessingDelegate.isInitialized) {
             messageProcessingDelegate.setSpeakMessageHandler(handler)
         }

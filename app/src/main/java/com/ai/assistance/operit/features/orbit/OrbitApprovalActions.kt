@@ -110,6 +110,12 @@ internal object OrbitApprovalActions {
 
     fun type(action: String): String = runCatching { JSONObject(action).optString("type") }.getOrDefault("")
 
+    /**
+     * An approved card that can no longer be carried out as it was shown; [message] tells the user
+     * why and what to do, in their language, and the card shows it instead of "try again".
+     */
+    class Problem(message: String) : IllegalStateException(message)
+
     /** The approval needs the user to type an API key before it can be approved. */
     fun needsSecret(action: String): Boolean =
         runCatching {
@@ -387,7 +393,7 @@ internal object OrbitApprovalActions {
             CHANGE_SETTINGS -> com.ai.assistance.operit.core.tools.OrbitSettingsTools.applyApproved(context, orbit, action)
             TOGGLE_SKILLS -> toggleSkills(context, orbit, action, english)
             UPDATE_MODEL_KEY -> updateModelKey(context, orbit, action, secret, english)
-            VOICE_PROFILE -> OrbitVoiceProfiles.apply(context, action, secret, english)
+            VOICE_PROFILE -> OrbitVoiceProfiles.apply(context, orbit.id, action, secret, english)
             WEIXIN_DISCONNECT -> {
                 OrbitWeixin.disconnect(context, orbit.id)
                 if (english) "WeChat is disconnected; messages sent there no longer reach you. The \"WeChat\" side chat and its history stay."

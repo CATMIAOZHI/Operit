@@ -207,16 +207,18 @@ class OpenAIVoiceProvider(
         }
     }
 
-    override suspend fun synthesizeToFile(text: String, out: File): Boolean = withContext(Dispatchers.IO) {
+    override suspend fun synthesizeToFile(text: String, out: File): Boolean = synthesizeToFile(text, out, null, null)
+
+    override suspend fun synthesizeToFile(text: String, out: File, rate: Float?, pitch: Float?): Boolean = withContext(Dispatchers.IO) {
         if (!isInitialized && !initialize()) return@withContext false
-        val profile = com.ai.assistance.operit.data.preferences.SpeechServiceProfilesPreferences(context.applicationContext)
-            .getCurrentTtsProfile()
+        val speed = rate ?: com.ai.assistance.operit.data.preferences.SpeechServiceProfilesPreferences(context.applicationContext)
+            .getCurrentTtsProfile().speechRate
         val payload = OpenAiSpeechRequest(
             model = model,
             input = text,
             voice = voiceId,
             response_format = "mp3",
-            speed = profile.speechRate.toDouble().coerceIn(0.25, 4.0),
+            speed = speed.toDouble().coerceIn(0.25, 4.0),
         )
         val request = Request.Builder()
             .url(endpointUrl)

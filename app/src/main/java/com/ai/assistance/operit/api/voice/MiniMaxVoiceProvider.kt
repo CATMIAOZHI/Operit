@@ -92,13 +92,15 @@ class MiniMaxVoiceProvider(
 
     override suspend fun stop(): Boolean = delegate.stop()
 
-    override suspend fun synthesizeToFile(text: String, out: java.io.File): Boolean {
+    override suspend fun synthesizeToFile(text: String, out: java.io.File): Boolean = synthesizeToFile(text, out, null, null)
+
+    override suspend fun synthesizeToFile(text: String, out: java.io.File, rate: Float?, pitch: Float?): Boolean {
         if (config.apiKey.isBlank()) {
             throw TtsException(context.getString(R.string.minimax_tts_error_api_key_not_set))
         }
         delegate.setConfiguration(buildHttpConfig())
         val model = config.modelName.takeIf { it.isNotBlank() } ?: DEFAULT_MODEL_NAME
-        return delegate.synthesizeAudio(text, out, mapOf("model" to model, "voice_id" to selectedVoiceId))
+        return delegate.synthesizeAudio(text, out, mapOf("model" to model, "voice_id" to selectedVoiceId), rate, pitch)
     }
 
     override suspend fun pause(): Boolean = delegate.pause()
