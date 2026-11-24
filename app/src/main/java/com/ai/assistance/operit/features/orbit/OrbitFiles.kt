@@ -350,6 +350,8 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         val real = realShortPath(f)
         require((allowed(real) && !isIndex(real)) || isWorkspace(real)) { "This file cannot be deleted: $path" }
         Files.delete(f.toPath())
+        // A voice message's kept words go with it.
+        OrbitVoiceText.forget(f, root)
         afterChange(real)
         return p
     }
@@ -509,7 +511,16 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
     }
 
     /** Saves a binary file under files/, keeping an existing one by adding a number to the name. */
-    suspend fun saveBytes(path: String, input: InputStream, maxBytes: Long = MAX_FILE_BYTES): Entry = io {
+    /**
+     * Saves [input] as a new file under files/. [voiceText], for a voice message in files/voice/,
+     * is kept as its words (see [OrbitVoiceText]) under the same lock, so they always name this very recording.
+     */
+    suspend fun saveBytes(
+        path: String,
+        input: InputStream,
+        maxBytes: Long = MAX_FILE_BYTES,
+        voiceText: String? = null,
+    ): Entry = io {
         var p = normalize(path)
         require(p.startsWith("files/") && FILES.matches(p)) { "Only files/ takes new files: $path" }
         val folder = p.substringBeforeLast('/')
@@ -522,6 +533,7 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         val target = inside(File(root, p))
         target.parentFile?.mkdirs()
         val temporary = File.createTempFile(".file-", ".tmp", target.parentFile)
+        val digest = voiceText?.let { OrbitVoiceText.digest() }
         try {
             temporary.outputStream().use { out ->
                 val buffer = ByteArray(64 * 1024)
@@ -532,12 +544,14 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
                     total += count
                     require(total <= maxBytes) { "File is larger than ${maxBytes / 1024 / 1024} MB" }
                     out.write(buffer, 0, count)
+                    digest?.update(buffer, 0, count)
                 }
             }
             Files.move(temporary.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE)
         } finally {
             temporary.delete()
         }
+        if (voiceText != null && digest != null && p.startsWith("files/voice/")) OrbitVoiceText.save(target, voiceText, root, digest)
         entry(p, target)
     }
 

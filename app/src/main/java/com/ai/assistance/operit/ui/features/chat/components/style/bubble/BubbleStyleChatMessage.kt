@@ -87,7 +87,9 @@ fun BubbleStyleChatMessage(
             val uiOffset = com.ai.assistance.operit.ui.common.dynamicui.LocalDynamicUiPartOffset.current?.cards ?: 0
             val pieces = remember(orbitLook, message.content, message.contentStream, message.displayMode, message.timestamp, english, uiOffset) {
                 if (orbitLook && message.contentStream == null && !message.displayMode.isCollaborationEvent)
-                    com.ai.assistance.operit.ui.features.chat.components.OrbitSpeech.pieceList(message.content, message.timestamp, english, uiOffset)
+                    com.ai.assistance.operit.ui.features.chat.components.OrbitSpeech.pieceList(
+                        message.content, message.timestamp, english, uiOffset, splitVoice = true,
+                    )
                 else null
             }
             val bubble: @Composable (ChatMessage, ChatMessageHeightMemory?) -> Unit = { shown, memory ->

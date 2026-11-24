@@ -10,6 +10,7 @@ import android.widget.Toast
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
@@ -21,8 +22,10 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -40,6 +43,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
@@ -50,8 +54,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.takeOrElse
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.Role
@@ -81,6 +87,8 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
@@ -315,6 +323,8 @@ fun MarkdownAudioRenderer(
     audioMarkdown: String,
     modifier: Modifier = Modifier,
     contentColor: Color = Color.Unspecified,
+    /** Set when the voice is a message of its own: the bar is then the bubble, in this color. */
+    bubbleColor: Color = Color.Unspecified,
 ) {
     if (!isCompleteImageMarkdown(audioMarkdown)) {
         return
@@ -326,12 +336,16 @@ fun MarkdownAudioRenderer(
         return
     }
     key(audioUrl) {
-        VoiceBar(audioUrl, audioAlt, contentColor.takeOrElse { LocalContentColor.current }, modifier)
+        VoiceBar(
+            audioUrl, audioAlt, contentColor.takeOrElse { LocalContentColor.current },
+            bubbleColor.takeIf { it != Color.Unspecified }, modifier,
+        )
     }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun VoiceBar(audioUrl: String, audioAlt: String, ink: Color, modifier: Modifier) {
+private fun VoiceBar(audioUrl: String, audioAlt: String, ink: Color, bubble: Color?, modifier: Modifier) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     // Inside a chat, voice keeps playing while its bar is scrolled away and stops when the chat goes.
@@ -342,6 +356,57 @@ private fun VoiceBar(audioUrl: String, audioAlt: String, ink: Color, modifier: M
     if (chatScope == null) {
         DisposableEffect(ownScope) { onDispose { VoicePlayback.leave(ownScope) } }
     }
+    // Long press opens a menu with "to text", like a messenger; the words were kept when the voice was made.
+    // Once found, the words stay with the bar with a mark of the recording they were checked for:
+    // showing them again only looks at the file's size and time, and checks it in full if it changed.
+    var found by rememberSaveable(audioUrl) { mutableStateOf<String?>(null) }
+    var foundFor by rememberSaveable(audioUrl) { mutableStateOf<String?>(null) }
+    var shown by rememberSaveable(audioUrl) { mutableStateOf(false) }
+    val words = found?.takeIf { shown }
+    var menuOpen by remember { mutableStateOf(false) }
+    val haptics = LocalHapticFeedback.current
+    val noWords = stringResource(R.string.voice_no_transcript)
+    val wordsScope = androidx.compose.runtime.rememberCoroutineScope()
+    var looking by remember { mutableStateOf(false) }
+    val toggleWords: () -> Unit = {
+        if (shown) {
+            shown = false
+        } else if (!looking) {
+            looking = true
+            val cached = found
+            val cachedFor = foundFor
+            wordsScope.launch {
+                try {
+                    val (mark, read) = withContext(Dispatchers.IO) {
+                        val voiceText = com.ai.assistance.operit.features.orbit.OrbitVoiceText
+                        val mark = voiceText.stamp(audioUrl, context.filesDir)
+                        mark to when {
+                            mark == null -> null
+                            cached != null && mark == cachedFor -> cached
+                            // Stops reading the recording when the bar leaves the screen.
+                            else -> voiceText.read(audioUrl, context.filesDir) { isActive }
+                        }
+                    }
+                    if (read == null) {
+                        found = null
+                        foundFor = null
+                        Toast.makeText(context, noWords, Toast.LENGTH_SHORT).show()
+                    } else {
+                        found = read
+                        foundFor = mark
+                        shown = true
+                    }
+                } finally {
+                    looking = false
+                }
+            }
+        }
+    }
+    val openMenu: () -> Unit = {
+        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+        menuOpen = true
+    }
+    val latestOpenMenu = androidx.compose.runtime.rememberUpdatedState(openMenu)
 
     val measuredMs by produceState(knownDuration(audioUrl)) { value = durationOf(context, audioUrl) }
     val now by remember { VoicePlayback.of(audioUrl) }.collectAsState(null)
@@ -371,6 +436,8 @@ private fun VoiceBar(audioUrl: String, audioAlt: String, ink: Color, modifier: M
     val playing = now?.wants == true
     val label = stringResource(R.string.audio_block)
     val actionLabel = stringResource(if (playing) R.string.pause else R.string.tts_play)
+    val wordsLabel = stringResource(if (words != null) R.string.voice_hide_text else R.string.voice_to_text)
+    val optionsLabel = stringResource(R.string.voice_options)
     val lengthText = if (total > 0) clock(total) else null
     val description = listOfNotNull(label, audioAlt.takeIf { it.isNotBlank() }, lengthText).joinToString(", ")
     val seekable = active && total > 0
@@ -381,14 +448,23 @@ private fun VoiceBar(audioUrl: String, audioAlt: String, ink: Color, modifier: M
         position = (total * at).toLong()
     }
 
-    Column(modifier = modifier.padding(vertical = 4.dp)) {
+    // As a message of its own the bar is the bubble (Orbit's bubble shape); inside words it has no
+    // frame of its own, only the play button, the wave and the time.
+    val barShape = if (bubble != null) RoundedCornerShape(4.dp, 20.dp, 20.dp, 20.dp) else RoundedCornerShape(24.dp)
+    Column(modifier = modifier.padding(vertical = if (bubble != null) 0.dp else 4.dp)) {
+      Box {
         Row(
             modifier = Modifier
                 .width(barWidth)
                 .heightIn(min = 48.dp)
-                .clip(RoundedCornerShape(24.dp))
-                .background(ink.copy(alpha = 0.08f))
-                .clickable(role = Role.Button, onClickLabel = actionLabel) {
+                .clip(barShape)
+                .then(if (bubble != null) Modifier.background(bubble) else Modifier)
+                .combinedClickable(
+                    role = Role.Button,
+                    onClickLabel = actionLabel,
+                    onLongClickLabel = optionsLabel,
+                    onLongClick = openMenu,
+                ) {
                     VoicePlayback.toggle(context, audioUrl, scope, lifecycle)
                 }
                 .semantics(mergeDescendants = true) {
@@ -398,20 +474,15 @@ private fun VoiceBar(audioUrl: String, audioAlt: String, ink: Color, modifier: M
                         setProgress { f -> seekTo(f); true }
                     }
                 }
-                .padding(horizontal = 10.dp, vertical = 8.dp),
+                .padding(horizontal = if (bubble != null) 12.dp else 4.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(
-                modifier = Modifier.size(32.dp).clip(CircleShape).background(ink.copy(alpha = 0.14f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                    contentDescription = null,
-                    tint = ink,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
+            Icon(
+                imageVector = if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                contentDescription = null,
+                tint = ink,
+                modifier = Modifier.size(26.dp),
+            )
             Spacer(Modifier.width(8.dp))
             Waveform(
                 seed = audioUrl.hashCode(),
@@ -423,7 +494,8 @@ private fun VoiceBar(audioUrl: String, audioAlt: String, ink: Color, modifier: M
                     .then(
                         if (!seekable) Modifier else Modifier
                             .pointerInput(audioUrl, total) {
-                                detectTapGestures { at -> seekTo(at.x / size.width) }
+                                // A long press on the wave opens the same menu as the rest of the bar.
+                                detectTapGestures(onLongPress = { latestOpenMenu.value() }) { at -> seekTo(at.x / size.width) }
                             }
                             .pointerInput(audioUrl, total) {
                                 fun at(x: Float) = (x / size.width).coerceIn(0f, 1f)
@@ -453,7 +525,33 @@ private fun VoiceBar(audioUrl: String, audioAlt: String, ink: Color, modifier: M
                 maxLines = 1,
             )
         }
-        if (audioAlt.isNotBlank()) {
+        androidx.compose.material3.DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+            androidx.compose.material3.DropdownMenuItem(
+                text = { Text(wordsLabel) },
+                onClick = {
+                    menuOpen = false
+                    toggleWords()
+                },
+            )
+        }
+      }
+        words?.let { text ->
+            SelectionContainer {
+                Text(
+                    text = text,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = ink,
+                    modifier = Modifier
+                        .padding(top = 6.dp)
+                        .widthIn(max = 300.dp)
+                        .clip(RoundedCornerShape(if (bubble != null) 16.dp else 12.dp))
+                        .background(bubble ?: ink.copy(alpha = 0.06f))
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                )
+            }
+        }
+        // A voice message of its own shows no title under it, as in a messenger.
+        if (audioAlt.isNotBlank() && bubble == null) {
             Text(
                 text = audioAlt,
                 style = MaterialTheme.typography.bodySmall,
