@@ -31,11 +31,15 @@ object OrbitTaskScheduler {
      */
     private val lock = Mutex()
 
-    /** [fromWorker]: called when a lane ends, so a due task waits a little before the next wake-up. */
-    suspend fun reschedule(context: Context, fromWorker: Boolean = false, restore: Boolean = false) {
+    /**
+     * [fromWorker]: called when a lane ends, so a due task waits a little before the next wake-up.
+     * [syncPlaces]: false when the caller syncs the watched places itself.
+     */
+    suspend fun reschedule(context: Context, fromWorker: Boolean = false, restore: Boolean = false,
+        syncPlaces: Boolean = true) {
         lock.withLock { rescheduleLocked(context, fromWorker, restore) }
         // Outside the lock: it may wait half a minute for a location fix, and reads what it needs itself.
-        OrbitGeofence.sync(context)
+        if (syncPlaces) OrbitGeofence.sync(context)
     }
 
     private suspend fun rescheduleLocked(context: Context, fromWorker: Boolean, restore: Boolean) {
@@ -69,7 +73,7 @@ object OrbitTaskScheduler {
             // that lane when it ends; waking every few seconds for hours would only burn
             // battery. A slow safety wake-up still covers a process that dies mid-run.
             if ((run != null && (OrbitTaskRunner.isRunningHere(run.id) || OrbitWake.isWatching(run.handoffTurnId))) ||
-                (run == null && retryAt <= now && OrbitTaskRunner.laneBusyHere(OrbitTaskRepository.isLongRun(task)))) {
+                (run == null && retryAt <= now && OrbitTaskHost.laneBusy(task))) {
                 val safety = now + BUSY_LANE_SAFETY_WAKE_MS
                 due = minOf(due ?: safety, safety)
                 continue

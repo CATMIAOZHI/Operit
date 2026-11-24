@@ -330,6 +330,9 @@ class OrbitTaskRepository(private val context: Context) {
          */
         const val LONG_RUN_MINUTES = 8
 
+        /** How many long runs go side by side; a quick check never waits for a routine of an hour. */
+        const val LONG_LANES = 3
+
         /** The ceiling matches Muse's 24 hours. */
         const val MAX_TIMEOUT_MINUTES = 24 * 60
 
@@ -358,6 +361,20 @@ class OrbitTaskRepository(private val context: Context) {
         /** Only a subagent run can be long; a task handled by Orbit in the chat just wakes it. */
         fun isLongRun(task: OrbitTaskEntity): Boolean =
             task.useSubagent && timeoutMinutes(task) > LONG_RUN_MINUTES
+
+        /** Page and script watches mostly just read and stop; the last long lane is kept for them. */
+        fun isQuickCheck(task: OrbitTaskEntity): Boolean = task.kind == "URL_CHANGE" ||
+            (task.kind == OrbitWatchSources.KIND && OrbitWatchSources.isScript(task.source))
+
+        /**
+         * Lane 0 runs short tasks, lanes 1 to [LONG_LANES] long ones; the last of those only watches,
+         * so hour-long routines filling the others never hold a page or script check back.
+         */
+        fun laneTakes(lane: Int, task: OrbitTaskEntity): Boolean = when {
+            lane == 0 -> !isLongRun(task)
+            lane < LONG_LANES -> isLongRun(task)
+            else -> isLongRun(task) && isQuickCheck(task)
+        }
 
         /** Modes that run at a chosen time of day or moment, so resuming waits for the next one. */
         private val timedModes = setOf("ONCE", "DAILY") + OrbitCalendarSchedule.modes

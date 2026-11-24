@@ -7,10 +7,12 @@ import com.ai.assistance.operit.api.chat.ChatRuntimeHolder
 import com.ai.assistance.operit.api.chat.ChatRuntimeSlot
 import com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
 import com.ai.assistance.operit.core.tools.StringResultData
+import com.ai.assistance.operit.data.dao.OrbitTaskDao
 import com.ai.assistance.operit.data.db.AppDatabase
 import com.ai.assistance.operit.data.model.*
 import com.ai.assistance.operit.data.preferences.CharacterCardManager
 import com.ai.assistance.operit.data.preferences.OrbitPreferences
+import com.ai.assistance.operit.data.preferences.OrbitProfile
 import com.ai.assistance.operit.data.preferences.OrbitRunOutcome
 import com.ai.assistance.operit.services.core.*
 import com.ai.assistance.operit.ui.permissions.UnattendedChats
@@ -49,6 +51,11 @@ object OrbitTaskRunner {
         val job: Job, val boot: String,
     )
     private val active = ConcurrentHashMap<String, ActiveRun>()
+    /**
+     * Tasks a lane here holds, from picking a due event until its run is cleaned up: lanes run side
+     * by side, and one task's next event must not start while its last run is still ending.
+     */
+    private val heldTasks = ConcurrentHashMap.newKeySet<String>()
     private val processBootFallback = UUID.randomUUID().toString()
     private val client = OkHttpClient.Builder().callTimeout(40, TimeUnit.SECONDS)
         .connectTimeout(15, TimeUnit.SECONDS).readTimeout(25, TimeUnit.SECONDS).build()
@@ -101,60 +108,152 @@ object OrbitTaskRunner {
     internal fun isRunningHere(runId: String): Boolean = active.values.any { it.token.id == runId }
     internal fun isChatRunningHere(chatId: String): Boolean = active[chatId]?.job?.isActive == true
 
-    /** True while this process runs a task in that lane; the lane reschedules when it ends. */
-    internal fun laneBusyHere(longLane: Boolean): Boolean =
-        active.values.any { OrbitTaskRepository.isLongRun(it.task) == longLane }
+    /** Both running flows come from [active] under one lock, so a lane ending never hides another's start. */
+    private fun setActive(chatId: String, state: ActiveRun?, expected: ActiveRun? = null) = synchronized(active) {
+        if (state != null) active[chatId] = state else active.remove(chatId, expected)
+        runningState.value = active.isNotEmpty()
+        runningChatsState.value = active.mapValues { it.value.orbitId }
+    }
 
     /**
      * Runs one due task, inside Operit's keep-alive service ([OrbitTaskHost]), so only the task's
-     * own time limit bounds it. Short tasks and long ones ([OrbitTaskRepository.isLongRun]) use
-     * separate lanes so a run of several hours never holds back a reminder.
+     * own time limit bounds it. [lane] picks which tasks it takes ([OrbitTaskRepository.laneTakes]),
+     * so a run of several hours never holds back a reminder or a watch.
+     * [onLooked] is told once, when this lane stops looking: the other long tasks that look due
+     * when it took one (none when it took nothing), so a lane that can take them looks for them.
      * True when a task ran to its end here, so the lane can go straight on to the next due one.
      */
-    suspend fun runNext(context: Context, longLane: Boolean = false): Boolean = coroutineScope {
-        val orbit = OrbitCompanion.ensureActiveChat(context) ?: return@coroutineScope false
+    suspend fun runNext(context: Context, lane: Int = 0,
+        onLooked: (moreDue: List<OrbitTaskEntity>) -> Unit = {}): Boolean {
+        val orbit = OrbitCompanion.ensureActiveChat(context) ?: return false
         val repository = OrbitTaskRepository(context)
         val dao = repository.dao
         // Tasks fixed to a time of day follow a time zone change before any of them is picked.
         runCatching { repository.refreshCalendarTimeZone(orbit.id) }
             .onFailure { if (it is CancellationException) throw it }
-        val tasks = dao.activeTasks(orbit.id)
-            .filter { OrbitTaskRepository.isLongRun(it) == longLane }
-            .sortedBy { it.nextRunAt }
+        val all = dao.activeTasks(orbit.id)
+        val tasks = all.filter { OrbitTaskRepository.laneTakes(lane, it) }.sortedBy { it.nextRunAt }
         val now = System.currentTimeMillis()
         val boot = bootId(context)
         // A live lease for one task must not starve the other due tasks. A due task goes before
         // handing over reports, so a reminder is never late because a report waits for a chat.
         val token = tasks.firstNotNullOfOrNull {
-            if (OrbitTaskRepository.prechecked(it) && dao.hasPendingResult(it.id)) return@firstNotNullOfOrNull null
-            // An event put back for a busy chat or a quiet time waits until its new time.
-            val event = dao.enqueueDue(it.id, now)?.takeIf { e -> e.dueAt <= now } ?: return@firstNotNullOfOrNull null
-            if (dao.eventRun(event.id)?.let { run -> OrbitWake.isWatching(run.handoffTurnId) } == true) {
-                return@firstNotNullOfOrNull null
+            // Held by another lane here: its run is still going or still ending.
+            if (!heldTasks.add(it.id)) return@firstNotNullOfOrNull null
+            val claimed = try {
+                claimDue(context, dao, it, now, boot)
+            } catch (e: Throwable) {
+                heldTasks.remove(it.id)
+                throw e
             }
-            if (!it.useSubagent && dao.eventRun(event.id) == null) {
-                // Waking Orbit makes it talk, so it follows the notification settings like a report.
-                val allowed = OrbitDelivery.wakeAllowedAt(context, it, event, now)
-                if (allowed > now) {
-                    dao.setEventDue(event.id, allowed)
-                    return@firstNotNullOfOrNull null
+            if (claimed == null) heldTasks.remove(it.id)
+            claimed
+        } ?: run {
+            onLooked(emptyList())
+            return false
+        }
+        var told = false
+        var more = emptyList<OrbitTaskEntity>()
+        val looked = {
+            if (!told) {
+                told = true
+                onLooked(more)
+            }
+        }
+        val ran = try {
+            if (lane > 0) {
+                // Other long tasks that look due and no lane here holds: worth another lane looking.
+                // Only a hint: when it cannot be read, the task taken still runs.
+                more = try {
+                    val others = all.filter {
+                        it.id != token.taskId && it.id !in heldTasks && OrbitTaskRepository.isLongRun(it)
+                    }
+                    val queued = if (others.isEmpty()) emptyList() else dao.queuedEvents(orbit.id)
+                    val elapsed = SystemClock.elapsedRealtime()
+                    val claimable = queued.filter { it.claimable(now, elapsed, boot) }.map { it.taskId }.toSet()
+                    val withEvent = queued.map { it.taskId }.toSet()
+                    others.filter {
+                        // A queued event (perhaps put off) decides; without one, the task's own next time.
+                        it.id in claimable || (it.id !in withEvent &&
+                            it.scheduleMode != "EVENT" && it.kind != OrbitGeofence.KIND && it.nextRunAt <= now)
+                    }.filter {
+                        // As the claim and the scheduler: not while its last result waits, nor under a stopped goal.
+                        !(OrbitTaskRepository.prechecked(it) && dao.hasPendingResult(it.id)) &&
+                            (it.goalId.isEmpty() || dao.goal(it.goalId)?.state == "ACTIVE")
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    emptyList()
                 }
             }
-            // A review killed mid-turn starts that turn over; it keeps its reading position and notes.
-            val resumable = it.source == OrbitRoutines.ALIGNMENT_SOURCE && it.useSubagent
-            dao.claim(event, UUID.randomUUID().toString(), boot, now, SystemClock.elapsedRealtime(), LEASE_MS,
-                context.getString(com.ai.assistance.operit.R.string.orbit_run_interrupted),
-                resumable = resumable,
-                resumeNextRunAt = if (resumable) OrbitTaskRepository.nextAt(it, now) else 0,
-                // The app was closed or restarted while this ran: a repeating task just goes on.
-                continueNextRunAt = goesOnAt(it, now),
-                continuedMessage = context.getString(com.ai.assistance.operit.R.string.orbit_run_interrupted_skipped),
-                continues = repeats(it))
-        } ?: run {
-            OrbitDelivery.sendPending(context, orbit.id)
+            runClaimed(context, orbit, dao, token, boot, lane, looked)
+        } finally {
+            heldTasks.remove(token.taskId)
+            looked()
+        }
+        return ran
+    }
+
+    /**
+     * Hands over waiting reports; [OrbitTaskHost] runs it beside the lanes, so no lane waits on a chat.
+     * Null when there were none; else whether this pass changed them (handed over, put off, run out,
+     * taken back), which moves the next wake-up.
+     */
+    suspend fun deliverReports(context: Context): Boolean? {
+        val orbitId = OrbitPreferences.getInstance(context).current().activeOrbitId ?: return null
+        val dao = OrbitTaskRepository(context).dao
+        fun signature(rows: List<OrbitDeliveryEntity>) =
+            rows.map { listOf(it.id, it.state, it.retryAt, it.messageId, it.chatId) }.toSet()
+        val pending = dao.pendingDeliveries(orbitId)
+        val handing = dao.handingDeliveries(orbitId)
+        // A report a killed process left being handed over goes back to waiting in sendPending.
+        if (pending.isEmpty() && handing.none { !OrbitWake.isWatching(it.handoffTurnId) }) return null
+        val before = signature(pending + handing)
+        OrbitDelivery.sendPending(context, orbitId, DELIVERY_BUDGET_MS)
+        return signature(dao.pendingDeliveries(orbitId) + dao.handingDeliveries(orbitId)) != before
+    }
+
+    private suspend fun claimDue(context: Context, dao: OrbitTaskDao, task: OrbitTaskEntity, now: Long,
+        boot: String): OrbitRunEntity? {
+        if (OrbitTaskRepository.prechecked(task) && dao.hasPendingResult(task.id)) return null
+        // An event put back for a busy chat or a quiet time waits until its new time. An event of a
+        // newer definition waits for the next look, which reads that definition (claim checks it too).
+        val event = dao.enqueueDue(task.id, now)?.takeIf { e -> e.dueAt <= now && e.taskVersion == task.version }
+            ?: return null
+        if (dao.eventRun(event.id)?.let { run -> OrbitWake.isWatching(run.handoffTurnId) } == true) return null
+        if (!task.useSubagent && dao.eventRun(event.id) == null) {
+            // Waking Orbit makes it talk, so it follows the notification settings like a report.
+            val allowed = OrbitDelivery.wakeAllowedAt(context, task, event, now)
+            if (allowed > now) {
+                dao.setEventDue(event.id, allowed)
+                return null
+            }
+        }
+        // A review killed mid-turn starts that turn over; it keeps its reading position and notes.
+        val resumable = task.source == OrbitRoutines.ALIGNMENT_SOURCE && task.useSubagent
+        return dao.claim(event, UUID.randomUUID().toString(), boot, now, SystemClock.elapsedRealtime(), LEASE_MS,
+            context.getString(com.ai.assistance.operit.R.string.orbit_run_interrupted),
+            resumable = resumable,
+            resumeNextRunAt = if (resumable) OrbitTaskRepository.nextAt(task, now) else 0,
+            // The app was closed or restarted while this ran: a repeating task just goes on.
+            continueNextRunAt = goesOnAt(task, now),
+            continuedMessage = context.getString(com.ai.assistance.operit.R.string.orbit_run_interrupted_skipped),
+            continues = repeats(task),
+            requireNoPendingResult = OrbitTaskRepository.prechecked(task))
+    }
+
+    private suspend fun runClaimed(context: Context, orbit: OrbitProfile, dao: OrbitTaskDao, token: OrbitRunEntity,
+        boot: String, lane: Int, registered: () -> Unit): Boolean = coroutineScope {
+        // An edit right after the claim already cancelled this run in the database.
+        val task = dao.task(token.taskId)?.takeIf { it.version == token.taskVersion } ?: return@coroutineScope false
+        // Its time limit was changed (that keeps the version) and it now belongs in another lane: put it back for that one.
+        if (!OrbitTaskRepository.laneTakes(lane, task)) {
+            // Its own time kept, so it stays ahead of later events.
+            val dueAt = dao.event(token.eventId)?.dueAt ?: System.currentTimeMillis()
+            dao.defer(token, dueAt, boot, System.currentTimeMillis(), SystemClock.elapsedRealtime())
             return@coroutineScope false
         }
-        val task = dao.task(token.taskId) ?: return@coroutineScope false
         // Woken in the chat, Orbit's own turn needs no long lane; the limit only bounds the wait.
         val timeoutMinutes = if (task.useSubagent) OrbitTaskRepository.timeoutMinutes(task) else WAKE_TIMEOUT_MINUTES
         var deferred = false
@@ -162,9 +261,9 @@ object OrbitTaskRunner {
         val chatId = "orbit-task-" + UUID.nameUUIDFromBytes("${token.id}:${token.generation}".toByteArray())
         val job = currentCoroutineContext().job
         val state = ActiveRun(orbit.id, task, token, job, boot)
-        active[chatId] = state
-        runningState.value = true
-        runningChatsState.update { it + (chatId to orbit.id) }
+        setActive(chatId, state)
+        // Registered first, so a pause or an edit from now on finds and cancels this run.
+        registered()
         val heartbeat = launch {
             while (isActive) {
                 delay(20_000)
@@ -190,6 +289,10 @@ object OrbitTaskRunner {
             withTimeout(timeoutMinutes * 60_000L) {
                 // Orbit was paused while this was being picked: not this task's fault, it goes on once Orbit does.
                 if (OrbitPreferences.getInstance(context).current().activeOrbitId != orbit.id) throw OrbitPaused()
+                // Paused, cancelled or edited before it was registered: nothing is read or run.
+                if (dao.currentLease(token, boot, System.currentTimeMillis(), SystemClock.elapsedRealtime()) == null) {
+                    return@withTimeout
+                }
                 // Orbit is paused while both token allowances are used up: the run waits and tries
                 // again later, so nothing is used up or marked failed while it cannot think.
                 if (OrbitQuota.paused(context) && dao.defer(token, System.currentTimeMillis() + QUOTA_RETRY_MS, boot,
@@ -390,15 +493,11 @@ object OrbitTaskRunner {
                         repeats(task))
                 }
                 runCatching { dao.pruneRuns(task.id) }
-                active.remove(chatId, state)
-                runningState.value = active.isNotEmpty()
-                runningChatsState.update { all -> if (active.containsKey(chatId)) all else all - chatId }
+                setActive(chatId, null, state)
             }
         }
         // Put off for a busy chat: end now so the retry is scheduled on time; reports wait for it.
-        if (deferred) return@coroutineScope false
-        OrbitDelivery.sendPending(context, orbit.id, DELIVERY_BUDGET_MS)
-        true
+        !deferred
     }
 
     internal suspend fun readUrl(url: String): String = withContext(Dispatchers.IO) {
