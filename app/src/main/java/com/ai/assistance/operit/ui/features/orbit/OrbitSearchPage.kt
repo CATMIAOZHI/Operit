@@ -1,9 +1,6 @@
 package com.ai.assistance.operit.ui.features.orbit
 
 import android.content.Context
-import android.os.CancellationSignal
-import android.os.OperationCanceledException
-import androidx.sqlite.db.SimpleSQLiteQuery
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -67,13 +64,9 @@ import com.ai.assistance.operit.data.db.AppDatabase
 import com.ai.assistance.operit.data.preferences.OrbitProfile
 import com.ai.assistance.operit.ui.features.chat.components.OrbitSpeech
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.awaitCancellation
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -104,76 +97,53 @@ internal object OrbitTalkSearch {
         "' '", "char(9)", "char(10)", "char(13)")
 
     /**
-     * Ids of every message, newest first, whose stored text holds [query] once Markdown marks and
-     * spaces are left out: a wide first pass, so nothing a person sees is missed. Only ids come
-     * back, so all of them are kept and hidden-text matches cannot push real ones out. One scan
-     * per search; typing on or leaving the page stops it inside SQLite.
+     * The messages, newest first, whose stored text holds [query] once Markdown marks and spaces
+     * are left out: a wide first pass, so nothing a person sees is missed. They are read as pages
+     * need them; typing on or leaving the page stops the reading inside SQLite.
      */
-    suspend fun matches(context: Context, chatIds: List<String>, query: String): List<Long> =
-        withContext(Dispatchers.IO) {
-            val trimmed = query.trim()
-            if (trimmed.isEmpty() || chatIds.isEmpty()) return@withContext emptyList()
-            val bare = trimmed.filterNot { it in marks || it.isWhitespace() }
-            // A search made only of such marks (say "#") is looked for as typed.
-            fun escape(s: String) = s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-            val text: String
-            val patterns: List<String>
-            val condition: String
-            if (bare.isNotEmpty()) {
-                text = ignoredInSql.fold("content") { sql, ch -> "REPLACE($sql,$ch,'')" }
-                // A link's address sits between words a person reads as one ("看[文档](…)说明"), so a
-                // message with a link may also hold the words in order with anything between them.
-                val inOrder = bare.codePoints().toArray().joinToString("%", "%", "%") { escape(String(Character.toChars(it))) }
-                patterns = listOf("%" + escape(bare) + "%", inOrder)
-                condition = "($text LIKE ? ESCAPE '\\' OR (INSTR(content,'](')>0 AND $text LIKE ? ESCAPE '\\'))"
-            } else {
-                text = "content"
-                patterns = listOf("%" + escape(trimmed) + "%")
-                condition = "$text LIKE ? ESCAPE '\\'"
-            }
-            val sql = "SELECT messageId FROM messages WHERE chatId IN (" + chatIds.joinToString(",") { "?" } + ")" +
-                " AND sender IN ('user','ai')" +
-                " AND displayMode NOT IN ('HIDDEN_PLACEHOLDER','COLLABORATION_EVENT','COLLABORATION_TASK')" +
-                " AND $condition ORDER BY timestamp DESC, messageId DESC"
-            val args: Array<Any?> = (chatIds + patterns).toTypedArray()
-            val db = AppDatabase.getDatabase(context).openHelper.readableDatabase
-            val signal = CancellationSignal()
-            coroutineScope {
-                // Room's own queries cannot be stopped midway; this signal can.
-                val watcher = launch(start = CoroutineStart.UNDISPATCHED) {
-                    try { awaitCancellation() } finally { signal.cancel() }
-                }
-                try {
-                    db.query(SimpleSQLiteQuery(sql, args), signal).use { cursor ->
-                        val ids = ArrayList<Long>()
-                        while (cursor.moveToNext()) {
-                            ensureActive()
-                            ids += cursor.getLong(0)
-                        }
-                        ids
-                    }
-                } catch (e: OperationCanceledException) {
-                    throw CancellationException("Search replaced")
-                } finally {
-                    watcher.cancel()
-                }
-            }
+    fun matches(context: Context, chatIds: List<String>, query: String): OrbitMatchStream {
+        val trimmed = query.trim()
+        if (trimmed.isEmpty()) return OrbitMatchStream(context, emptyList(), "0")
+        val bare = trimmed.filterNot { it in marks || it.isWhitespace() }
+        // A search made only of such marks (say "#") is looked for as typed.
+        fun escape(s: String) = s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        val patterns: List<String>
+        val condition: String
+        if (bare.isNotEmpty()) {
+            val text = ignoredInSql.fold("content") { sql, ch -> "REPLACE($sql,$ch,'')" }
+            // A link's address sits between words a person reads as one ("看[文档](…)说明"), so a
+            // message with a link may also hold the words in order with anything between them.
+            val inOrder = bare.codePoints().toArray().joinToString("%", "%", "%") { escape(String(Character.toChars(it))) }
+            patterns = listOf("%" + escape(bare) + "%", inOrder)
+            condition = "($text LIKE ? ESCAPE '\\' OR (INSTR(content,'](')>0 AND $text LIKE ? ESCAPE '\\'))"
+        } else {
+            patterns = listOf("%" + escape(trimmed) + "%")
+            condition = "content LIKE ? ESCAPE '\\'"
         }
+        val test = "sender IN ('user','ai')" +
+            " AND displayMode NOT IN ('HIDDEN_PLACEHOLDER','COLLABORATION_EVENT','COLLABORATION_TASK')" +
+            " AND $condition"
+        return OrbitMatchStream(context, chatIds, test, patterns)
+    }
 
     /**
-     * The hits among [ids] from [from], checked against the words a person sees, and where the next
-     * page starts, or null at the end. Each message is read whole, however long.
+     * The hits among [matches] from [from], checked against the words a person sees, and where the
+     * next page starts, or null at the end. Each message is read whole, however long. Once there is
+     * something to show, the page stops after a short while so the first results are not held back.
      */
-    suspend fun page(context: Context, ids: List<Long>, query: String, from: Int): Pair<List<OrbitSearchHit>, Int?> =
+    suspend fun page(context: Context, matches: OrbitMatchStream, query: String, from: Int): Pair<List<OrbitSearchHit>, Int?> =
         withContext(Dispatchers.IO) {
             val needle = query.trim().replace(spaces, " ")
             val dao = AppDatabase.getDatabase(context).chatContentDao()
             val attachmentOnly = context.getString(R.string.orbit_user_sent_attachment)
             val cardOnly = context.getString(R.string.orbit_sent_card)
             val hits = ArrayList<OrbitSearchHit>()
+            val deadline = android.os.SystemClock.uptimeMillis() + OrbitMatchStream.PAGE_TIME_MS
             var at = from
-            while (at < ids.size && at - from < MAX_READ_PER_PAGE && hits.size < PAGE) {
-                val batch = ids.subList(at, minOf(at + BATCH, ids.size))
+            while (at - from < MAX_READ_PER_PAGE && hits.size < PAGE) {
+                matches.fill(at, at + BATCH, if (hits.isEmpty()) Long.MAX_VALUE else deadline)
+                val batch = matches.ids(at, BATCH)
+                if (batch.isEmpty()) break
                 val byId = dao.getMessagesByIds(batch).associateBy { it.messageId }
                 batch.forEach { id ->
                     ensureActive()
@@ -185,8 +155,9 @@ internal object OrbitTalkSearch {
                     if (index >= 0) hits += OrbitSearchHit(row.messageId, row.chatId, row.timestamp, around(text, index))
                 }
                 at += batch.size
+                if (hits.isNotEmpty() && android.os.SystemClock.uptimeMillis() > deadline) break
             }
-            hits to at.takeIf { it < ids.size }
+            hits to at.takeIf { matches.more(it) }
         }
 
     /** The text from a little before the match, so a match deep in a long message still shows. */
@@ -221,8 +192,8 @@ internal fun OrbitSearchPage(
         mapOf(orbit.chatId to mainTitle) + orbit.sideChats.associate { it.chatId to it.title }
     }
     var hits by remember { mutableStateOf<List<OrbitSearchHit>>(emptyList()) }
-    // Every message that may match the shown words; pages are read from it in order.
-    var matchIds by remember { mutableStateOf<List<Long>>(emptyList()) }
+    // The messages that may match the shown words; pages are read from it in order.
+    var matchIds by remember { mutableStateOf<OrbitMatchStream?>(null) }
     var next by remember { mutableStateOf<Int?>(null) }
     // The words the shown results are for; the box may already hold newer ones.
     var searched by remember { mutableStateOf("") }
@@ -234,7 +205,7 @@ internal fun OrbitSearchPage(
     val needle = query.trim()
     LaunchedEffect(needle, chatIds) {
         if (needle.isEmpty()) {
-            hits = emptyList(); matchIds = emptyList(); next = null; searched = ""
+            hits = emptyList(); matchIds = null; next = null; searched = ""
             failed = false; moreFailed = false; loading = false
             return@LaunchedEffect
         }
@@ -248,17 +219,17 @@ internal fun OrbitSearchPage(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            hits = emptyList(); matchIds = emptyList(); next = null; failed = true; moreFailed = false; searched = needle
+            hits = emptyList(); matchIds = null; next = null; failed = true; moreFailed = false; searched = needle
         } finally {
             loading = false
         }
     }
     val listState = rememberLazyListState()
     LaunchedEffect(searched) { if (searched.isNotEmpty()) listState.scrollToItem(0) }
+    // Counted in results, not list rows: the loading row at the bottom must not move the mark.
     val nearEnd by remember {
         derivedStateOf {
-            val info = listState.layoutInfo
-            (info.visibleItemsInfo.lastOrNull()?.index ?: -1) >= info.totalItemsCount - 4
+            (listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1) >= hits.size - 4
         }
     }
     // Reads on near the end of the list, and straight away while nothing was found yet.
@@ -267,7 +238,7 @@ internal fun OrbitSearchPage(
         val from = next ?: return@LaunchedEffect
         if (!wantMore || loading || moreFailed || searched.isEmpty()) return@LaunchedEffect
         val forQuery = searched
-        val ids = matchIds
+        val ids = matchIds ?: return@LaunchedEffect
         loadingMore = true
         try {
             val (found, more) = OrbitTalkSearch.page(context, ids, forQuery, from)
@@ -341,7 +312,8 @@ internal fun OrbitSearchPage(
                                 onClick = { onOpenHit(hit) },
                             )
                         }
-                        if (loadingMore) item(key = "more") {
+                        // Stays while pages keep coming, so it does not blink between them.
+                        if (loadingMore || (next != null && wantMore && !moreFailed)) item(key = "more") {
                             Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
                                 CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                             }

@@ -37,7 +37,7 @@ interface MessageDao {
         FROM messages m LEFT JOIN message_variants v
           ON m.selectedVariantIndex > 0 AND v.chatId = m.chatId
           AND v.messageTimestamp = m.timestamp AND v.variantIndex = m.selectedVariantIndex
-        WHERE m.chatId = :chatId ORDER BY m.timestamp ASC
+        WHERE m.chatId = :chatId ORDER BY m.timestamp ASC, m.messageId ASC
     """)
     suspend fun getProcessMetadata(chatId: String): List<com.ai.assistance.operit.data.model.ChatMessageProcessMetadata>
 
@@ -51,7 +51,7 @@ interface MessageDao {
         FROM messages m LEFT JOIN message_variants v
           ON m.selectedVariantIndex > 0 AND v.chatId = m.chatId
           AND v.messageTimestamp = m.timestamp AND v.variantIndex = m.selectedVariantIndex
-        WHERE m.chatId = :chatId ORDER BY m.timestamp DESC LIMIT :limit
+        WHERE m.chatId = :chatId ORDER BY m.timestamp DESC, m.messageId DESC LIMIT :limit
     """)
     suspend fun getRecentProcessMetadata(chatId: String, limit: Int): List<com.ai.assistance.operit.data.model.ChatMessageProcessMetadata>
 
@@ -65,7 +65,7 @@ interface MessageDao {
         FROM messages m LEFT JOIN message_variants v
           ON m.selectedVariantIndex > 0 AND v.chatId = m.chatId
           AND v.messageTimestamp = m.timestamp AND v.variantIndex = m.selectedVariantIndex
-        WHERE m.chatId = :chatId AND m.timestamp >= :since ORDER BY m.timestamp ASC
+        WHERE m.chatId = :chatId AND m.timestamp >= :since ORDER BY m.timestamp ASC, m.messageId ASC
     """)
     suspend fun getProcessMetadataFrom(chatId: String, since: Long): List<com.ai.assistance.operit.data.model.ChatMessageProcessMetadata>
 
@@ -79,9 +79,37 @@ interface MessageDao {
         FROM messages m LEFT JOIN message_variants v
           ON m.selectedVariantIndex > 0 AND v.chatId = m.chatId
           AND v.messageTimestamp = m.timestamp AND v.variantIndex = m.selectedVariantIndex
-        WHERE m.chatId = :chatId AND m.timestamp >= :since AND m.timestamp <= :until ORDER BY m.timestamp ASC
+        WHERE m.chatId = :chatId AND m.timestamp >= :since AND m.timestamp <= :until ORDER BY m.timestamp ASC, m.messageId ASC
     """)
     suspend fun getProcessMetadataBetween(chatId: String, since: Long, until: Long): List<com.ai.assistance.operit.data.model.ChatMessageProcessMetadata>
+
+    /** The newest [limit] rows of [getProcessMetadata] said before [before], newest first. */
+    @Query("""
+        SELECT m.timestamp, m.sender, m.displayMode,
+            COALESCE(v.sentAt, m.sentAt) AS sentAt,
+            COALESCE(v.completedAt, m.completedAt) AS completedAt,
+            COALESCE(v.waitDurationMs, m.waitDurationMs) AS waitDurationMs,
+            COALESCE(v.outputDurationMs, m.outputDurationMs) AS outputDurationMs
+        FROM messages m LEFT JOIN message_variants v
+          ON m.selectedVariantIndex > 0 AND v.chatId = m.chatId
+          AND v.messageTimestamp = m.timestamp AND v.variantIndex = m.selectedVariantIndex
+        WHERE m.chatId = :chatId AND m.timestamp < :before ORDER BY m.timestamp DESC, m.messageId DESC LIMIT :limit
+    """)
+    suspend fun getProcessMetadataBefore(chatId: String, before: Long, limit: Int): List<com.ai.assistance.operit.data.model.ChatMessageProcessMetadata>
+
+    /** The oldest [limit] rows of [getProcessMetadata] said after [after], oldest first. */
+    @Query("""
+        SELECT m.timestamp, m.sender, m.displayMode,
+            COALESCE(v.sentAt, m.sentAt) AS sentAt,
+            COALESCE(v.completedAt, m.completedAt) AS completedAt,
+            COALESCE(v.waitDurationMs, m.waitDurationMs) AS waitDurationMs,
+            COALESCE(v.outputDurationMs, m.outputDurationMs) AS outputDurationMs
+        FROM messages m LEFT JOIN message_variants v
+          ON m.selectedVariantIndex > 0 AND v.chatId = m.chatId
+          AND v.messageTimestamp = m.timestamp AND v.variantIndex = m.selectedVariantIndex
+        WHERE m.chatId = :chatId AND m.timestamp > :after ORDER BY m.timestamp ASC, m.messageId ASC LIMIT :limit
+    """)
+    suspend fun getProcessMetadataAfter(chatId: String, after: Long, limit: Int): List<com.ai.assistance.operit.data.model.ChatMessageProcessMetadata>
 
     /**
      * Replies in which the assistant called tools or thought first; both are stored as markup
