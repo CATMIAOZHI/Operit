@@ -6,6 +6,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -110,6 +111,8 @@ internal enum class OrbitFindKind(val icon: String, val label: Int) {
     FILE("file-text", R.string.orbit_find_files),
     LINK("link", R.string.orbit_find_links),
     MUSIC("music", R.string.orbit_find_music),
+    /** Orbit's voice messages: audio it made into its files/voice/. */
+    VOICE("mic", R.string.orbit_find_voice),
     CARD("layout-grid", R.string.orbit_find_cards),
     APPROVAL("shield-check", R.string.orbit_find_approvals),
     FAVORITE("star", R.string.orbit_find_favorites),
@@ -166,6 +169,9 @@ internal object OrbitChatFind {
     private fun condition(kind: OrbitFindKind): String = when (kind) {
         OrbitFindKind.MEDIA, OrbitFindKind.FILE, OrbitFindKind.MUSIC ->
             "(content LIKE '%<link%' OR content LIKE '%<attachment%' OR content LIKE '%orbit_card%' OR content LIKE '%![%](%')"
+        // Only messages naming files/voice/ (a card's JSON writes it as files\/voice\/), so a chat
+        // with few voice messages is not read through for them.
+        OrbitFindKind.VOICE -> "(content LIKE '%files/voice/%' OR content LIKE '%files\\/voice\\/%')"
         OrbitFindKind.LINK -> "content LIKE '%http%'"
         OrbitFindKind.CARD -> "(content LIKE '%orbit_card%' OR content LIKE '%```a2ui%')"
         OrbitFindKind.APPROVAL -> "(content LIKE '%orbit_card%' AND content LIKE '%approval_id%')"
@@ -281,22 +287,29 @@ internal object OrbitChatFind {
         withContext(Dispatchers.IO) {
             val dao = AppDatabase.getDatabase(context).chatContentDao()
             val files = OrbitFiles.of(context, orbitId)
+            val voiceDir = if (kind == OrbitFindKind.VOICE || kind == OrbitFindKind.MUSIC) {
+                runCatching { files.fileFor(VOICE_DIR).path + "/" }.getOrNull()
+            } else null
             val english = !context.resources.configuration.locales[0].language.startsWith("zh")
             val found = ArrayList<OrbitFound>()
-            val deadline = android.os.SystemClock.uptimeMillis() + OrbitMatchStream.PAGE_TIME_MS
+            val started = android.os.SystemClock.uptimeMillis()
+            val deadline = started + OrbitMatchStream.PAGE_TIME_MS
+            val emptyDeadline = started + OrbitMatchStream.EMPTY_TIME_MS
             var at = from
-            while (at - from < MAX_READ_PER_PAGE && found.size < PAGE) {
-                ids.fill(at, at + BATCH, if (found.isEmpty()) Long.MAX_VALUE else deadline)
+            // With nothing found yet, a page goes on past MAX_READ_PER_PAGE until its time is up.
+            while ((at - from < MAX_READ_PER_PAGE || found.isEmpty()) && found.size < PAGE) {
+                ids.fill(at, at + BATCH, if (found.isEmpty()) emptyDeadline else deadline)
                 val batch = ids.ids(at, BATCH)
                 if (batch.isEmpty()) break
                 val byId = dao.getMessagesByIds(batch).associateBy { it.messageId }
                 batch.forEach { id ->
                     ensureActive()
                     val row = byId[id] ?: return@forEach
-                    found += extract(context, files, english, kind, row.messageId, row.chatId, row.timestamp, row.sender, row.content)
+                    found += extract(context, files, voiceDir, english, kind, row.messageId, row.chatId, row.timestamp, row.sender, row.content)
                 }
                 at += batch.size
-                if (found.isNotEmpty() && android.os.SystemClock.uptimeMillis() > deadline) break
+                val now = android.os.SystemClock.uptimeMillis()
+                if (now > (if (found.isEmpty()) emptyDeadline else deadline)) break
             }
             found to at.takeIf { ids.more(it) }
         }
@@ -331,8 +344,24 @@ internal object OrbitChatFind {
 
     private fun typeOf(name: String) = name.substringAfterLast('.', "").lowercase()
 
+    private const val VOICE_DIR = "files/voice"
+
+    /**
+     * A voice message is audio Orbit made into its files/voice/: there for a full path ([voiceDir]
+     * is that folder of this Orbit), or starting with it for a path inside Orbit. Other audio is
+     * the other audio.
+     */
+    private fun audioKind(path: String?, voiceDir: String?, inOrbit: Boolean): OrbitFindKind {
+        val voice = when {
+            path == null -> false
+            inOrbit -> path.removePrefix("/").startsWith("$VOICE_DIR/")
+            else -> voiceDir != null && path.startsWith(voiceDir)
+        }
+        return if (voice) OrbitFindKind.VOICE else OrbitFindKind.MUSIC
+    }
+
     private fun extract(
-        context: Context, files: OrbitFiles, english: Boolean, kind: OrbitFindKind,
+        context: Context, files: OrbitFiles, voiceDir: String?, english: Boolean, kind: OrbitFindKind,
         messageId: Long, chatId: String, timestamp: Long, sender: String, content: String,
     ): List<OrbitFound> {
         val out = ArrayList<OrbitFound>()
@@ -379,7 +408,8 @@ internal object OrbitChatFind {
         val shown = OrbitSpeech.of(content)
         val (speech, cards) = OrbitSpeech.splitCards(shown)
         // Audio, pictures and video Orbit put in its words as Markdown (a voice message is one).
-        if (kind == OrbitFindKind.MEDIA || kind == OrbitFindKind.MUSIC || kind == OrbitFindKind.FILE) {
+        if (kind == OrbitFindKind.MEDIA || kind == OrbitFindKind.MUSIC || kind == OrbitFindKind.VOICE ||
+            kind == OrbitFindKind.FILE) {
             // A picture shown twice in one reply is one result, landing on where it shows first.
             markdownMedia.findAll(speech).distinctBy { it.groupValues[2] }.forEach { m ->
                 val url = m.groupValues[2]
@@ -390,7 +420,7 @@ internal object OrbitChatFind {
                 // The picture inside Orbit's words, so the chat lands on it rather than the words before.
                 val inWords = "md:$timestamp:$url"
                 when {
-                    ext in audioTypes -> add(OrbitFindKind.MUSIC) { OrbitFound(it, chatId, timestamp, name, pieceKey = inWords) }
+                    ext in audioTypes -> add(audioKind(path, voiceDir, inOrbit = false)) { OrbitFound(it, chatId, timestamp, name, pieceKey = inWords) }
                     ext in videoTypes -> add(OrbitFindKind.MEDIA) { OrbitFound(it, chatId, timestamp, name, video = true, pieceKey = inWords) }
                     ext in OrbitChatCards.imageTypes ->
                         add(OrbitFindKind.MEDIA) { OrbitFound(it, chatId, timestamp, name, file = path?.let(::File), pieceKey = inWords) }
@@ -412,7 +442,10 @@ internal object OrbitChatFind {
                     when {
                         isImage -> add(OrbitFindKind.MEDIA) { OrbitFound(it, chatId, timestamp, name, file = files.chatFile(path), pieceKey = piece) }
                         ext in videoTypes -> add(OrbitFindKind.MEDIA) { OrbitFound(it, chatId, timestamp, name, video = true, pieceKey = piece) }
-                        ext in audioTypes -> add(OrbitFindKind.MUSIC) { OrbitFound(it, chatId, timestamp, name, size, pieceKey = piece) }
+                        // A sent copy lives under sent/; "from" keeps where it was sent from.
+                        ext in audioTypes -> add(audioKind(o.optString("from").ifBlank { path }, voiceDir, inOrbit = true)) {
+                            OrbitFound(it, chatId, timestamp, name, size, pieceKey = piece)
+                        }
                         else -> add(OrbitFindKind.FILE) { OrbitFound(it, chatId, timestamp, name, size, pieceKey = piece) }
                     }
                 }
@@ -551,16 +584,22 @@ private fun SearchField(query: String, onChange: (String) -> Unit, focus: FocusR
     )
 }
 
-/** "Search for": the shortcuts, four to a row. */
+private const val GRID_COLUMNS = 3
+
+/** "Search for": the shortcuts, [GRID_COLUMNS] to a row. */
 @Composable
 private fun KindGrid(onPick: (OrbitFindKind) -> Unit) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 16.dp)) {
+    // Scrolls when the keyboard leaves little room (landscape, a small window).
+    Column(
+        Modifier.fillMaxWidth().verticalScroll(androidx.compose.foundation.rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 16.dp)
+    ) {
         Text(
             stringResource(R.string.orbit_find_title), style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
         )
-        OrbitFindKind.entries.chunked(4).forEach { row ->
+        OrbitFindKind.entries.chunked(GRID_COLUMNS).forEach { row ->
             Row(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
                 row.forEach { k ->
                     val label = stringResource(k.label)
@@ -582,7 +621,7 @@ private fun KindGrid(onPick: (OrbitFindKind) -> Unit) {
                             maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
-                repeat(4 - row.size) { Spacer(Modifier.weight(1f)) }
+                repeat(GRID_COLUMNS - row.size) { Spacer(Modifier.weight(1f)) }
             }
         }
     }
@@ -665,11 +704,14 @@ private fun nearEnd(state: LazyListState, count: () -> Int): androidx.compose.ru
     }
 }
 
+/** Near the end of [count] results; the footer (loading, look further) does not count. */
 @Composable
-private fun nearEnd(state: LazyGridState) = remember(state) {
-    derivedStateOf {
-        val info = state.layoutInfo
-        (info.visibleItemsInfo.lastOrNull()?.index ?: -1) >= info.totalItemsCount - 12
+private fun nearEnd(state: LazyGridState, count: () -> Int): androidx.compose.runtime.State<Boolean> {
+    val counted = androidx.compose.runtime.rememberUpdatedState(count)
+    return remember(state) {
+        derivedStateOf {
+            (state.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1) >= counted.value() - 12
+        }
     }
 }
 
@@ -690,11 +732,19 @@ private fun FoundList(orbit: OrbitProfile, chatId: String, kind: OrbitFindKind, 
     var ready by remember(kind) { mutableStateOf(false) }
     var failed by remember(kind) { mutableStateOf(false) }
     var loadingMore by remember(kind) { mutableStateOf(false) }
+    // A page that read for a while and found nothing stops; the user can look further back.
+    var paused by remember(kind) { mutableStateOf(false) }
+    var readBackTo by remember(kind) { mutableStateOf<Long?>(null) }
     LaunchedEffect(kind, chatId) {
         try {
             val list = OrbitChatFind.candidates(context, chatId, kind)
             val (first, more) = OrbitChatFind.page(context, orbit.id, list, kind, 0)
+            val stopped = first.isEmpty() && more != null
+            // Read before any state changes: the state is what restarts the loading effects.
+            val date = if (stopped) list.readBackTo(more ?: 0) else null
             ids = list; found = first; next = more
+            paused = stopped
+            if (stopped) readBackTo = date
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -716,8 +766,13 @@ private fun FoundList(orbit: OrbitProfile, chatId: String, kind: OrbitFindKind, 
         loadingMore = true
         try {
             val (page, after) = OrbitChatFind.page(context, orbit.id, stream, kind, from)
+            val stopped = page.isEmpty() && after != null
+            // Read before any state changes: they restart the effect running this, which would cancel it.
+            val date = if (stopped) stream.readBackTo(after ?: 0) else null
             found = found + page
             next = after
+            paused = stopped
+            if (stopped) readBackTo = date
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -730,12 +785,16 @@ private fun FoundList(orbit: OrbitProfile, chatId: String, kind: OrbitFindKind, 
     if (failed) { SearchNote(stringResource(R.string.orbit_search_failed)); return }
     if (kind == OrbitFindKind.MEDIA) {
         val gridState = rememberLazyGridState()
-        val wantMore by nearEnd(gridState)
-        LaunchedEffect(wantMore || found.isEmpty(), next) {
-            if ((wantMore || found.isEmpty()) && next != null) more()
+        val wantMore by nearEnd(gridState) { found.size }
+        LaunchedEffect(wantMore || found.isEmpty(), next, paused) {
+            if ((wantMore || found.isEmpty()) && next != null && !paused) more()
         }
         if (found.isEmpty()) {
-            if (next != null || loadingMore) Loading() else SearchNote(stringResource(R.string.orbit_find_empty))
+            when {
+                paused && !loadingMore -> KeepLooking(readBackTo) { paused = false }
+                next != null || loadingMore -> Loading()
+                else -> SearchNote(stringResource(R.string.orbit_find_empty))
+            }
             return
         }
         LazyVerticalGrid(
@@ -743,16 +802,29 @@ private fun FoundList(orbit: OrbitProfile, chatId: String, kind: OrbitFindKind, 
             horizontalArrangement = Arrangement.spacedBy(2.dp), verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             items(found, key = { it.key }) { item -> MediaTile(item) { onOpen(item.chatId, item.timestamp, item.pieceKey) } }
+            if (paused && !loadingMore) {
+                item(key = "keep", span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+                    KeepLooking(readBackTo) { paused = false }
+                }
+            } else if (loadingMore) {
+                item(key = "more", span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+                    Loading(Modifier.padding(16.dp))
+                }
+            }
         }
         return
     }
     val listState = rememberLazyListState()
     val wantMore by nearEnd(listState) { found.size }
-    LaunchedEffect(wantMore || found.isEmpty(), next) {
-        if ((wantMore || found.isEmpty()) && next != null) more()
+    LaunchedEffect(wantMore || found.isEmpty(), next, paused) {
+        if ((wantMore || found.isEmpty()) && next != null && !paused) more()
     }
     if (found.isEmpty()) {
-        if (next != null || loadingMore) Loading() else SearchNote(stringResource(R.string.orbit_find_empty))
+        when {
+            paused && !loadingMore -> KeepLooking(readBackTo) { paused = false }
+            next != null || loadingMore -> Loading()
+            else -> SearchNote(stringResource(R.string.orbit_find_empty))
+        }
         return
     }
     LazyColumn(Modifier.fillMaxSize(), state = listState) {
@@ -762,7 +834,31 @@ private fun FoundList(orbit: OrbitProfile, chatId: String, kind: OrbitFindKind, 
             val detail = listOfNotNull(day, item.detail.takeIf { it.isNotEmpty() }, answer?.let { stringResource(it) }).joinToString(" · ")
             FoundRow(kind.icon, item.title, detail, divider = i > 0, onClick = { onOpen(item.chatId, item.timestamp, item.pieceKey) })
         }
-        if (loadingMore || (next != null && wantMore)) item(key = "more") { Loading(Modifier.padding(16.dp)) }
+        if (paused && !loadingMore) {
+            item(key = "keep") { KeepLooking(readBackTo) { paused = false } }
+        } else if (loadingMore || (next != null && wantMore)) {
+            item(key = "more") { Loading(Modifier.padding(16.dp)) }
+        }
+    }
+}
+
+/** Nothing more found in a while of reading: how far back it got, and a button to look further. */
+@Composable
+private fun KeepLooking(readBackTo: Long?, onMore: () -> Unit) {
+    val context = LocalContext.current
+    Column(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        val note = readBackTo?.let { stringResource(R.string.orbit_find_read_back_to, remember(it) { searchDayLabel(context, it) }) }
+            ?: stringResource(R.string.orbit_find_nothing_yet)
+        Text(
+            note, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+        )
+        androidx.compose.material3.TextButton(onClick = onMore, modifier = Modifier.padding(top = 4.dp)) {
+            Text(stringResource(R.string.orbit_find_keep_looking))
+        }
     }
 }
 

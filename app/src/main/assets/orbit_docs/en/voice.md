@@ -30,7 +30,7 @@ If a cloud voice fails, the tool reports the error and does not fall back to the
 ## Make a voice message
 
 Use `orbit_voice action=speak` when the user wants a voice message, briefing, story, or other replayable audio.
-Put the spoken words in `text`. Optional `title` supplies the filename without an extension.
+Put the spoken words in `text`. Optional `title` supplies the filename without an extension; it shows under the voice bar, so a few words on the topic are enough, such as "Morning briefing".
 `voice` (a phone system voice name) is only accepted when the user chose the phone's own voice.
 
 Each file allows at most 6000 characters, counting all lines together for multi-speaker audio; requests to the voice service are also capped, so do not cut lines too small.
@@ -50,6 +50,7 @@ Write short, natural exchanges. Do not describe this as real people participatin
 ## Deliver the audio
 
 On success, the tool returns `path`, `engine` (`cloud` or `phone`) and `markdown`; a voice message also has `service` (the profile name), a podcast the `voices` each speaker got.
-Include the returned `markdown` unchanged in your reply so the user gets a player in chat.
+Put the returned `markdown` unchanged on a line of its own; the chat shows it as a voice bar the user taps to play.
+Send it the way people send a voice note: at most one short sentence around it, and do not write out what the audio says; give a text version when the user asks for one.
 The file is saved under the current Orbit's `files/voice/` (MP3 or WAV for cloud voices, WAV for the phone's voice) and is also available among the files on the Builds page.To resend existing audio, use `orbit_file action=send`.
 A device path alone is not a delivered file. Report completion only from the actual tool result.
