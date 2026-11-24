@@ -9422,7 +9422,7 @@
     <string name="orbit_profile_status_busy">正在忙</string>
     <string name="orbit_profile_today">今天</string>
     <string name="orbit_profile_yesterday">昨天</string>
-    <string name="orbit_profile_activity_empty">还没有执行过任务</string>
+    <string name="orbit_profile_activity_empty">暂无任务动态。脚本监控没发现情况的检查，在那个任务的详情里看</string>
     <string name="orbit_profile_run_interrupted">执行中断，已暂停</string>
     <string name="orbit_profile_approvals_empty">暂时没有批准记录</string>
     <string name="orbit_profile_waiting">等你处理</string>
@@ -9722,6 +9722,7 @@
     <string name="orbit_decision_chat_quiet">%1$s 看过了，这次没打扰你</string>
     <string name="orbit_decision_chat_pending">%1$s 看过了，还不确定有没有跟你说</string>
     <string name="orbit_hook_needs_dry_run">这个脚本还没试跑通过。请让 Orbit 先试跑、检查输出，再启用任务。</string>
+    <!-- Its start is OrbitRunEntity.HOOK_QUIET_ZH: these checks stay off the activity list by it. -->
     <string name="orbit_hook_silent">脚本判断这次不用叫醒 Orbit：%1$s</string>
     <string name="orbit_task_in_chat">到点后由 %1$s 在聊天里处理；聊天正忙时会稍后再提醒</string>
     <string name="orbit_run_in_chat">已交给 Orbit 在聊天里处理</string>

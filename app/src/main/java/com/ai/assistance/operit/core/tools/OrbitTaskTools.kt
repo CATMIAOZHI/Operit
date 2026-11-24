@@ -45,13 +45,13 @@ internal object OrbitTaskTools {
             ToolParameterSchema("interval_minutes", "integer", "检查间隔，15到10080分钟，默认60", false),
             ToolParameterSchema("notify_policy", description = "CHANGES 仅有价值变化时通知，ALWAYS 每次汇报，DIGEST 每日汇总有价值的结果", required = false),
             ToolParameterSchema("use_subagent", "boolean", "可选，默认 false：到点在聊天里叫醒你本人处理（提醒、问候、几步就能做完的事）。true：到点由后台子代理去做，做完把结果交回给你，再由你决定怎么告诉用户；适合步骤多、耗时长、不需要聊天上下文的活（如批量审查、长时间整理）", false),
-            ToolParameterSchema("model", description = "指定模型：main 主模型、assistant 辅助模型、default 默认（聊天内执行用主模型，后台任务和对齐复盘用辅助模型）。create 不填用 default；update 不填保留。Model role: main/assistant/default; default uses main for chat wakes, assistant for background runs and alignment. Returns effective_model with the actual model.", required = false),
-            ToolParameterSchema("timeout_minutes", "integer", "use_subagent=true 时子代理单次运行时限，1到1440分钟（最多24小时），不填默认5分钟；超时会停下并暂停任务", false),
+            ToolParameterSchema("model", description = "只对 use_subagent=true 的后台任务有用：main 主模型、assistant 辅助模型、default 默认（辅助模型）。在聊天里叫醒你的任务用那个聊天当前选的模型，不填这项（填了也不用）。create 不填用 default；update 不填保留。Only for use_subagent=true background runs: main/assistant/default (assistant). Tasks that wake you in a chat use that chat's current model and ignore this. Returns effective_model with the actual model.", required = false),
+            ToolParameterSchema("timeout_minutes", "integer", "use_subagent=true 时子代理单次运行时限，1到1440分钟（最多24小时），不填默认60分钟；超时会停下并暂停任务（夜间对齐复盘固定120分钟，超时会保留进度、下次接着读）", false),
         ),
         details = "根据用户交代的目标安排后续工作。用户说“某天几点提醒我”用 ONCE+run_at+notify_policy=ALWAYS；" +
             "update 只改传入的字段（title、instruction、url、watch/script、schedule_mode、run_at、daily_time、repeat_on、interval_minutes、notify_policy、timeout_minutes、use_subagent、model），没传的保持不变。" +
             "只改说明或脚本的一小段时用 instruction_old/instruction_new 或 script_old/script_new，像 edit_file 一样换掉那段，不用整篇重写。" +
-            "model 指定主模型或辅助模型，不填写内部配置编号；返回 model 是保存的选择，effective_model 是实际角色、配置名和模型名，model_error 表示需用户到设置→模型重新选择。" +
+            "model 只给后台任务（use_subagent=true）指定主模型或辅助模型，不填写内部配置编号；返回 model 是保存的选择（在聊天里执行的任务是 chat，表示用那个聊天当前的模型），effective_model 是实际角色、配置名和模型名，model_error 表示需用户到设置→模型重新选择。" +
             "改了时间（schedule_mode、run_at、daily_time、repeat_on、interval_minutes）或网页会重算下次运行，只改 title、notify_policy 等不动下次时间；任何真的改动都会停掉正在进行的这次运行（没做完的结果作废），正在跑时别为了改标题去 update。" +
             "改动类操作会返回任务现在的样子、changed（有没有变）和 changed_fields（变了哪些），next_run 是下次执行的本地时间（timezone 是时区，停了的任务为 null）。run 只是排队，结果做完才回来。" +
             "list 里的 instruction、last_observation 只给前200字，要全文用 detail。" +
@@ -59,7 +59,7 @@ internal object OrbitTaskTools {
             "“每年几月几号”（生日、纪念日、续费）用 YEARLY+repeat_on+daily_time；周期提醒同样配 notify_policy=ALWAYS；" +
             "“每隔几小时”用 INTERVAL。手机关机/强停/断网时不能承诺准点。" +
             "到点时默认在安排它的聊天里给你一条隐藏的“到点了”消息，你带着完整的聊天上下文自己处理，用户只看到你说的话；提醒就直接用自己的话提醒，不需要额外设置。" +
-            "只有活很重、很长时才设 use_subagent=true：子代理在后台做（默认最多5分钟，按需调大 timeout_minutes，最多1440分钟），结果交回给你后再由你告诉用户。" +
+            "只有活很重、很长时才设 use_subagent=true：子代理在后台做（默认最多60分钟，按需调整 timeout_minutes，最多1440分钟），结果交回给你后再由你告诉用户。" +
             "子代理与主聊天使用相同的现有工具和快速审核；需要技能或工具包时按需发现和加载。" +
             "「动态更新」（每12小时写一条动态）和「每日点子」（每天上午9点想点子）是你自己的后台任务，动态页和点子页靠它们更新：" +
             "只能 pause/resume/run 或用 update 改时间（schedule_mode、interval_minutes、daily_time、repeat_on）和 model，不能 cancel，也不能改标题、内容或执行方式。" +
@@ -114,7 +114,9 @@ internal object OrbitTaskTools {
                 calendarRule = arguments["repeat_on"].orEmpty(),
                 timeoutMinutes = parseTimeout(arguments["timeout_minutes"]) ?: 0,
                 useSubagent = parseFlag(arguments["use_subagent"]) ?: false,
-                modelRole = arguments["model"]?.let(OrbitModels::checkedRole) ?: OrbitModels.DEFAULT,
+                // Only a background run has a model of its own; one woken in a chat uses the chat's.
+                modelRole = arguments["model"]?.takeIf { parseFlag(arguments["use_subagent"]) == true }
+                    ?.let(OrbitModels::checkedRole) ?: OrbitModels.DEFAULT,
                 // Made in a side chat: its reports go back to that side chat, like Muse. Made by a
                 // running task: its reports go where that task reports.
                 chatId = reportChatId(context, orbit, runtime?.callerChatId)), context).apply {
@@ -259,7 +261,9 @@ internal object OrbitTaskTools {
                         parseTimeout(given["timeout_minutes"]) ?: task.timeoutMinutes,
                         parseFlag(given["use_subagent"]) ?: task.useSubagent,
                         scheduleMode = mode,
-                        modelRole = given["model"]?.let(OrbitModels::checkedRole) ?: task.modelRole)) {
+                        // Kept as saved for a task woken in a chat: it has no model of its own to change.
+                        modelRole = given["model"]?.takeIf { parseFlag(given["use_subagent"]) ?: task.useSubagent }
+                            ?.let(OrbitModels::checkedRole) ?: task.modelRole)) {
                             val now = repository.dao.task(id)
                             if (now != null && now.source != task.source) askVault(context, orbit, now, this)
                         }
@@ -594,8 +598,13 @@ internal object OrbitTaskTools {
     private suspend fun json(task: OrbitTaskEntity, context: Context) = JSONObject().put("task_id", task.id).put("title", task.title)
         .put("kind", task.kind)
         .put("use_subagent", task.useSubagent)
-        .put("model", task.modelRole.lowercase(java.util.Locale.ROOT))
         .apply {
+            // Woken in a chat, it answers with that chat's current model: no model of its own.
+            if (!task.useSubagent) {
+                put("model", "chat")
+                return@apply
+            }
+            put("model", task.modelRole.lowercase(java.util.Locale.ROOT))
             val role = OrbitModels.taskRole(task)
             val effective = JSONObject().put("role", role.lowercase(java.util.Locale.ROOT))
             try {

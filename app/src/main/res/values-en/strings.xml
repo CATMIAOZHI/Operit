@@ -9446,7 +9446,7 @@
     <string name="orbit_profile_status_busy">Busy</string>
     <string name="orbit_profile_today">Today</string>
     <string name="orbit_profile_yesterday">Yesterday</string>
-    <string name="orbit_profile_activity_empty">No tasks run yet</string>
+    <string name="orbit_profile_activity_empty">No task activity yet. Watch script checks that found nothing are in that task\'s details</string>
     <string name="orbit_profile_run_interrupted">Interrupted and paused</string>
     <string name="orbit_profile_approvals_empty">No approval records yet</string>
     <string name="orbit_profile_waiting">Waiting for you</string>
@@ -9747,6 +9747,7 @@
     <string name="orbit_decision_chat_quiet">%1$s looked and chose not to bother you</string>
     <string name="orbit_decision_chat_pending">%1$s looked; not sure yet whether it told you</string>
     <string name="orbit_hook_needs_dry_run">This script has not passed a dry run. Ask Orbit to try it, review the output, then enable the task.</string>
+    <!-- Its start is OrbitRunEntity.HOOK_QUIET_EN: these checks stay off the activity list by it. -->
     <string name="orbit_hook_silent">The script decided not to wake Orbit this time: %1$s</string>
     <string name="orbit_task_in_chat">When it\'s due, %1$s handles it in the chat; if you\'re in the middle of a conversation, it waits a moment</string>
     <string name="orbit_run_in_chat">Handed to Orbit in the chat</string>
