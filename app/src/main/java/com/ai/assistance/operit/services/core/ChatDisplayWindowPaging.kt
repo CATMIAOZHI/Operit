@@ -68,6 +68,34 @@ internal fun takeOldestDisplayPages(
         .flatten()
 }
 
+/**
+ * Where the page after the oldest [pageCount] pages of [messages] starts, counted forward from the
+ * oldest row, or null when the rows run out first. Each page starts at a page-starting row and
+ * holds [triggerMessagesPerPage] of them, and a summary always starts one, so every page read
+ * forward is whole without going through the rest of the chat.
+ */
+internal fun forwardDisplayPagesEnd(
+    messages: List<ChatMessage>,
+    pageCount: Int,
+    triggerMessagesPerPage: Int = DISPLAY_PAGE_TRIGGER_COUNT,
+): Int? {
+    var pages = 0
+    var triggers = 0
+    var pageStart = 0
+    messages.forEachIndexed { index, message ->
+        if (!isDisplayPageTriggerMessage(message.sender)) return@forEachIndexed
+        // A summary starts a page whenever anything comes before it in the page.
+        if (index > pageStart && (message.sender == "summary" || triggers >= triggerMessagesPerPage.coerceAtLeast(1))) {
+            pages += 1
+            if (pages >= pageCount) return index
+            triggers = 0
+            pageStart = index
+        }
+        triggers += 1
+    }
+    return null
+}
+
 private inline fun <T> resolveDisplayPageRanges(
     messages: List<T>,
     senderOf: (T) -> String,

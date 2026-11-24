@@ -13,6 +13,7 @@ import com.ai.assistance.operit.data.repository.ChatHistoryManager
 import java.time.LocalDateTime
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -21,6 +22,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import com.ai.assistance.operit.data.preferences.CharacterCardManager
 import com.ai.assistance.operit.data.preferences.ActivePromptManager
 import com.ai.assistance.operit.data.model.ActivePrompt
@@ -157,8 +159,8 @@ class ChatHistoryDelegate(
     }
 
     /**
-     * The structure of the conversation's metadata now shown. Built once per metadata snapshot: it
-     * goes through the whole conversation, and the window is updated on every new message.
+     * The structure of the metadata now shown. Built once per metadata snapshot: the window is
+     * updated on every new message.
      */
     @Volatile private var structureMemo: Pair<List<com.ai.assistance.operit.data.model.ChatMessageProcessMetadata>, TranscriptStructure>? = null
 
@@ -168,30 +170,52 @@ class ChatHistoryDelegate(
         return TranscriptStructure(metadata).also { structureMemo = metadata to it }
     }
 
-    /** Pages read for the window, with the metadata snapshot they were picked from. */
+    /** Pages read for the window, with the metadata they were picked from. */
     private class TranscriptPages(val messages: List<ChatMessage>, val known: KnownMetadata)
 
     /**
-     * The whole conversation's metadata as read once, with the store's message-write count from
-     * just before. A load reuses it for the window it picked instead of reading it a second time.
+     * The part of the conversation's metadata around what is shown, cut where no reply process is
+     * split (see [readMetadataSlice]), with the store's message-write count from just before. A
+     * load reuses it for the window it picked instead of reading it a second time.
      */
-    private class KnownMetadata(
-        val metadata: List<com.ai.assistance.operit.data.model.ChatMessageProcessMetadata>,
-        val writes: Long,
-    )
-
-    private suspend fun readMetadata(chatId: String): KnownMetadata {
-        val writes = chatHistoryManager.messageWriteCount()
-        return KnownMetadata(chatHistoryManager.loadChatMessageProcessMetadata(chatId), writes)
+    private class KnownMetadata(val slice: MetadataSlice, val writes: Long) {
+        val metadata get() = slice.rows
     }
 
+    /** The metadata holding [low]..[high] (null [high]: to the newest row); see [readMetadataSlice]. */
+    private suspend fun readMetadata(
+        chatId: String,
+        low: Long?,
+        high: Long?,
+        wantOlder: (MetadataSlice) -> Boolean = { false },
+        wantNewer: (MetadataSlice) -> Boolean = { false },
+    ): KnownMetadata {
+        val writes = chatHistoryManager.messageWriteCount()
+        val slice = readMetadataSlice(
+            before = { time, limit -> chatHistoryManager.loadChatMessageProcessMetadataBefore(chatId, time, limit) },
+            after = { time, limit -> chatHistoryManager.loadChatMessageProcessMetadataAfter(chatId, time, limit) },
+            at = { time -> chatHistoryManager.loadChatMessageProcessMetadataBetween(chatId, time, time) },
+            low = low, high = high, wantOlder = wantOlder, wantNewer = wantNewer,
+        )
+        return KnownMetadata(slice, writes)
+    }
+
+    /** The metadata holding every row of [messages]; the newest rows when there are none. */
+    private suspend fun readMetadataCovering(chatId: String, messages: List<ChatMessage>): KnownMetadata =
+        if (messages.isEmpty()) readMetadata(chatId, null, null)
+        else readMetadata(chatId, messages.minOf { it.timestamp }, messages.maxOf { it.timestamp })
+
+    private fun KnownMetadata.covers(messages: List<ChatMessage>): Boolean =
+        messages.isEmpty() || slice.covers(messages.minOf { it.timestamp }, messages.maxOf { it.timestamp })
+
     /**
-     * Whether [known] still describes [chatId]: no message was saved since it was read, and the
-     * newest message is still its newest (checked in the store itself, since a save is reported to
-     * the write count a moment after it lands). Otherwise the metadata is read again, as before.
+     * Whether [known] still describes [chatId]: no message was saved since it was read, and when it
+     * reaches the newest message, that is still the newest (checked in the store itself, since a
+     * save is reported to the write count a moment after it lands). Otherwise it is read again.
      */
     private suspend fun stillCurrent(chatId: String, known: KnownMetadata): Boolean {
         if (chatHistoryManager.messageWriteCount() != known.writes) return false
+        if (!known.slice.atEnd) return true
         val newest = chatHistoryManager.newestMessageTimestamp(chatId)
         // Checked again after the lookup: a save reported while it ran counts too. Rows the window
         // holds are grouped by their own in-memory fields anyway (ResponseProcessMessages), so a
@@ -204,7 +228,8 @@ class ChatHistoryDelegate(
         chatId: String,
         messages: List<ChatMessage> = _chatHistory.value,
     ) {
-        val loadResult = buildCurrentChatLoadResult(chatId, messages)
+        val slice = readMetadataCovering(chatId, messages).slice
+        val loadResult = withContext(Dispatchers.Default) { buildCurrentChatLoadResult(chatId, messages, slice) }
         setCurrentChatMessagesInMemory(
             messages = loadResult.messages,
             hasOlderPersistedHistory = loadResult.hasOlderPersistedHistory,
@@ -215,19 +240,21 @@ class ChatHistoryDelegate(
     private suspend fun buildCurrentChatLoadResult(
         chatId: String,
         messages: List<ChatMessage>,
-        structure: TranscriptStructure? = null,
+        slice: MetadataSlice,
+        structure: TranscriptStructure = TranscriptStructure(slice.rows),
     ): CurrentChatWindowLoadResult {
-        val resolvedStructure = structure ?: TranscriptStructure(chatHistoryManager.loadChatMessageProcessMetadata(chatId))
-        val topLevel = resolvedStructure.topLevelRows.mapTo(hashSetOf()) { it.timestamp }
+        val topLevel = structure.topLevelRows.mapTo(hashSetOf()) { it.timestamp }
         val visible = messages.map { it.timestamp }.filter { it in topLevel }
         val displayStartTimestamp = visible.firstOrNull()
         val displayEndTimestamp = visible.lastOrNull()
+        // Rows before or after the slice always include one shown on its own: a cut follows a
+        // finished reply row and comes before the owner's own row.
         val hasOlderPersistedHistory =
             displayStartTimestamp != null &&
-                topLevel.any { it < displayStartTimestamp }
+                (!slice.atStart || topLevel.any { it < displayStartTimestamp })
         val hasNewerPersistedHistory =
             displayEndTimestamp != null &&
-                topLevel.any { it > displayEndTimestamp }
+                (!slice.atEnd || topLevel.any { it > displayEndTimestamp })
         return CurrentChatWindowLoadResult(
             messages = messages,
             hasOlderPersistedHistory = hasOlderPersistedHistory,
@@ -241,25 +268,38 @@ class ChatHistoryDelegate(
         expectedMessages: List<ChatMessage>? = null,
         generation: Long = currentChatWindow.generation(),
         mergePage: Boolean = false,
-        // The snapshot the pages were picked from, when they were just read: the whole
-        // conversation's metadata is not read a second time for the same load.
+        // The metadata the pages were picked from, when they were just read: it is not read a
+        // second time for the same load.
         known: KnownMetadata? = null,
     ): List<ChatMessage>? {
-        val metadata = known?.takeIf { stillCurrent(chatId, it) }?.metadata
-            ?: chatHistoryManager.loadChatMessageProcessMetadata(chatId)
-        val structure = TranscriptStructure(metadata)
+        val shown = if (mergePage) messages + _chatHistory.value else messages
+        val current = known?.takeIf { it.covers(shown) && stillCurrent(chatId, it) }
+            ?: readMetadataCovering(chatId, shown)
+        val metadata = current.metadata
+        val structure = withContext(Dispatchers.Default) { TranscriptStructure(metadata) }
         val present = messages.mapTo(mutableSetOf()) { it.timestamp }
         val missingFinals = messages.mapNotNull { structure.turnByTimestamp[it.timestamp]?.finalTimestamp }
             .distinct().filterNot { it in present }
         val completeWindow = (messages + chatHistoryManager.loadChatMessagesByTimestamps(chatId, missingFinals))
             .sortedBy { it.timestamp }
-        val loadResult = buildCurrentChatLoadResult(chatId, completeWindow, structure)
+        val loadResult = withContext(Dispatchers.Default) {
+            buildCurrentChatLoadResult(chatId, completeWindow, current.slice, structure)
+        }
+        // Checked last, just before showing (nothing waits between it and the commit): a message
+        // saved after the metadata reached the newest row is newer history the window lacks.
+        val newestStored = if (current.slice.atEnd) chatHistoryManager.newestMessageTimestamp(chatId) else null
         if (_currentChatId.value != chatId || !currentChatWindow.isCurrent(generation)) return null
-        val committed = if (mergePage) {
+        val built = if (mergePage) {
             // Merge into the state at submission, not the snapshot taken before IO.
             val merged = mergeLoadedTranscriptMessages(_chatHistory.value, loadResult.messages)
-            buildCurrentChatLoadResult(chatId, merged, structure)
+            buildCurrentChatLoadResult(chatId, merged, current.slice, structure)
         } else loadResult
+        // Both lists are in time order, so their last rows are their newest.
+        val committed = if (newestStored != null && built.messages.isNotEmpty() &&
+            newestStored > maxOf(built.messages.last().timestamp, metadata.lastOrNull()?.timestamp ?: Long.MIN_VALUE)
+        ) {
+            built.copy(hasNewerPersistedHistory = true)
+        } else built
         if (!currentChatWindow.tryApplyLoadResult(
                 committed, _chatHistory, generation, expectedMessages)) return null
         _processMetadata.value = metadata
@@ -272,7 +312,7 @@ class ChatHistoryDelegate(
         }
         if (loadResult.messages.isEmpty()) {
             latestDisplayPageCountByChatId.remove(chatId)
-        } else if (!loadResult.hasNewerPersistedHistory) {
+        } else if (!loadResult.hasNewerPersistedHistory && !committed.hasNewerPersistedHistory) {
             latestDisplayPageCountByChatId[chatId] =
                 countDisplayPages(loadResult.messages).coerceIn(1, MAX_DISPLAY_PAGE_COUNT)
         }
@@ -296,7 +336,7 @@ class ChatHistoryDelegate(
         beforeTimestampExclusive: Long,
         pageCount: Int,
     ): TranscriptPages {
-        return loadTranscriptPages(chatId, pageCount, before = beforeTimestampExclusive)
+        return loadTranscriptPages(chatId, pageCount, before = beforeTimestampExclusive, keep = _chatHistory.value)
     }
 
     private suspend fun collectNewerDisplayPagesAfter(
@@ -304,26 +344,56 @@ class ChatHistoryDelegate(
         afterTimestampExclusive: Long,
         pageCount: Int,
     ): TranscriptPages {
-        return loadTranscriptPages(chatId, pageCount, after = afterTimestampExclusive)
+        return loadTranscriptPages(chatId, pageCount, after = afterTimestampExclusive, keep = _chatHistory.value)
     }
 
+    /**
+     * [pageCount] display pages before [before], after [after], or up to [upTo] (else the newest),
+     * with the reply rows an Orbit chat shows. Only the metadata around them is read, going further
+     * only until there are enough pages; [keep] (the window they join) is read with it.
+     */
     private suspend fun loadTranscriptPages(
         chatId: String,
         pageCount: Int,
         before: Long? = null,
         after: Long? = null,
         upTo: Long? = null,
-        known: KnownMetadata? = null,
+        keep: List<ChatMessage> = emptyList(),
     ): TranscriptPages {
-        val snapshot = known ?: readMetadata(chatId)
-        val structure = TranscriptStructure(snapshot.metadata)
-        val candidates = structure.topLevelRows.filter {
+        fun candidatesOf(structure: TranscriptStructure) = structure.topLevelRows.filter {
             (before == null || it.timestamp < before) && (after == null || it.timestamp > after) &&
                 (upTo == null || it.timestamp <= upTo)
         }.map { ChatMessage(timestamp = it.timestamp, sender = it.sender, content = "") }
-        val page = if (after != null) takeOldestDisplayPages(candidates, pageCount)
-            else takeNewestDisplayPages(candidates, pageCount)
-        val timestamps = page.map { it.timestamp }
+        // Newer pages are counted forward from [after], so they are whole as soon as the page after
+        // them starts, without reading on to the end of a long chat.
+        fun enoughNewer(slice: MetadataSlice) =
+            forwardDisplayPagesEnd(candidatesOf(TranscriptStructure(slice.rows)), pageCount) != null
+        // Older pages, split back from [before], are whole once there are more than asked for.
+        fun enoughOlder(slice: MetadataSlice) =
+            splitDisplayPages(candidatesOf(TranscriptStructure(slice.rows))).size > pageCount
+        val keepLow = keep.minOfOrNull { it.timestamp }
+        val keepHigh = keep.maxOfOrNull { it.timestamp }
+        val snapshot = if (after != null) {
+            readMetadata(chatId, low = minOf(after, keepLow ?: after), high = maxOf(after, keepHigh ?: after),
+                wantNewer = { !enoughNewer(it) })
+        } else {
+            val anchor = before ?: upTo
+            val high = when {
+                anchor == null -> null
+                keepHigh != null -> maxOf(anchor, keepHigh)
+                else -> anchor
+            }
+            readMetadata(chatId, low = anchor?.let { minOf(it, keepLow ?: it) }, high = high,
+                wantOlder = { !enoughOlder(it) })
+        }
+        val structure = withContext(Dispatchers.Default) { TranscriptStructure(snapshot.metadata) }
+        val timestamps = withContext(Dispatchers.Default) {
+            val candidates = candidatesOf(structure)
+            val page = if (after != null) {
+                forwardDisplayPagesEnd(candidates, pageCount)?.let { candidates.subList(0, it) } ?: candidates
+            } else takeNewestDisplayPages(candidates, pageCount)
+            page.map { it.timestamp }
+        }
         // An Orbit chat draws every row as something Orbit said, with no process to fold: what it
         // said (and the cards it sent) before the user spoke up mid-reply is a row of that reply's
         // process, so it comes along with the reply.
@@ -346,7 +416,8 @@ class ChatHistoryDelegate(
         try {
         val chatId = _currentChatId.value ?: return
         val generation = currentChatWindow.generation()
-        val structure = TranscriptStructure(chatHistoryManager.loadChatMessageProcessMetadata(chatId))
+        // The turn's final row is in the window, so the metadata around the window holds the turn.
+        val structure = TranscriptStructure(readMetadataCovering(chatId, _chatHistory.value).metadata)
         val turn = structure.turns.firstOrNull { it.key == key } ?: return
         val present = _chatHistory.value.mapTo(hashSetOf()) { it.timestamp }
         if (turn.finalTimestamp !in present) return
@@ -381,17 +452,22 @@ class ChatHistoryDelegate(
         val generation = currentChatWindow.generation()
         while (_currentChatId.value == chatId && currentChatWindow.isCurrent(generation)) {
             val currentMessages = _chatHistory.value
-            val structure = TranscriptStructure(chatHistoryManager.loadChatMessageProcessMetadata(chatId))
+            val hasNewer = currentChatWindow.hasPersistedNewerHistoryNow()
+            // From the window's first row to its last, or on to the newest when it shows the newest.
+            val known = currentMessages.takeIf { it.isNotEmpty() }?.let { shown ->
+                readMetadata(chatId, shown.minOf { it.timestamp }, if (hasNewer) shown.maxOf { it.timestamp } else null)
+            }
+            val structure = TranscriptStructure(known?.metadata.orEmpty())
             val timestamps = retainedTranscriptReloadTimestamps(
-                structure, currentMessages.map { it.timestamp },
-                currentChatWindow.hasPersistedNewerHistoryNow(),
+                structure, currentMessages.map { it.timestamp }, hasNewer,
             )
             // Storage stays authoritative for edits/deletions. A concurrent page/process
             // load invalidates this snapshot; retry rather than discard newly opened rows.
-            val reloadedMessages = chatHistoryManager.loadChatMessagesByTimestamps(chatId, timestamps)
-                .ifEmpty { collectNewestDisplayPages(chatId, 1).messages }
+            val reloaded = chatHistoryManager.loadChatMessagesByTimestamps(chatId, timestamps)
+            val pages = if (reloaded.isEmpty()) collectNewestDisplayPages(chatId, 1) else null
             val committed = applyCurrentChatDisplayWindow(
-                chatId, reloadedMessages, expectedMessages = currentMessages, generation = generation,
+                chatId, pages?.messages ?: reloaded, expectedMessages = currentMessages, generation = generation,
+                known = pages?.known ?: known,
             )
             if (committed != null) return committed
         }
@@ -489,14 +565,14 @@ class ChatHistoryDelegate(
             return false
         }
         return try {
-            val known = readMetadata(chatId)
-            val structure = TranscriptStructure(known.metadata)
+            val around = readMetadata(chatId, targetTimestamp, targetTimestamp)
+            val structure = TranscriptStructure(around.metadata)
             if (structure.rows.none { it.timestamp == targetTimestamp }) {
                 currentChatWindow.finishLoadingDisplayWindowFailure()
                 return false
             }
             val finalTimestamp = structure.turnByTimestamp[targetTimestamp]?.finalTimestamp ?: targetTimestamp
-            val page = loadTranscriptPages(chatId, 1, upTo = finalTimestamp, known = known)
+            val page = loadTranscriptPages(chatId, 1, upTo = finalTimestamp)
             val target = chatHistoryManager.loadChatMessagesByTimestamps(chatId, listOf(targetTimestamp))
             val revealedMessages = (page.messages + target).distinctBy { it.timestamp }.sortedBy { it.timestamp }
             applyCurrentChatDisplayWindow(chatId, revealedMessages, generation = generation, known = page.known)
@@ -759,11 +835,11 @@ class ChatHistoryDelegate(
             val initialPageCount = latestDisplayPageCountByChatId[chatId] ?: 1
             val bounds = displayBoundsByChatId[chatId]
             // The rows the chat showed when it was left, when it was left with any. Their exact
-            // times were kept; the whole conversation is gone through only when they were not.
+            // times were kept; when they were not, the metadata between the bounds picks them.
             var restoredMetadata: KnownMetadata? = null
             val restoredMessages = bounds?.let {
                 val timestamps = displayTimestampsByChatId[chatId] ?: run {
-                    val metadata = readMetadata(chatId).also { m -> restoredMetadata = m }.metadata
+                    val metadata = readMetadata(chatId, it.first, it.second).also { m -> restoredMetadata = m }.metadata
                     TranscriptStructure(metadata).topLevelRows
                         .filter { row -> row.timestamp >= it.first && row.timestamp <= it.second }
                         .map { row -> row.timestamp }

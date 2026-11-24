@@ -87,8 +87,12 @@ import com.ai.assistance.operit.util.ChatImageBitmapCache
 import com.ai.assistance.operit.util.ChatMarkupRegex
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -110,6 +114,9 @@ internal enum class OrbitFindKind(val icon: String, val label: Int) {
     APPROVAL("shield-check", R.string.orbit_find_approvals),
     FAVORITE("star", R.string.orbit_find_favorites),
 }
+
+/** The days of one month ([key] = year * 12 + month from 0) with messages: day of month -> first message time. */
+internal class OrbitFindMonth(val key: Int, val days: Map<Int, Long>)
 
 /** One thing found in a chat: where it was said, and what to show for it. */
 internal data class OrbitFound(
@@ -165,18 +172,9 @@ internal object OrbitChatFind {
         OrbitFindKind.DATE, OrbitFindKind.FAVORITE -> "0"
     }
 
-    /** Ids of the messages in [chatId] that may hold [kind], newest first. */
-    suspend fun candidates(context: Context, chatId: String, kind: OrbitFindKind): List<Long> = withContext(Dispatchers.IO) {
-        val sql = "SELECT messageId FROM messages WHERE chatId = ?$SHOWN AND ${condition(kind)} ORDER BY timestamp DESC, messageId DESC"
-        AppDatabase.getDatabase(context).openHelper.readableDatabase.query(SimpleSQLiteQuery(sql, arrayOf(chatId))).use { cursor ->
-            val ids = ArrayList<Long>()
-            while (cursor.moveToNext()) {
-                ensureActive()
-                ids += cursor.getLong(0)
-            }
-            ids
-        }
-    }
+    /** The messages in [chatId] that may hold [kind], newest first, read as pages need them. */
+    fun candidates(context: Context, chatId: String, kind: OrbitFindKind): OrbitMatchStream =
+        OrbitMatchStream(context, listOf(chatId), "1$SHOWN AND ${condition(kind)}")
 
     /**
      * The pictures Orbit sent in [chatId] around the message said at [at], oldest first, for
@@ -234,27 +232,63 @@ internal object OrbitChatFind {
      * The time of the first message of each day [chatId] has messages on, newest day first. The
      * user's own first message is preferred: an early reply row of Orbit may hold only thinking or
      * tools, which the chat does not show, so there would be nothing to land on.
+     *
+     * Goes back one day with messages at a time, so a long chat's recent months show first: the
+     * list so far is given each time a month is complete, and once more at the end.
      */
-    suspend fun days(context: Context, chatId: String): List<Long> = withContext(Dispatchers.IO) {
-        val sql = "SELECT COALESCE(MIN(CASE WHEN sender = 'user' THEN timestamp END), MIN(timestamp)) FROM messages WHERE chatId = ?$SHOWN" +
-            " GROUP BY date(timestamp / 1000, 'unixepoch', 'localtime') ORDER BY 1 DESC"
-        AppDatabase.getDatabase(context).openHelper.readableDatabase.query(SimpleSQLiteQuery(sql, arrayOf(chatId))).use { cursor ->
-            val out = ArrayList<Long>()
-            while (cursor.moveToNext()) out += cursor.getLong(0)
-            out
+    fun days(context: Context, chatId: String): Flow<OrbitFindMonth> = flow {
+        val db = AppDatabase.getDatabase(context).openHelper.readableDatabase
+        val latestSql = "SELECT timestamp FROM messages WHERE chatId = ?$SHOWN AND timestamp < ?" +
+            " ORDER BY timestamp DESC, messageId DESC LIMIT 1"
+        val firstSql = "SELECT timestamp FROM messages WHERE chatId = ?$SHOWN AND timestamp >= ? AND timestamp < ?" +
+            " ORDER BY timestamp, messageId LIMIT 1"
+        val firstUserSql = "SELECT timestamp FROM messages WHERE chatId = ?$SHOWN AND sender = 'user'" +
+            " AND timestamp >= ? AND timestamp < ? ORDER BY timestamp, messageId LIMIT 1"
+        fun one(sql: String, args: Array<Any>): Long? = db.query(SimpleSQLiteQuery(sql, args)).use {
+            if (it.moveToFirst() && !it.isNull(0)) it.getLong(0) else null
         }
-    }
+        val zone = java.time.ZoneId.systemDefault()
+        var before = Long.MAX_VALUE
+        var monthKey = Int.MIN_VALUE
+        var monthDays = LinkedHashMap<Int, Long>()
+        while (true) {
+            currentCoroutineContext().ensureActive()
+            val latest = one(latestSql, arrayOf(chatId, before)) ?: break
+            val date = java.time.Instant.ofEpochMilli(latest).atZone(zone).toLocalDate()
+            // The day's real bounds where it is: a midnight that repeats or is skipped still gives
+            // the earliest moment of the day, and the next day is worked out on its own.
+            val start = date.atStartOfDay(zone).toInstant().toEpochMilli()
+            val end = date.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+            val key = date.year * 12 + date.monthValue - 1
+            if (key != monthKey) {
+                if (monthDays.isNotEmpty()) emit(OrbitFindMonth(monthKey, monthDays))
+                monthKey = key
+                monthDays = LinkedHashMap()
+            }
+            val first = one(firstUserSql, arrayOf(chatId, start, end)) ?: one(firstSql, arrayOf(chatId, start, end)) ?: latest
+            monthDays[date.dayOfMonth] = first
+            // Always further back, whatever the clock did.
+            before = minOf(start, latest)
+        }
+        if (monthDays.isNotEmpty()) emit(OrbitFindMonth(monthKey, monthDays))
+    }.flowOn(Dispatchers.IO)
 
-    /** What [ids] hold of [kind] from [from] on, and where the next page starts, or null at the end. */
-    suspend fun page(context: Context, orbitId: String, ids: List<Long>, kind: OrbitFindKind, from: Int): Pair<List<OrbitFound>, Int?> =
+    /**
+     * What [ids] hold of [kind] from [from] on, and where the next page starts, or null at the end.
+     * Once there is something to show, the page stops after a short while so it is not held back.
+     */
+    suspend fun page(context: Context, orbitId: String, ids: OrbitMatchStream, kind: OrbitFindKind, from: Int): Pair<List<OrbitFound>, Int?> =
         withContext(Dispatchers.IO) {
             val dao = AppDatabase.getDatabase(context).chatContentDao()
             val files = OrbitFiles.of(context, orbitId)
             val english = !context.resources.configuration.locales[0].language.startsWith("zh")
             val found = ArrayList<OrbitFound>()
+            val deadline = android.os.SystemClock.uptimeMillis() + OrbitMatchStream.PAGE_TIME_MS
             var at = from
-            while (at < ids.size && at - from < MAX_READ_PER_PAGE && found.size < PAGE) {
-                val batch = ids.subList(at, minOf(at + BATCH, ids.size))
+            while (at - from < MAX_READ_PER_PAGE && found.size < PAGE) {
+                ids.fill(at, at + BATCH, if (found.isEmpty()) Long.MAX_VALUE else deadline)
+                val batch = ids.ids(at, BATCH)
+                if (batch.isEmpty()) break
                 val byId = dao.getMessagesByIds(batch).associateBy { it.messageId }
                 batch.forEach { id ->
                     ensureActive()
@@ -262,8 +296,9 @@ internal object OrbitChatFind {
                     found += extract(context, files, english, kind, row.messageId, row.chatId, row.timestamp, row.sender, row.content)
                 }
                 at += batch.size
+                if (found.isNotEmpty() && android.os.SystemClock.uptimeMillis() > deadline) break
             }
-            found to at.takeIf { it < ids.size }
+            found to at.takeIf { ids.more(it) }
         }
 
     /**
@@ -271,12 +306,11 @@ internal object OrbitChatFind {
      * on a visible row (an Orbit reply row holding only thinking or tools shows nothing).
      */
     suspend fun firstShownOfDay(context: Context, chatId: String, dayTime: Long): Long = withContext(Dispatchers.IO) {
-        val day = Calendar.getInstance().apply {
-            timeInMillis = dayTime
-            set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
-        }
-        val start = day.timeInMillis
-        val end = day.apply { add(Calendar.DAY_OF_MONTH, 1) }.timeInMillis
+        // The same day bounds as [days].
+        val zone = java.time.ZoneId.systemDefault()
+        val date = java.time.Instant.ofEpochMilli(dayTime).atZone(zone).toLocalDate()
+        val start = date.atStartOfDay(zone).toInstant().toEpochMilli()
+        val end = date.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
         val sql = "SELECT messageId FROM messages WHERE chatId = ?$SHOWN AND timestamp >= ? AND timestamp < ?" +
             " ORDER BY timestamp, messageId LIMIT 200"
         val ids = AppDatabase.getDatabase(context).openHelper.readableDatabase
@@ -559,7 +593,7 @@ private fun KindGrid(onPick: (OrbitFindKind) -> Unit) {
 private fun WordResults(orbit: OrbitProfile, chatId: String, needle: String, onOpen: (String, Long) -> Unit) {
     val context = LocalContext.current
     var hits by remember(chatId) { mutableStateOf<List<OrbitSearchHit>>(emptyList()) }
-    var ids by remember(chatId) { mutableStateOf<List<Long>>(emptyList()) }
+    var ids by remember(chatId) { mutableStateOf<OrbitMatchStream?>(null) }
     var next by remember(chatId) { mutableStateOf<Int?>(null) }
     var searched by remember(chatId) { mutableStateOf("") }
     var loading by remember { mutableStateOf(false) }
@@ -574,7 +608,7 @@ private fun WordResults(orbit: OrbitProfile, chatId: String, needle: String, onO
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            hits = emptyList(); ids = emptyList(); next = null; failed = true; searched = needle
+            hits = emptyList(); ids = null; next = null; failed = true; searched = needle
         } finally {
             loading = false
         }
@@ -582,14 +616,15 @@ private fun WordResults(orbit: OrbitProfile, chatId: String, needle: String, onO
     val listState = rememberLazyListState()
     LaunchedEffect(searched) { if (searched.isNotEmpty()) listState.scrollToItem(0) }
     var loadingMore by remember { mutableStateOf(false) }
-    val wantMore by nearEnd(listState)
+    val wantMore by nearEnd(listState) { hits.size }
     LaunchedEffect(wantMore || hits.isEmpty(), next, searched, loading) {
         val from = next ?: return@LaunchedEffect
         if (!(wantMore || hits.isEmpty()) || loading || searched.isEmpty()) return@LaunchedEffect
         val forQuery = searched
+        val stream = ids ?: return@LaunchedEffect
         loadingMore = true
         try {
-            val (found, more) = OrbitTalkSearch.page(context, ids, forQuery, from)
+            val (found, more) = OrbitTalkSearch.page(context, stream, forQuery, from)
             if (searched == forQuery) {
                 val seen = hits.mapTo(HashSet()) { it.messageId }
                 hits = hits + found.filter { it.messageId !in seen }
@@ -612,16 +647,21 @@ private fun WordResults(orbit: OrbitProfile, chatId: String, needle: String, onO
                 val label = remember(hit.timestamp) { searchDayLabel(context, hit.timestamp) }
                 SearchRow(hit = hit, query = searched, label = label, divider = i > 0, onClick = { onOpen(hit.chatId, hit.timestamp) })
             }
-            if (loadingMore) item(key = "more") { Loading(Modifier.padding(16.dp)) }
+            // Stays while pages keep coming, so it does not blink between them.
+            if (loadingMore || (next != null && wantMore)) item(key = "more") { Loading(Modifier.padding(16.dp)) }
         }
     }
 }
 
+/** Near the end of [count] results; the loading row at the bottom does not count. */
 @Composable
-private fun nearEnd(state: LazyListState) = remember(state) {
-    derivedStateOf {
-        val info = state.layoutInfo
-        (info.visibleItemsInfo.lastOrNull()?.index ?: -1) >= info.totalItemsCount - 6
+private fun nearEnd(state: LazyListState, count: () -> Int): androidx.compose.runtime.State<Boolean> {
+    // The results list may be a new one (another chat or kind); the latest is always read.
+    val counted = androidx.compose.runtime.rememberUpdatedState(count)
+    return remember(state) {
+        derivedStateOf {
+            (state.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1) >= counted.value() - 6
+        }
     }
 }
 
@@ -645,7 +685,7 @@ private fun Loading(modifier: Modifier = Modifier) {
 private fun FoundList(orbit: OrbitProfile, chatId: String, kind: OrbitFindKind, onOpen: (String, Long, String?) -> Unit) {
     val context = LocalContext.current
     var found by remember(kind) { mutableStateOf<List<OrbitFound>>(emptyList()) }
-    var ids by remember(kind) { mutableStateOf<List<Long>>(emptyList()) }
+    var ids by remember(kind) { mutableStateOf<OrbitMatchStream?>(null) }
     var next by remember(kind) { mutableStateOf<Int?>(null) }
     var ready by remember(kind) { mutableStateOf(false) }
     var failed by remember(kind) { mutableStateOf(false) }
@@ -672,9 +712,10 @@ private fun FoundList(orbit: OrbitProfile, chatId: String, kind: OrbitFindKind, 
     }
     suspend fun more() {
         val from = next ?: return
+        val stream = ids ?: return
         loadingMore = true
         try {
-            val (page, after) = OrbitChatFind.page(context, orbit.id, ids, kind, from)
+            val (page, after) = OrbitChatFind.page(context, orbit.id, stream, kind, from)
             found = found + page
             next = after
         } catch (e: CancellationException) {
@@ -691,7 +732,7 @@ private fun FoundList(orbit: OrbitProfile, chatId: String, kind: OrbitFindKind, 
         val gridState = rememberLazyGridState()
         val wantMore by nearEnd(gridState)
         LaunchedEffect(wantMore || found.isEmpty(), next) {
-            if ((wantMore || found.isEmpty()) && next != null && !loadingMore) more()
+            if ((wantMore || found.isEmpty()) && next != null) more()
         }
         if (found.isEmpty()) {
             if (next != null || loadingMore) Loading() else SearchNote(stringResource(R.string.orbit_find_empty))
@@ -706,9 +747,9 @@ private fun FoundList(orbit: OrbitProfile, chatId: String, kind: OrbitFindKind, 
         return
     }
     val listState = rememberLazyListState()
-    val wantMore by nearEnd(listState)
+    val wantMore by nearEnd(listState) { found.size }
     LaunchedEffect(wantMore || found.isEmpty(), next) {
-        if ((wantMore || found.isEmpty()) && next != null && !loadingMore) more()
+        if ((wantMore || found.isEmpty()) && next != null) more()
     }
     if (found.isEmpty()) {
         if (next != null || loadingMore) Loading() else SearchNote(stringResource(R.string.orbit_find_empty))
@@ -721,7 +762,7 @@ private fun FoundList(orbit: OrbitProfile, chatId: String, kind: OrbitFindKind, 
             val detail = listOfNotNull(day, item.detail.takeIf { it.isNotEmpty() }, answer?.let { stringResource(it) }).joinToString(" · ")
             FoundRow(kind.icon, item.title, detail, divider = i > 0, onClick = { onOpen(item.chatId, item.timestamp, item.pieceKey) })
         }
-        if (loadingMore) item(key = "more") { Loading(Modifier.padding(16.dp)) }
+        if (loadingMore || (next != null && wantMore)) item(key = "more") { Loading(Modifier.padding(16.dp)) }
     }
 }
 
@@ -878,23 +919,24 @@ private fun DayPicker(chatId: String, onOpen: (Long) -> Unit) {
     val openDay: (Long) -> Unit = { time ->
         scope.launch { onOpen(runCatching { OrbitChatFind.firstShownOfDay(context, chatId, time) }.getOrDefault(time)) }
     }
-    val days by produceState<List<Long>?>(null, chatId) {
-        value = runCatching { OrbitChatFind.days(context, chatId) }.getOrDefault(emptyList())
+    // Newest month first; each one is added once it is complete, below those already shown.
+    val days by produceState<List<OrbitFindMonth>?>(null, chatId) {
+        try {
+            OrbitChatFind.days(context, chatId).collect { month ->
+                val shown = value.orEmpty()
+                if (shown.none { it.key == month.key }) value = shown + month
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Keeps the months already shown; a failure before any shows the empty note.
+        }
+        if (value == null) value = emptyList()
     }
-    val list = days ?: run { Loading(); return }
-    if (list.isEmpty()) {
+    val months = days ?: run { Loading(); return }
+    if (months.isEmpty()) {
         SearchNote(stringResource(R.string.orbit_find_empty))
         return
-    }
-    // Month (year * 12 + month) -> day of month -> the first message that day.
-    val months = remember(list) {
-        val cal = Calendar.getInstance()
-        list.groupBy {
-            cal.timeInMillis = it
-            cal.get(Calendar.YEAR) * 12 + cal.get(Calendar.MONTH)
-        }.mapValues { (_, times) ->
-            times.associateBy { cal.timeInMillis = it; cal.get(Calendar.DAY_OF_MONTH) }
-        }.toSortedMap(compareByDescending { it })
     }
     val locale = androidx.compose.ui.platform.LocalResources.current.configuration.locales[0]
     val monthFormat = remember(locale) {
@@ -908,14 +950,15 @@ private fun DayPicker(chatId: String, onOpen: (Long) -> Unit) {
         }
     }
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
-        items(months.keys.toList(), key = { it }) { month ->
+        items(months, key = { it.key }) { found ->
+            val month = found.key
             val cal = remember(month) {
                 Calendar.getInstance().apply { clear(); set(month / 12, month % 12, 1) }
             }
             val firstDay = cal.firstDayOfWeek
             val lead = (cal.get(Calendar.DAY_OF_WEEK) - firstDay + 7) % 7
             val count = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
-            val active = months[month].orEmpty()
+            val active = found.days
             Column(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
                 Text(
                     monthFormat.format(cal.time), style = MaterialTheme.typography.titleMedium,

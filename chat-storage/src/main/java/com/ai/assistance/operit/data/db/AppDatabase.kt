@@ -66,7 +66,7 @@ import com.ai.assistance.operit.util.ChatMarkupRegex
         com.ai.assistance.operit.data.model.OrbitArtifactVersionEntity::class,
         com.ai.assistance.operit.data.model.OrbitNotificationEntity::class,
     ],
-    version = 47,
+    version = 48,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -92,6 +92,13 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun tokenStatsDao(): TokenStatsDao
 
     companion object {
+        /** Next message number and ordered reads stop scanning the whole chat; adds no data. */
+        val MIGRATION_47_48 = object : Migration(47, 48) {
+            private val sql =
+                "CREATE INDEX IF NOT EXISTS index_messages_chatId_orderIndex ON messages(chatId, orderIndex)"
+            override fun migrate(db: SupportSQLiteDatabase) = db.execSQL(sql)
+            override fun migrate(connection: SQLiteConnection) = connection.execSQL(sql)
+        }
         /** Indexes for clearing old task runs; adds no data. */
         val MIGRATION_46_47 = object : Migration(46, 47) {
             private val statements = listOf(
@@ -1271,6 +1278,7 @@ abstract class AppDatabase : RoomDatabase() {
                                 MIGRATION_44_45,
                                 MIGRATION_45_46,
                                 MIGRATION_46_47,
+                                MIGRATION_47_48,
                             ) // 添加新的迁移
                             // personal/dev briefly shipped experimental schemas 21-23. Only those
                             // development inputs are intentionally rebuilt; stable v20 is migrated.
