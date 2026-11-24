@@ -8,7 +8,8 @@ and package-loading routes, with the same fixed FAST automatic review. There is 
 tool whitelist, dedicated outbound connector, remote executor or alternative agent runtime.
 The existing CLI/FULL provider modes and user tool decisions still apply.
 
-Multiple companions may exist, but only one runs at a time. A role card seeds Soul.md once;
+The app keeps only one Orbit: a new one can be created only after the current one is deleted.
+Builds from before this rule may still hold an older, unused Orbit until it is deleted. A role card seeds Soul.md once;
 later editing or deleting that card does not change Orbit. Each companion has a persistent
 main conversation. Naming remains an Orbit tool action.
 
@@ -93,11 +94,11 @@ Goals link existing tasks and show their actual states. Feed exposes formal resu
 artifacts have immutable versions, hashes, preview and revision tasks. Optional artifact-save
 helpers retain narrow receipts; they are not a restriction on ordinary file tools.
 
-Soul updates use orbit_soul.read/history/update. An update with the current version applies
-directly, without a second user-approval workflow. The main conversation and its live root
-background turns can update it; children cannot rewrite their parent's identity. Atomic
-version checks reject stale concurrent edits. The current and up to nineteen prior applied
-versions remain available for user-initiated restoration. Soul text cannot change FAST policy.
+Soul updates use orbit_soul. An update with the current version applies directly, without a
+second user-approval workflow. The main conversation and its live root background turns can
+update it; children cannot rewrite their parent's identity. Atomic version checks reject stale
+concurrent edits. Soul keeps only its current content; there is no version history or restore.
+Soul text cannot change FAST policy.
 
 ## Learning and skills
 
@@ -106,10 +107,14 @@ use_package loads bodies on demand. File-version restoration uses the existing r
 and does not claim to restore deleted whole packages.
 
 Explicit memory corrections advance a durable learning generation. Late background learning
-cannot overwrite a newer correction; stale pending proposals are superseded. The current
-conservative policy excludes pre-correction history from subsequent automatic learning, using
-both source IDs and timestamps. Ordinary recall and explicit reads remain available. This is
-not precise per-fact forgetting; refining that behavior is a separate product decision.
+cannot overwrite a newer correction; stale pending proposals are superseded. A correction does
+not exclude older conversation from later automatic learning.
+
+There is no dedicated forgetting flow. When the user asks Orbit to forget something, it removes
+the matching entries with the ordinary memory, profile and note tools, and tells the user the
+chat's own messages are still there for them to delete. Files in `files/` are only pointed out,
+never edited. Approving a memory deletion also strips the removed lines from earlier, finished
+change records, so the change log does not keep a copy.
 
 Learning proposals retain host-collected batch source references and current excerpt access,
 not immutable per-sentence evidence. Graph provenance and semantic dependency cleanup remain

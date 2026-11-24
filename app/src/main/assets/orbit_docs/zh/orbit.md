@@ -67,9 +67,9 @@ MCP 服务在 MCP 设置里配置（Orbit 设置里能打开，你也可以用 `
 
 ## 修改设置
 
-用户想改设置时，用 `orbit_settings` 的 `get` 查看当前值、可选值或范围，以及是否所有 Orbit 共用；`request_change` 的 `changes` 填 JSON 对象，可一次申请多项。支持聊天配色、头像大小、明暗模式、每周与额外额度、额外额度每周重置或补满、聊完后开始整理记忆的等待时间、开发者模式、默认启动模式、消息通知（`message_notifications`）和对话上下文预算（`context_window_k`）。用户要导出数据时用 `orbit_settings` 的 `request_export` 放导出卡片；语音配置的切换、新建、换密钥、删除用 `orbit_voice` 的 `request_switch`、`request_create`、`request_key`、`request_delete`，语速、音调这类细项才用 `request_settings`；用户有了新的模型 API 密钥，优先用 `orbit_models` 的 `request_create` 新建一个配置，能用后再用 `request_use` 切过去，旧配置留着备用；只有用户要替换某个配置的密钥时才用 `request_key`，并指明是哪个配置（同名的写成 `DeepSeek#2` 这样）；连接或断开微信用 `orbit_channel` 的 `request_connect`、`request_disconnect`；技能开关用 `orbit_skills` 的 `request_visibility`；Claude、Grok、Antigravity、Command Code 账号登录用 `orbit_vault` 的 `request_account_login`。
+用户想改设置时，用 `orbit_settings` 的 `get` 查看当前值、可选值或范围，以及是不是 App 级设置；`request_change` 的 `changes` 填 JSON 对象，可一次申请多项。支持聊天配色、头像大小、明暗模式、额度算法（`quota_mode`）、每周与额外额度、额外额度每周重置或补满、聊完后开始整理记忆的等待时间、开发者模式、默认启动模式、消息通知（`message_notifications`）和对话上下文预算（`context_window_k`）。用户要导出数据时用 `orbit_settings` 的 `request_export` 放导出卡片；语音配置的切换、新建、换密钥、删除用 `orbit_voice` 的 `request_switch`、`request_create`、`request_key`、`request_delete`，语速、音调这类细项才用 `request_settings`；用户有了新的模型 API 密钥，优先用 `orbit_models` 的 `request_create` 新建一个配置，能用后再用 `request_use` 切过去，旧配置留着备用；只有用户要替换某个配置的密钥时才用 `request_key`，并指明是哪个配置（同名的写成 `DeepSeek#2` 这样）；连接或断开微信用 `orbit_channel` 的 `request_connect`、`request_disconnect`；技能开关用 `orbit_skills` 的 `request_visibility`；Claude、Grok、Antigravity、Command Code 账号登录用 `orbit_vault` 的 `request_account_login`。
 
-额度以原始 token 数填写，由所有 Orbit 共用，开发者模式和默认启动模式也是共用设置。Orbit 的浏览器用自己的一套登录，和主应用分开，你和用户都不能修改；只有手机系统 WebView 不支持分开登录时，才只能和主应用共用（`get` 返回的 `browser_login` 是只读的实际状态）。外观、整理等待时间、消息通知和上下文预算分别属于当前 Orbit。上下文预算同时用于它的主聊天和所有侧聊，以主模型的 K token 计；主模型是 DeepSeek Flash 时推荐 400K。自动压缩始终开启，压缩起点由 App 自动决定，都不能修改；`get` 会返回当前实际起点。
+额度的单位看 `get` 返回的 `quota_mode`：按花费时填美元，按 token 时填原始 token 数；额度、开发者模式和默认启动模式是 App 级设置（App 里只有一个 Orbit）。Orbit 的浏览器用自己的一套登录，和主应用分开，你和用户都不能修改；只有手机系统 WebView 不支持分开登录时，才只能和主应用共用（`get` 返回的 `browser_login` 是只读的实际状态）。外观、整理等待时间、消息通知和上下文预算分别属于当前 Orbit。上下文预算同时用于它的主聊天和所有侧聊，以主模型的 K token 计；主模型是 DeepSeek Flash 时推荐 400K。自动压缩始终开启，压缩起点由 App 自动决定，都不能修改；`get` 会返回当前实际起点。
 
 审批卡会逐项列出旧值和新值，放卡后用一句话结束本轮。用户同意后由 App 再校验、执行并发送逐项隐藏结果；值已变化或写入失败的项目会说明没改的原因，以结果为准，不自行重做。`pause: true` 可以申请暂停整个 Orbit，批准后当前 Orbit 和后台工作会停下，恢复只能由用户手动操作。工具权限、全访问模式、语音配置、导出和技能开关不通过此工具修改。
 
@@ -83,7 +83,7 @@ MCP 服务在 MCP 设置里配置（Orbit 设置里能打开，你也可以用 `
 ## 数据与导出
 
 每个 Orbit 有自己的资料、记忆、文件和学习内容。
-主聊天和侧聊属于同一个 Orbit；其他 Orbit 的记忆不默认共享。
+主聊天和侧聊属于同一个 Orbit，共用它的记忆。
 本地保存不等于所有处理都不出设备：使用远程模型或外部工具时，相关内容会交给相应服务处理。
 服务如何留存或使用数据，需要核实该服务的政策，不能替它保证。
 

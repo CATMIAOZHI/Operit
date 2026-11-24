@@ -783,15 +783,17 @@ class CollaborationCoordinator private constructor(context: Context) {
     }
 
     /** User Stop on the root owns the whole tree; the interrupt tool still targets one agent. */
-    suspend fun stopTreeForUser(chatId: String, stopParent: suspend () -> Unit) {
+    suspend fun stopTreeForUser(chatId: String, stillWanted: () -> Boolean = { true }, stopParent: suspend () -> Unit) {
         val root = synchronized(lock) {
             state.agents.firstOrNull { it.chatId == chatId && it.path == AgentPath.ROOT }?.rootChatId
         }
         if (root == null) {
-            stopParent()
+            if (stillWanted()) stopParent()
             return
         }
         val affected = synchronized(lock) {
+            // A stop meant for one turn: checked again right before anything is cancelled.
+            if (!stillWanted()) return
             if (!stopGate.begin(root)) return
             jobs.filterKeys { it.startsWith("$root:") }.values.toList().also { jobs ->
                 jobs.forEach { it.cancel() }

@@ -48,6 +48,8 @@ internal object OrbitSettingsTools {
         PALETTE("chat_palette", R.string.orbit_settings_palette, choices = OrbitChatPalette.entries.map { it.name.lowercase(Locale.ROOT) }),
         AVATAR("avatar_size", R.string.orbit_settings_avatar, choices = OrbitAvatarSize.entries.map { it.name.lowercase(Locale.ROOT) }),
         COLOR("color_mode", R.string.orbit_settings_color, choices = OrbitColorMode.entries.map { it.name.lowercase(Locale.ROOT) }),
+        // Before the limits: their unit follows it.
+        QUOTA_MODE("quota_mode", R.string.orbit_settings_quota_mode, true, listOf("money", "tokens")),
         WEEKLY("weekly_limit", R.string.orbit_settings_weekly, true),
         EXTRA("extra_limit", R.string.orbit_settings_extra, true),
         EXTRA_WEEKLY("extra_weekly_reset", R.string.orbit_settings_extra_weekly, true),
@@ -68,16 +70,16 @@ internal object OrbitSettingsTools {
         parametersStructured = listOf(
             ToolParameterSchema("action", description = "get / request_change / request_export / open_page", required = true),
             ToolParameterSchema("changes", "string",
-                "request_change: JSON object of setting names and new values, e.g. {\"color_mode\":\"dark\",\"weekly_limit\":1000000000}. Read get for keys/options first.", false),
+                "request_change: JSON object of setting names and new values, e.g. {\"color_mode\":\"dark\",\"weekly_limit\":100}. Read get for keys/options first.", false),
             ToolParameterSchema("page", description = "open_page: tool_access, tool_permissions, models, notifications or mcp", required = false),
             ToolParameterSchema("title", description = "request_change: optional short title in the user's language", required = false),
             ToolParameterSchema("reason", description = "request_change: explain why these changes help, in the user's language", required = false),
         ),
         details = """
-  - get returns current values, allowed values/ranges, units and shared_by_all_orbits. Quotas, developer mode, launch mode and pausing are shared; appearance, the memory review wait, message notifications and the context budget belong to this Orbit.
+  - get returns current values, allowed values/ranges, units and shared_by_all_orbits. Quotas, developer mode, launch mode and pausing are app settings (the app has one Orbit); appearance, the memory review wait, message notifications and the context budget belong to this Orbit.
   - context_window_k is the context budget for the main chat and every side chat together, in K tokens measured against your main model. Automatic compaction is always on and the app picks where it starts (get returns it); neither can be changed. For DeepSeek Flash models 500K is recommended.
   - message_notifications=true lets your messages also appear as their own phone notification while the app is closed; false keeps them in the chat only. It is separate from the system notification permission, which orbit_permission_card notify asks for.
-  - request_change validates every item, including unknown keys, invalid values and unchanged values; correct all reported errors and ask again. Token limits use raw tokens, never millions or currency. Only get's allowlisted settings can be changed.
+  - request_change validates every item, including unknown keys, invalid values and unchanged values; correct all reported errors and ask again. weekly_limit, extra_limit and refill's current follow quota_mode: US dollars (a number such as 100 or 12.5) when money, raw tokens when tokens, never millions. Ask for quota_mode on its own card, then for the limits in the new unit. Only get's allowlisted settings can be changed.
   - The approval card lists old → new values. End this turn with one short line after the card appears. Only after approval does the app recheck and apply each item, then send you a hidden result. Read each result; an outdated or failed item may be skipped.
   - Your browser keeps its own logins, apart from the main app's; neither you nor the user can change this. Only on a phone whose WebView cannot keep logins apart does it share the main app's. get returns browser_login (read-only): separate or shared_with_app.
   - pause accepts only true. Approval stops the current Orbit and its background work; only the user can resume it manually. An old approval cannot pause another Orbit.
@@ -102,10 +104,11 @@ internal object OrbitSettingsTools {
             Setting.PALETTE -> orbit.appearance.palette.name.lowercase(Locale.ROOT)
             Setting.AVATAR -> orbit.appearance.avatarSize.name.lowercase(Locale.ROOT)
             Setting.COLOR -> orbit.appearance.mode.name.lowercase(Locale.ROOT)
-            Setting.WEEKLY -> quota.weeklyLimit
-            Setting.EXTRA -> quota.extraLimit
+            Setting.QUOTA_MODE -> if (quota.byMoney) "money" else "tokens"
+            Setting.WEEKLY -> limit(quota, quota.weeklyLimit)
+            Setting.EXTRA -> limit(quota, quota.extraLimit)
             Setting.EXTRA_WEEKLY -> quota.extraWeekly
-            Setting.REFILL -> quota.extraUsed
+            Setting.REFILL -> limit(quota, quota.extraUsed)
             Setting.DELAY -> memory.learningDelayMinutes().toLong()
             Setting.DEVELOPER -> settings.developerMode
             Setting.LAUNCH -> launchMode.name.lowercase(Locale.ROOT)
@@ -120,6 +123,23 @@ internal object OrbitSettingsTools {
         val exact = java.math.BigDecimal(value.toString()).stripTrailingZeros()
         return if (exact.scale() <= 0) exact.toLong() else exact.toDouble()
     }
+
+    /** An allowance amount as the model reads and writes it: US dollars for a money allowance, tokens otherwise. */
+    private fun limit(quota: OrbitQuota.State, value: Long): Number {
+        if (!quota.byMoney) return value
+        val dollars = java.math.BigDecimal.valueOf(value, 6).stripTrailingZeros()
+        return if (dollars.scale() <= 0) dollars.toLong() else dollars.toDouble()
+    }
+
+    /** [value] from [limit] back in the allowance's own unit. */
+    private fun stored(quota: OrbitQuota.State, value: Any): Long =
+        if (!quota.byMoney) (value as Number).toLong()
+        else java.math.BigDecimal(value.toString()).movePointRight(6).longValueExact()
+
+    /** The settings whose values are in the allowance's unit. */
+    private val quotaAmounts = setOf(Setting.WEEKLY, Setting.EXTRA, Setting.REFILL)
+    private const val QUOTA_UNIT = "quota_unit"
+    private fun unitOf(quota: OrbitQuota.State) = if (quota.byMoney) "usd" else "tokens"
 
     private suspend fun snapshot(context: Context, orbitId: String): Snapshot {
         val settings = OrbitPreferences.getInstance(context).current()
@@ -197,6 +217,10 @@ internal object OrbitSettingsTools {
                     }
                     val changes = JSONObject(raw)
                     require(changes.length() in 1..Setting.entries.size) { "Give at least one setting, and no more than ${Setting.entries.size}" }
+                    require(!changes.has(Setting.QUOTA_MODE.key) ||
+                        (!changes.has(Setting.WEEKLY.key) && !changes.has(Setting.EXTRA.key) && !changes.has(Setting.REFILL.key))) {
+                        text.getString(R.string.orbit_settings_quota_mode_alone)
+                    }
                     val normalized = JSONObject()
                     val expected = JSONObject()
                     val errors = mutableListOf<String>()
@@ -220,6 +244,11 @@ internal object OrbitSettingsTools {
                     require(detail.length <= OrbitApprovals.MAX_DETAIL) { "Too long for one approval card; request fewer changes" }
                     val action = JSONObject().put("type", OrbitApprovalActions.CHANGE_SETTINGS)
                         .put("changes", normalized).put("expected", expected).toString()
+                        .let { json ->
+                            // Amounts are in the unit in force now; the card keeps which, so a later switch cannot reread them.
+                            if (quotaAmounts.any { normalized.has(it.key) }) JSONObject(json).put(QUOTA_UNIT, unitOf(state.quota)).toString()
+                            else json
+                        }
                     val approval = OrbitApprovals.request(context, orbit.id, caller.orEmpty(),
                         arg("title").ifEmpty { text.getString(R.string.orbit_settings_title) }.take(OrbitApprovals.MAX_TITLE),
                         detail, action)
@@ -244,9 +273,11 @@ internal object OrbitSettingsTools {
                 .apply {
                     when (setting) {
                         Setting.WEEKLY, Setting.EXTRA -> {
-                            put("min", if (setting == Setting.WEEKLY) OrbitQuota.MIN_WEEKLY else 0L)
-                            put("max", OrbitQuota.MAX_LIMIT)
-                            put("unit", "tokens")
+                            val quota = state.quota
+                            put("min", if (setting != Setting.WEEKLY) 0L
+                                else limit(quota, if (quota.byMoney) OrbitQuota.MIN_WEEKLY_MONEY else OrbitQuota.MIN_WEEKLY))
+                            put("max", limit(quota, if (quota.byMoney) OrbitQuota.MAX_MONEY else OrbitQuota.MAX_LIMIT))
+                            put("unit", if (quota.byMoney) "USD" else "tokens")
                         }
                         Setting.DELAY -> { put("options", JSONArray(delays)); put("unit", "minutes") }
                         Setting.CONTEXT_WINDOW -> {
@@ -264,7 +295,7 @@ internal object OrbitSettingsTools {
                         put("note", text.getString(R.string.orbit_settings_pause_note))
                     }
                     if (setting == Setting.REFILL) {
-                        put("current_means", "extra_used_tokens")
+                        put("current_means", if (state.quota.byMoney) "extra_used_usd" else "extra_used_tokens")
                         put("note", text.getString(R.string.orbit_settings_refill_note))
                     }
                     if (setting == Setting.CONTEXT_WINDOW) {
@@ -308,6 +339,20 @@ internal object OrbitSettingsTools {
         }
         return when (setting) {
             Setting.WEEKLY, Setting.EXTRA -> {
+                if (state.quota.byMoney) {
+                    val number = (raw as? Number)?.takeIf { raw !is Boolean }
+                        ?: throw IllegalArgumentException(text.getString(R.string.orbit_settings_number))
+                    val dollars = runCatching { java.math.BigDecimal(number.toString()).stripTrailingZeros() }.getOrNull()
+                        ?: throw IllegalArgumentException(text.getString(R.string.orbit_settings_number))
+                    val min = if (setting == Setting.WEEKLY) OrbitQuota.MIN_WEEKLY_MONEY else 0L
+                    val range = text.getString(R.string.orbit_settings_money_range,
+                        limit(state.quota, min).toString(), limit(state.quota, OrbitQuota.MAX_MONEY).toString())
+                    require(dollars.scale() <= 2) { range }
+                    // Compared as decimals first, so a huge number can never wrap into the range.
+                    require(dollars.movePointRight(6) in java.math.BigDecimal.valueOf(min)..java.math.BigDecimal.valueOf(OrbitQuota.MAX_MONEY)) { range }
+                    val micros = dollars.movePointRight(6).longValueExact()
+                    return limit(state.quota, micros)
+                }
                 val value = integer(text, raw)
                 val min = if (setting == Setting.WEEKLY) OrbitQuota.MIN_WEEKLY else 0L
                 require(value in min..OrbitQuota.MAX_LIMIT) {
@@ -348,7 +393,7 @@ internal object OrbitSettingsTools {
         else -> a == b
     }
 
-    private fun display(text: Context, setting: Setting, value: Any): String {
+    private fun display(text: Context, setting: Setting, value: Any, quota: OrbitQuota.State): String {
         val label = when (setting) {
             Setting.PALETTE -> when (value) {
                 "avatar" -> R.string.orbit_palette_avatar
@@ -374,14 +419,17 @@ internal object OrbitSettingsTools {
                 else -> R.string.orbit_mode_system
             }
             Setting.LAUNCH -> if (value == "orbit") R.string.nav_orbit else R.string.launch_mode_standard
+            Setting.QUOTA_MODE -> if (value == "money") R.string.orbit_settings_quota_money else R.string.orbit_settings_quota_tokens
             Setting.PAUSE -> if (value == true) R.string.orbit_settings_paused else R.string.orbit_settings_running
             else -> null
         }
         if (label != null) return text.getString(label)
+        fun amount(v: Any) = if (quota.byMoney) OrbitQuota.amount(text, quota, stored(quota, v))
+            else text.getString(R.string.orbit_settings_tokens, OrbitQuota.amount(text, (v as Number).toLong()))
         return when (setting) {
-            Setting.WEEKLY, Setting.EXTRA -> text.getString(R.string.orbit_settings_tokens, OrbitQuota.amount(text, (value as Number).toLong()))
+            Setting.WEEKLY, Setting.EXTRA -> amount(value)
             Setting.REFILL -> if (value == true) text.getString(R.string.orbit_settings_refilled)
-                else text.getString(R.string.orbit_settings_extra_used, OrbitQuota.amount(text, (value as Number).toLong()))
+                else text.getString(R.string.orbit_settings_extra_used, amount(value))
             Setting.DELAY -> text.getString(R.string.orbit_settings_minutes, value.toString())
             Setting.CONTEXT_WINDOW -> "${value}K"
             else -> text.getString(if (value == true) R.string.orbit_settings_on else R.string.orbit_settings_off)
@@ -393,8 +441,8 @@ internal object OrbitSettingsTools {
             if (reason.isNotBlank()) append(reason).append("\n\n")
             Setting.entries.filter { changes.has(it.key) }.forEach { setting ->
                 append(text.getString(R.string.orbit_settings_change_line,
-                    text.getString(setting.label), display(text, setting, state.value(setting)),
-                    display(text, setting, changes.get(setting.key)),
+                    text.getString(setting.label), display(text, setting, state.value(setting), state.quota),
+                    display(text, setting, changes.get(setting.key), state.quota),
                     if (setting.shared) text.getString(R.string.orbit_settings_shared) else "")).append('\n')
                 if (setting == Setting.REFILL) append(text.getString(R.string.orbit_settings_refill_note)).append('\n')
                 if (setting == Setting.PAUSE) append(text.getString(R.string.orbit_settings_pause_note)).append('\n')
@@ -430,15 +478,22 @@ internal object OrbitSettingsTools {
                     same(current, expected.get(setting.key)))) {
                     text.getString(R.string.orbit_settings_stale)
                 }
+                // A card from before the allowance had a unit, or from the other unit, is never reread.
+                require(setting !in quotaAmounts || action.optString(QUOTA_UNIT) == unitOf(state.quota)) {
+                    text.getString(R.string.orbit_settings_stale)
+                }
                 write(context, state, setting, value)
                 results += text.getString(R.string.orbit_settings_applied,
-                    text.getString(setting.label), display(text, setting, value))
+                    text.getString(setting.label), display(text, setting, value, state.quota))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                val reason = if (setting == Setting.PAUSE && e is java.util.ConcurrentModificationException)
-                    text.getString(R.string.orbit_settings_not_active)
-                else e.message ?: text.getString(R.string.orbit_settings_failed)
+                val reason = when {
+                    setting == Setting.PAUSE && e is java.util.ConcurrentModificationException ->
+                        text.getString(R.string.orbit_settings_not_active)
+                    e is com.ai.assistance.operit.features.orbit.OrbitQuotaChangedException -> text.getString(R.string.orbit_settings_stale)
+                    else -> e.message ?: text.getString(R.string.orbit_settings_failed)
+                }
                 results += text.getString(R.string.orbit_settings_skipped,
                     text.getString(setting.label), if (reason.length <= 60) reason else reason.take(59) + "…")
             }
@@ -459,10 +514,15 @@ internal object OrbitSettingsTools {
                 it.copy(mode = OrbitColorMode.valueOf((value as String).uppercase(Locale.ROOT)))
             }
             // Only the approved field is written; the other two are read inside the same edit.
-            Setting.WEEKLY -> OrbitQuota.setLimits(context, weekly = value as Long)
-            Setting.EXTRA -> OrbitQuota.setLimits(context, extra = value as Long)
+            // Each is saved only if the allowance is still as it was checked, inside the same save.
+            Setting.QUOTA_MODE -> OrbitQuota.setLimits(context, byMoney = value == "money", confirm = true,
+                expected = { it.byMoney == state.quota.byMoney })
+            Setting.WEEKLY -> OrbitQuota.setLimits(context, weekly = stored(state.quota, value), confirm = true,
+                expected = { it.byMoney == state.quota.byMoney && it.weeklyLimit == state.quota.weeklyLimit })
+            Setting.EXTRA -> OrbitQuota.setLimits(context, extra = stored(state.quota, value), confirm = true,
+                expected = { it.byMoney == state.quota.byMoney && it.extraLimit == state.quota.extraLimit })
             Setting.EXTRA_WEEKLY -> OrbitQuota.setLimits(context, extraWeekly = value as Boolean)
-            Setting.REFILL -> OrbitQuota.refillExtra(context)
+            Setting.REFILL -> OrbitQuota.refillExtra(context, expected = { it.byMoney == state.quota.byMoney })
             Setting.DELAY -> state.memory.setLearningDelayMinutes((value as Long).toInt())
             Setting.DEVELOPER -> preferences.setDeveloperMode(value as Boolean)
             Setting.LAUNCH -> LaunchModePreferences.getInstance(context).setMode(

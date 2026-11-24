@@ -190,7 +190,7 @@ object OrbitDelivery {
                 // No live listener means the process died or bookkeeping failed. Keep the draft
                 // retryable; a hand-off alone is never evidence that the user received it.
                 val abandoned = dao.handingDeliveries(orbitId).filterNot { OrbitWake.isWatching(it.handoffTurnId) }
-                if (abandoned.isNotEmpty()) dao.retryDeliveries(abandoned.map { it.id }, now)
+                if (abandoned.isNotEmpty()) dao.retryDeliveries(abandoned.map { it.id }, now, interrupted = true)
                 // A report for a side chat that is gone goes to the main chat instead.
                 val chats = AppDatabase.getDatabase(context).chatDao()
                 dao.pendingDeliveries(orbitId).map { it.chatId }.distinct()
@@ -240,6 +240,9 @@ object OrbitDelivery {
                 OrbitExecutionGate.serialized {
                     val finishedAt = System.currentTimeMillis()
                     if (outcome == OrbitWake.Told.FAILED) dao.retryDeliveries(ids, finishedAt)
+                    // Stopped before it finished: what Orbit had not settled is told again later,
+                    // marked so it first checks whether the chat already says it.
+                    else if (outcome == OrbitWake.Told.CANCELLED) dao.retryDeliveries(ids, finishedAt, interrupted = true)
                     else {
                         dao.finishDeliveries(ids, turn.turnId, finishedAt)
                         if (outcome == OrbitWake.Told.SPOKE) dao.touchDelivered(orbitId, finishedAt)

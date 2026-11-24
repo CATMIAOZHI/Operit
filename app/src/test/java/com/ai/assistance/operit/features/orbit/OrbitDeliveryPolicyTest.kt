@@ -30,6 +30,14 @@ class OrbitDeliveryPolicyTest {
             OrbitNotificationEntity("orbit", quietEnabled = true), now, false, now, ZoneId.of("America/New_York")))
     }
 
+    @Test fun `inside the repeated hour when clocks go back, quiet lasts until the second end time`() {
+        // 02:15 after the switch back; the first 02:30 (summer time) was 45 minutes ago.
+        val now = at("2026-10-25T02:15:00+01:00")
+        assertEquals(at("2026-10-25T02:30:00+01:00"), OrbitDeliveryPolicy.nextAllowed(
+            OrbitNotificationEntity("orbit", quietEnabled = true, quietStart = 22 * 60, quietEnd = 2 * 60 + 30),
+            now, false, now, ZoneId.of("Europe/Berlin")))
+    }
+
     @Test fun `a task due right at the digest time wakes that morning, a report waits a day`() {
         val policy = OrbitNotificationEntity("orbit")
         for (queued in listOf("2026-10-17T09:00:00+08:00", "2026-10-17T09:00:00.500+08:00")) {

@@ -44,9 +44,16 @@ object OrbitWake {
     private val locks = ConcurrentHashMap<String, Mutex>()
     private val replyScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val activeTurns = ConcurrentHashMap.newKeySet<String>()
+    /** How to stop each turn in [activeTurns]: a task cancelled meanwhile must not keep using tools. */
+    private val turnStops = ConcurrentHashMap<String, () -> Unit>()
 
     /** A worker may stop waiting while the chat still owns its turn and terminal listener. */
     internal fun isWatching(turnId: String): Boolean = turnId.isNotEmpty() && turnId in activeTurns
+
+    /** Stops the chat turn [turnId] if it is still running. */
+    internal fun stopTurn(turnId: String) {
+        turnStops[turnId]?.invoke()
+    }
 
     /**
      * What Orbit said to the user in its messages written at [timestamps] in [chatId], as
@@ -91,9 +98,11 @@ object OrbitWake {
         /** Sent; Orbit stayed quiet, or had not finished within the time allowed. */
         QUIET,
         /** Sent, but Orbit's turn ended in an error (the model failed), so it said nothing. */
-        FAILED;
+        FAILED,
+        /** Sent, but the turn was stopped (by the user, or because its task was stopped) before it finished. */
+        CANCELLED;
 
-        val sent get() = this == SPOKE || this == QUIET || this == FAILED
+        val sent get() = this == SPOKE || this == QUIET || this == FAILED || this == CANCELLED
     }
 
     /** The task title of a stored notice, or null when the message is not one. */
@@ -215,6 +224,10 @@ object OrbitWake {
                 append("[item ${item.id}] 「${line(item.title, 80)}」 key=${key(item)}")
                 if (item.priority == "high") append(" priority=high")
                 if (item.expiresAt > 0) append(" ${if (english) "expires" else "截止"}=${day.format(java.util.Date(item.expiresAt))}")
+                // The app stopped after an earlier hand-off; the reply may already be in this chat.
+                if (item.verdictNote == OrbitDeliveryEntity.INTERRUPTED) append(if (english)
+                    " (handed to you before, but the app stopped before your reply was recorded: if this chat shows you already told it, skip already_handled)"
+                    else "（之前交给过你，但应用在记下你的回复前中断了：先看聊天里是不是已经说过，说过就 skip already_handled）")
             }
             val rest = (share - head.length - 1).coerceAtLeast(0)
             // Evidence and earlier tellings take at most a third; the draft gets the rest.
@@ -307,6 +320,7 @@ object OrbitWake {
             // A notice that went out is always recorded: nothing can cancel in between.
             withContext(NonCancellable) {
                 activeTurns.add(turnId)
+                turnStops[turnId] = { core.cancelRegisteredChatTurnIfRunning(turnId, chatId) }
                 onSending()
                 val sent = withContext(Dispatchers.Main.immediate) {
                         core.trySendUserMessageToExistingChat(
@@ -339,12 +353,13 @@ object OrbitWake {
                                     OrbitDelivery.announce(app, chatId, orbit.name, said)
                                     Told.SPOKE
                                 }
-                            } else if (signal is ChatTurnTerminalSignal.Failed) Told.FAILED else Told.QUIET
+                            } else if (signal is ChatTurnTerminalSignal.Failed) Told.FAILED else Told.CANCELLED
                             onFinished(outcome)
                             outcome
                         } finally {
                             decision?.accepting = false
                             activeTurns.remove(turnId)
+                            turnStops.remove(turnId)
                         }
                     }
                 }
@@ -360,6 +375,7 @@ object OrbitWake {
             if (followup == null) {
                 decision?.accepting = false
                 activeTurns.remove(turnId)
+                turnStops.remove(turnId)
                 if (terminal?.isCompleted == false) {
                     core.failRegisteredChatTurn(turnId, chatId, "Orbit did not start a reply listener")
                 }

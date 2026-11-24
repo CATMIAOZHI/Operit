@@ -2335,7 +2335,9 @@ internal fun StandardBrowserSessionTools.typeIntoElementByRef(
     text: String,
     submit: Boolean,
     slowly: Boolean,
-    requiredSite: String? = null
+    requiredSite: String? = null,
+    /** A password is only typed into a password box: what a plain box holds shows up in later snapshots. */
+    passwordField: Boolean = false,
 ): String {
     // For vault values the site check runs in the same script as the fill, against the live document,
     // so a page that is navigating away cannot receive a value meant for another site.
@@ -2353,7 +2355,15 @@ internal fun StandardBrowserSessionTools.typeIntoElementByRef(
                 throw new Error("wrong_site");
             }
         """.trimIndent()
-    }.orEmpty()
+    }.orEmpty() + if (passwordField) """
+
+        // The element may sit in a same-origin frame, whose HTMLInputElement is not this window's.
+        const inputClass = target && target.ownerDocument && target.ownerDocument.defaultView &&
+            target.ownerDocument.defaultView.HTMLInputElement;
+        if (!inputClass || !(target instanceof inputClass) || String(target.type || "").toLowerCase() !== "password") {
+            throw new Error("not_password_field");
+        }
+    """.trimIndent() else ""
     val expression =
         """
         (async function() {

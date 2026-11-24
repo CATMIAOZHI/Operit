@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="orbit_decision_chat_cancelled">这次回复中途停了，没算完成</string>
+    <string name="orbit_decision_chat_cancelled_goes_on">这次回复中途停了，没算完成；之后照常按计划执行</string>
     <string name="orbit_decision_chat_failed">%1$s 这次回复出错了（多半是模型出了问题）</string>
     <string name="orbit_reminder_fallback">提醒：%1$s\n（%2$s 这次没能回复，可能是模型出了问题。）</string>
     <string name="orbit_run_model_failed_skipped">这次没跑成：%1$s 下次会按时再试。</string>

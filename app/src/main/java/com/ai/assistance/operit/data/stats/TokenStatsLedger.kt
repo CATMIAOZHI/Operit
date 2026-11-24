@@ -21,6 +21,11 @@ import org.json.JSONObject
 data class FrozenEventPricing(
     val pricing: ResolvedPricing,
     val cost: Double?,
+    /**
+     * Only for an allowance estimate, never the ledger: when no usage was reported, the price whose
+     * context tier is picked by the caller's own count of what it sent. Not kept in the spool line.
+     */
+    val estimatePricing: ResolvedPricing? = null,
 )
 
 /**
@@ -156,10 +161,16 @@ object TokenStatsLedger {
         appContext: Context,
         request: TokenStatRequestContext,
     ): FrozenEventPricing {
-        val pricing = resolvePricing(appContext, request)
+        val sources = pricingSources(appContext, request)
+        val pricing = resolvePricingFrom(sources.first, sources.second, request)
         val usage = request.aggregatedUsage()
         val cost = usage?.let { TokenCostCalculator.computeCost(it.toTokenUsageInput(), pricing)?.amount }
-        return FrozenEventPricing(pricing, cost)
+        // Same prices already read: a tiered price unknown for want of a reported length gets its tier
+        // from the caller's count, for the estimate only.
+        val estimate = request.meteredInputTokens?.takeIf { usage == null && !pricing.known }?.let { metered ->
+            resolvePricingFrom(sources.first, sources.second, request, metered()).takeIf { it.known }
+        }
+        return FrozenEventPricing(pricing, cost, estimate)
     }
 
     /** 价格读取失败/超时：完整 usage 仍持久化，但价格与成本明确 unresolved。 */
@@ -191,6 +202,14 @@ object TokenStatsLedger {
         appContext: Context,
         request: TokenStatRequestContext,
     ): ResolvedPricing {
+        val sources = pricingSources(appContext, request)
+        return resolvePricingFrom(sources.first, sources.second, request)
+    }
+
+    private suspend fun pricingSources(
+        appContext: Context,
+        request: TokenStatRequestContext,
+    ): Pair<List<com.ai.assistance.operit.data.model.TokenStatPriceOverrideEntity>, LegacyPriceSettings?> {
         val injected = databaseProvider
         val database = injected?.invoke(appContext) ?: AppDatabase.getDatabase(appContext)
         val dao = database.tokenStatsDao()
@@ -199,13 +218,15 @@ object TokenStatsLedger {
         val legacyOverride =
             legacyPriceProvider?.invoke(appContext, providerModel)
                 ?: ApiPreferences.getInstance(appContext).legacyPriceSettingsFor(providerModel)
-        return resolvePricingFrom(overrides, legacyOverride, request)
+        return overrides to legacyOverride
     }
 
     private fun resolvePricingFrom(
         overrides: List<com.ai.assistance.operit.data.model.TokenStatPriceOverrideEntity>,
         legacyOverride: LegacyPriceSettings?,
         request: TokenStatRequestContext,
+        /** Picks the context tier instead of the reported usage; for an allowance estimate only. */
+        estimatedInputTokens: Long? = null,
     ): ResolvedPricing {
         val providerModel = "${request.provider}:${request.model}"
         return TokenPriceResolver.resolve(
@@ -215,7 +236,7 @@ object TokenStatsLedger {
             overrides = overrides,
             legacyOverride = legacyOverride,
             defaults = DefaultModelPricingCollect.getDefaultPricing(providerModel),
-            contextInputTokens = TokenCostCalculator.contextInputTokens(
+            contextInputTokens = estimatedInputTokens ?: TokenCostCalculator.contextInputTokens(
                 request.aggregatedUsage()?.toTokenUsageInput(), request.attemptCount,
             ),
             selectContextTier = true,

@@ -416,6 +416,9 @@ interface OrbitTaskDao {
     @Query("SELECT * FROM orbit_events WHERE taskId = :taskId AND taskVersion = :version ORDER BY dueAt LIMIT 1")
     suspend fun pendingEvent(taskId: String, version: Long): OrbitEventEntity?
 
+    @Query("SELECT * FROM orbit_events WHERE taskId = :taskId AND taskVersion = :version ORDER BY dueAt")
+    suspend fun pendingEvents(taskId: String, version: Long): List<OrbitEventEntity>
+
     @Query("SELECT COUNT(*) FROM orbit_events WHERE taskId = :taskId AND taskVersion = :version AND id LIKE '%:manual:%'")
     suspend fun pendingManualCount(taskId: String, version: Long): Int
 
@@ -682,7 +685,7 @@ interface OrbitTaskDao {
      * it had not decided on, or had chosen to tell, wait to be told again. A call to leave one out stands.
      */
     @Transaction
-    suspend fun retryDeliveries(ids: List<String>, now: Long) {
+    suspend fun retryDeliveries(ids: List<String>, now: Long, interrupted: Boolean = false) {
         ids.forEach { id ->
             val item = delivery(id)?.takeIf { it.state in setOf("PENDING", "HANDING") } ?: return@forEach
             // A deliberate skip or a user's answer already settled this item.
@@ -692,9 +695,12 @@ interface OrbitTaskDao {
             } else {
                 val attempts = (item.attempts + if (item.state == "PENDING") 1 else 0).coerceAtMost(16)
                 val delay = minOf(6 * 60 * 60_000L, 60_000L * (1L shl (attempts - 1).coerceIn(0, 9)))
+                // Once interrupted, it stays marked until Orbit decides on it again.
+                val note = if (interrupted && item.state == "HANDING" ||
+                    item.verdictNote == OrbitDeliveryEntity.INTERRUPTED) OrbitDeliveryEntity.INTERRUPTED else ""
                 updateDelivery(item.copy(state = "PENDING", notificationSent = false, handoffTurnId = "",
                     attempts = attempts, retryAt = now + delay, verdict = "", verdictReason = "",
-                    verdictNote = "", presentation = "", decidedAt = 0))
+                    verdictNote = note, presentation = "", decidedAt = 0))
             }
         }
     }
@@ -798,23 +804,47 @@ interface OrbitTaskDao {
         deleteOrbitTasks(orbitId)
     }
 
-    /** Pausing and edits fence out old workers and discard their unposted notifications. */
+    /**
+     * Pausing and edits fence out old workers and discard their unposted notifications.
+     * [expectedState] is the state the caller read: finishing a run does not raise the version, so an
+     * edit made from an older read must not bring a task that just finished back to life.
+     */
     @Transaction
-    suspend fun replaceDefinition(updated: OrbitTaskEntity, expectedVersion: Long): Boolean {
+    suspend fun replaceDefinition(updated: OrbitTaskEntity, expectedVersion: Long, expectedState: String? = null): Boolean {
         val current = task(updated.id) ?: return false
         if (current.version != expectedVersion) return false
+        if (expectedState != null && current.state != expectedState) return false
         require(updated.orbitId == current.orbitId)
         val pendingUserRequest = current.state == "WAITING_USER" ||
             (current.state == "VERIFY" && latestRun(current.id)?.state == "WAITING_USER")
         if (pendingUserRequest && updated.state != "CANCELLED") return false
         if (updated.state == "ACTIVE" && unresolvedActions(current.id).isNotEmpty()) return false
+        // A predecessor's completion that has not been picked up yet is still owed to a task that keeps
+        // waiting on the same predecessor; a predecessor that runs once would never send it again.
+        val owed = if (updated.state != "CANCELLED" && current.scheduleMode == "EVENT" && updated.scheduleMode == "EVENT" &&
+            updated.triggerTaskId == current.triggerTaskId)
+            pendingEvents(current.id, current.version).filter { it.id.contains(":completed:") && eventRun(it.id) == null }
+        else emptyList()
         markUnreceiptedUnknown(current.id, updated.updatedAt)
         updateTask(updated.copy(version = current.version + 1))
         cancelRuns(current.id, updated.updatedAt)
         cancelDeliveries(current.id)
         deleteTaskEvents(current.id)
+        owed.forEach { event ->
+            insertEvent(event.copy(id = "${current.id}:${current.version + 1}:completed:${event.sourceRunId}",
+                taskVersion = current.version + 1))
+        }
         return true
     }
+
+    /**
+     * Changes only how a task is named and reported, and which model and time limit it gets next:
+     * what it does and when stay, so a run in progress is not fenced out and keeps its result.
+     */
+    @Query("UPDATE orbit_tasks SET title = :title, notifyPolicy = :notifyPolicy, modelRole = :modelRole, " +
+        "timeoutMinutes = :timeoutMinutes, updatedAt = :now WHERE id = :id AND version = :version AND state = :state")
+    suspend fun updateLabels(id: String, version: Long, state: String, title: String, notifyPolicy: String,
+        modelRole: String, timeoutMinutes: Int, now: Long): Int
 
     /** [replaceDefinition], but only while no run of the task is in progress. */
     @Transaction

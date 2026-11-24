@@ -67,15 +67,29 @@ object OrbitTaskRunner {
         ),
     )
 
-    fun cancelTask(taskId: String) {
+    /** A turn a task handed to its Orbit's chat, kept while it may still run. */
+    private class Handoff(val orbitId: String, val turnId: String)
+
+    /** The chat turn each task handed to Orbit, while it still runs, by task id. */
+    private val handoffs = ConcurrentHashMap<String, Handoff>()
+
+    /**
+     * Stops [taskId]'s work here. [stopChatTurn]: also stop the turn it already handed to its chat, so
+     * a paused, cancelled or rewritten task cannot go on using tools there.
+     */
+    fun cancelTask(taskId: String, stopChatTurn: Boolean = true) {
         active.values.filter { it.task.id == taskId }.forEach { it.job.cancel() }
+        if (stopChatTurn) handoffs[taskId]?.let { OrbitWake.stopTurn(it.turnId) }
     }
     fun cancelUnlessActive(orbitId: String?) {
         active.values.filter { it.orbitId != orbitId }.forEach { it.job.cancel() }
+        // Pausing fences out their runs; the turns they already handed over stop with them.
+        handoffs.values.filter { it.orbitId != orbitId }.forEach { OrbitWake.stopTurn(it.turnId) }
     }
     suspend fun cancelOrbit(orbitId: String) {
         val jobs = active.values.filter { it.orbitId == orbitId }.map { it.job }
         jobs.forEach { it.cancel() }
+        handoffs.values.filter { it.orbitId == orbitId }.forEach { OrbitWake.stopTurn(it.turnId) }
         withTimeout(60_000) { jobs.joinAll() }
     }
 
@@ -605,6 +619,15 @@ object OrbitTaskRunner {
             try {
                 val now = System.currentTimeMillis()
                 val failed = told == OrbitWake.Told.FAILED
+                // Stopped before it finished: not done, and not the model's failure either.
+                if (told == OrbitWake.Told.CANCELLED) {
+                    // Only a task that really goes on is told so; one paused or waiting for a check says just what happened.
+                    val reason = context.getString(com.ai.assistance.operit.R.string.orbit_decision_chat_cancelled)
+                    val goesOn = context.getString(com.ai.assistance.operit.R.string.orbit_decision_chat_cancelled_goes_on)
+                    if (dao.interrupt(state.token, now, reason, goesOnAt(task, now), goesOn, repeats(task)))
+                        runCatching { dao.pruneRuns(task.id) }
+                    return
+                }
                 val reason = context.getString(com.ai.assistance.operit.R.string.orbit_decision_chat_failed, orbit.name)
                 val saved = if (failed) {
                     // The model's failure is told on its own (see tellModelFailure); a repeating task goes on.
@@ -636,6 +659,7 @@ object OrbitTaskRunner {
                 }
                 runCatching { dao.pruneRuns(task.id) }
             } finally {
+                handoffs.computeIfPresent(task.id) { _, h -> h.takeUnless { it.turnId == decision.turnId } }
                 OrbitChatDecision.end(chatId, decision)
                 OrbitTaskScheduler.reschedule(context, fromWorker = true)
             }
@@ -648,11 +672,14 @@ object OrbitTaskRunner {
                     .also { if (it) OrbitChatDecision.begin(chatId, decision) }
             },
             onSending = {
+                // Known before the hand-off is saved: a stop that lands right after it still finds the turn.
+                handoffs[task.id] = Handoff(task.orbitId, decision.turnId)
                 check(dao.beginChatHandoff(state.token, decision.turnId, state.boot,
                     System.currentTimeMillis(), SystemClock.elapsedRealtime())) { "Task was paused, cancelled or replaced" }
             }, onFinished = ::finish, decision = decision, modelRole = OrbitModels.taskRole(task))
         } finally {
             if (!OrbitWake.isWatching(decision.turnId)) {
+                handoffs.computeIfPresent(task.id) { _, h -> h.takeUnless { it.turnId == decision.turnId } }
                 OrbitChatDecision.end(chatId, decision)
             }
         }

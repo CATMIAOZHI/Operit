@@ -156,6 +156,11 @@ data class OrbitDeliveryEntity(
         const val UNREGISTERED = "unregistered"
         /** The item ran out before it was handed to Orbit. */
         const val EXPIRED = "expired"
+        /**
+         * Handed to Orbit, but the app stopped before the turn was recorded as finished: Orbit may
+         * already have told it, so the next hand-off asks it to check the chat first.
+         */
+        const val INTERRUPTED = "interrupted"
         const val TEXT = "text"
         const val OPTIONS = "options"
         /** Plain message, reply options, a map card, a list card, or a saved piece of work. */

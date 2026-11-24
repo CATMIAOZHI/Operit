@@ -40,7 +40,8 @@ object OrbitPromptFiles {
 
     private fun atomic(file: File, content: String) {
         val parent = checkNotNull(file.parentFile)
-        check(parent.mkdirs() || parent.isDirectory)
+        // The Orbit's folder is made with the Orbit; a late write never makes a deleted one again.
+        check(parent.isDirectory) { "The Orbit's folder is gone" }
         val temp = File.createTempFile(".orbit-", ".tmp", parent)
         try {
             temp.outputStream().use { it.write(content.toByteArray(Charsets.UTF_8)); it.fd.sync() }

@@ -268,6 +268,13 @@ class MessageProcessingDelegate(
         var streamCollectionJob: Job? = null,
         var stateCollectionJob: Job? = null,
         var currentTurnOptions: ChatTurnOptions = ChatTurnOptions(),
+        /**
+         * Stops still winding down here (guarded by this runtime's lock). No turn starts while one
+         * is: the chat's AI service is shared by its turns, and a stop's cleanup would reach a new one.
+         */
+        var stopsInProgress: Int = 0,
+        /** A send admitted but whose job is not out yet: a stop waits for that job instead of missing it. */
+        var startingJob: CompletableDeferred<Job?>? = null,
         var requestSentAt: Long = 0L,
         var requestStartElapsed: Long = 0L,
         @Volatile var runStartedElapsed: Long = 0L,
@@ -359,7 +366,8 @@ class MessageProcessingDelegate(
 
     private fun runtimeFor(chatId: String?): ChatRuntime {
         val key = chatKey(chatId)
-        return chatRuntimes[key] ?: ChatRuntime().also { chatRuntimes[key] = it }
+        // Made at most once per chat: its lock is what admits turns.
+        return chatRuntimes.computeIfAbsent(key) { ChatRuntime() }
     }
 
     @Synchronized
@@ -665,9 +673,34 @@ class MessageProcessingDelegate(
         }
     }
 
-    private suspend fun cancelMessageInternal(chatId: String, keepPartialResponse: Boolean) {
-        invalidateComposerPrediction(chatId)
+    private suspend fun cancelMessageInternal(chatId: String, keepPartialResponse: Boolean, onlyTurnId: String? = null) {
         val chatRuntime = runtimeFor(chatId)
+        synchronized(chatRuntime) {
+            // A stop meant for one turn: once another turn runs here, there is nothing of it left to stop.
+            if (onlyTurnId != null && chatRuntime.currentTurnOptions.turnId != onlyTurnId) return
+            // From here until this stop is done no turn starts here, so all it touches is the stopped turn's.
+            chatRuntime.stopsInProgress++
+        }
+        try {
+            // Run to its end even if the caller stops waiting (a timeout around it): the chat is let go
+            // only once nothing of the stopped turn can still reach the next one.
+            withContext(kotlinx.coroutines.NonCancellable) { stopCurrentTurn(chatId, chatRuntime, keepPartialResponse) }
+        } finally {
+            synchronized(chatRuntime) {
+                chatRuntime.stopsInProgress--
+                if (chatRuntime.stopsInProgress == 0) {
+                    chatRuntime.isLoading.value = false
+                    // After loading is off (a finished state is ignored while loading) and before a
+                    // new turn can be admitted, which takes this same lock.
+                    setChatInputProcessingState(chatId, EnhancedInputProcessingState.Idle)
+                }
+            }
+            updateGlobalLoadingState()
+        }
+    }
+
+    private suspend fun stopCurrentTurn(chatId: String, chatRuntime: ChatRuntime, keepPartialResponse: Boolean) {
+        invalidateComposerPrediction(chatId)
         chatRuntime.canSteer = false
         chatRuntime.prepareSteeringInput = null
         chatRuntime.inputInbox?.seal()
@@ -678,12 +711,17 @@ class MessageProcessingDelegate(
             if (keepPartialResponse) chatRuntime.streamingAiMessage else null
         val initialCancellationToolBoundarySnapshot =
             if (keepPartialResponse) chatRuntime.toolBoundarySnapshot else null
-        val jobsToCancel =
-            linkedSetOf<Job>().apply {
-                chatRuntime.sendJob?.let { add(it) }
-                chatRuntime.stateCollectionJob?.let { add(it) }
-                chatRuntime.streamCollectionJob?.let { add(it) }
-            }
+        // Read under the lock its job is put out under: the ticket gone means its job is seen here.
+        val jobsToCancel = linkedSetOf<Job>()
+        val starting = synchronized(chatRuntime) {
+            chatRuntime.sendJob?.let { jobsToCancel.add(it) }
+            chatRuntime.stateCollectionJob?.let { jobsToCancel.add(it) }
+            chatRuntime.streamCollectionJob?.let { jobsToCancel.add(it) }
+            chatRuntime.startingJob
+        }
+        // A send admitted a moment ago puts its job out right away (nothing in between suspends, and a
+        // failure there says so); it is stopped here with the rest instead of starting after this stop.
+        starting?.await()?.let { jobsToCancel.add(it) }
 
         clearCurrentTurnToolInvocationCount(chatId)
         AIMessageManager.cancelOperationAndAwait(chatId)
@@ -727,13 +765,10 @@ class MessageProcessingDelegate(
         chatRuntime.streamingAiMessage = null
         chatRuntime.toolBoundarySnapshot = null
         chatRuntime.steeringBoundarySnapshot = null
-        chatRuntime.isLoading.value = false
         chatRuntime.currentTurnOptions = ChatTurnOptions()
         chatRuntime.requestSentAt = 0L
         chatRuntime.requestStartElapsed = 0L
         chatRuntime.firstResponseElapsed = null
-        updateGlobalLoadingState()
-        setChatInputProcessingState(chatId, EnhancedInputProcessingState.Idle)
 
         if (currentTurnOptions.persistTurn) {
             withContext(Dispatchers.IO) { saveCurrentChat() }
@@ -745,6 +780,24 @@ class MessageProcessingDelegate(
             com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator
                 .getInstance(context).stopTreeForUser(chatId) {
                     cancelMessageInternal(chatId, keepPartialResponse = true)
+                }
+        }
+    }
+
+    /**
+     * Stops turn [turnId] in [chatId] and the subagents under it, only while it is still the turn
+     * running there. A turn not started yet is held off by its cancellation mark instead.
+     */
+    fun cancelTurn(chatId: String, turnId: String) {
+        coroutineScope.launch(Dispatchers.IO) {
+            val runtime = runtimeFor(chatId)
+            if (runtime.currentTurnOptions.turnId != turnId) return@launch
+            com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator
+                .getInstance(context).stopTreeForUser(
+                    chatId,
+                    stillWanted = { runtime.currentTurnOptions.turnId == turnId },
+                ) {
+                    cancelMessageInternal(chatId, keepPartialResponse = true, onlyTurnId = turnId)
                 }
         }
     }
@@ -973,7 +1026,16 @@ class MessageProcessingDelegate(
             return false
         }
         val chatRuntime = runtimeFor(chatId)
-        if (chatRuntime.isLoading.value) {
+        // Checked and taken at once, so two sends never both start, and none starts while a stop winds down.
+        val starting = CompletableDeferred<Job?>()
+        val admitted = synchronized(chatRuntime) {
+            if (chatRuntime.isLoading.value || chatRuntime.stopsInProgress > 0) return@synchronized false
+            chatRuntime.isLoading.value = true
+            chatRuntime.currentTurnOptions = turnOptions
+            chatRuntime.startingJob = starting
+            true
+        }
+        if (!admitted) {
             AppLogger.w(
                 TAG,
                 "sendUserMessage忽略: chat正在处理中, chatId=$chatId, roleCardId=$roleCardId, override=${!messageTextOverride.isNullOrBlank()}, suppressUserMessageInHistory=$suppressUserMessageInHistory"
@@ -981,6 +1043,9 @@ class MessageProcessingDelegate(
             rejectRegisteredTurn("Chat is already processing another turn")
             return false
         }
+        // From admission to its job being out nothing suspends; should anything here throw, the chat
+        // is let go again and a stop waiting for the job is told there is none.
+        try {
 
         val composerPredictionGeneration = invalidateComposerPrediction(chatId)
         val originalMessageText = rawMessageText.trim()
@@ -1005,8 +1070,6 @@ class MessageProcessingDelegate(
             chatRuntime.userWaiting = turnOptions.persistTurn && !turnOptions.hideUserMessage &&
                 !turnOptions.deliveredByTool && !turnOptions.isSubTask
         }
-        chatRuntime.isLoading.value = true
-        chatRuntime.currentTurnOptions = turnOptions
         chatRuntime.inputInbox = TurnInputInbox()
         chatRuntime.canSteer = false
         chatRuntime.prepareSteeringInput = null
@@ -1048,11 +1111,18 @@ class MessageProcessingDelegate(
                 perfStart = perfStart,
             )
         val sendJob =
-            coroutineScope.launch(Dispatchers.IO + CoroutineName("ChatSend")) {
+            // ATOMIC: a turn stopped before its body ran still runs it, so abortBeforeSend releases the chat.
+            coroutineScope.launch(Dispatchers.IO + CoroutineName("ChatSend"), start = kotlinx.coroutines.CoroutineStart.ATOMIC) {
                 // Preparing the message (model settings, attachments, saving it) runs before the turn's own
                 // try/finally. A failure there must still release the chat, or it stays "generating" for good.
                 var sendBodyStarted = false
                 try {
+                    // Waits for its job to be put out first, so even a turn stopped at once never
+                    // lets the chat go before then (it is put out right after this is launched).
+                    starting.await()
+                    if (turnOptions.turnId?.let(isTurnCancellationRequested) == true) {
+                        throw kotlinx.coroutines.CancellationException("Turn ${turnOptions.turnId} was cancelled before it started")
+                    }
                     turn.prepareSend()
                     try {
                         sendBodyStarted = true
@@ -1070,7 +1140,11 @@ class MessageProcessingDelegate(
                 }
             }
         sendJob.invokeOnCompletion { perfStart.reportIfUnused(it) }
-        chatRuntime.sendJob = sendJob
+        synchronized(chatRuntime) {
+            chatRuntime.sendJob = sendJob
+            if (chatRuntime.startingJob === starting) chatRuntime.startingJob = null
+        }
+        starting.complete(sendJob)
         if (turnOptions.turnId?.let(isTurnCancellationRequested) == true) {
             sendJob.cancel(
                 kotlinx.coroutines.CancellationException(
@@ -1079,6 +1153,18 @@ class MessageProcessingDelegate(
             )
         }
         return true
+        } catch (e: Throwable) {
+            synchronized(chatRuntime) {
+                if (chatRuntime.startingJob === starting) chatRuntime.startingJob = null
+                if (chatRuntime.stopsInProgress == 0) {
+                    chatRuntime.isLoading.value = false
+                    chatRuntime.currentTurnOptions = ChatTurnOptions()
+                }
+            }
+            starting.complete(null)
+            updateGlobalLoadingState()
+            throw e
+        }
     }
 
     /**
@@ -1297,7 +1383,7 @@ class MessageProcessingDelegate(
                 ?: getEnhancedAiService())
                 ?: run {
                     withContext(Dispatchers.Main) { showErrorMessage(context.getString(R.string.message_ai_service_not_initialized)) }
-                    chatRuntime.isLoading.value = false
+                    synchronized(chatRuntime) { if (chatRuntime.stopsInProgress == 0) chatRuntime.isLoading.value = false }
                     updateGlobalLoadingState()
                     setChatInputProcessingState(activeChatId, EnhancedInputProcessingState.Idle)
                     return
@@ -2407,7 +2493,13 @@ class MessageProcessingDelegate(
         val currentJob = coroutineContext[Job] ?: throw IllegalStateException("Missing coroutine job")
         var serviceForTerminalCleanup: EnhancedAIService? = null
         var shouldResetInputStateToIdle = false
-        chatRuntime.sendJob = currentJob
+        val busy = context.getString(R.string.chat_regenerate_busy)
+        synchronized(chatRuntime) {
+            // Taken at once, as a send is; not while a stop still winds down.
+            if (chatRuntime.isLoading.value || chatRuntime.stopsInProgress > 0) throw IllegalStateException(busy)
+            chatRuntime.isLoading.value = true
+            chatRuntime.sendJob = currentJob
+        }
         resetCurrentTurnToolInvocationCount(chatId)
         com.ai.assistance.operit.features.orbit.OrbitChatDecision.onTurnStarted(chatId, null)
         chatRuntime.runStartedElapsed = android.os.SystemClock.elapsedRealtime()
@@ -2623,7 +2715,7 @@ class MessageProcessingDelegate(
             chatRuntime.stateCollectionJob?.cancel()
             chatRuntime.stateCollectionJob = null
             chatRuntime.responseStream = null
-            chatRuntime.isLoading.value = false
+            synchronized(chatRuntime) { if (chatRuntime.stopsInProgress == 0) chatRuntime.isLoading.value = false }
             updateGlobalLoadingState()
             terminalState?.let { state ->
                 setChatInputProcessingState(chatId, state)
@@ -2773,7 +2865,8 @@ class MessageProcessingDelegate(
         chatRuntime.requestSentAt = 0L
         chatRuntime.requestStartElapsed = 0L
         chatRuntime.firstResponseElapsed = null
-        chatRuntime.isLoading.value = false
+        // A stop winding down keeps the chat busy until it is done (it releases it then).
+        synchronized(chatRuntime) { if (chatRuntime.stopsInProgress == 0) chatRuntime.isLoading.value = false }
 
         updateGlobalLoadingState()
         clearCurrentTurnToolInvocationCount(chatId)

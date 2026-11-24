@@ -224,32 +224,36 @@ class MemoryReviewRepository internal constructor(
     private fun texts(d: MemoryReviewChange) = listOf(d.title, d.body, d.description, d.before, d.addition,
         d.reason, d.audits, d.evidence) + d.files.values
 
-    /** Forget flow, read only: the records whose stored text contains a line [matches] finds. */
-    internal suspend fun idsMatching(matches: (String) -> Boolean): List<String> = withContext(Dispatchers.IO) {
-        mutex.withLock { read().filter { d -> texts(d).any { t -> t.lines().any(matches) } }.map { it.id } }
+    /**
+     * Lines an approved edit of memory, the profile or a note file took out. A deleted entry should
+     * not live on in the change history, so finished records drop these lines too. A heading that
+     * goes counts too (a people note is headed by the person's name); lines still in the file, and
+     * bare rules or list marks, are left alone.
+     */
+    internal fun removedLines(change: MemoryReviewChange): Set<String> {
+        if (change.kind !in setOf("notes", "user", ORBIT_FILE) || change.addition.isNotEmpty() || change.before.isBlank())
+            return emptySet()
+        val kept = change.body.lineSequence().map { it.trim() }.toHashSet()
+        return change.before.lineSequence().map { it.trim() }.filter { line ->
+            line !in kept && line.trimStart('#', '-', '*', '+', '>', ' ', '|', '=', '_').length >= 2
+        }.toHashSet()
     }
 
-    /**
-     * Forget flow: strips every line [matches] finds from the stored snapshots, and stops undecided
-     * proposals that carry it so they cannot write it back. Returns the ids changed.
-     */
-    internal suspend fun forgetLines(matches: (String) -> Boolean): List<String> = withContext(Dispatchers.IO) {
-        mutex.withLock {
-            fun clean(text: String) = if (text.lines().none(matches)) text else text.lines().filterNot(matches).joinToString("\n")
-            val changed = mutableListOf<String>()
-            val next = read().map { d ->
-                if (texts(d).none { t -> t.lines().any(matches) }) return@map d
-                changed += d.id
-                val undecided = d.status in setOf("pending", "applying")
-                d.copy(title = clean(d.title).ifBlank { "-" }, body = clean(d.body), description = clean(d.description),
-                    before = clean(d.before), addition = clean(d.addition), reason = if (undecided)
-                        "Removed because the user asked Orbit to forget it" else clean(d.reason),
-                    audits = clean(d.audits), evidence = clean(d.evidence), files = d.files.mapValues { clean(it.value) },
-                    status = if (undecided) "superseded" else d.status,
-                    reviewedAt = if (undecided) System.currentTimeMillis() else d.reviewedAt)
-            }
-            if (changed.isNotEmpty()) write(next)
-            changed
+    /** Removes [lines] from finished records; undecided ones keep their exact snapshots for review. */
+    internal fun scrubFinished(items: List<MemoryReviewChange>, lines: Set<String>): List<MemoryReviewChange> {
+        if (lines.isEmpty()) return items
+        val matches = { line: String -> line.trim() in lines }
+        // One pass per text; a text with nothing to drop is kept as it is, without being rebuilt.
+        fun clean(text: String): String {
+            if (text.isEmpty() || text.lineSequence().none(matches)) return text
+            return text.lineSequence().filterNot(matches).joinToString("\n")
+        }
+        return items.map { d ->
+            if (d.status in setOf("pending", "applying")) d
+            else d.copy(title = clean(d.title), body = clean(d.body), description = clean(d.description), before = clean(d.before),
+                addition = clean(d.addition), reason = clean(d.reason), audits = clean(d.audits),
+                evidence = clean(d.evidence), files = d.files.mapValues { clean(it.value) })
+                .let { if (it == d) d else it }
         }
     }
     /** Only AI proposal call sites use this; manual edits and old pending items are not swept. */
@@ -624,8 +628,9 @@ class MemoryReviewRepository internal constructor(
                 reviewer = reviewer, reason = reason.take(2000)
             )
             items[index] = decided
-            write(items)
-            decided
+            val history = if (approve) scrubFinished(items, removedLines(change)) else items
+            write(history)
+            history[index]
         }
     }
     suspend fun delete() = withContext(Dispatchers.IO) {

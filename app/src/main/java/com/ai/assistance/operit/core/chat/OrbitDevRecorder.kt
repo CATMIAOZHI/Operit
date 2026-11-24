@@ -96,6 +96,39 @@ object OrbitDevRecorder {
     private fun enabled(context: Context): Boolean =
         OrbitPreferences.getInstance(context).snapshot.developerMode
 
+    /**
+     * The developer option is Orbit's: only its chats (and their task and subagent chats) are kept;
+     * an ordinary chat of the main app never is. Read only, walking up the parent chats once per
+     * chat: an answer is kept, a "no" only for a minute since a chat can still be given to Orbit.
+     */
+    private suspend fun isOrbitChat(context: Context, chatId: String): Boolean {
+        known(context, chatId)?.let { return it }
+        val settings = OrbitPreferences.getInstance(context).snapshot
+        val chats = com.ai.assistance.operit.data.db.AppDatabase.getDatabase(context).chatDao()
+        var cursor: String? = chatId
+        var found = false
+        for (step in 0 until 8) {
+            val id = cursor ?: break
+            if (settings.ownerForChat(id) != null || id in settings.chatOwners) { found = true; break }
+            cursor = chats.getChatById(id)?.parentChatId
+        }
+        if (ownership.size > MAX_OWNERSHIP) ownership.clear()
+        ownership[chatId] = found to System.currentTimeMillis()
+        return found
+    }
+
+    /** Whether [chatId] is Orbit's, when that is known without reading the database. */
+    private fun known(context: Context, chatId: String): Boolean? {
+        val settings = OrbitPreferences.getInstance(context).snapshot
+        if (settings.ownerForChat(chatId) != null || chatId in settings.chatOwners) return true
+        val (orbit, at) = ownership[chatId] ?: return null
+        return orbit.takeIf { it || System.currentTimeMillis() - at < NOT_ORBIT_TTL_MS }
+    }
+
+    private val ownership = java.util.concurrent.ConcurrentHashMap<String, Pair<Boolean, Long>>()
+    private const val MAX_OWNERSHIP = 512
+    private const val NOT_ORBIT_TTL_MS = 60_000L
+
     private val unsafe = Regex("[^A-Za-z0-9_-]")
 
     private fun chatDir(context: Context, chatId: String): File =
@@ -114,6 +147,8 @@ object OrbitDevRecorder {
         val id = chatId?.takeIf { it.isNotBlank() } ?: return
         val context = app() ?: return
         if (!enabled(context)) return
+        // An ordinary chat already known as such never takes one of the few body slots.
+        if (known(context, id) == false) return
         val at = System.currentTimeMillis()
         val queued = pending.incrementAndGet() <= MAX_PENDING
         if (!queued) pending.decrementAndGet()
@@ -121,6 +156,7 @@ object OrbitDevRecorder {
         val bodyToKeep = body.takeIf { queued }
         scope.launch {
             try {
+                if (!isOrbitChat(context, id)) return@launch
                 mutex.withLock {
                     val root = File(context.cacheDir, DIR)
                     val dir = chatDir(context, id).apply { mkdirs() }
@@ -154,6 +190,7 @@ object OrbitDevRecorder {
         val at = System.currentTimeMillis()
         scope.launch {
             try {
+                if (!isOrbitChat(context, id)) return@launch
                 mutex.withLock { noteMark(File(chatDir(context, id).apply { mkdirs() }, SENT), at, "S", kind) }
                 revision.value += 1
             } catch (e: Exception) {
@@ -179,6 +216,7 @@ object OrbitDevRecorder {
             .put("text", text.take(MAX_EVENT_TEXT)).toString()
         scope.launch {
             try {
+                if (!isOrbitChat(context, id)) return@launch
                 mutex.withLock {
                     val root = File(context.cacheDir, DIR)
                     val file = File(chatDir(context, id).apply { mkdirs() }, EVENTS)

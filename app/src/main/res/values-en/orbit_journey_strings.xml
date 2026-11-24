@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="orbit_decision_chat_cancelled">The reply was stopped partway, so this run does not count as done</string>
+    <string name="orbit_decision_chat_cancelled_goes_on">The reply was stopped partway, so this run does not count as done; the task goes on as planned</string>
     <string name="orbit_decision_chat_failed">%1$s\'s reply failed this time (most likely a model problem)</string>
     <string name="orbit_reminder_fallback">Reminder: %1$s\n(%2$s couldn\'t reply this time; the model may have failed.)</string>
     <string name="orbit_run_model_failed_skipped">This run didn\'t go through: %1$s It will try again at the next scheduled time.</string>

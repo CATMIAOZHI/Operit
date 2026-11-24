@@ -74,6 +74,12 @@ class TokenStatRequestContext(
      */
     internal var frozenPricing: FrozenEventPricing? = null
 
+    /**
+     * The caller's own count of what it sent, asked for only when the provider reported no usage:
+     * it picks a tiered price's tier for an allowance estimate ([FrozenEventPricing.estimatePricing]).
+     */
+    @Volatile internal var meteredInputTokens: (() -> Long)? = null
+
     /** 价格无法读取时的结构化、脱敏原因；不得用默认价格冒充历史快照。 */
     internal var pricingResolutionDiagnostic: String? = null
 
