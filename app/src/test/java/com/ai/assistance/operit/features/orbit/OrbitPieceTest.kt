@@ -39,6 +39,14 @@ class OrbitPieceTest {
         assertTrue(pieces.single().showsBadge)
     }
 
+    @Test fun aVoiceLineAfterCodeClosedByALongerFenceIsItsOwnBubble() {
+        val voice = "![语音](file:///data/files/voice/a.wav)"
+        val shown = "看这段\n```\n$voice\n````\n$voice"
+        val pieces = OrbitSpeech.pieceList(shown, 3, english = false, splitVoice = true)
+        // The voice inside the code stays code; the one after the code is a bubble of its own.
+        assertEquals(listOf("看这段\n```\n$voice\n````", voice), pieces.map { it.content })
+    }
+
     @Test fun summariesNeverCarryAPathOrCode() {
         val file = JSONObject().put("kind", OrbitChatCards.FILE).put("name", "报告.pdf").put("path", "/data/secret/报告.pdf").toString()
         val summary = OrbitChatCards.summary(file, english = false)

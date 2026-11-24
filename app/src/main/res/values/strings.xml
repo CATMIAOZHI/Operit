@@ -5964,6 +5964,10 @@
     <string name="image_block">图片</string>
     <string name="audio_block">音频</string>
     <string name="audio_playback_failed">这段音频暂时放不了</string>
+    <string name="voice_to_text">转文字</string>
+    <string name="voice_options">语音选项</string>
+    <string name="voice_hide_text">收起文字</string>
+    <string name="voice_no_transcript">这段音频没有文字稿</string>
     <string name="video_block">视频</string>
     <string name="image_load_failed">图片加载失败</string>
     <string name="save_image">保存图片</string>

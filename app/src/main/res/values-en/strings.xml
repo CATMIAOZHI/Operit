@@ -5544,6 +5544,10 @@
     <string name="image_block">Image</string>
     <string name="audio_block">Audio</string>
     <string name="audio_playback_failed">This audio can\'t be played right now</string>
+    <string name="voice_to_text">Show text</string>
+    <string name="voice_options">Voice options</string>
+    <string name="voice_hide_text">Hide text</string>
+    <string name="voice_no_transcript">No text for this audio</string>
     <string name="video_block">Video</string>
     <string name="image_load_failed">Image failed to load</string>
     <string name="save_image">Save Image</string>

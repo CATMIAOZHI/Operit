@@ -598,16 +598,31 @@ object OrbitSpeech {
      * cards), each Dynamic UI card, then each tool card. [timestamp] is the message's. [uiOffset]
      * is how many Dynamic UI cards come before [shown] when it is only a part of its message.
      */
-    fun pieceList(shown: String, timestamp: Long, english: Boolean, uiOffset: Int = 0): List<OrbitPiece> {
+    /**
+     * [splitVoice]: for the chat on screen, a voice message alone on its line is a bubble of its own.
+     * Off elsewhere, so pieces keep their numbers (a channel keys what it sent by them).
+     */
+    fun pieceList(shown: String, timestamp: Long, english: Boolean, uiOffset: Int = 0, splitVoice: Boolean = false): List<OrbitPiece> {
         val whole = timestamp.toString()
         if (!shown.contains("message_break", ignoreCase = true) && !shown.contains("```$ORBIT_CARD_FENCE\n") &&
-            !shown.contains("```a2ui")) return listOf(OrbitPiece(shown, whole, null, true))
+            !shown.contains("```a2ui") && !(splitVoice && hasVoiceLine(shown))) return listOf(OrbitPiece(shown, whole, null, true))
         val (parts, cards) = bubbles(shown)
         val out = mutableListOf<OrbitPiece>()
         var ui = uiOffset
         parts.forEach { part ->
             var at = 0
-            fun words(text: String) { text.trim().takeIf { it.isNotEmpty() }?.let { out += OrbitPiece(it, whole, null, false) } }
+            // A voice message on a line of its own is a bubble of its own, as in a messenger.
+            fun words(text: String) {
+                var from = 0
+                fun add(t: String) { t.trim().takeIf { it.isNotEmpty() }?.let { out += OrbitPiece(it, whole, null, false) } }
+                if (!splitVoice || !text.contains("](")) return add(text)
+                voiceLines(text).forEach { m ->
+                    add(text.substring(from, m.range.first))
+                    add(m.value)
+                    from = m.range.last + 1
+                }
+                add(text.substring(from))
+            }
             uiFence.findAll(part).forEach { m ->
                 words(part.substring(at, m.range.first))
                 val n = ui++
@@ -630,6 +645,51 @@ object OrbitSpeech {
         if (out.none { it.summary == null } && out.isNotEmpty()) out[0] = out[0].copy(fallbackBadgeKey = whole)
         return out
     }
+
+    // A Markdown audio link alone on its line (Orbit's voice messages are written so). At most three
+    // spaces before it: four make it code.
+    private val voiceLine = Regex("(?m)^ {0,3}!\\[[^\\]\\n]*\\]\\(([^)\\s]+)\\)[ \\t]*$")
+    // A code fence line: its marker, and what follows it (a closing fence has nothing after).
+    private val fenceLine = Regex("^ {0,3}(`{3,}|~{3,})(.*)$")
+
+    /**
+     * The ranges of [text]'s fenced code blocks, each to its closing fence or the end. As in
+     * Markdown, a block closes on a fence of the same mark at least as long as its opening.
+     */
+    private fun codeBlocks(text: String): List<IntRange> {
+        val out = mutableListOf<IntRange>()
+        var open: String? = null
+        var start = 0
+        var at = 0
+        while (at <= text.length) {
+            val end = text.indexOf('\n', at).let { if (it < 0) text.length else it }
+            val m = fenceLine.find(text.substring(at, end).trimEnd('\r'))
+            if (m != null) {
+                val mark = m.groupValues[1]
+                val opening = open
+                if (opening == null) {
+                    open = mark
+                    start = at
+                } else if (mark[0] == opening[0] && mark.length >= opening.length && m.groupValues[2].isBlank()) {
+                    out += start..end
+                    open = null
+                }
+            }
+            at = end + 1
+        }
+        if (open != null) out += start..text.length
+        return out
+    }
+
+    /** The voice lines of [text] outside code blocks. */
+    private fun voiceLines(text: String): List<MatchResult> {
+        val code = if (text.contains("```") || text.contains("~~~")) codeBlocks(text) else emptyList()
+        return voiceLine.findAll(text).filter { m ->
+            com.ai.assistance.operit.ui.common.markdown.isLikelyAudioUrl(m.groupValues[1]) && code.none { m.range.first in it }
+        }.toList()
+    }
+
+    private fun hasVoiceLine(text: String) = text.contains("](") && voiceLines(text).isNotEmpty()
 
     private fun clean(content: String): String {
         // A card a tool put in the chat (a secure entry card, a picture or file Orbit sent) stays

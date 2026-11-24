@@ -60,7 +60,7 @@ internal object OrbitVoiceTools {
   - 云端声音出错时会直接报错，不会改用手机声音；用一句话告诉用户原因。
   - 用户选了手机自带声音时，speak 和 podcast 都用手机的语音引擎，效果取决于手机；voice / voices 写手机声音名（来自 voices）。
   - 一个文件最多6000字（podcast 是所有台词加起来）。更长就拆成几段分别生成。
-  - 生成后把返回的 markdown 单独放一行，聊天里显示成语音条，用户点一下就播放；文件也会出现在构建页的文件里。像发语音一样：前后最多一句短话，不要把语音的内容再用文字写一遍，用户要文字版时再给。title 写几个字的话题，会显示在语音条下面。
+  - 生成后把返回的 markdown 单独放一行，聊天里显示成语音条，用户点一下就播放；文件也会出现在构建页的文件里。像发语音一样：前后最多一句短话，不要把语音的内容再用文字写一遍（用户长按语音条、点「转文字」就能看到原文），用户要文字版时再给。title 写几个字的话题，用作文件名。
   - podcast 的台词要像真人对话：短句、有来有回，每人一段不要太长。
   - App 的语音配置分两类：tts 是朗读（文字转语音），stt 是语音输入（听写）。每类可以有多个配置，同一时间各用一个。先用 profiles 看有哪些、正在用哪个；里面没有密钥，只有 has_key。
   - 换用另一个配置用 request_switch；新建用 request_create（新建后马上换用它；从正在用的配置复制设置，换了服务就从空白开始）；换密钥用 request_key；删除用 request_delete（正在用的不能删）。这些都会在聊天里放一张批准卡片，要填密钥时用户在卡片里填，你看不到。放完用一句话结束这一轮，用户批准后你会收到一条隐藏消息说明结果。
@@ -125,7 +125,7 @@ internal object OrbitVoiceTools {
                     val temp = File(context.cacheDir, "orbit-voice-${UUID.randomUUID()}.wav")
                     try {
                         OrbitVoice.designVoice(context, key, description, text, temp)
-                        val entry = temp.inputStream().use { files.saveBytes("files/voice/$name.wav", it) }
+                        val entry = temp.inputStream().use { files.saveBytes("files/voice/$name.wav", it, voiceText = text) }
                         JSONObject().put("path", entry.path).put("bytes", entry.size)
                             .put("markdown", OrbitFileTools.mediaMarkdown(files.fileFor(entry.path)))
                             .put("note", "If this turn has ${com.ai.assistance.operit.features.orbit.OrbitTaskRunner.FINISH} (a separate task run), " +
@@ -307,7 +307,8 @@ internal object OrbitVoiceTools {
                                 podcast.extension to JSONObject().put("lines", lines.size).put("voices", JSONObject(podcast.voices))
                                     .apply { if (podcast.shared) put("note", "There were not enough different voices, so some speakers share one. Tell the user in one line if it matters.") }
                             }
-                            val entry = made.inputStream().use { files.saveBytes("files/voice/$name.$extension", it) }
+                            val words = com.ai.assistance.operit.features.orbit.OrbitVoiceText.of(lines.map { it.speaker to it.text })
+                            val entry = made.inputStream().use { files.saveBytes("files/voice/$name.$extension", it, voiceText = words) }
                             return@withContext ToolResult(tool.name, true, StringResultData(
                                 details.put("path", entry.path).put("chars", lines.sumOf { it.text.length })
                                     .put("bytes", entry.size).put("engine", "cloud")
@@ -321,7 +322,8 @@ internal object OrbitVoiceTools {
                     val temp = File(context.cacheDir, "orbit-voice-${UUID.randomUUID()}.wav")
                     try {
                         val used = OrbitVoice.synthesize(context, lines, voices, temp, style)
-                        val entry = temp.inputStream().use { files.saveBytes("files/voice/$name.wav", it) }
+                        val words = com.ai.assistance.operit.features.orbit.OrbitVoiceText.of(lines.map { it.speaker to it.text })
+                        val entry = temp.inputStream().use { files.saveBytes("files/voice/$name.wav", it, voiceText = words) }
                         JSONObject().put("path", entry.path).put("chars", lines.sumOf { it.text.length })
                             .put("lines", lines.size).put("bytes", entry.size)
                             .put("engine", "phone")
