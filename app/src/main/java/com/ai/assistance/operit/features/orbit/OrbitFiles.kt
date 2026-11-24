@@ -385,7 +385,14 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
             "$p is reached through a link into ${if (isWorkspace(real)) "workspace/" else "files/"}. " +
                 "Nothing was deleted. Delete it by its real path: ${File(root, real).absolutePath}"
         }
-        if (recursive) return deleteTree(dir, alive)
+        if (recursive) {
+            try {
+                return deleteTree(dir, alive)
+            } finally {
+                // Words shown for the voice messages in it go too, even when only some were deleted.
+                OrbitVoiceText.forgetFolder(real)
+            }
+        }
         // The file system refuses a folder that is not empty, even one that just got a file.
         try {
             Files.delete(dir.toPath())
