@@ -114,6 +114,7 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Summarize
+import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.ui.draw.alpha
 import com.ai.assistance.operit.api.chat.llmprovider.MediaLinkParser
 import com.ai.assistance.operit.plugins.chatmessage.ChatMessageMenuDialogRequest
@@ -901,6 +902,9 @@ private fun MessageItem(
     var showEmojiPicker by remember { mutableStateOf(false) }
     // The bubble the long-press menu is for: a card inside the reply, or null for the message itself.
     var menuPiece by remember { mutableStateOf<OrbitPiece?>(null) }
+    // The voice message the long-press menu was opened on (its "to text"), and whether it has words.
+    var menuVoice by remember { mutableStateOf<String?>(null) }
+    var menuVoiceHasWords by remember { mutableStateOf(false) }
     val reactionKey = menuPiece?.reactionKey(orbitUserReactions?.byMessage) ?: message.timestamp.toString()
     val canReactToOrbit = orbitLook && message.sender == "ai" && orbitUserReactions != null && isActionable &&
         !isMultiSelectMode && !isWriting && message.contentStream == null
@@ -935,6 +939,8 @@ private fun MessageItem(
     val openMessageMenu: () -> Unit = {
         if (!isMultiSelectMode && isActionable) {
             menuPiece = null
+            menuVoice = null
+            menuVoiceHasWords = false
             pluginMenuItems =
                 if (!isHiddenUserMessage && allowTranscriptMutation) {
                     ChatMessageMenuItemRegistry.createMenuItems(buildPluginMenuItemParams())
@@ -942,6 +948,81 @@ private fun MessageItem(
                     emptyList()
                 }
             showContextMenu = true
+        }
+    }
+    val latestOpenMessageMenu = androidx.compose.runtime.rememberUpdatedState(openMessageMenu)
+    // The voice messages here showing their words ("to text"): which ones is kept with the message
+    // (also while it is scrolled away), and the words themselves only while it is on screen. Both the
+    // bars and the menu read [voiceWords], so they always agree.
+    val shownVoices = androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(ArrayList<String>()) }
+    val voiceWords = remember {
+        androidx.compose.runtime.mutableStateMapOf<String, com.ai.assistance.operit.ui.common.markdown.VoiceTranscripts.Found>()
+    }
+    val voiceNoWords = stringResource(R.string.voice_no_transcript)
+    // At most one look at each recording at a time; hiding its words stops it.
+    val voiceJobs = remember { java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Job>() }
+    fun showVoiceWords(url: String, words: com.ai.assistance.operit.ui.common.markdown.VoiceTranscripts.Found?) {
+        if (words == null) voiceWords.remove(url) else voiceWords[url] = words
+        shownVoices.value = ArrayList(shownVoices.value - url).apply { if (words != null) add(url) }
+    }
+    fun hideVoiceWords(url: String) {
+        voiceJobs.remove(url)?.cancel()
+        showVoiceWords(url, null)
+    }
+    fun requestVoiceWords(url: String, quiet: Boolean) {
+        if (voiceJobs[url]?.isActive == true) return
+        val job = coroutineScope.launch {
+            val deletions = com.ai.assistance.operit.features.orbit.OrbitVoiceText.forgotten
+            val before = deletions.value
+            var found = com.ai.assistance.operit.ui.common.markdown.VoiceTranscripts.find(context, url)
+            // A recording deleted (or replaced) while it was being read shows nothing.
+            if (found != null && deletions.value != before &&
+                withContext(Dispatchers.IO) { com.ai.assistance.operit.ui.common.markdown.VoiceTranscripts.markOf(context, url) } != found.mark
+            ) found = null
+            if (found == null && !quiet) Toast.makeText(context, voiceNoWords, Toast.LENGTH_SHORT).show()
+            showVoiceWords(url, found)
+        }
+        voiceJobs[url] = job
+        job.invokeOnCompletion { voiceJobs.remove(url, job) }
+    }
+    // Words shown before the message left the screen (or the app) come back only after the
+    // recording is checked again: one deleted or changed meanwhile shows nothing.
+    val voicesToCheck = shownVoices.value.filter { it !in voiceWords }
+    if (voicesToCheck.isNotEmpty()) {
+        LaunchedEffect(voicesToCheck) { voicesToCheck.forEach { requestVoiceWords(it, quiet = true) } }
+    }
+    // A recording deleted while its words show here (from the Library, say) takes them away, and so
+    // does one replaced by another of the same name: the words shown are only for the one checked.
+    if (voiceWords.isNotEmpty()) {
+        LaunchedEffect(Unit) {
+            // Also looks once when its words first show, for a deletion just before.
+            com.ai.assistance.operit.features.orbit.OrbitVoiceText.forgotten.collect {
+                val shown = voiceWords.mapValues { it.value.mark }
+                val gone = withContext(Dispatchers.IO) {
+                    shown.filter { (url, mark) -> com.ai.assistance.operit.ui.common.markdown.VoiceTranscripts.markOf(context, url) != mark }.keys
+                }
+                // Only words still the ones checked go (hidden or shown again meanwhile, they stay as they are).
+                gone.filter { voiceWords[it]?.mark == shown[it] }.forEach(::hideVoiceWords)
+            }
+        }
+    }    // A long press on a voice bar opens this same menu, for that recording; none while it takes no menu.
+    val canOpenVoiceMenu = !isMultiSelectMode && isActionable
+    val voiceHost = remember(canOpenVoiceMenu) {
+        val open: (String) -> Unit = { url ->
+            latestOpenMessageMenu.value()
+            if (showContextMenu) menuVoice = url
+        }
+        com.ai.assistance.operit.ui.common.markdown.VoiceMenuHost(
+            open = open.takeIf { canOpenVoiceMenu },
+            words = { url -> voiceWords[url]?.text },
+        )
+    }    // Whether the recording has words is looked up only while its menu is open.
+    val menuVoiceOpen = menuVoice?.takeIf { showContextMenu }
+    if (menuVoiceOpen != null) {
+        LaunchedEffect(menuVoiceOpen) {
+            menuVoiceHasWords = withContext(Dispatchers.IO) {
+                com.ai.assistance.operit.ui.common.markdown.VoiceTranscripts.available(context, menuVoiceOpen)
+            }
         }
     }
     // In an Orbit reply each bubble (words, a card, a Dynamic UI card) takes its own gestures.
@@ -1021,6 +1102,7 @@ private fun MessageItem(
             LocalOrbitMessageGestures provides
                 if (orbitLook) OrbitMessageGestures(quickLike, openMessageMenu) else null,
             LocalOrbitPieceActions provides pieceActions,
+            com.ai.assistance.operit.ui.common.markdown.LocalVoiceMenu provides voiceHost,
         ) {
         OrbitSwipeToReply(
             enabled = orbitLook && isActionable && !isHiddenUserMessage && !isMultiSelectMode &&
@@ -1299,6 +1381,32 @@ private fun MessageItem(
             }
             // A card has no words to copy or read out.
             if (!isHiddenUserMessage && menuPiece == null) {
+                // A voice message's words, kept when it was made ("to text", as in a messenger).
+                val voice = menuVoice
+                val voiceShown = voice != null && voiceHost.words(voice) != null
+                if (voice != null && (voiceShown || menuVoiceHasWords)) {
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                stringResource(if (voiceShown) R.string.voice_hide_text else R.string.voice_to_text),
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        },
+                        onClick = {
+                            showContextMenu = false
+                            if (voiceShown) hideVoiceWords(voice) else requestVoiceWords(voice, quiet = false)
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.TextFields,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        },
+                        modifier = Modifier.heightIn(min = 44.dp),
+                    )
+                }
                 DropdownMenuItem(
                     text = {
                         Text(

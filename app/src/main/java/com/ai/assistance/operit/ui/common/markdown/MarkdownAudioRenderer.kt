@@ -90,6 +90,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 
@@ -115,6 +116,60 @@ class VoiceScope
 /** Given by the chat list; audio shown elsewhere stops when its own bar leaves. */
 val LocalVoiceScope = staticCompositionLocalOf<VoiceScope?> { null }
 
+/**
+ * Given by a chat message for the voice bars in it. [open], a long press on a bar, opens the
+ * message's own menu for that recording (one menu, as in a messenger; "to text" is one of its
+ * items), and is null while the message takes no menu (picking messages). [words] are the words
+ * this message shows under a bar. Elsewhere (a preview, a shared picture) there is neither.
+ */
+class VoiceMenuHost(val open: ((String) -> Unit)?, val words: (String) -> String?)
+
+val LocalVoiceMenu = androidx.compose.runtime.compositionLocalOf<VoiceMenuHost?> { null }
+
+/**
+ * A speed-up for finding the words of a recording again: the words of recordings already checked,
+ * by url, each with a cheap mark of its recording, so finding them again only looks at the files
+ * (see [com.ai.assistance.operit.features.orbit.OrbitVoiceText.stamp]) and checks them in full only
+ * when the recording changed. What a bubble shows is its message's own state, never read from here.
+ */
+object VoiceTranscripts {
+    /** Words checked against their recording, with the [mark] it had then. */
+    class Found(val text: String, val mark: String)
+    private const val MAX = 64
+    // Least recently used first; the oldest goes when full.
+    private val found = object : LinkedHashMap<String, Found>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Found>?) = size > MAX
+    }
+    // One look at a recording at a time, wherever it is shown, so the next one finds it checked.
+    // A fixed few locks by url: two recordings sharing one only wait for each other.
+    private val reading = Array(16) { kotlinx.coroutines.sync.Mutex() }
+
+    /** The mark of the recording at [url] and its words now, null when either is gone. Reads files. */
+    fun markOf(context: Context, url: String): String? =
+        com.ai.assistance.operit.features.orbit.OrbitVoiceText.stamp(url, context.filesDir)
+
+    /** Whether the recording at [url] has words kept for it (a quick look at the files). Reads files. */
+    fun available(context: Context, url: String): Boolean = markOf(context, url) != null
+
+    /**
+     * The words of the recording at [url] now, checked against it; null when there are none (a
+     * cancelled [kotlinx.coroutines.CoroutineScope] stops the reading). Reads files.
+     */
+    suspend fun find(context: Context, url: String): Found? =
+        reading[(url.hashCode() and Int.MAX_VALUE) % reading.size].withLock { findNow(context, url) }
+
+    private suspend fun findNow(context: Context, url: String): Found? {
+        val voiceText = com.ai.assistance.operit.features.orbit.OrbitVoiceText
+        val before = synchronized(found) { found[url] }
+        val now = withContext(Dispatchers.IO) {
+            val mark = voiceText.stamp(url, context.filesDir) ?: return@withContext null
+            if (before != null && mark == before.mark) before
+            else voiceText.read(url, context.filesDir) { isActive }?.let { Found(it, mark) }
+        }
+        synchronized(found) { if (now == null) found.remove(url) else found[url] = now }
+        return now
+    }
+}
 /** Stops the voice playing for [scope], if any; voice another chat started keeps playing. */
 fun stopVoiceIn(scope: VoiceScope) = VoicePlayback.leave(scope)
 
@@ -356,58 +411,19 @@ private fun VoiceBar(audioUrl: String, audioAlt: String, ink: Color, bubble: Col
     if (chatScope == null) {
         DisposableEffect(ownScope) { onDispose { VoicePlayback.leave(ownScope) } }
     }
-    // Long press opens a menu with "to text", like a messenger; the words were kept when the voice was made.
-    // Once found, the words stay with the bar with a mark of the recording they were checked for:
-    // showing them again only looks at the file's size and time, and checks it in full if it changed.
-    var found by rememberSaveable(audioUrl) { mutableStateOf<String?>(null) }
-    var foundFor by rememberSaveable(audioUrl) { mutableStateOf<String?>(null) }
-    var shown by rememberSaveable(audioUrl) { mutableStateOf(false) }
-    val words = found?.takeIf { shown }
-    var menuOpen by remember { mutableStateOf(false) }
+    // Long press opens the message's own menu, which has "to text" (see [VoiceMenuHost]).
+    val host = LocalVoiceMenu.current
+    // Only this bar's own words: another bar showing or hiding its words does not redraw it.
+    val words by remember(host, audioUrl) { androidx.compose.runtime.derivedStateOf { host?.words(audioUrl) } }
+    val longPress = host?.open
     val haptics = LocalHapticFeedback.current
-    val noWords = stringResource(R.string.voice_no_transcript)
-    val wordsScope = androidx.compose.runtime.rememberCoroutineScope()
-    var looking by remember { mutableStateOf(false) }
-    val toggleWords: () -> Unit = {
-        if (shown) {
-            shown = false
-        } else if (!looking) {
-            looking = true
-            val cached = found
-            val cachedFor = foundFor
-            wordsScope.launch {
-                try {
-                    val (mark, read) = withContext(Dispatchers.IO) {
-                        val voiceText = com.ai.assistance.operit.features.orbit.OrbitVoiceText
-                        val mark = voiceText.stamp(audioUrl, context.filesDir)
-                        mark to when {
-                            mark == null -> null
-                            cached != null && mark == cachedFor -> cached
-                            // Stops reading the recording when the bar leaves the screen.
-                            else -> voiceText.read(audioUrl, context.filesDir) { isActive }
-                        }
-                    }
-                    if (read == null) {
-                        found = null
-                        foundFor = null
-                        Toast.makeText(context, noWords, Toast.LENGTH_SHORT).show()
-                    } else {
-                        found = read
-                        foundFor = mark
-                        shown = true
-                    }
-                } finally {
-                    looking = false
-                }
-            }
+    val openMenu: (() -> Unit)? = longPress?.let { open ->
+        {
+            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+            open(audioUrl)
         }
     }
-    val openMenu: () -> Unit = {
-        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-        menuOpen = true
-    }
     val latestOpenMenu = androidx.compose.runtime.rememberUpdatedState(openMenu)
-
     val measuredMs by produceState(knownDuration(audioUrl)) { value = durationOf(context, audioUrl) }
     val now by remember { VoicePlayback.of(audioUrl) }.collectAsState(null)
     // The length the player found (web audio has no other), kept after it stops.
@@ -436,7 +452,6 @@ private fun VoiceBar(audioUrl: String, audioAlt: String, ink: Color, bubble: Col
     val playing = now?.wants == true
     val label = stringResource(R.string.audio_block)
     val actionLabel = stringResource(if (playing) R.string.pause else R.string.tts_play)
-    val wordsLabel = stringResource(if (words != null) R.string.voice_hide_text else R.string.voice_to_text)
     val optionsLabel = stringResource(R.string.voice_options)
     val lengthText = if (total > 0) clock(total) else null
     val description = listOfNotNull(label, audioAlt.takeIf { it.isNotBlank() }, lengthText).joinToString(", ")
@@ -462,7 +477,7 @@ private fun VoiceBar(audioUrl: String, audioAlt: String, ink: Color, bubble: Col
                 .combinedClickable(
                     role = Role.Button,
                     onClickLabel = actionLabel,
-                    onLongClickLabel = optionsLabel,
+                    onLongClickLabel = optionsLabel.takeIf { openMenu != null },
                     onLongClick = openMenu,
                 ) {
                     VoicePlayback.toggle(context, audioUrl, scope, lifecycle)
@@ -495,7 +510,7 @@ private fun VoiceBar(audioUrl: String, audioAlt: String, ink: Color, bubble: Col
                         if (!seekable) Modifier else Modifier
                             .pointerInput(audioUrl, total) {
                                 // A long press on the wave opens the same menu as the rest of the bar.
-                                detectTapGestures(onLongPress = { latestOpenMenu.value() }) { at -> seekTo(at.x / size.width) }
+                                detectTapGestures(onLongPress = { latestOpenMenu.value?.invoke() }) { at -> seekTo(at.x / size.width) }
                             }
                             .pointerInput(audioUrl, total) {
                                 fun at(x: Float) = (x / size.width).coerceIn(0f, 1f)
@@ -523,15 +538,6 @@ private fun VoiceBar(audioUrl: String, audioAlt: String, ink: Color, bubble: Col
                 style = MaterialTheme.typography.labelMedium,
                 color = ink.copy(alpha = 0.8f),
                 maxLines = 1,
-            )
-        }
-        androidx.compose.material3.DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-            androidx.compose.material3.DropdownMenuItem(
-                text = { Text(wordsLabel) },
-                onClick = {
-                    menuOpen = false
-                    toggleWords()
-                },
             )
         }
       }

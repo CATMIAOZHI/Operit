@@ -1,5 +1,6 @@
 package com.ai.assistance.operit.features.orbit
 
+import kotlinx.coroutines.flow.update
 import org.json.JSONObject
 import java.io.File
 import java.net.URLDecoder
@@ -21,6 +22,11 @@ object OrbitVoiceText {
     private const val FOLDER = ".text"
     /** Far more than the longest words a recording can have (6000 characters). */
     private const val MAX_BYTES = 128 * 1024L
+
+    private val forgottenCount = kotlinx.coroutines.flow.MutableStateFlow(0)
+
+    /** Counts recordings deleted, so words shown for one can be taken away (see [forget]). */
+    val forgotten: kotlinx.coroutines.flow.StateFlow<Int> = forgottenCount
 
     private fun isLink(f: File) = Files.isSymbolicLink(f.toPath())
 
@@ -77,7 +83,15 @@ object OrbitVoiceText {
 
     /** Drops the words kept for [audio], when it is deleted (called by [OrbitFiles] under its lock). */
     internal fun forget(audio: File, within: File) {
-        runCatching { wordsFor(audio, within)?.let { Files.deleteIfExists(it.toPath()) } }
+        val gone = runCatching { wordsFor(audio, within)?.let { Files.deleteIfExists(it.toPath()) } }.getOrNull() == true
+        // Only a recording that had words can have them on screen.
+        if (gone) forgottenCount.update { it + 1 }
+    }
+
+    /** A folder holding recordings ([folder], short path) was deleted whole, words and all. */
+    internal fun forgetFolder(folder: String) {
+        val p = folder.trimEnd('/')
+        if (p == "files" || p == "files/voice" || p.startsWith("files/voice/")) forgottenCount.update { it + 1 }
     }
 
     /** The words for [lines] of a podcast, one speaker's line a row; a single voice is just its text. */
