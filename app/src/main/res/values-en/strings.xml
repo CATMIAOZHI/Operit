@@ -5543,6 +5543,7 @@
     <string name="plan_execution_graph">Execution Plan</string>
     <string name="image_block">Image</string>
     <string name="audio_block">Audio</string>
+    <string name="audio_playback_failed">This audio can\'t be played right now</string>
     <string name="video_block">Video</string>
     <string name="image_load_failed">Image failed to load</string>
     <string name="save_image">Save Image</string>
@@ -10127,7 +10128,11 @@
     <string name="orbit_find_media">Photos &amp; videos</string>
     <string name="orbit_find_files">Files</string>
     <string name="orbit_find_links">Links</string>
-    <string name="orbit_find_music">Music</string>
+    <string name="orbit_find_music">Audio</string>
+    <string name="orbit_find_voice">Voice</string>
+    <string name="orbit_find_read_back_to">Searched back to %1$s, nothing more yet</string>
+    <string name="orbit_find_nothing_yet">Nothing found yet</string>
+    <string name="orbit_find_keep_looking">Look further back</string>
     <string name="orbit_find_cards">Cards</string>
     <string name="orbit_find_approvals">Approvals</string>
     <string name="orbit_find_favorites">Favorites</string>

@@ -828,7 +828,8 @@ private fun renderNodeContent(
                         imageMarkdown = imageContent,
                         modifier = Modifier.fillMaxWidth(),
                         maxImageHeight = 140,
-                        enableDialogs = enableDialogs
+                        enableDialogs = enableDialogs,
+                        contentColor = textColor
                     )
                 }
             } else {

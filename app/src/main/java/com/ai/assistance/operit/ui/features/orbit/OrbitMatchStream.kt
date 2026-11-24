@@ -55,6 +55,24 @@ internal class OrbitMatchStream(
     suspend fun more(at: Int): Boolean = lock.withLock { at < found.size || !finished }
 
     /**
+     * How far back everything before [at] has been looked at: the time of the next match not yet
+     * handed out, else of the newest one read but not yet queued, else of the oldest row read.
+     * Null before anything is read.
+     */
+    suspend fun readBackTo(at: Int): Long? = withContext(Dispatchers.IO) {
+        lock.withLock {
+            if (at < found.size) {
+                // Rare (a page stopped with matches queued), so their times are not kept; read this one.
+                return@withLock AppDatabase.getDatabase(context).openHelper.readableDatabase
+                    .query(SimpleSQLiteQuery("SELECT timestamp FROM messages WHERE messageId = ?", arrayOf<Any>(found[at])))
+                    .use { if (it.moveToFirst()) it.getLong(0) else null }
+            }
+            sources.filter { it.waiting.isNotEmpty() }.maxOfOrNull { it.waiting.first()[0] }
+                ?: sources.filter { !it.done }.maxOfOrNull { it.time }?.takeIf { it != Long.MAX_VALUE }
+        }
+    }
+
+    /**
      * Reads on until [upTo] ids are found or nothing is left, but stops before reading another
      * window once there is any id from [from] on, or once [deadline] (uptime millis) has passed:
      * what is found is shown first. Stopping the caller stops the query inside SQLite; what was
@@ -124,5 +142,11 @@ internal class OrbitMatchStream(
         private const val WINDOW = 1000
         /** How long a page keeps reading for more once it has something to show. */
         const val PAGE_TIME_MS = 150L
+        /**
+         * About how long a page reads while it has found nothing (checked between windows, so a
+         * window under way finishes): a long chat with little or none of what is looked for is not
+         * read to its start behind a spinner; the user chooses to look further.
+         */
+        const val EMPTY_TIME_MS = 3000L
     }
 }

@@ -5963,6 +5963,7 @@
     <string name="plan_execution_graph">计划执行图</string>
     <string name="image_block">图片</string>
     <string name="audio_block">音频</string>
+    <string name="audio_playback_failed">这段音频暂时放不了</string>
     <string name="video_block">视频</string>
     <string name="image_load_failed">图片加载失败</string>
     <string name="save_image">保存图片</string>
@@ -10102,7 +10103,11 @@
     <string name="orbit_find_media">图片与视频</string>
     <string name="orbit_find_files">文件</string>
     <string name="orbit_find_links">链接</string>
-    <string name="orbit_find_music">音乐</string>
+    <string name="orbit_find_music">音频</string>
+    <string name="orbit_find_voice">语音</string>
+    <string name="orbit_find_read_back_to">已查到 %1$s，暂时没找到更多</string>
+    <string name="orbit_find_nothing_yet">暂时没找到</string>
+    <string name="orbit_find_keep_looking">继续往前找</string>
     <string name="orbit_find_cards">卡片</string>
     <string name="orbit_find_approvals">批准</string>
     <string name="orbit_find_favorites">收藏</string>

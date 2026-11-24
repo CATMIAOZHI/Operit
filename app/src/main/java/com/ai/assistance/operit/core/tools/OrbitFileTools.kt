@@ -97,7 +97,7 @@ internal object OrbitFileTools {
                     check(settings.orbitForChat(runtime?.callerChatId) != null) {
                         "send only works in a chat with the user"
                     }
-                    val path = arg("path").trim().removePrefix("/")
+                    val path = com.ai.assistance.operit.features.orbit.OrbitFiles.normalize(arg("path"))
                     require(path.startsWith("files/")) { "Only files under files/ can be sent" }
                     val file = files.fileFor(path)
                     require(file.isFile) { "No such file: $path" }
@@ -113,7 +113,9 @@ internal object OrbitFileTools {
                             "later changes to $path do not change it. Do not paste its path.")
                         .put(com.ai.assistance.operit.features.orbit.OrbitChatCards.KEY,
                             com.ai.assistance.operit.features.orbit.OrbitChatCards.attachment(
-                                orbit.id, copy, file.name, file.length(), bounds.outWidth, bounds.outHeight))
+                                orbit.id, copy, file.name, file.length(), bounds.outWidth, bounds.outHeight)
+                                // Where it was sent from, so chat search can tell a voice message from other audio.
+                                .put("from", path))
                         .toString()
                 }
                 "import" -> {

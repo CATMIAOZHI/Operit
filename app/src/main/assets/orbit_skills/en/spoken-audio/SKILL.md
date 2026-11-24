@@ -22,7 +22,8 @@ description: Make voice messages and readings - write words meant for listening,
 
 ## Deliver
 
-- Put the markdown orbit_voice returns into the reply as is, and the user can play it in the chat.
+- Put the markdown orbit_voice returns on a line of its own, unchanged; the chat shows it as a voice bar the user taps to play.
+- Send it like a voice note: at most one short sentence around it, and do not also write out what it says; give a text version when the user asks.
 - Making audio does not mean it may be sent to anyone else or published.
 
 ## Reference files

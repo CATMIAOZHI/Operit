@@ -873,6 +873,12 @@ private fun OrbitChatPage(
     LaunchedEffect(currentChatId, unreadChats, chatOnScreen) {
         if (chatOnScreen && currentChatId in unreadChats) com.ai.assistance.operit.features.orbit.OrbitDelivery.markSeen(currentChatId)
     }
+    // The chat stays composed under the other tabs, its search and the pages over it; a voice
+    // message playing there stops when one of them covers it, as there is no pause button to reach.
+    val chatCovered = tab != OrbitTab.CHAT || profileShown || sidebarSearch || subPage != null || showImport || chatSearchOpen
+    LaunchedEffect(chatCovered) {
+        if (chatCovered) com.ai.assistance.operit.ui.common.markdown.stopVoicePlayback()
+    }
     // Like a messenger: once the chat is in front of the user, its notifications are cleared.
     // The developer view may show one of its subagents instead; the chat itself is not read then.
     val chatReadable = chatOnScreen && !(devView && devSubChatId != null)
