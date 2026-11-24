@@ -28,9 +28,13 @@ class OrbitTaskFilesTest {
         assertTrue(split.startsWith("---\n${OrbitFiles.TASK_COPY_MARK}\n---\n# 看 邮 件 吧\n"))
         assertTrue(OrbitFiles.isTaskCopy(split))
         listOf("- task_id: 1a2b3c4d-0000-0000-0000-000000000000", "- state: ACTIVE", "- schedule_mode: DAILY",
-            "- daily_time: 09:00", "- next_run: 1970-01-02 00:00", "- notify_policy: CHANGES", "- model: default")
+            "- daily_time: 09:00", "- next_run: 1970-01-02 00:00", "- notify_policy: CHANGES")
             .forEach { assertTrue(it, text.contains("$it\n")) }
         assertFalse(text.contains("interval_minutes"))
+        // Woken in the chat, it uses that chat's model; only a background task names one.
+        assertFalse(text.contains("- model:"))
+        val background = OrbitTaskFiles.render(task().copy(useSubagent = true), "x", english = false, zone = utc)
+        assertTrue(background.contains("- timeout_minutes: 60\n- model: default\n"))
         assertTrue(text.endsWith("## 要做什么（instruction）\n\n每天看一眼新邮件。\n有重要的就告诉我。\n"))
     }
 

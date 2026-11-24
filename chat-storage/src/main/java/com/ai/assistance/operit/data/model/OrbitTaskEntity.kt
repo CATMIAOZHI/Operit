@@ -103,6 +103,13 @@ data class OrbitRunEntity(
 
         /** Handed to Orbit in its chat; that chat turn is the record, so the run stays off the activity list. */
         const val IN_CHAT = "@in_chat"
+
+        /**
+         * How a watch script's quiet check (nothing worth waking Orbit for) begins its decision: the start of
+         * the app string orbit_hook_silent in each language, which must stay the same. Kept out of the activity list.
+         */
+        const val HOOK_QUIET_ZH = "脚本判断这次不用叫醒 Orbit"
+        const val HOOK_QUIET_EN = "The script decided not to wake Orbit"
     }
 }
 

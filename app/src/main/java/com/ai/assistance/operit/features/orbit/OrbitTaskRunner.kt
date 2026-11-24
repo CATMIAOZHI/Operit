@@ -487,7 +487,12 @@ object OrbitTaskRunner {
                 "or put an open_settings card for them to check. If they said before they don't want reminders about this, call orbit_nothing_to_do to stay quiet.")
     }
 
-    private fun modelKey(state: ActiveRun) = "task_model:${OrbitModels.taskRole(state.task)}:"
+    /**
+     * A background run's model is its role's; a task woken in a chat answers with that chat's own
+     * model, so its failures are told (and cleared) per chat, apart from the background roles.
+     */
+    private fun modelKey(state: ActiveRun) = if (state.task.useSubagent) "task_model:${OrbitModels.taskRole(state.task)}:"
+        else "task_model:chat:${state.task.chatId.ifBlank { "main" }}:"
 
     /** The task's model answered a turn: its failure, if one was told, is over and a new one is told again. */
     private fun modelWorked(context: Context, state: ActiveRun) = OrbitNotices.clear(context, state.orbitId, modelKey(state))
@@ -676,7 +681,9 @@ object OrbitTaskRunner {
                 handoffs[task.id] = Handoff(task.orbitId, decision.turnId)
                 check(dao.beginChatHandoff(state.token, decision.turnId, state.boot,
                     System.currentTimeMillis(), SystemClock.elapsedRealtime())) { "Task was paused, cancelled or replaced" }
-            }, onFinished = ::finish, decision = decision, modelRole = OrbitModels.taskRole(task))
+            }, onFinished = ::finish, decision = decision,
+                // Woken in a chat, it answers with whatever model that chat uses now, like the user's own turns.
+                modelRole = null)
         } finally {
             if (!OrbitWake.isWatching(decision.turnId)) {
                 handoffs.computeIfPresent(task.id) { _, h -> h.takeUnless { it.turnId == decision.turnId } }

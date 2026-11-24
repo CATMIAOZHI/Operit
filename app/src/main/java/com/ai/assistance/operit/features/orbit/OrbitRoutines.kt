@@ -65,8 +65,9 @@ internal object OrbitRoutines {
     const val FEED_INTERVAL_MINUTES = 12 * 60
     /** New ideas every morning at 9 by default. */
     const val IDEAS_MINUTE = 9 * 60
-    /** Short routines share the lane with reminders. */
-    private const val TIMEOUT_MINUTES = 8
+    /** Each run of a background routine (Feed, Ideas and the rest) may take up to an hour: some models are slow. */
+    const val ROUTINE_TIMEOUT_MINUTES = 60
+    private const val TIMEOUT_MINUTES = ROUTINE_TIMEOUT_MINUTES
     /** Enough for the nightly alignment review to read the whole window in one run. */
     const val REVIEW_TIMEOUT_MINUTES = 120
     /**
@@ -75,7 +76,7 @@ internal object OrbitRoutines {
      */
     const val PROACTIVE_INTERVAL_MINUTES = 2 * 60
     /** It may look up tasks, goals and older messages before drafting. */
-    private const val PROACTIVE_TIMEOUT_MINUTES = 15
+    private const val PROACTIVE_TIMEOUT_MINUTES = ROUTINE_TIMEOUT_MINUTES
     /** The first check, or one after a long pause, looks back at most a day. */
     private const val PROACTIVE_LOOKBACK_MS = 24L * 60 * 60_000
     private const val PROACTIVE_SOURCE_CHARS = 18_000

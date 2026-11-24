@@ -321,8 +321,8 @@ class OrbitTaskRepository(private val context: Context) {
             (task.kind == "DAILY" && task.id == "daily-${task.orbitId}") ||
                 (task.kind == "ONCE" && task.id.startsWith("manual-${task.orbitId}-"))
 
-        /** A run without its own limit gets five minutes. */
-        const val DEFAULT_TIMEOUT_MINUTES = 5
+        /** A background run without its own limit gets an hour: some models are slow. */
+        const val DEFAULT_TIMEOUT_MINUTES = 60
 
         /**
          * Runs longer than this get a lane of their own in [OrbitTaskHost], so a run of hours never
@@ -348,10 +348,12 @@ class OrbitTaskRepository(private val context: Context) {
             require(dailyMinute in 0 until 24 * 60) { "daily_time must be a time of day between 00:00 and 23:59" }
         }
 
-        /** The alignment review's limit lives in the app, like its steps, so older stored copies get it too. */
-        fun timeoutMinutes(task: OrbitTaskEntity): Int =
-            if (task.kind == "ASSIST" && task.source == OrbitRoutines.ALIGNMENT_SOURCE) OrbitRoutines.REVIEW_TIMEOUT_MINUTES
-            else task.timeoutMinutes.takeIf { it in 1..MAX_TIMEOUT_MINUTES } ?: DEFAULT_TIMEOUT_MINUTES
+        /** Built-in routines' limits live in the app, like their steps, so older stored copies get them too. */
+        fun timeoutMinutes(task: OrbitTaskEntity): Int = when {
+            task.kind == "ASSIST" && task.source == OrbitRoutines.ALIGNMENT_SOURCE -> OrbitRoutines.REVIEW_TIMEOUT_MINUTES
+            task.kind == "ASSIST" && OrbitRoutines.isRoutineSource(task.source) -> OrbitRoutines.ROUTINE_TIMEOUT_MINUTES
+            else -> task.timeoutMinutes.takeIf { it in 1..MAX_TIMEOUT_MINUTES } ?: DEFAULT_TIMEOUT_MINUTES
+        }
 
         /** Only a subagent run can be long; a task handled by Orbit in the chat just wakes it. */
         fun isLongRun(task: OrbitTaskEntity): Boolean =

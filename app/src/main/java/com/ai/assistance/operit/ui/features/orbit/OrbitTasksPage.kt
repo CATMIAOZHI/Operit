@@ -893,7 +893,8 @@ private fun TaskDetail(
                 }, divider)
             }
         }
-        item(key = "model") { OrbitTaskModelCard(task, onDraft) }
+        // A task woken in a chat answers with that chat's own model; only background runs pick one.
+        if (task.useSubagent) item(key = "model") { OrbitTaskModelCard(task, onDraft) }
         if (task.kind == OrbitGeofence.KIND) item(key = "location-status") { GeofenceStatus(task) }
         item(key = "result") {
             val run = lastRun

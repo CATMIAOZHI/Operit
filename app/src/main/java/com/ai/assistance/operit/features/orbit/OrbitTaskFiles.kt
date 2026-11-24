@@ -130,7 +130,7 @@ object OrbitTaskFiles {
             add("notify_policy" to task.notifyPolicy)
             add("use_subagent" to task.useSubagent.toString())
             if (task.useSubagent) add("timeout_minutes" to OrbitTaskRepository.timeoutMinutes(task).toString())
-            add("model" to task.modelRole.lowercase(Locale.ROOT))
+            if (task.useSubagent) add("model" to task.modelRole.lowercase(Locale.ROOT))
             if (task.goalId.isNotEmpty()) add("goal_id" to task.goalId)
         }
         val note = when {
