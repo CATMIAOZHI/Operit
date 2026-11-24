@@ -209,8 +209,10 @@ class ChatServiceCore(
                 )
             },
             onTurnTerminated = { signal ->
+                // Pending goes first: a racing cancel then sees no pending turn and adds no mark.
+                val pending = pendingChatTurns.remove(signal.turnId)
                 cancellationRequestedChatTurns.remove(signal.turnId)
-                pendingChatTurns.remove(signal.turnId)?.complete(signal)
+                pending?.complete(signal)
             },
             isTurnCancellationRequested = { turnId ->
                 turnId in cancellationRequestedChatTurns
@@ -342,8 +344,9 @@ class ChatServiceCore(
     }
 
     fun failRegisteredChatTurn(turnId: String, chatId: String, error: String) {
+        val pending = pendingChatTurns.remove(turnId)
         cancellationRequestedChatTurns.remove(turnId)
-        pendingChatTurns.remove(turnId)?.complete(
+        pending?.complete(
             ChatTurnTerminalSignal.Failed(
                 turnId = turnId,
                 chatId = chatId,
@@ -356,6 +359,20 @@ class ChatServiceCore(
         cancellationRequestedChatTurns.add(turnId)
         messageCoordinationDelegate.cancelSummaryForChat(chatId)
         messageProcessingDelegate.cancelMessage(chatId)
+    }
+
+    /** Stops turn [turnId] only while it is still the one running; a finished turn's chat is left alone. */
+    fun cancelRegisteredChatTurnIfRunning(turnId: String, chatId: String): Boolean {
+        if (!pendingChatTurns.containsKey(turnId)) return false
+        cancellationRequestedChatTurns.add(turnId)
+        // Ended in between: its end already cleared the mark, so this one would stay forever.
+        if (!pendingChatTurns.containsKey(turnId)) {
+            cancellationRequestedChatTurns.remove(turnId)
+            return false
+        }
+        // Only that turn's own run is stopped: a newer turn in the same chat is left alone.
+        messageProcessingDelegate.cancelTurn(chatId, turnId)
+        return true
     }
 
     suspend fun cancelRegisteredChatTurnAndAwait(turnId: String, chatId: String) {

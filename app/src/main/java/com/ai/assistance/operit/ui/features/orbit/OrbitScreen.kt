@@ -826,11 +826,22 @@ private fun OrbitChatPage(
         showProfile = false
         stackNames = ""
     }
+    // A text file from the Builds tab opens full screen, over the bottom tabs, so a stray tap
+    // on a tab cannot drop an unsaved edit.
+    var editingFile by rememberSaveable(orbit.id) { mutableStateOf<String?>(null) }
+    var filesVersion by remember(orbit.id) { mutableStateOf(0) }
     // A tapped report notification or a share opens that chat, over whatever page was showing.
     val openRequest by com.ai.assistance.operit.features.orbit.OrbitNavigation.pendingChat.collectAsState()
     LaunchedEffect(openRequest, orbit.talkChatIds) {
         val id = openRequest ?: return@LaunchedEffect
-        if (id in orbit.talkChatIds) {
+        // A page with an unsaved edit asks first, as a sidebar pick does; the jump is dropped then
+        // (a tapped notification is already gone), and the user is pointed to the chat list instead.
+        val canLeave = id in orbit.talkChatIds && cardLeaveGuard.tryLeave() && leaveGuard.tryLeave()
+        if (id in orbit.talkChatIds && !canLeave) {
+            android.widget.Toast.makeText(context, context.getString(R.string.orbit_open_blocked_unsaved),
+                android.widget.Toast.LENGTH_LONG).show()
+        }
+        if (canLeave) {
             // An explicit chat navigation leaves the inspector too. Otherwise it would keep a
             // subagent selected after closing the profile that its back preview needs underneath.
             devEnter?.cancel()
@@ -845,8 +856,9 @@ private fun OrbitChatPage(
             tab = OrbitTab.CHAT
             showProfile = false
             stackNames = ""
-                        showChats = false
+            showChats = false
             chatSearchOpen = false
+            if (editingFile != null) { editingFile = null; filesVersion++ }
         }
         com.ai.assistance.operit.features.orbit.OrbitNavigation.consume(id)
     }
@@ -882,10 +894,6 @@ private fun OrbitChatPage(
     val hasUnreadState = rememberUpdatedState(hasUnread)
     val leaveOrbit = com.ai.assistance.operit.ui.main.LocalLeaveOrbit.current
     var pageTab by rememberSaveable(orbit.id) { mutableStateOf(OrbitTab.FEED) }
-    // A text file from the Builds tab opens full screen, over the bottom tabs, so a stray tap
-    // on a tab cannot drop an unsaved edit.
-    var editingFile by rememberSaveable(orbit.id) { mutableStateOf<String?>(null) }
-    var filesVersion by remember(orbit.id) { mutableStateOf(0) }
     var memoryRetry by remember(orbit.id) { mutableStateOf(0) }
     val memoryResult by produceState<Result<String>?>(null, orbit.id, memoryRetry) {
         value = null

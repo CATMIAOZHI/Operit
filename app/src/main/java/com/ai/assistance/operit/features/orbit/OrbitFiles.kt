@@ -258,32 +258,6 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         return Written(p, before, text, existed = existed)
     }
 
-    /**
-     * For forgetting: deletes [path], or rewrites it with [clean], only while it is still Orbit's own,
-     * checked under the lock together with the change: never a user document, and a hook script in
-     * files/ only while its bytes still read as what its task registered ([hooks]: path to hash).
-     * False when it was left alone.
-     */
-    suspend fun cleanOwned(path: String, hooks: Map<String, String>, delete: Boolean, clean: (String) -> String): Boolean = io {
-        val p = normalize(path)
-        val owned = hooks[p]?.let { registered ->
-            runCatching {
-                val f = inside(File(root, p))
-                f.isFile && f.length() <= MAX_TEXT * 4L &&
-                    OrbitTextFiles.readStrictUtf8(f)?.let(OrbitWatchSources::hash) == registered
-            }.getOrDefault(false)
-        } == true
-        if (isUserDocument(p, if (owned) setOf(p) else emptySet())) return@io false
-        // Gone since the scan (or never written, only its template): nothing here to clean.
-        val f = inside(File(root, p))
-        if (!f.isFile) return@io false
-        if (delete) deleteNow(path) else {
-            require(f.length() <= MAX_TEXT * 4L) { "File is too large to read" }
-            writeNow(p, clean(f.readText()))
-        }
-        true
-    }
-
     /** The newest nightly review, dreams/YYYY-MM-DD.md, or null before the first one. */
     suspend fun latestDream(): String? = io {
         File(root, "dreams").listFiles()?.map { "dreams/${it.name}" }

@@ -6,7 +6,7 @@ Identify which one the user means rather than describing all of them as the same
 
 ## Viewing and delivering files
 
-The Builds page has three tabs: "Builds" holds content you generated, "Library" holds files the user uploaded and saved, and "System files" lets the user browse your whole folder (read only, with open, share, quote in chat and copy path).
+The Builds page has three tabs: "Made" holds content you generated, "Library" holds files the user uploaded and saved, and "System files" lets the user browse your whole folder (read only, with open, share, quote in chat and copy path).
 Images, video, audio, and plain text support in-app previews, sharing, and “Open in another app.”
 Actual preview support still depends on the format, content, and device decoding support; not every file extension guarantees a preview.
 Other formats can open in an appropriate external app; do not promise an internal editor that does not exist.
@@ -62,7 +62,7 @@ Do not promise that a deleted file can be recovered, and do not create a new fil
 
 ## Artifact versions
 
-Artifact version records in Builds preserve previously saved work products for inspection.
+Artifact version records in Made preserve previously saved work products for inspection.
 Use `orbit_artifact` actions `list` and `read` to inspect artifacts and versions.
 To continue work from a version, pass its identifier as a new task's `source_artifact_version_id`.
 

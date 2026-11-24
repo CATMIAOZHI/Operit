@@ -224,6 +224,14 @@ class OrbitTaskRepository(private val context: Context) {
         if (!timingChanged && title == task.title && instruction == task.instruction && source == task.source &&
             notifyPolicy == task.notifyPolicy && timeoutMinutes == task.timeoutMinutes && useSubagent == task.useSubagent &&
             modelRole == task.modelRole) return true
+        // Only its name, how it reports, its model or its time limit: the run in progress keeps
+        // going and settles as usual, so a one-off task is never run twice for a new title.
+        if (!timingChanged && scheduleMode == task.scheduleMode && instruction == task.instruction &&
+            source == task.source && useSubagent == task.useSubagent) {
+            return OrbitExecutionGate.serialized {
+                dao.updateLabels(task.id, task.version, task.state, title, notifyPolicy, modelRole, timeoutMinutes, now) == 1
+            }
+        }
         val nextRun = if (task.kind == OrbitGeofence.KIND) 0L else if (!timingChanged && source == task.source) task.nextRunAt else when (scheduleMode) {
             "ONCE" -> maxOf(runAt ?: task.nextRunAt, now)
             "DAILY" -> now + OrbitCompanion.delayUntilNextCheckIn(now, dailyMinute)
@@ -241,9 +249,11 @@ class OrbitTaskRepository(private val context: Context) {
                 useSubagent = useSubagent, scheduleMode = scheduleMode, modelRole = modelRole,
                 lastFingerprint = if (source == task.source) task.lastFingerprint else "",
                 lastObservation = if (source == task.source) task.lastObservation else "",
-                updatedAt = now), task.version)
+                updatedAt = now), task.version, expectedState = task.state)
         }
         if (changed) {
+            // The run in progress was fenced out: its turn already in the chat stops too, so the old
+            // version cannot go on using tools while the new one runs.
             OrbitTaskRunner.cancelTask(task.id)
             OrbitTaskScheduler.reschedule(context)
         }

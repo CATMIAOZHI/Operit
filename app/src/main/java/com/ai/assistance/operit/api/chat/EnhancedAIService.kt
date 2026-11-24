@@ -128,6 +128,8 @@ class EnhancedAIService private constructor(
 
     companion object {
         private const val TAG = "EnhancedAIService"
+        /** How long a stop waits for the providers' streams to end before the chat moves on to a new service. */
+        private const val STREAM_STOP_WAIT_MS = 10_000L
         /** A compacted background reading run keeps this share of its trigger free for the next pages. */
         private const val IN_PLACE_ROOM = 0.7
         /** Share of the compaction line the summary request of an in-place compaction may take. */
@@ -3934,13 +3936,18 @@ class EnhancedAIService private constructor(
 
     /** Cancel the current conversation */
     fun cancelConversation() {
+        cancelConversationStarted()
+    }
+
+    /** Cancels the conversation; the returned job is the providers' streams still being stopped. */
+    private fun cancelConversationStarted(): Job {
         invalidateAllExecutionContexts("cancelConversation")
 
         // Set conversation inactive
         // isConversationActive.set(false) // This is now per-context, can't set a global one
 
         // Cancel all underlying AIService streaming instances
-        initScope.launch {
+        val streamsStopped = initScope.launch {
             runCatching {
                 multiServiceManager.cancelAllStreaming()
             }.onFailure { e ->
@@ -3975,6 +3982,7 @@ class EnhancedAIService private constructor(
         stopAiService()
 
         AppLogger.d(TAG, "Conversation cancellation complete")
+        return streamsStopped
     }
 
     /**
@@ -3984,10 +3992,21 @@ class EnhancedAIService private constructor(
      * these jobs have completed.
      */
     suspend fun cancelConversationAndAwait() {
-        cancelConversation()
+        val streamsStopped = cancelConversationStarted()
         val jobs = toolExecutionJobs.values.toSet()
         jobs.forEach { job -> job.cancel() }
         jobs.forEach { job -> job.join() }
+        // The providers' streams are stopped too before this returns: a stop done later could reach
+        // the next turn, which uses this same service.
+        // A stop that does not finish in time could still reach the next turn of this chat, which
+        // uses this same service: the chat then gets a fresh one for that turn, and the late stop
+        // only reaches this one's own providers.
+        if (kotlinx.coroutines.withTimeoutOrNull(STREAM_STOP_WAIT_MS) { streamsStopped.join() } == null) {
+            AppLogger.w(TAG, "Provider streams did not stop in time; the chat's next turn gets a new service")
+            synchronized(CHAT_INSTANCES) {
+                CHAT_INSTANCES.entries.removeIf { it.value === this }
+            }
+        }
     }
 
     /** Cancel all tool executions */

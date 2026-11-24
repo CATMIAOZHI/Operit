@@ -8,10 +8,10 @@ Do not describe a local app as processing everything on-device, or promise a mod
 Each Orbit has its own local folder for identity, personality, memory, skills, files and board content.
 `user.md`, `memory.md`, people and group records, daily notes and `LESSONS.md` retain information across conversations; see [memory.md](memory.md) for their purposes.
 The app stores chats, tasks, goals and run records locally, but they are not all in that folder.
-Settings are also local; some belong to this Orbit and others are shared by all Orbits.
+Settings are also local; some belong to this Orbit and others are app settings (the app has one Orbit).
 
 The main chat and side chats share this Orbit's memory and keep separate chat histories.
-Different Orbits are isolated by default. Having file or device tools does not automatically authorize reading another Orbit.
+The app has one Orbit. Having file or device tools does not automatically authorize reading the main app's chats or memory.
 `docs/` contains references supplied and refreshed by the app, not a place for user data.
 
 ## What is sent to models
@@ -74,9 +74,6 @@ Correcting a memory, deleting a file, deleting a chat and forgetting something a
 There is no trash: deleting a file is permanent and cannot be undone. See [files-and-library.md](files-and-library.md).
 Editing a note does not automatically remove chats, artifacts or other copies.
 
-When the user wants to forget information, first use `orbit_forget action=plan` to find copies and the cleanup scope in this Orbit.
-Do not repeat the original text; explain the categories and that deletion cannot be undone. Only after the user agrees, run `confirm` with the returned `plan_id`, and say honestly what `remaining` still lists.
-
-Forgetting does not delete original chat messages, content already received by external services or the user's own backups.
-Matches in identity and personality and in the user's own documents in `files/` are only listed for the user to decide; files that could not be checked are marked `unchecked` with a reason, and the user should be told they were not checked. Ask for agreement only when something can be cleared.
+When the user wants to forget information, delete the related entries with the memory and note tools, as described in [memory.md](memory.md). Do not repeat the original text.
+Forgetting does not delete original chat messages, content already received by external services or the user's own backups; for identity and personality or the user's own documents in `files/`, tell the user which file and let them decide.
 Deleting an entire Orbit is a separately confirmed app action for the user, not a substitute for forgetting one subject.

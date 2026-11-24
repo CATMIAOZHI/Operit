@@ -16,6 +16,8 @@ internal fun StandardBrowserSessionTools.typeVaultValue(
     value: String,
     site: String,
     submit: Boolean,
+    /** The value is a password: it only goes into a password box. */
+    password: Boolean = false,
 ): ToolResult = OrbitBrowserControl.aiCall {
     val session = getSession(null) ?: return@aiCall error(toolName, "No active browser tab. Open the sign-in page first.")
     val wrongSite = "The current page is not $site over https. Open that site's sign-in page, wait for it to load, and retry."
@@ -36,13 +38,17 @@ internal fun StandardBrowserSessionTools.typeVaultValue(
     }
     val markers = captureActionMarkers(session)
     try {
-        typeIntoElementByRef(session.page, ref, value, submit, false, requiredSite = site)
+        typeIntoElementByRef(session.page, ref, value, submit, false, requiredSite = site, passwordField = password)
     } catch (e: kotlinx.coroutines.CancellationException) {
         throw e
     } catch (e: Exception) {
         // Never pass the script error on: it is built from a script that holds the value.
-        return@aiCall error(toolName, if (e.message.orEmpty().contains("wrong_site")) wrongSite
-            else "Could not fill that field. Take a new snapshot and check the ref.")
+        return@aiCall error(toolName, when {
+            e.message.orEmpty().contains("wrong_site") -> wrongSite
+            e.message.orEmpty().contains("not_password_field") -> "That box is not a password box, so the password was not typed. " +
+                "Use the ref of the password box from a new snapshot; if the site shows the password as plain text, switch it back to hidden first."
+            else -> "Could not fill that field. Take a new snapshot and check the ref."
+        })
     }
     val settlement = settleBrowserAction(
         initialSession = session,

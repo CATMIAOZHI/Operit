@@ -46,7 +46,7 @@ status: in-progress
 | 每日流水 | `orbit_file` 的 daily，后台任务结果自动记一行 [DONE batch1] |
 | 经验本、主动消息偏好、时区、对齐总结、设备 | LESSONS.md、PROACTIVE_PREFERENCES.md（后台任务会读）、timezones.yaml、ALIGNMENT_SYNTHESIS.md、DEVICES.md [DONE batch1] |
 | 生成的文件 | `files/` 目录，构建页和文件页都能打开、分享、删除 [DONE batch1] |
-| 回收站 | 删掉的文件留 30 天，可恢复或彻底删除 [DONE batch1] |
+| 回收站 | 已取消：删除就是永久删除，旧版本留下的回收站在启动时清掉 |
 | 系统提示词副本 | `orbit_file` 的 prompt_copy，存 Orbit 部分的副本到 `files/` [DONE batch1] |
 | 技能管理 | 详情页「技能与学习」里查看、编辑、删除 Orbit 自己的技能 [DONE] |
 | 富格式成果 | `orbit_file` 的 export，把 `files/` 里的 Markdown 导出成网页、Word、PDF；import 把应用里别处的文件收进 `files/` [DONE batch2] |
@@ -70,7 +70,7 @@ status: in-progress
 | 起名卡片 | 新 Orbit 的主聊天前几轮，提示词里带一段「第一次相处」，让 Orbit 用 dynamic_ui 做起名和气质卡片，用户选好后 `orbit_set_name` 改名、写进 IDENTITY.md [DONE batch4] |
 | 密码凭据保险箱 | `orbit_vault`：request_login / request_api_key 在聊天里放一张安全卡片并立即返回；用户点卡片在弹层里填，值直接加密存进保险箱，保存后隐藏通知 Orbit 接着做，关掉卡片什么都不发；Orbit 只看到网站和打码用户名；fill 只填进同站 https 网页，http_request 只发往登记的主机；设置「隐私与数据」里可查看、删除 [DONE batch5，卡片流程 batch7] |
 | 发图片和文件 | `orbit_file` 的 send：把 `files/` 里的文件像真人一样发进聊天，图片点一下存相册，其他文件点一下用别的应用打开；Orbit 读图时的「已查看 N 张图像」在 Orbit 聊天里不显示 [DONE batch7] |
-| 「忘掉」流程 | `orbit_forget`：plan 只读找出记忆、资料、文件（含回收站）、技能、目标、任务、任务成果的每个版本、动态（含卡片）、点子（含已下架的和全部字段）、跟踪、批准记录、未发汇报、修改记录里的副本，用户确认后 confirm 一起清掉，没回答的批准申请安静拒绝；SOUL / IDENTITY / 提示词 / 用户自己加的技能里的命中只列出请用户自己改；图片音视频只按文件名查；聊天记录要用户自己删；清掉的内容不能再写回记忆 [DONE batch5，补充包 4 补漏扫] |
+| 「忘掉」 | 已简化：去掉 `orbit_forget` 专用流程。用户说忘掉某件事，Orbit 用平常改记忆、人物页、笔记的工具删掉相关条目，并告诉用户聊天里的原话还在、可自己删；`files/` 里的文档只列出来不改；批准删除记忆后，已结束的修改记录里也抹掉被删的那几行 |
 | 记忆溯源 | `orbit_memory_origin`：说明一条记忆来自哪次聊天、什么时候、谁批准、替换了几行，不返回旧正文 [DONE batch5] |
 | 发送前检查 | `orbit_presend_check`：对外发消息前核对草稿已定稿、没有密码和已忘内容、收件人明确、用户看过并同意 [DONE batch5] |
 | 从别的 AI 导入记忆 | 设置「隐私与数据」→ 复制提示词给别的 AI，粘贴回答后交给 Orbit 整理进记忆 [DONE batch5] |
@@ -91,7 +91,8 @@ status: in-progress
 - [x] Feed：Orbit 在后台写的短文章信息流（25d778e8c）
 - [x] Ideas：Orbit 主动提出的建议卡片（25d778e8c）
 - [ ] Tailscale 等内网设备连接——暂缓
-- [ ] 只能有 1 个 Orbit：创建新 Orbit 前必须先删掉现有的那个（以后做；现在额度和用量页已经按“所有 Orbit 共用一份额度”设计，改成单 Orbit 后不用再改）
+- [x] 只能有 1 个 Orbit：创建新 Orbit 前必须先删掉现有的那个；额度和用量页按这一个 Orbit 算
+- [x] 每周额度可选按花费（美元，默认每周 100、额外 100、额外额度默认随周重置）或按 token；首次在额度卡提示用户确认；可把模型配置标成包月套餐，不扣额度；没价格的调用会提示补价格
 
 ## 做不了（及原因）
 
@@ -128,7 +129,7 @@ status: in-progress
 | 密码凭据保险箱 | `tools/12`、`skills/00-凭证注入模式.md` | 录入卡片直接把值存进保险箱，助手只看到站点和字段名；脚本拿不到明文，只能向白名单主机发带凭证的请求 |
 | 富格式成果、动态 UI 卡片 | `tools/13` | 成果创建时就定好归属，之后不搬；改成果时传用户原话 |
 | Feed | `31-Feed提示词与unit结构.md` | Feed 只由一段文字提示词决定；每条内容必须写一句「为什么给你看」 |
-| Ideas、图片生成、回收站、「忘掉」流程、起名卡片 | `tools/13`、`skills/forget` | 「忘掉」先做只读规划，用户确认最新计划后才删 |
+| Ideas、图片生成、起名卡片 | `tools/13` | 回收站和「忘掉」专用流程已取消，见上表 |
 | 人物和群组记忆、每日流水日志 | `21-记忆库结构.md` | 人物页只记用户亲口说的关系；按需读取，不整个塞进提示词 |
 | 经验本、对齐总结、用户资料格式 | `runtime-samples/20` | USER 的固定三项是名字、称呼、时区 |
 | 专项技能 | `skills/*`、`skills/muse_db/references` | 可改写成 Orbit 技能包 |

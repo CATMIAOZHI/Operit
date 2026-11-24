@@ -30,6 +30,9 @@ internal object OrbitDeliveryPolicy {
         if (!quiet) return due
         var end = date.toLocalDate().atTime(LocalTime.ofSecondOfDay(policy.quietEnd * 60L)).atZone(zone)
         if (overnight && minute >= policy.quietStart) end = end.plusDays(1)
+        // When the clocks go back, the end time happens twice; inside the repeated hour the first one
+        // has already passed, so quiet lasts until the second.
+        if (end.toInstant().toEpochMilli() <= due) end = end.withLaterOffsetAtOverlap()
         return end.toInstant().toEpochMilli()
     }
 }

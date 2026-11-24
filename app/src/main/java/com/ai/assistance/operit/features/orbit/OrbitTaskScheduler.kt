@@ -10,6 +10,8 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.ai.assistance.operit.data.preferences.OrbitPreferences
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Decides when Orbit's tasks are next due and sets one WorkManager wake-up for then. The wake-up
@@ -23,15 +25,25 @@ object OrbitTaskScheduler {
     /** While lanes run; separate from [WAKE] so the two never replace each other. */
     private const val SAFETY = "orbit_durable_task_safety"
     private const val BUSY_LANE_SAFETY_WAKE_MS = 30 * 60_000L
+    /**
+     * One reschedule at a time: each reads the tasks and then sets or cancels the single wake-up, so
+     * an older read finishing last could cancel or postpone a wake-up a newer task needs.
+     */
+    private val lock = Mutex()
 
     /** [fromWorker]: called when a lane ends, so a due task waits a little before the next wake-up. */
     suspend fun reschedule(context: Context, fromWorker: Boolean = false, restore: Boolean = false) {
+        lock.withLock { rescheduleLocked(context, fromWorker, restore) }
+        // Outside the lock: it may wait half a minute for a location fix, and reads what it needs itself.
+        OrbitGeofence.sync(context)
+    }
+
+    private suspend fun rescheduleLocked(context: Context, fromWorker: Boolean, restore: Boolean) {
         val settings = OrbitPreferences.getInstance(context).current()
         val active = settings.active?.takeUnless { it.deleting }
         OrbitTaskRunner.cancelUnlessActive(active?.id)
         val manager = WorkManager.getInstance(context)
         if (active == null) {
-            OrbitGeofence.sync(context)
             manager.cancelUniqueWork(WAKE)
             return
         }
@@ -78,7 +90,6 @@ object OrbitTaskScheduler {
         }
         if (due == null) {
             manager.cancelUniqueWork(WAKE)
-            OrbitGeofence.sync(context)
             return
         }
         val request = OneTimeWorkRequestBuilder<OrbitTaskWakeWorker>()
@@ -86,7 +97,6 @@ object OrbitTaskScheduler {
             .build()
         manager.enqueueUniqueWork(WAKE,
             if (restore && !zoneChanged) ExistingWorkPolicy.KEEP else ExistingWorkPolicy.REPLACE, request)
-        OrbitGeofence.sync(context)
     }
 
     fun wake(context: Context) {

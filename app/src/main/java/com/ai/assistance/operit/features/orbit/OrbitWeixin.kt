@@ -480,7 +480,7 @@ internal object OrbitWeixin {
     /** Thrown when deleting the side chat WeChat is linked to. */
     class ChatBoundException : IllegalStateException("This side chat is linked to WeChat; disconnect WeChat in settings first")
 
-    /** The Orbit was deleted (its stores are already gone): stop and drop what is held in memory. */
+    /** The Orbit is being deleted: stop (waiting for the poll to end) and drop what is held in memory, before its stores go. */
     suspend fun forget(context: Context, orbitId: String) {
         val app = context.applicationContext
         runnerLock.withLock { if (runnerOrbit == orbitId) stopLocked(app) }

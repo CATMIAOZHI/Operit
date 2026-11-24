@@ -366,6 +366,8 @@ private fun runOutcome(run: OrbitRunEntity, task: OrbitTaskEntity): String {
         run.state == "FAILED" -> stringResource(R.string.orbit_run_failed_unknown)
         run.decision == OrbitRunEntity.SKIPPED -> OrbitRoutines.skippedReason(context, task)
         run.decision == OrbitRunEntity.UNCHANGED -> stringResource(R.string.orbit_decision_unchanged)
+        // Stopped partway and going on: why it stopped, not the hand-over it started as.
+        run.state == "INTERRUPTED" && run.observation.isNotBlank() -> run.observation
         OrbitChatDecision.isChat(run.decision) -> OrbitChatDecision.describe(context, run.decision, rememberOrbitName(task.orbitId))
         run.observation.isNotBlank() -> run.observation
         run.decision.isNotBlank() -> run.decision
@@ -567,7 +569,7 @@ private fun ChatRunRecord(run: OrbitRunEntity, orbitName: String, finding: Boole
 
 /** A run handed to Orbit in the chat that ended without an error, cancel or still going. */
 private fun chatRunEndedWell(run: OrbitRunEntity): Boolean =
-    OrbitChatDecision.isChat(run.decision) && run.error.isBlank() && run.state !in setOf("RUNNING", "CANCELLED", "FAILED")
+    OrbitChatDecision.isChat(run.decision) && run.error.isBlank() && run.state !in setOf("RUNNING", "CANCELLED", "FAILED", "INTERRUPTED")
 
 /** A confirmation as a bottom sheet: a round icon, what will happen, and two full-width pills. */
 @OptIn(ExperimentalMaterial3Api::class)

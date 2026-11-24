@@ -64,7 +64,7 @@ object OrbitCompanion {
         val appContext = context.applicationContext
         val profile = chatMutex.withLock {
             val preferences = OrbitPreferences.getInstance(appContext)
-            val existing = preferences.current().orbits.maxByOrNull { it.createdAt }
+            val existing = preferences.current().orbits.filterNot { it.deleting }.maxByOrNull { it.createdAt }
             val profile =
                 if (existing != null) ensureChatLocked(appContext, existing)
                 else createLocked(appContext, onCreated)
@@ -99,18 +99,26 @@ object OrbitCompanion {
         applySchedule(context)
     }
 
-    /** Deletes the Orbit [orbitId] together with its chat and Soul.md. */
+    /**
+     * Deletes the Orbit [orbitId] together with its chat and Soul.md. Its settings go last: a
+     * deletion cut off on the way leaves the Orbit marked deleting, and the next try (from the
+     * screen, or at the next app start) picks up where this one stopped.
+     */
     suspend fun remove(context: Context, orbitId: String) {
         val appContext = context.applicationContext
         val preferences = OrbitPreferences.getInstance(appContext)
-        val orbit = preferences.current().orbits.firstOrNull { it.id == orbitId } ?: return
+        // Under the chat lock: a chat being made again for it cannot write the Orbit back afterwards.
+        val orbit = chatMutex.withLock {
+            val orbit = preferences.current().orbits.firstOrNull { it.id == orbitId } ?: return
+            preferences.markDeleting(orbitId)
+            orbit
+        }
         val chatIds = mutableSetOf(orbit.chatId).apply { addAll(orbit.ownedChatIds) }
         chatIds.addAll(preferences.current().chatOwners.filterValues { it == orbitId }.keys)
         val chats = com.ai.assistance.operit.data.db.AppDatabase.getDatabase(appContext)
             .chatDao().getAllChatsDirectly()
         chatIds.addAll(orbitDescendants(chatIds, chats.map { it.id to it.parentChatId }))
         chatIds.forEach { preferences.rememberChatOwner(it, orbitId) }
-        preferences.markDeleting(orbitId)
         // No late write of key use may make its folder again.
         OrbitVaultUsage.forget(orbitId)
         // The phone's notification history is kept for the Orbit only. Cleared now, before the Orbit's
@@ -127,21 +135,53 @@ object OrbitCompanion {
                     chatIds.forEach { runtimes.getCore(slot).prepareChatDeletion(it) }
                 }
                 orbit.memorySpaceId?.let { UserPreferencesManager.getInstance(appContext).deleteMemorySpace(it) }
-                preferences.removeOrbit(orbitId)
             }
-        core(appContext).deleteChatHistory(orbit.chatId)
-        orbit.sideChats.forEach { core(appContext).deleteChatHistory(it.chatId) }
+        // One at a time, each waited for: a chat that could not go keeps the Orbit marked deleting.
+        (listOf(orbit.chatId) + orbit.sideChats.map { it.chatId }).forEach { deleteChatAndWait(appContext, it) }
         OrbitReactions.drop(orbitId)
+        // WeChat stops first and drops what it holds: a poll still running could write its store back.
+        OrbitWeixin.forget(appContext, orbitId)
         // Its vault and forget plan are encrypted outside the Orbit's folder.
-        runCatching { OrbitSecretFile.deleteAllForOrbit(appContext, orbitId) }
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { OrbitSecretFile.deleteAllForOrbit(appContext, orbitId) }
         OrbitVault.forgetCached(orbitId)
-        runCatching { OrbitWeixin.forget(appContext, orbitId) }
         // Model-only task chats are independent NORMAL nodes, not children in the archive graph.
         val history = com.ai.assistance.operit.data.repository.ChatHistoryManager.getInstance(appContext)
+        val chatDao = com.ai.assistance.operit.data.db.AppDatabase.getDatabase(appContext).chatDao()
         chats.filter { it.id in chatIds && it.hiddenReason == "ORBIT_TASK" }.forEach {
-            if (history.deleteChatHistory(it.id)) preferences.forgetDeletedTaskChatOwner(it.id, orbitId)
+            if (history.deleteChatHistory(it.id) || chatDao.getChatById(it.id) == null) {
+                preferences.forgetDeletedTaskChatOwner(it.id, orbitId)
+            } else error("Could not delete one of the Orbit's task chats")
         }
+        preferences.removeOrbit(orbitId)
         applySchedule(appContext)
+    }
+
+    /** Deletes [chatId] and waits until it is gone; one already gone counts as done. */
+    private suspend fun deleteChatAndWait(appContext: Context, chatId: String) {
+        if (chatId.isBlank()) return
+        val core = core(appContext)
+        // Read straight from the database: a failed read must stop the deletion, not count as gone.
+        val chatDao = com.ai.assistance.operit.data.db.AppDatabase.getDatabase(appContext).chatDao()
+        suspend fun exists() = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            chatDao.getChatById(chatId) != null
+        }
+        if (!exists()) return
+        val deleted = CompletableDeferred<Boolean>()
+        core.getChatHistoryDelegate().deleteChatHistory(chatId) { deleted.complete(it) }
+        // Waiting too long is a failed try (kept for the next one), not a cancellation of the caller.
+        check(kotlinx.coroutines.withTimeoutOrNull(CHAT_CREATE_TIMEOUT_MS) { deleted.await() } == true || !exists()) {
+            "Could not delete the Orbit's chat"
+        }
+    }
+
+    /** Finishes deletions that were cut off (the app closed or a step failed), at app start. */
+    private suspend fun finishDeletions(context: Context) {
+        OrbitPreferences.getInstance(context).current().orbits.filter { it.deleting }.forEach { orbit ->
+            runCatching { remove(context, orbit.id) }.onFailure {
+                if (it is kotlinx.coroutines.CancellationException) throw it
+                com.ai.assistance.operit.util.AppLogger.w("OrbitCompanion", "Could not finish deleting an Orbit: ${it.message}")
+            }
+        }
     }
 
     /** Stops a check-in whose Orbit is no longer the running one. */
@@ -380,7 +420,11 @@ object OrbitCompanion {
         }
         val recreated = orbit.copy(chatId = createChat(context, null, orbit.name), memorySpaceId = spaceId,
             ownedChatIds = orbit.ownedChatIds + orbit.chatId)
-        OrbitPreferences.getInstance(context).putOrbit(recreated)
+        // A deleted Orbit (or one being deleted) is never written back; its new chat goes with it.
+        if (!OrbitPreferences.getInstance(context).replaceLiveOrbit(recreated)) {
+            core(context).deleteChatHistory(recreated.chatId)
+            error("Orbit is being deleted")
+        }
         OrbitContextSettings.enforce(context, recreated)
         OrbitExecutionGate.serialized {
             val dao = com.ai.assistance.operit.data.db.AppDatabase.getDatabase(context).orbitTaskDao()
@@ -496,6 +540,7 @@ object OrbitCompanion {
 
     /** Restores the schedule at app start without moving a check-in that is already queued. */
     suspend fun restoreSchedule(context: Context) {
+        finishDeletions(context.applicationContext)
         OrbitTaskScheduler.migrateAndSchedule(context, restore = true)
     }
 }

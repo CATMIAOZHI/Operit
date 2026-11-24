@@ -230,7 +230,8 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
         }
 
         private fun atomicBytes(directory: File, file: File, content: ByteArray) {
-            check(directory.mkdirs() || directory.isDirectory)
+            // The Orbit's folder is made with the Orbit; a late write never makes a deleted one again.
+            check(directory.isDirectory) { "The Orbit's folder is gone" }
             val temp = File.createTempFile(".board-", ".tmp", directory)
             try {
                 temp.outputStream().use { it.write(content); it.fd.sync() }
