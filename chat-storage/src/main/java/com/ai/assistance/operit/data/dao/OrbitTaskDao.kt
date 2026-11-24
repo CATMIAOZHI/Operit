@@ -25,6 +25,20 @@ data class OrbitWindowMessage(
 /** When a task's next run will really happen: its waiting event, which may have been put off. */
 data class OrbitTaskDue(val taskId: String, val dueAt: Long)
 
+/** A queued task event and the run holding it (all null when none does). */
+data class OrbitQueuedEvent(
+    val taskId: String,
+    val dueAt: Long,
+    val runState: String?,
+    val bootId: String?,
+    val leaseUntilWall: Long?,
+    val leaseUntilElapsed: Long?,
+) {
+    /** Due, and free to claim: no run holds it, or its run's lease here ended or is from before a restart. */
+    fun claimable(now: Long, elapsed: Long, boot: String): Boolean = dueAt <= now && (runState == null ||
+        (runState == "RUNNING" && (bootId != boot || (leaseUntilElapsed ?: 0) <= elapsed || (leaseUntilWall ?: 0) <= now)))
+}
+
 /** One run of an Orbit task, with its task title, for the profile's activity list. */
 data class OrbitActivityRow(
     val id: String,
@@ -416,7 +430,7 @@ interface OrbitTaskDao {
     @Update
     suspend fun updateTask(task: OrbitTaskEntity)
 
-    @Query("SELECT * FROM orbit_events WHERE taskId = :taskId AND taskVersion = :version ORDER BY dueAt LIMIT 1")
+    @Query("SELECT * FROM orbit_events WHERE taskId = :taskId AND taskVersion = :version ORDER BY dueAt, id LIMIT 1")
     suspend fun pendingEvent(taskId: String, version: Long): OrbitEventEntity?
 
     @Query("SELECT * FROM orbit_events WHERE taskId = :taskId AND taskVersion = :version ORDER BY dueAt")
@@ -585,6 +599,18 @@ interface OrbitTaskDao {
 
     @Query("SELECT EXISTS(SELECT 1 FROM orbit_deliveries WHERE taskId=:taskId AND state IN ('PENDING','HANDING'))")
     suspend fun hasPendingResult(taskId: String): Boolean
+
+    /**
+     * The first queued event (as [pendingEvent] orders them) of each of [orbitId]'s active tasks,
+     * with the run holding it, if any.
+     */
+    @Query("SELECT e.taskId AS taskId, e.dueAt AS dueAt, r.state AS runState, r.bootId AS bootId, " +
+        "r.leaseUntilWall AS leaseUntilWall, r.leaseUntilElapsed AS leaseUntilElapsed " +
+        "FROM orbit_events e JOIN orbit_tasks t ON t.id = e.taskId AND t.version = e.taskVersion " +
+        "LEFT JOIN orbit_runs r ON r.eventId = e.id WHERE t.orbitId = :orbitId AND t.state = 'ACTIVE' " +
+        "AND e.id = (SELECT h.id FROM orbit_events h WHERE h.taskId = t.id AND h.taskVersion = t.version " +
+        "ORDER BY h.dueAt, h.id LIMIT 1)")
+    suspend fun queuedEvents(orbitId: String): List<OrbitQueuedEvent>
 
     @Query("SELECT * FROM orbit_deliveries WHERE id = :id")
     suspend fun delivery(id: String): OrbitDeliveryEntity?
@@ -912,10 +938,16 @@ interface OrbitTaskDao {
         continuedMessage: String = interruptedMessage,
         /** Whether the task goes on; a repeating place task goes on with no clock time (0). */
         continues: Boolean = continueNextRunAt > 0,
+        /** A task checked before its turn waits while its last result is still to be handed over. */
+        requireNoPendingResult: Boolean = false,
     ): OrbitRunEntity? {
         val task = task(event.taskId)?.takeIf { it.state == "ACTIVE" && it.version == event.taskVersion }
             ?: return null
-        if (pendingEvent(task.id, task.version)?.id != event.id) return null
+        // Read again here: another lane may have put this event back (a busy chat, used-up tokens)
+        // after the caller saw it due.
+        val head = pendingEvent(task.id, task.version)
+        if (head?.id != event.id || head.dueAt > now) return null
+        if (requireNoPendingResult && hasPendingResult(task.id)) return null
         if (task.goalId.isNotEmpty() && goal(task.goalId)?.state != "ACTIVE") return null
         // Short and long tasks run in separate lanes; after an edit moves a task across the
         // boundary, its new version must wait until the old run still holding a live lease ends.
