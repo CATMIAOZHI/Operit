@@ -5,9 +5,12 @@ import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.speech.LocalVoiceModels
 import com.ai.assistance.operit.api.speech.SpeechServiceFactory.SpeechServiceType
 import com.ai.assistance.operit.api.voice.DoubaoVoiceProvider
+import com.ai.assistance.operit.api.voice.MimoVoiceProvider
 import com.ai.assistance.operit.api.voice.VoiceServiceFactory.VoiceServiceType
 import com.ai.assistance.operit.data.preferences.SpeechServiceProfilesPreferences
 import com.ai.assistance.operit.data.preferences.SpeechServicesPreferences
+import com.ai.assistance.operit.data.preferences.SpeechOrigin
+import com.ai.assistance.operit.ui.features.settings.screens.SpeechKeyFamily
 import kotlinx.coroutines.flow.first
 import org.json.JSONArray
 import org.json.JSONObject
@@ -24,6 +27,8 @@ internal object OrbitVoiceProfiles {
     const val OP_SWITCH = "switch"
     const val OP_KEY = "key"
     const val OP_DELETE = "delete"
+    /** Sets the voice one Orbit reads aloud with: a new copied voice, a saved profile, or the app's. */
+    const val OP_OWN = "own"
     const val MAX_NAME = 40
     private const val MAX_FIELD = 300
 
@@ -62,6 +67,7 @@ internal object OrbitVoiceProfiles {
             SpeechServiceType.SHERPA_NCNN.name -> R.string.speech_services_stt_type_sherpa
             SpeechServiceType.OPENAI_STT.name -> R.string.speech_services_stt_type_openai
             SpeechServiceType.DEEPGRAM_STT.name -> R.string.speech_services_stt_type_deepgram
+            SpeechServiceType.MIMO_STT.name -> R.string.speech_services_stt_type_mimo
             else -> R.string.voice_local_engine
         }
     )
@@ -74,7 +80,7 @@ internal object OrbitVoiceProfiles {
         return if (kind == TTS) {
             p.ttsProfilesFlow.first().map {
                 Profile(it.id, it.name, it.serviceType.name, it.serviceType in localTts, it.httpConfig.apiKey.isNotBlank(),
-                    it.httpConfig.urlTemplate, it.httpConfig.modelName, it.httpConfig.voiceId,
+                    it.httpConfig.urlTemplate, it.httpConfig.modelName, listedVoice(it.httpConfig.voiceId),
                     if (it.serviceType == VoiceServiceType.SHERPA_ONNX) it.localModelId else "")
             } to p.currentTtsProfileIdFlow.first()
         } else {
@@ -86,18 +92,26 @@ internal object OrbitVoiceProfiles {
         }
     }
 
+    /** A cloned voice is a recording (a path, or inline audio from older versions), never shown in full. */
+    private fun listedVoice(voice: String): String =
+        if (voice.trim().startsWith("/") || MimoVoiceProvider.isRecording(voice)) "(voice sample)"
+        else voice.take(MAX_FIELD)
+
     /** How Orbit names each profile: its name, or name#1, name#2 … when several share one. */
-    fun selectors(all: List<Profile>): Map<String, String> {
-        val counts = all.groupingBy { it.name }.eachCount()
+    fun selectors(all: List<Profile>): Map<String, String> = selectors(all, { it.id }, { it.name })
+
+    /** [selectors] for any list of things with an id and a name, such as already-read read-aloud profiles. */
+    fun <T> selectors(all: List<T>, id: (T) -> String, name: (T) -> String): Map<String, String> {
+        val counts = all.groupingBy(name).eachCount()
         val picks = LinkedHashMap<String, String>()
-        all.filter { counts[it.name] == 1 }.forEach { picks[it.id] = it.name }
+        all.filter { counts[name(it)] == 1 }.forEach { picks[id(it)] = name(it) }
         val used = picks.values.toMutableSet()
-        all.filter { counts[it.name] != 1 }.groupBy { it.name }.forEach { (name, same) ->
+        all.filter { counts[name(it)] != 1 }.groupBy(name).forEach { (shared, same) ->
             var n = 1
             same.forEach { profile ->
-                while ("$name#$n" in used) n++
-                picks[profile.id] = "$name#$n"
-                used += "$name#$n"
+                while ("$shared#$n" in used) n++
+                picks[id(profile)] = "$shared#$n"
+                used += "$shared#$n"
             }
         }
         return picks
@@ -114,8 +128,8 @@ internal object OrbitVoiceProfiles {
         error("No $kind profile \"$select\"; use a select exactly as action=profiles shows it")
     }
 
-    /** Every profile, without keys, for action=profiles. */
-    suspend fun listJson(context: Context): JSONObject {
+    /** Every profile, without keys, for action=profiles; [orbitId]'s own voice is shown as orbit_voice. */
+    suspend fun listJson(context: Context, orbitId: String): JSONObject {
         fun part(kind: String, all: List<Profile>, current: String): JSONObject {
             val picks = selectors(all)
             return JSONObject().put("in_use", picks[current].orEmpty()).put("profiles", JSONArray(all.map {
@@ -128,9 +142,11 @@ internal object OrbitVoiceProfiles {
         }
         val (tts, ttsNow) = profiles(context, TTS)
         val (stt, sttNow) = profiles(context, STT)
+        val own = OrbitVoice.ownVoice(context, orbitId)
         return JSONObject()
             .put("tts", part(TTS, tts, ttsNow))
             .put("stt", part(STT, stt, sttNow))
+            .put("orbit_voice", tts.firstOrNull { it.id == own }?.let { selectors(tts)[it.id] } ?: JSONObject.NULL)
             .put("tts_services", JSONArray(ttsServices))
             .put("stt_services", JSONArray(sttServices))
             .put("local_models", JSONArray(LocalVoiceModels.models.map {
@@ -155,6 +171,14 @@ internal object OrbitVoiceProfiles {
 
     fun title(context: Context, action: JSONObject): String {
         val name = action.optString("profile_name").ifEmpty { action.optString("name") }
+        if (action.optString("op") == OP_OWN) {
+            val orbit = action.optString("orbit_name")
+            return when {
+                action.optString("sample").isNotEmpty() -> context.getString(R.string.orbit_approval_voice_title_own_new, orbit, name)
+                action.optString("profile_id").isEmpty() -> context.getString(R.string.orbit_approval_voice_title_own_app, orbit)
+                else -> context.getString(R.string.orbit_approval_voice_title_own, orbit, name)
+            }
+        }
         return context.getString(when (action.optString("op")) {
             OP_CREATE -> R.string.orbit_approval_voice_title_create
             OP_SWITCH -> R.string.orbit_approval_voice_title_switch
@@ -164,6 +188,18 @@ internal object OrbitVoiceProfiles {
     }
 
     fun detail(context: Context, action: JSONObject, current: String, reason: String): String = buildString {
+        if (action.optString("op") == OP_OWN) {
+            append(context.getString(R.string.orbit_approval_voice_own_note, action.optString("orbit_name")))
+            action.optString("sample").takeIf { it.isNotEmpty() }?.let {
+                append("\n").append(context.getString(R.string.orbit_approval_voice_own_sample, it))
+                val from = action.optString("key_from")
+                if (from.isNotEmpty()) append("\n").append(context.getString(R.string.orbit_approval_voice_own_key_from, from))
+            }
+            append("\n").append(context.getString(R.string.orbit_approval_voice_current, current))
+            if (action.optBoolean("needs_key")) append("\n").append(context.getString(R.string.orbit_approval_voice_key_needed))
+            if (reason.isNotBlank()) append("\n\n").append(context.getString(R.string.orbit_approval_reason, reason.trim()))
+            return@buildString
+        }
         val kind = action.optString("kind")
         append(context.getString(if (kind == TTS) R.string.orbit_approval_voice_kind_tts else R.string.orbit_approval_voice_kind_stt))
         val service = action.optString("service")
@@ -186,8 +222,8 @@ internal object OrbitVoiceProfiles {
         if (reason.isNotBlank()) append("\n\n").append(context.getString(R.string.orbit_approval_reason, reason.trim()))
     }
 
-    /** Carries out an approved voice request and says plainly what changed. */
-    suspend fun apply(context: Context, action: JSONObject, secret: String?, english: Boolean): String {
+    /** Carries out [orbitId]'s approved voice request and says plainly what changed. */
+    suspend fun apply(context: Context, orbitId: String, action: JSONObject, secret: String?, english: Boolean): String {
         val kind = action.getString("kind")
         require(kind == TTS || kind == STT) { "Unknown voice kind" }
         val p = prefs(context)
@@ -195,6 +231,7 @@ internal object OrbitVoiceProfiles {
         val key = secret?.trim().orEmpty()
         require(key.length <= 4000) { "API key too long" }
         return when (action.getString("op")) {
+            OP_OWN -> own(context, p, orbitId, action, key, english)
             OP_SWITCH -> {
                 val id = action.getString("profile_id")
                 if (kind == TTS) p.selectTtsProfile(id) else p.selectSttProfile(id)
@@ -230,6 +267,84 @@ internal object OrbitVoiceProfiles {
         }
     }
 
+    /** SHA-256 of a file, so an approved recording is exactly the one the card was made for. */
+    fun sha256(file: java.io.File): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val n = input.read(buffer)
+                if (n < 0) break
+                digest.update(buffer, 0, n)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    /**
+     * Gives one Orbit its own read-aloud voice. A recording becomes a new MiMo copied-voice profile
+     * (with a MiMo key already saved in the app, or the one typed on the card); a saved profile is
+     * used as it is; no profile means the app's voice again. The app's own voice never changes.
+     */
+    private suspend fun own(context: Context, p: SpeechServiceProfilesPreferences, orbitId: String, action: JSONObject,
+        key: String, english: Boolean): String {
+        require(action.optString("orbit_id") == orbitId) { "This voice request is for another Orbit" }
+        // What the user is told when the card can no longer be carried out as it was shown.
+        fun problem(res: Int): Nothing = throw OrbitApprovalActions.Problem(context.getString(res))
+        val sample = action.optString("sample")
+        if (sample.isEmpty()) {
+            val id = action.optString("profile_id")
+            if (id.isEmpty()) {
+                OrbitVoice.setOwnVoice(context, orbitId, "")
+                return if (english) "You read aloud with the app's voice again." else "你现在又和 App 用同一个朗读声音了。"
+            }
+            if (p.ttsProfilesFlow.first().none { it.id == id }) problem(R.string.orbit_voice_own_err_profile_gone)
+            val before = OrbitVoice.setOwnVoice(context, orbitId, id)
+            // Deleted in the meantime: put back the earlier voice (unless the user picked another since) and say so.
+            if (p.ttsProfilesFlow.first().none { it.id == id }) {
+                OrbitVoice.replaceOwnVoice(context, orbitId, expected = id, profileId = before)
+                problem(R.string.orbit_voice_own_err_profile_gone)
+            }
+            val name = action.optString("profile_name")
+            return if (english) "You now read aloud with \"$name\"; the rest of the app keeps its voice."
+            else "你现在用「$name」朗读，App 其他地方的声音不变。"
+        }
+        val file = OrbitFiles.of(context, orbitId).chatFile(sample) ?: problem(R.string.orbit_voice_own_err_sample_gone)
+        if (file.length() > MimoVoiceProvider.MAX_SAMPLE_BYTES) problem(R.string.orbit_voice_own_err_sample_changed)
+        // The key the card named: the one typed on it, or the very saved key it showed, still at the same address.
+        val http = if (key.isNotEmpty()) {
+            key to MimoVoiceProvider.DEFAULT_ENDPOINT_URL
+        } else {
+            val found = OrbitVoice.mimoKey(context, action.optString("key_owner").ifEmpty { problem(R.string.orbit_voice_own_err_key_gone) })
+                ?.second?.takeIf { it.endpoint == action.optString("key_endpoint") }
+                ?: problem(R.string.orbit_voice_own_err_key_gone)
+            found.key to found.endpoint.ifEmpty { MimoVoiceProvider.DEFAULT_ENDPOINT_URL }
+        }
+        // Copied and hashed in one read, so what is kept is exactly the recording that was approved.
+        val kept = try {
+            com.ai.assistance.operit.ui.features.settings.screens.keepVoiceSample(
+                context, android.net.Uri.fromFile(file), action.optString("sample_sha256"))
+        } catch (_: com.ai.assistance.operit.ui.features.settings.screens.SampleChangedException) {
+            problem(R.string.orbit_voice_own_err_sample_changed)
+        }
+        val template = p.getCurrentTtsProfile()
+        val name = action.getString("name")
+        // Its own reading rules stay the user's; speed and pitch start at normal for the new voice.
+        val profile = p.createTtsProfile(name, template.copy(
+            serviceType = VoiceServiceType.MIMO_TTS,
+            httpConfig = SpeechServicesPreferences.TtsHttpConfig(
+                urlTemplate = http.second, apiKey = http.first, headers = emptyMap(),
+                modelName = MimoVoiceProvider.Mode.CLONE.model, voiceId = kept.name,
+            ),
+            vitsConfig = SpeechServicesPreferences.DEFAULT_VITS_TTS_PACKAGE_CONFIG,
+            speechRate = SpeechServicesPreferences.DEFAULT_TTS_SPEECH_RATE,
+            pitch = SpeechServicesPreferences.DEFAULT_TTS_PITCH,
+        ), select = false)
+        OrbitVoice.setOwnVoice(context, orbitId, profile.id)
+        return if (english) "Your new voice is saved as \"$name\" and you read aloud with it now; the rest of the app keeps its voice."
+        else "新声音已存成「$name」，你现在就用它朗读，App 其他地方的声音不变。"
+    }
+
     private suspend fun create(context: Context, p: SpeechServiceProfilesPreferences, kind: String, action: JSONObject,
         key: String, english: Boolean, what: String): String {
         val name = action.getString("name")
@@ -240,6 +355,14 @@ internal object OrbitVoiceProfiles {
         val local = localModel(kind, action.optString("local_model"))
         require(!action.optBoolean("needs_key") || key.isNotEmpty()) { "API key missing" }
         val localModelId: String
+        // Copying a profile to another server leaves its key, headers and voice recording behind.
+        var leftKey = false
+        fun sameServer(old: String, family: SpeechKeyFamily?): Boolean {
+            if (endpoint.isEmpty()) return true
+            val fallback = family?.officialUrl.orEmpty()
+            val a = SpeechOrigin.of(old.ifBlank { fallback })
+            return a != null && a == SpeechOrigin.of(endpoint)
+        }
         if (kind == TTS) {
             val type = VoiceServiceType.valueOf(service)
             val template = p.getCurrentTtsProfile()
@@ -248,6 +371,11 @@ internal object OrbitVoiceProfiles {
             var http = if (same) template.httpConfig else SpeechServicesPreferences.TtsHttpConfig("", "", emptyMap()).let {
                 if (type == VoiceServiceType.DOUBAO_TTS) it.copy(urlTemplate = DoubaoVoiceProvider.DEFAULT_ENDPOINT_URL,
                     voiceId = DoubaoVoiceProvider.DEFAULT_VOICE_ID) else it
+            }
+            if (same && !sameServer(http.urlTemplate, SpeechKeyFamily.of(type))) {
+                val sample = MimoVoiceProvider.isRecording(http.voiceId)
+                leftKey = http.apiKey.isNotEmpty()
+                http = http.copy(apiKey = "", headers = emptyMap(), voiceId = if (sample) "" else http.voiceId)
             }
             if (endpoint.isNotEmpty()) http = http.copy(urlTemplate = endpoint)
             if (model.isNotEmpty()) http = http.copy(modelName = model)
@@ -268,6 +396,10 @@ internal object OrbitVoiceProfiles {
             val template = p.getCurrentSttProfile()
             val same = template.serviceType == type
             var http = if (same) template.httpConfig else SpeechServicesPreferences.SttHttpConfig("", "", "")
+            if (same && !sameServer(http.endpointUrl, SpeechKeyFamily.of(type))) {
+                leftKey = http.apiKey.isNotEmpty()
+                http = http.copy(apiKey = "")
+            }
             if (endpoint.isNotEmpty()) http = http.copy(endpointUrl = endpoint)
             if (model.isNotEmpty()) http = http.copy(modelName = model)
             if (key.isNotEmpty()) http = http.copy(apiKey = key)
@@ -279,12 +411,16 @@ internal object OrbitVoiceProfiles {
             if (english) " Its local model is not downloaded yet; the app asks the user to download it the first time it is used."
             else "它的本机模型还没下载，第一次用时 App 会请用户下载。"
         } else ""
+        val keyNote = if (leftKey && key.isEmpty()) {
+            if (english) " The new address is another server, so the old API key was not carried over; ask the user for its own key."
+            else "新地址和原来的不是同一个服务器，所以没有沿用原来的 API 密钥，需要请用户填这个服务器的密钥。"
+        } else ""
         return if (english) {
             "Added the $what profile \"$name\" ($label)" + (if (key.isNotEmpty()) " with the API key the user typed" else "") +
-                ". It is now the profile in use.$download"
+                ". It is now the profile in use.$download$keyNote"
         } else {
             "已新建${what}配置「$name」（$label）" + (if (key.isNotEmpty()) "，API 密钥是用户亲手填的" else "") +
-                "，现在正在用它。$download"
+                "，现在正在用它。$download$keyNote"
         }
     }
 }

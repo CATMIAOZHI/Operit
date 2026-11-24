@@ -204,6 +204,7 @@ fun SpeechToTextScreen(navController: NavController) {
             SpeechServiceFactory.SpeechServiceType.SHERPA_NCNN -> resources.getString(R.string.sherpa_ncnn_best)
             SpeechServiceFactory.SpeechServiceType.OPENAI_STT -> resources.getString(R.string.speech_services_stt_type_openai)
             SpeechServiceFactory.SpeechServiceType.DEEPGRAM_STT -> resources.getString(R.string.speech_services_stt_type_deepgram)
+            SpeechServiceFactory.SpeechServiceType.MIMO_STT -> resources.getString(R.string.speech_services_stt_type_mimo)
         }
     }
     

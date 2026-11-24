@@ -370,6 +370,10 @@ interface OrbitTaskDao {
     @Query("SELECT * FROM orbit_tasks WHERE orbitId = :orbitId ORDER BY createdAt DESC")
     suspend fun tasks(orbitId: String): List<OrbitTaskEntity>
 
+    /** [tasks] that are ACTIVE, in the same order: what scheduling reads, without the finished history. */
+    @Query("SELECT * FROM orbit_tasks WHERE orbitId = :orbitId AND state = 'ACTIVE' ORDER BY createdAt DESC")
+    suspend fun activeTasks(orbitId: String): List<OrbitTaskEntity>
+
     /** Every Orbit's unfinished tasks, followed as they change: the source of the tasks/ copies. */
     @Query("SELECT * FROM orbit_tasks WHERE state NOT IN ('CANCELLED', 'DONE') ORDER BY createdAt")
     fun observeOpenTasks(): Flow<List<OrbitTaskEntity>>
@@ -1007,9 +1011,14 @@ interface OrbitTaskDao {
     @Transaction
     suspend fun renew(token: OrbitRunEntity, bootId: String, now: Long, elapsed: Long, leaseMs: Long): Boolean {
         val current = currentLease(token, bootId, now, elapsed) ?: return false
-        updateRun(current.copy(leaseUntilElapsed = elapsed + leaseMs, leaseUntilWall = now + leaseMs))
+        // Only the two lease times change; rewriting the whole row (with its long source text) every
+        // heartbeat cost far more than the renewal itself.
+        setRunLease(current.id, elapsed + leaseMs, now + leaseMs)
         return true
     }
+
+    @Query("UPDATE orbit_runs SET leaseUntilElapsed = :elapsed, leaseUntilWall = :wall WHERE id = :runId")
+    suspend fun setRunLease(runId: String, elapsed: Long, wall: Long)
 
     @Transaction
     suspend fun checkpoint(token: OrbitRunEntity, text: String, fingerprint: String,

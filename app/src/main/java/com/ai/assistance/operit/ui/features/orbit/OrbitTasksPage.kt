@@ -1,5 +1,7 @@
 package com.ai.assistance.operit.ui.features.orbit
 
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
@@ -158,9 +160,17 @@ internal fun OrbitTasksPage(
         catch (e: CancellationException) { throw e }
         catch (e: Exception) { }
     }
-    // Each task's newest run, so the list says how it last went (a skipped review included).
-    val latestRuns by produceState(emptyMap<String, OrbitRunEntity>(), orbitId, retry) {
-        try { repository.dao.observeLatestRuns(orbitId).collect { rows -> value = rows.associateBy { it.taskId } } }
+    // Each task's newest run, so the list says how it last went (a skipped review included). Only the
+    // list reads it; a page opened on one task follows that task's run itself. A running task renews
+    // its lease every 20 seconds, which changes nothing shown, so those updates are let through once.
+    val latestRuns by produceState(emptyMap<String, OrbitRunEntity>(), orbitId, retry, initialTaskId) {
+        if (initialTaskId != null) return@produceState
+        try {
+            repository.dao.observeLatestRuns(orbitId)
+                .map { rows -> rows.map { it.copy(leaseUntilElapsed = 0, leaseUntilWall = 0) } }
+                .distinctUntilChanged()
+                .collect { rows -> value = rows.associateBy { it.taskId } }
+        }
         catch (e: CancellationException) { throw e }
         catch (e: Exception) { }
     }

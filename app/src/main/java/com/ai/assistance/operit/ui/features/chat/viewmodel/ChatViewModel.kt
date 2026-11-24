@@ -144,7 +144,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     // 添加语音服务
     private var voiceService: VoiceService? = null
     private var voiceStateCollectionJob: Job? = null
-    private var speechPlaybackJob: Job? = null
+    /** Parent of every sentence of the current reading; cancelled as a whole when a new reading starts or speech stops. */
+    private var speechGenerationJob: Job = kotlinx.coroutines.SupervisorJob(viewModelScope.coroutineContext[Job])
+    /** The service [voiceStateCollectionJob] follows. */
+    private var observedVoiceService: VoiceService? = null
     private var speechControlsHideJob: Job? = null
     private val speechServiceProfiles = SpeechServiceProfilesPreferences(context)
     private val activePromptManager = ActivePromptManager.getInstance(context)
@@ -806,7 +809,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     }
                 }
         )
-        mainChatCore.setSpeakMessageHandler(::speakMessage)
+        mainChatCore.setSpeakMessageHandler { text, interrupt, chatId -> speakMessage(text, interrupt, chatId) }
         mainChatCore.setOnEnhancedAiServiceReady { service ->
             enhancedAiService = service
             setupInputProcessingStateListener(service)
@@ -3248,11 +3251,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
         if (::mainChatCore.isInitialized) {
             mainChatCore.setUiBridge(EmptyChatServiceUiBridge)
-            mainChatCore.setSpeakMessageHandler { _, _ -> }
+            mainChatCore.setSpeakMessageHandler { _, _, _ -> }
         }
         
         // 清理语音服务资源
-        voiceService?.shutdown()
+        // An Orbit's own voice is released through the factory, so its slot does not keep a closed service.
+        voiceService?.let { if (voiceServiceIsOwn) VoiceServiceFactory.releaseOwnInstance(it) else it.shutdown() }
 
         // 不再在这里停止Web服务器，因为使用的是单例模式
         // 服务器应在应用退出时由Application类或专门的服务管理类关闭
@@ -3717,7 +3721,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private fun initializeVoiceService() {
         // 监听当前 TTS 档案的变化
         viewModelScope.launch {
-            speechServiceProfiles.currentTtsProfileFlow.collect { profile ->
+            // Only a real change of the app's profile: adding another profile (an Orbit's own voice) is not one.
+            speechServiceProfiles.currentTtsProfileFlow.distinctUntilChanged().collect { profile ->
                 try {
                     AppLogger.d(TAG, "TTS档案变化，重新初始化语音服务: profile=${profile.id} type=${profile.serviceType}")
 
@@ -3735,12 +3740,24 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     private suspend fun recreateVoiceService(): Boolean {
+        // An Orbit reading in its own voice is not the app's service; let it go on.
+        if (voiceServiceIsOwn) {
+            VoiceServiceFactory.resetInstance()
+            return true
+        }
         voiceService?.stop()
+        // An Orbit may have started reading in its own voice while the old service stopped.
+        if (voiceServiceIsOwn) {
+            VoiceServiceFactory.resetInstance()
+            return true
+        }
         voiceStateCollectionJob?.cancel()
         VoiceServiceFactory.resetInstance()
         val currentVoiceService = VoiceServiceFactory.getInstance(context)
         voiceService = currentVoiceService
         val initialized = currentVoiceService.initialize()
+        // Another reading took over while this one started: leave the controls with it.
+        if (voiceService !== currentVoiceService) return initialized
         if (initialized) {
             observeVoiceState(currentVoiceService)
         } else {
@@ -3751,8 +3768,29 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         return initialized
     }
 
-    private suspend fun ensureActiveVoiceService(): VoiceService? {
-        val latestVoiceService = VoiceServiceFactory.getInstance(context)
+    /** Whether [voiceService] is an Orbit's own voice rather than the app's read-aloud service. */
+    private var voiceServiceIsOwn = false
+
+    /** The chat whose text is being read aloud; only it adds more sentences to the reading. */
+    private var speechChatId: String? = null
+
+    /** Bumped on the main thread by each interrupting reading and by stop; older readings then quit. */
+    private var speechGeneration = 0L
+
+    /**
+     * The service the last reading went to, for stop, pause and resume: they act on what is playing,
+     * even after the chat or its voice changed. Only with nothing started yet is one made.
+     */
+    private suspend fun playingVoiceService(): VoiceService? = voiceService ?: ensureActiveVoiceService()
+
+    private suspend fun ensureActiveVoiceService(
+        own: SpeechServiceProfilesPreferences.TtsProfile? = null,
+        isCurrent: () -> Boolean = { true },
+    ): VoiceService? {
+        // An Orbit with its own voice gets a separate service, so the app's never replaces it.
+        val latestVoiceService = if (own != null) VoiceServiceFactory.getOwnInstance(context, own)
+            else VoiceServiceFactory.getInstance(context)
+        voiceServiceIsOwn = own != null
         if (voiceService !== latestVoiceService) {
             AppLogger.d(TAG, "检测到TTS服务实例已切换，更新聊天页引用")
             voiceStateCollectionJob?.cancel()
@@ -3770,7 +3808,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             }
         }
 
-        if (voiceStateCollectionJob?.isActive != true) {
+        // The controls follow only the service of the reading still going on.
+        if (voiceService === currentVoiceService && isCurrent() &&
+            (voiceStateCollectionJob?.isActive != true || observedVoiceService !== currentVoiceService)) {
             observeVoiceState(currentVoiceService)
         }
         return currentVoiceService
@@ -3787,6 +3827,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private fun observeVoiceState(service: VoiceService) {
         voiceStateCollectionJob?.cancel()
         cancelSpeechControlsHide("observeVoiceState.restart provider=${service::class.java.simpleName}")
+        observedVoiceService = service
         voiceStateCollectionJob = viewModelScope.launch {
             service.speakingStateFlow.collect { isSpeaking ->
                 _isPlaying.value = isSpeaking
@@ -3821,15 +3862,37 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         speakMessage(message, interrupt = true)
     }
 
-    fun speakMessage(message: String, interrupt: Boolean) {
+    /** [chatId] is the chat the text comes from (auto-read); null means the open chat. */
+    fun speakMessage(message: String, interrupt: Boolean, chatId: String? = null) {
+        // Auto-read calls come from the reply's worker thread; who owns the reading is decided on
+        // the main thread only, in the order the calls came.
+        if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
+            viewModelScope.launch(Dispatchers.Main) { speakMessage(message, interrupt, chatId) }
+            return
+        }
+        val source = chatId ?: currentChatId.value
+        // A reading belongs to the chat that started it: another chat's reply, still streaming,
+        // does not add its sentences in between (or swap the voice back and forth).
+        if (!interrupt && chatId != null && speechChatId != null && chatId != speechChatId) return
+        if (interrupt || speechChatId == null) speechChatId = source
         if (interrupt) {
-            speechPlaybackJob?.cancel()
+            endSpeechGeneration()
             logSpeechState("cancelPlaybackJob", "reason=newInterruptingSpeak")
         }
-        speechPlaybackJob = viewModelScope.launch {
+        val generation = speechGeneration
+        // Earlier sentences may still be waiting for the voice to start; after every wait they check
+        // that their reading is still the current one before touching the voice or the controls.
+        fun stale() = generation != speechGeneration || source != speechChatId
+        viewModelScope.launch(speechGenerationJob) {
             try {
                 cancelSpeechControlsHide("newSpeak")
-                val currentVoiceService = ensureActiveVoiceService()
+                // Read once: the voice and its reading rules come from the same profile. An Orbit
+                // chat speaks in its Orbit's own voice when it has one.
+                val own = com.ai.assistance.operit.features.orbit.OrbitVoice.ownTtsProfileForChat(context, source)
+                // Another chat started a reading while the voice was looked up: this sentence is not part of it.
+                if (stale()) return@launch
+                val currentVoiceService = ensureActiveVoiceService(own) { !stale() }
+                if (stale()) return@launch
                 _isSpeechSessionActive.value = true
                 _isSpeechPaused.value = false
                 logSpeechState(
@@ -3844,7 +3907,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     return@launch
                 }
 
-                val cleanerRegexs = speechServiceProfiles.getCurrentTtsProfile().cleanerRegexs
+                val cleanerRegexs = (own ?: speechServiceProfiles.getCurrentTtsProfile()).cleanerRegexs
                 val cleanedText = TtsCleaner.clean(message, cleanerRegexs)
                 val cleanMessage = WaifuMessageProcessor.cleanContentForWaifu(cleanedText)
                 AppLogger.d(
@@ -3869,6 +3932,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                         isSpeechPaused.filter { !it }.first()
                         logSpeechState("resumeObserved", "segmentIndex=$index")
                     }
+                    if (stale()) return@launch
 
                     AppLogger.d(
                         TAG,
@@ -3903,14 +3967,20 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     /** 停止朗读 */
+    /** Ends the current reading: all its sentences stop, even ones still waiting inside a voice service. */
+    private fun endSpeechGeneration() {
+        speechGeneration++
+        speechGenerationJob.cancel()
+        speechGenerationJob = kotlinx.coroutines.SupervisorJob(viewModelScope.coroutineContext[Job])
+    }
+
     fun stopSpeaking() {
+        endSpeechGeneration()
         viewModelScope.launch {
             try {
                 logSpeechState("stopSpeaking.request")
                 cancelSpeechControlsHide("stopSpeaking")
-                speechPlaybackJob?.cancel()
-                speechPlaybackJob = null
-                ensureActiveVoiceService()?.stop()
+                playingVoiceService()?.stop()
                 _isSpeechPaused.value = false
                 _isSpeechSessionActive.value = false
                 logSpeechState("stopSpeaking.done")
@@ -3928,7 +3998,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 cancelSpeechControlsHide("pauseSpeaking")
                 // Cancelling speak closes the provider and discards queued audio. Pause must
                 // keep the owning job alive so resume can continue the same utterance.
-                val success = ensureActiveVoiceService()?.pause() == true
+                val success = playingVoiceService()?.pause() == true
                 if (success) {
                     _isSpeechPaused.value = true
                     _isSpeechSessionActive.value = true
@@ -3949,7 +4019,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             try {
                 logSpeechState("resumeSpeaking.request")
                 cancelSpeechControlsHide("resumeSpeaking")
-                val success = ensureActiveVoiceService()?.resume() == true
+                val success = playingVoiceService()?.resume() == true
                 if (success) {
                     _isSpeechPaused.value = false
                     _isSpeechSessionActive.value = true

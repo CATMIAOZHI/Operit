@@ -625,7 +625,7 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
             val stem = name.removeSuffix(".md")
             val names = sequenceOf(name, "$stem-task.md") + (2..20).asSequence().map { "$stem-task-$it.md" }
             // The first name free for a copy; when none is, the first, which then reports why.
-            placed[names.firstOrNull { it !in placed && it !in copies.keys.minus(name) && !taken(File(dir, it)) } ?: name] = text
+            placed[names.firstOrNull { it !in placed && (it == name || it !in copies) && !taken(File(dir, it)) } ?: name] = text
         }
         dir.listFiles()?.forEach { f ->
             if (f.name in placed || !f.name.endsWith(".md")) return@forEach

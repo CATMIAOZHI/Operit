@@ -44,7 +44,9 @@ import okhttp3.Response
  * 此实现通过HTTP请求获取TTS音频数据，支持配置不同的TTS服务端点
  */
 open class HttpVoiceProvider(
-    private val context: Context
+    private val context: Context,
+    /** Off for services whose key header must never follow a redirect to another server. */
+    private val followRedirects: Boolean = true,
 ) : VoiceService {
 
     private var httpConfig: SpeechServicesPreferences.TtsHttpConfig = SpeechServicesPreferences.DEFAULT_HTTP_TTS_PRESET
@@ -53,6 +55,24 @@ open class HttpVoiceProvider(
         private const val TAG = "HttpVoiceProvider"
         private const val DEFAULT_TIMEOUT = 10 // 10秒超时
         private const val SPEECH_PREVIEW_MAX = 48
+        private val PLACEHOLDER = Regex("\\{([^{}\\s\"]+)\\}")
+
+        /**
+         * One pass over the template: a value put in (the text being read, say) is never scanned
+         * again, so braces inside it stay literal. Later entries win, as before.
+         */
+        internal fun replacePlaceholders(
+            template: String,
+            replacements: Map<String, String>,
+            transform: (rawValue: String, matchRange: IntRange, currentTemplate: String) -> String
+        ): String {
+            val byKey = LinkedHashMap<String, String>()
+            replacements.forEach { (key, value) -> byKey[key.lowercase()] = value }
+            return PLACEHOLDER.replace(template) { match ->
+                val value = byKey[match.groupValues[1].lowercase()] ?: return@replace match.value
+                transform(value, match.range, template)
+            }
+        }
     }
 
     private fun speechPreview(text: String): String {
@@ -66,8 +86,18 @@ open class HttpVoiceProvider(
             .connectTimeout(DEFAULT_TIMEOUT.toLong(), TimeUnit.SECONDS)
             .readTimeout(DEFAULT_TIMEOUT.toLong(), TimeUnit.SECONDS)
             .writeTimeout(DEFAULT_TIMEOUT.toLong(), TimeUnit.SECONDS)
+            .followRedirects(followRedirects)
+            .followSslRedirects(followRedirects)
             .build()
     }
+
+    /**
+     * A file sent in place of [marker] in a JSON body, Base64-encoded while the request is
+     * written, so a large voice sample is neither kept in the template nor copied per sentence.
+     */
+    internal class StreamedFile(val marker: String, val file: File)
+
+    @Volatile internal var streamedFile: StreamedFile? = null
 
     // 初始化状态
     private val _isInitialized = MutableStateFlow(false)
@@ -209,13 +239,25 @@ open class HttpVoiceProvider(
 
     override suspend fun synthesizeToFile(text: String, out: File): Boolean = synthesizeAudio(text, out, emptyMap())
 
+    override suspend fun synthesizeToFile(text: String, out: File, rate: Float?, pitch: Float?): Boolean =
+        synthesizeAudio(text, out, emptyMap(), rate, pitch)
+
     /** The audio for [text] written to [out], with [extraParams] filled into the request like [speak]'s. */
-    internal suspend fun synthesizeAudio(text: String, out: File, extraParams: Map<String, String>): Boolean =
+    internal suspend fun synthesizeAudio(
+        text: String,
+        out: File,
+        extraParams: Map<String, String>,
+        rate: Float? = null,
+        pitch: Float? = null,
+    ): Boolean =
         withContext(Dispatchers.IO) {
             if (!isInitialized && !initialize()) return@withContext false
-            val profile = com.ai.assistance.operit.data.preferences.SpeechServiceProfilesPreferences(context.applicationContext)
-                .getCurrentTtsProfile()
-            val audio = fetchAudioFromServer(text, profile.speechRate, profile.pitch, currentVoiceId, extraParams)
+            // The profile is read only when the caller did not say the speed and pitch.
+            val profile = if (rate == null || pitch == null) {
+                com.ai.assistance.operit.data.preferences.SpeechServiceProfilesPreferences(context.applicationContext)
+                    .getCurrentTtsProfile()
+            } else null
+            val audio = fetchAudioFromServer(text, rate ?: profile!!.speechRate, pitch ?: profile!!.pitch, currentVoiceId, extraParams)
                 ?: return@withContext false
             try {
                 audio.copyTo(out, overwrite = true)
@@ -238,9 +280,11 @@ open class HttpVoiceProvider(
             return null
         }
 
-        val profile = com.ai.assistance.operit.data.preferences.SpeechServiceProfilesPreferences(context.applicationContext).getCurrentTtsProfile()
-        val effectiveRate = request.rate ?: profile.speechRate
-        val effectivePitch = request.pitch ?: profile.pitch
+        val profile = if (request.rate == null || request.pitch == null) {
+            com.ai.assistance.operit.data.preferences.SpeechServiceProfilesPreferences(context.applicationContext).getCurrentTtsProfile()
+        } else null
+        val effectiveRate = request.rate ?: profile!!.speechRate
+        val effectivePitch = request.pitch ?: profile!!.pitch
 
         try {
             // 生成缓存键
@@ -380,16 +424,23 @@ open class HttpVoiceProvider(
                     return@withContext null
                 }
 
-                // Replace placeholders in the request body template
-                val requestBody =
-                    replaceBodyPlaceholders(
-                        template = httpConfig.requestBody,
-                        replacements = bodyPlaceholders,
-                        contentType = httpConfig.contentType
-                    )
-
                 val mediaType = httpConfig.contentType.toMediaType()
-                val body = requestBody.toRequestBody(mediaType)
+                fun fill(template: String) =
+                    replaceBodyPlaceholders(template = template, replacements = bodyPlaceholders, contentType = httpConfig.contentType)
+                // A streamed file's slot is found in the fixed template first, so text read aloud can
+                // never be mistaken for it; both sides are then filled in on their own.
+                val streamed = streamedFile
+                val slot = streamed?.let { httpConfig.requestBody.indexOf(it.marker) } ?: -1
+                val body = if (streamed != null && slot >= 0) {
+                    Base64FileBody(
+                        fill(httpConfig.requestBody.substring(0, slot)),
+                        streamed.file,
+                        fill(httpConfig.requestBody.substring(slot + streamed.marker.length)),
+                        mediaType,
+                    )
+                } else {
+                    fill(httpConfig.requestBody).toRequestBody(mediaType)
+                }
 
                 requestBuilder
                     .url(httpUrl)
@@ -489,23 +540,6 @@ open class HttpVoiceProvider(
         replacements: Map<String, String>
     ): String {
         return replacePlaceholders(template, replacements) { rawValue, _, _ -> rawValue }
-    }
-
-    private fun replacePlaceholders(
-        template: String,
-        replacements: Map<String, String>,
-        transform: (rawValue: String, matchRange: IntRange, currentTemplate: String) -> String
-    ): String {
-        var result = template
-        replacements.forEach { (key, rawValue) ->
-            val regex = Regex("\\{${Regex.escape(key)}\\}", RegexOption.IGNORE_CASE)
-            val currentTemplate = result
-            result =
-                regex.replace(currentTemplate) { matchResult ->
-                    transform(rawValue, matchResult.range, currentTemplate)
-                }
-        }
-        return result
     }
 
     private fun encodeJsonPlaceholderValue(

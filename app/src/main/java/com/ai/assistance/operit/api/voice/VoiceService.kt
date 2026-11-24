@@ -90,6 +90,13 @@ interface VoiceService {
     suspend fun synthesizeToFile(text: String, out: java.io.File): Boolean = false
 
     /**
+     * Like [synthesizeToFile], at [rate] and [pitch] where this engine takes them; null means the
+     * app's read-aloud settings, as before. A voice chosen for one Orbit passes its own.
+     */
+    suspend fun synthesizeToFile(text: String, out: java.io.File, rate: Float?, pitch: Float?): Boolean =
+        synthesizeToFile(text, out)
+
+    /**
      * 表示TTS语音的数据类
      *
      * @property id 语音唯一标识符

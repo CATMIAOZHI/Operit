@@ -122,7 +122,7 @@ class MessageProcessingDelegate(
             { _, _ -> null },
         // 添加自动朗读相关的回调
         private val getIsAutoReadEnabled: () -> Boolean,
-        private var speakMessageHandler: (String, Boolean) -> Unit
+        private var speakMessageHandler: (String, Boolean, String?) -> Unit
 ) {
     companion object {
         private const val TAG = "MessageProcessingDelegate"
@@ -873,7 +873,7 @@ class MessageProcessingDelegate(
         return runtimeFor(chatId).isLoading.value
     }
 
-    fun setSpeakMessageHandler(handler: (String, Boolean) -> Unit) {
+    fun setSpeakMessageHandler(handler: (String, Boolean, String?) -> Unit) {
         speakMessageHandler = handler
     }
 
@@ -1713,7 +1713,7 @@ class MessageProcessingDelegate(
                         TAG,
                         "autoRead[waifuStream] interrupt=$interrupt len=${segment.length} preview=\"${speechPreview(segment)}\""
                     )
-                    speakMessageHandler(segment, interrupt)
+                    speakMessageHandler(segment, interrupt, chatId)
                 }
                 tryEmitScrollToBottomThrottled(chatId)
             }
@@ -1799,7 +1799,7 @@ class MessageProcessingDelegate(
                                 TAG,
                                 "autoRead[flush] interrupt=$interrupt didStreamAutoRead=$didStreamAutoRead len=${trimmed.length} preview=\"${speechPreview(trimmed)}\""
                             )
-                            speakMessageHandler(trimmed, interrupt)
+                            speakMessageHandler(trimmed, interrupt, chatId)
                         } else if (segment.isNotEmpty()) {
                             AppLogger.d(
                                 TAG,
@@ -2720,7 +2720,7 @@ class MessageProcessingDelegate(
                         )
                         // 如果启用了自动朗读，则朗读完整消息
                         if (turnOptions.persistTurn && !com.ai.assistance.operit.ui.permissions.UnattendedChats.contains(chatId) && getIsAutoReadEnabled() && !skipFinalAutoRead) {
-                            speakMessageHandler(finalContent, true)
+                            speakMessageHandler(finalContent, true, chatId)
                         }
                         forceEmitScrollToBottom(chatId)
                     }

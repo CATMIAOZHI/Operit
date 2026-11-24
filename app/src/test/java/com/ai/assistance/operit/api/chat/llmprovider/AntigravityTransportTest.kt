@@ -57,6 +57,19 @@ class AntigravityTransportTest {
         assertEquals(listOf("a", "gemini-3.7-flash-tiered"), models.map { it.id })
     }
 
+    @Test fun gemini4UsesCliClientAndTierSuffixedIdsSendNoSecondLevel() {
+        val manager = com.ai.assistance.operit.data.api.ProviderAccountManager
+        assertEquals(manager.ANTIGRAVITY_CLI_UA, manager.antigravityUserAgent("gemini-4-argon-low"))
+        assertEquals(manager.ANTIGRAVITY_CLI_UA, manager.antigravityUserAgent("gemini-4-hydrogen-xhigh"))
+        assertEquals(manager.ANTIGRAVITY_UA, manager.antigravityUserAgent("gemini-3.7-flash-tiered"))
+        assertEquals(manager.ANTIGRAVITY_UA, manager.antigravityUserAgent("gemini-3.1-pro-low"))
+        val body = AntigravityTransport.compile(JSONObject("""{
+          "contents":[{"role":"user","parts":[{"text":"hi"}]}],
+          "generationConfig":{"thinkingConfig":{"thinkingLevel":"high"}}
+        }"""), "gemini-4-argon-low", "s").second
+        assertFalse(body.optJSONObject("generationConfig")?.has("thinkingConfig") ?: false)
+    }
+
     @Test fun switchingAccountsDropsBothSignatureSpellingsButKeepsToolIdentity() {
         val original = JSONObject("""{"_operit_account_scope":"a:model","role":"model","parts":[
           {"thought":true,"text":"private reasoning","thoughtSignature":"sig"},

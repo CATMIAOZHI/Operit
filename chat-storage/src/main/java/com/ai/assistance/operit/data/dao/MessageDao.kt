@@ -37,7 +37,7 @@ interface MessageDao {
         FROM messages m LEFT JOIN message_variants v
           ON m.selectedVariantIndex > 0 AND v.chatId = m.chatId
           AND v.messageTimestamp = m.timestamp AND v.variantIndex = m.selectedVariantIndex
-        WHERE m.chatId = :chatId ORDER BY m.timestamp ASC
+        WHERE m.chatId = :chatId ORDER BY m.timestamp ASC, m.messageId ASC
     """)
     suspend fun getProcessMetadata(chatId: String): List<com.ai.assistance.operit.data.model.ChatMessageProcessMetadata>
 
@@ -51,7 +51,7 @@ interface MessageDao {
         FROM messages m LEFT JOIN message_variants v
           ON m.selectedVariantIndex > 0 AND v.chatId = m.chatId
           AND v.messageTimestamp = m.timestamp AND v.variantIndex = m.selectedVariantIndex
-        WHERE m.chatId = :chatId ORDER BY m.timestamp DESC LIMIT :limit
+        WHERE m.chatId = :chatId ORDER BY m.timestamp DESC, m.messageId DESC LIMIT :limit
     """)
     suspend fun getRecentProcessMetadata(chatId: String, limit: Int): List<com.ai.assistance.operit.data.model.ChatMessageProcessMetadata>
 
@@ -65,7 +65,7 @@ interface MessageDao {
         FROM messages m LEFT JOIN message_variants v
           ON m.selectedVariantIndex > 0 AND v.chatId = m.chatId
           AND v.messageTimestamp = m.timestamp AND v.variantIndex = m.selectedVariantIndex
-        WHERE m.chatId = :chatId AND m.timestamp >= :since ORDER BY m.timestamp ASC
+        WHERE m.chatId = :chatId AND m.timestamp >= :since ORDER BY m.timestamp ASC, m.messageId ASC
     """)
     suspend fun getProcessMetadataFrom(chatId: String, since: Long): List<com.ai.assistance.operit.data.model.ChatMessageProcessMetadata>
 
@@ -79,9 +79,37 @@ interface MessageDao {
         FROM messages m LEFT JOIN message_variants v
           ON m.selectedVariantIndex > 0 AND v.chatId = m.chatId
           AND v.messageTimestamp = m.timestamp AND v.variantIndex = m.selectedVariantIndex
-        WHERE m.chatId = :chatId AND m.timestamp >= :since AND m.timestamp <= :until ORDER BY m.timestamp ASC
+        WHERE m.chatId = :chatId AND m.timestamp >= :since AND m.timestamp <= :until ORDER BY m.timestamp ASC, m.messageId ASC
     """)
     suspend fun getProcessMetadataBetween(chatId: String, since: Long, until: Long): List<com.ai.assistance.operit.data.model.ChatMessageProcessMetadata>
+
+    /** The newest [limit] rows of [getProcessMetadata] said before [before], newest first. */
+    @Query("""
+        SELECT m.timestamp, m.sender, m.displayMode,
+            COALESCE(v.sentAt, m.sentAt) AS sentAt,
+            COALESCE(v.completedAt, m.completedAt) AS completedAt,
+            COALESCE(v.waitDurationMs, m.waitDurationMs) AS waitDurationMs,
+            COALESCE(v.outputDurationMs, m.outputDurationMs) AS outputDurationMs
+        FROM messages m LEFT JOIN message_variants v
+          ON m.selectedVariantIndex > 0 AND v.chatId = m.chatId
+          AND v.messageTimestamp = m.timestamp AND v.variantIndex = m.selectedVariantIndex
+        WHERE m.chatId = :chatId AND m.timestamp < :before ORDER BY m.timestamp DESC, m.messageId DESC LIMIT :limit
+    """)
+    suspend fun getProcessMetadataBefore(chatId: String, before: Long, limit: Int): List<com.ai.assistance.operit.data.model.ChatMessageProcessMetadata>
+
+    /** The oldest [limit] rows of [getProcessMetadata] said after [after], oldest first. */
+    @Query("""
+        SELECT m.timestamp, m.sender, m.displayMode,
+            COALESCE(v.sentAt, m.sentAt) AS sentAt,
+            COALESCE(v.completedAt, m.completedAt) AS completedAt,
+            COALESCE(v.waitDurationMs, m.waitDurationMs) AS waitDurationMs,
+            COALESCE(v.outputDurationMs, m.outputDurationMs) AS outputDurationMs
+        FROM messages m LEFT JOIN message_variants v
+          ON m.selectedVariantIndex > 0 AND v.chatId = m.chatId
+          AND v.messageTimestamp = m.timestamp AND v.variantIndex = m.selectedVariantIndex
+        WHERE m.chatId = :chatId AND m.timestamp > :after ORDER BY m.timestamp ASC, m.messageId ASC LIMIT :limit
+    """)
+    suspend fun getProcessMetadataAfter(chatId: String, after: Long, limit: Int): List<com.ai.assistance.operit.data.model.ChatMessageProcessMetadata>
 
     /**
      * Replies in which the assistant called tools or thought first; both are stored as markup
@@ -146,15 +174,14 @@ interface MessageDao {
     @Query("SELECT EXISTS(SELECT 1 FROM messages WHERE chatId = :chatId LIMIT 1)")
     suspend fun existsAnyMessage(chatId: String): Boolean
 
+    /** The chat's newest message time, found at the end of its time index. */
+    @Query("SELECT MAX(timestamp) FROM messages WHERE chatId = :chatId")
+    suspend fun newestTimestamp(chatId: String): Long?
+
     @Query(
         """
         SELECT
-            (
-                SELECT COUNT(*)
-                FROM messages AS earlier
-                WHERE earlier.chatId = messages.chatId
-                    AND earlier.timestamp < messages.timestamp
-            ) AS messageIndex,
+            NULL AS messageIndex,
             timestamp AS timestamp,
             sender AS sender,
             CASE
@@ -172,10 +199,31 @@ interface MessageDao {
         ORDER BY timestamp ASC
         """
     )
-    suspend fun getLocatorPreviewsForChat(
+    suspend fun getLocatorPreviewsForChatUnranked(
         chatId: String,
         previewCharCount: Int,
     ): List<ChatMessageLocatorPreview>
+
+    /**
+     * Every message's preview with its place in the chat: how many messages come before it in time
+     * (rows sharing a time share a place). Counted in one pass over the time-ordered rows; asking
+     * SQLite to count the earlier rows for each row grew with the square of the chat's length.
+     */
+    suspend fun getLocatorPreviewsForChat(
+        chatId: String,
+        previewCharCount: Int,
+    ): List<ChatMessageLocatorPreview> {
+        val rows = getLocatorPreviewsForChatUnranked(chatId, previewCharCount)
+        var place = 0
+        var placeTime = Long.MIN_VALUE
+        return rows.mapIndexed { index, row ->
+            if (index == 0 || row.timestamp != placeTime) {
+                place = index
+                placeTime = row.timestamp
+            }
+            row.copy(messageIndex = place)
+        }
+    }
 
     @Query(
         """

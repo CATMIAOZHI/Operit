@@ -176,7 +176,7 @@ internal fun OrbitApprovalCard(card: JSONObject) {
                     val result = runCatching { OrbitApprovals.decide(context, owner, target.id, true, "", always = always) }
                     busy = false
                     when {
-                        result.isFailure -> Toast.makeText(context, R.string.orbit_approval_failed, Toast.LENGTH_SHORT).show()
+                        result.isFailure -> approvalFailed(context, result.exceptionOrNull())
                         result.getOrNull() == null -> Toast.makeText(context, R.string.orbit_approval_already, Toast.LENGTH_SHORT).show()
                         // The app just did something for Orbit: show what came of it.
                         target.action.isNotEmpty() -> sheet = true
@@ -322,7 +322,7 @@ internal fun OrbitApprovalSheet(
             if (result.isFailure) {
                 if (result.exceptionOrNull() is kotlinx.coroutines.CancellationException) return@launch
                 // Nothing was saved: keep the sheet and what the user wrote, so they can try again.
-                Toast.makeText(context, R.string.orbit_approval_failed, Toast.LENGTH_SHORT).show()
+                approvalFailed(context, result.exceptionOrNull())
                 return@launch
             }
             key = ""
@@ -547,4 +547,11 @@ internal fun OrbitApprovalSheet(
             }
         }
     }
+}
+
+/** Tells the user an approval failed: why and what to do when the app knows, else to try again. */
+private fun approvalFailed(context: android.content.Context, error: Throwable?) {
+    val reason = (error as? com.ai.assistance.operit.features.orbit.OrbitApprovalActions.Problem)?.message
+    if (reason != null) Toast.makeText(context, reason, Toast.LENGTH_LONG).show()
+    else Toast.makeText(context, R.string.orbit_approval_failed, Toast.LENGTH_SHORT).show()
 }

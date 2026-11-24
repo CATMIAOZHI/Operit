@@ -199,7 +199,7 @@ android {
         minSdk = if (browserBuild) 29 else 26
         targetSdk = 34
         versionCode = 100205
-        versionName = "1.12.2-ry.23"
+        versionName = "1.12.2-ry.24"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

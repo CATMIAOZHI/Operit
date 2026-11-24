@@ -114,7 +114,7 @@ fun OrbitChatCard(source: String) {
         OrbitChatCards.PERMISSION -> OrbitPermissionCard(card)
         OrbitChatCards.CHATGPT_LOGIN -> ChatGptLoginCard(card)
         OrbitChatCards.ACCOUNT_LOGIN -> OrbitAccountLoginCard(card)
-        OrbitChatCards.SPEECH_SETTINGS -> OrbitSpeechSettingsCard()
+        OrbitChatCards.SPEECH_SETTINGS -> OrbitSpeechSettingsCard(card.optString("orbit_id"))
         OrbitChatCards.WEIXIN_LOGIN -> OrbitWeixinLoginCard(card)
         OrbitChatCards.DATA_EXPORT -> OrbitDataExportCard(card)
         OrbitChatCards.OPEN_PAGE -> OrbitOpenPageCard(card)

@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -39,6 +40,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -226,26 +228,27 @@ internal fun OrbitWeixinLoginCard(card: JSONObject) {
     }
 }
 
-/** Shows which voice services are in use and opens the voice settings page inside Orbit. */
+/** Shows which voice services [orbitId] uses (its own read-aloud voice, if it has one) and opens the voice settings page. */
 @Composable
-internal fun OrbitSpeechSettingsCard() {
+internal fun OrbitSpeechSettingsCard(orbitId: String) {
     val context = LocalContext.current
     val profiles = remember { SpeechServiceProfilesPreferences(context.applicationContext) }
-    // Each wrapped in a list, so "not read yet" (null) differs from "none set" (a list holding null);
+    // Wrapped in a list, so "not read yet" (null) differs from "none set" (a list holding null);
     // a shared picture waits for both.
-    val ttsRead by remember(profiles) {
-        profiles.currentTtsProfileOrNullFlow.map { listOf(it) }
-    }.collectAsState(initial = null)
     val sttRead by remember(profiles) {
         profiles.currentSttProfileOrNullFlow.map { listOf(it) }
     }.collectAsState(initial = null)
-    com.ai.assistance.operit.ui.common.markdown.MarkdownSnapshotWork(ttsRead == null || sttRead == null)
-    val tts = ttsRead?.firstOrNull()
+    // Read in the background: the Orbit's own voice, else the app's; shown only once it is known.
+    val voice by remember(orbitId) {
+        com.ai.assistance.operit.features.orbit.OrbitVoice.voiceStateFlow(context.applicationContext, orbitId)
+    }.collectAsState(initial = null)
+    com.ai.assistance.operit.ui.common.markdown.MarkdownSnapshotWork(sttRead == null || voice == null)
+    val tts = voice?.let { it.own?.name ?: it.appVoice.ifEmpty { null } }
     val stt = sttRead?.firstOrNull()
     val openPage = LocalOrbitOpenPage.current
     CardColumn {
         CardHeading("volume-2", stringResource(R.string.orbit_speech_card_title),
-            stringResource(R.string.orbit_speech_card_sub, tts?.name ?: "…", stt?.name ?: "…"))
+            stringResource(R.string.orbit_speech_card_sub, tts ?: "…", stt?.name ?: "…"))
         Spacer(Modifier.height(14.dp))
         CardButton(stringResource(R.string.orbit_speech_card_open), enabled = openPage != null) {
             openPage?.invoke(OrbitCardPage.SPEECH_SETTINGS)
@@ -351,6 +354,13 @@ internal fun OrbitSpeechSettingsPage(orbitId: String, onBack: () -> Unit) {
     var readAloud by remember(orbitId) {
         mutableStateOf(com.ai.assistance.operit.features.orbit.OrbitVoice.usesReadAloud(context, orbitId))
     }
+    val voiceState by remember(orbitId) {
+        com.ai.assistance.operit.features.orbit.OrbitVoice.voiceStateFlow(context.applicationContext, orbitId)
+    }.collectAsState(initial = null)
+    var pickingVoice by rememberSaveable(orbitId) { mutableStateOf(false) }
+    // A voice profile deleted elsewhere means the Orbit speaks with the app's voice again.
+    val ownVoice = voiceState?.own
+    val appVoiceName = voiceState?.appVoice.orEmpty()
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
         .statusBarsPadding().navigationBarsPadding()) {
         OrbitPageHeader(stringResource(R.string.orbit_speech_card_title), onBack,
@@ -359,15 +369,49 @@ internal fun OrbitSpeechSettingsPage(orbitId: String, onBack: () -> Unit) {
             backgroundColor = com.ai.assistance.operit.ui.features.settings.components.settingsCardColor(false),
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
         ) {
+            com.ai.assistance.operit.ui.features.settings.components.SettingsNavRow(
+                title = stringResource(R.string.orbit_voice_own_title),
+                subtitle = when {
+                    voiceState == null -> null
+                    ownVoice != null -> stringResource(R.string.orbit_voice_own_custom, ownVoice.name)
+                    appVoiceName.isEmpty() -> stringResource(R.string.orbit_voice_own_app)
+                    else -> stringResource(R.string.orbit_voice_own_follow, appVoiceName)
+                },
+                onClick = { pickingVoice = true },
+                searchable = false,
+            )
             com.ai.assistance.operit.ui.features.settings.components.SettingsSwitchRow(
-                title = stringResource(R.string.orbit_voice_read_aloud_title),
-                subtitle = stringResource(if (readAloud) R.string.orbit_voice_read_aloud_on else R.string.orbit_voice_read_aloud_off),
-                checked = readAloud,
+                // Off by default: voice messages use a cloud voice; the phone's only when the user picks it.
+                title = stringResource(R.string.orbit_voice_phone_title),
+                // Nothing about the voice until it has been read, so a missing one never flashes as fine.
+                subtitle = when {
+                    !readAloud -> R.string.orbit_voice_phone_on
+                    voiceState == null -> null
+                    voiceState?.noAudioVoice != true -> R.string.orbit_voice_phone_off
+                    // Chosen for this Orbit alone: setting up the app's voice below would not change it.
+                    voiceState?.own != null -> R.string.orbit_voice_phone_missing_own
+                    else -> R.string.orbit_voice_phone_missing
+                }?.let { stringResource(it) },
+                checked = !readAloud,
                 onCheckedChange = {
-                    readAloud = it
-                    com.ai.assistance.operit.features.orbit.OrbitVoice.setUsesReadAloud(context, orbitId, it)
+                    readAloud = !it
+                    com.ai.assistance.operit.features.orbit.OrbitVoice.setUsesReadAloud(context, orbitId, !it)
                 },
                 searchable = false,
+            )
+        }
+        // Shown once the voices are read, so nothing is offered as picked before it really is.
+        val state = voiceState
+        if (pickingVoice && state != null) {
+            OrbitVoicePicker(
+                profiles = state.choices,
+                selected = state.own?.id.orEmpty(),
+                appVoiceName = state.appVoice,
+                onPick = {
+                    com.ai.assistance.operit.features.orbit.OrbitVoice.setOwnVoice(context, orbitId, it)
+                    pickingVoice = false
+                },
+                onDismiss = { pickingVoice = false },
             )
         }
         Text(
@@ -380,6 +424,58 @@ internal fun OrbitSpeechSettingsPage(orbitId: String, onBack: () -> Unit) {
                 onBackPressed = onBack,
                 dialogStyle = com.ai.assistance.operit.ui.features.settings.components.SettingsDialogStyle.ORBIT,
             )
+        }
+    }
+}
+
+/** Picks the voice one Orbit reads aloud with: the app's (empty id) or one saved read-aloud profile. */
+@Composable
+private fun OrbitVoicePicker(
+    profiles: List<com.ai.assistance.operit.features.orbit.OrbitVoice.VoiceChoice>,
+    selected: String,
+    appVoiceName: String,
+    onPick: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    OrbitDialog(
+        onDismissRequest = onDismiss,
+        title = stringResource(R.string.orbit_voice_own_title),
+        text = {
+            Column(Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.orbit_voice_own_hint), modifier = Modifier.padding(bottom = 8.dp))
+                OrbitVoiceChoice(
+                    title = stringResource(R.string.orbit_voice_own_app),
+                    subtitle = appVoiceName.takeIf { it.isNotEmpty() },
+                    selected = selected.isEmpty(),
+                    onClick = { onPick("") },
+                )
+                profiles.forEach { p ->
+                    OrbitVoiceChoice(title = p.name, subtitle = null, selected = p.id == selected, onClick = { onPick(p.id) })
+                }
+            }
+        },
+        dismissButton = {
+            OrbitDialogAction(onClick = onDismiss, secondary = true) { Text(stringResource(android.R.string.cancel)) }
+        },
+    )
+}
+
+@Composable
+private fun OrbitVoiceChoice(title: String, subtitle: String?, selected: Boolean, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+            .selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
+            .padding(horizontal = 4.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        androidx.compose.material3.RadioButton(selected = selected, onClick = null)
+        Spacer(Modifier.width(8.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (subtitle != null) {
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
         }
     }
 }

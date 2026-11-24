@@ -18,6 +18,7 @@ object SpeechServiceFactory {
         SHERPA_ONNX,
         OPENAI_STT,
         DEEPGRAM_STT,
+        MIMO_STT,
     }
 
     /**
@@ -44,6 +45,7 @@ object SpeechServiceFactory {
         val effectiveType = when (selectedType) {
             SpeechServiceType.OPENAI_STT,
             SpeechServiceType.DEEPGRAM_STT,
+            SpeechServiceType.MIMO_STT,
             SpeechServiceType.SHERPA_ONNX,
             -> SpeechServiceType.SHERPA_NCNN
             else -> selectedType
@@ -79,6 +81,12 @@ object SpeechServiceFactory {
                     )
                 }
             }
+            SpeechServiceType.MIMO_STT -> MimoSttProvider(
+                context = context,
+                endpointUrl = httpConfig.endpointUrl,
+                apiKey = httpConfig.apiKey,
+                model = httpConfig.modelName,
+            )
             SpeechServiceType.DEEPGRAM_STT -> {
                 runBlocking {
                     DeepgramSttProvider(

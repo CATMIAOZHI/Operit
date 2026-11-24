@@ -87,7 +87,9 @@ object VoiceServiceFactory {
                 VoiceServiceType.MIMO_TTS -> {
                     MimoVoiceProvider(
                         context = context,
-                        config = profile.httpConfig
+                        config = profile.httpConfig,
+                        speechRate = profile.speechRate,
+                        pitch = profile.pitch,
                     )
                 }
                 VoiceServiceType.DOUBAO_TTS -> {
@@ -115,12 +117,41 @@ object VoiceServiceFactory {
         return FocusedVoiceService(context.applicationContext, provider)
     }
 
-    // 单例实例缓存
+    /**
+     * A service that always speaks at [profile]'s own speed and pitch, even when it is not the app's
+     * current profile (several engines otherwise read the app's). Used for a voice chosen for one Orbit.
+     */
+    fun createProfileVoiceService(
+        context: Context,
+        profile: SpeechServiceProfilesPreferences.TtsProfile,
+    ): VoiceService = ProfileVoiceService(createVoiceService(context, profile), profile.speechRate, profile.pitch)
+
+    private class ProfileVoiceService(
+        private val delegate: VoiceService,
+        private val rate: Float,
+        private val pitch: Float,
+    ) : VoiceService by delegate {
+        override suspend fun speak(text: String, interrupt: Boolean, rate: Float?, pitch: Float?,
+            extraParams: Map<String, String>): Boolean =
+            delegate.speak(text, interrupt, rate ?: this.rate, pitch ?: this.pitch, extraParams)
+
+        override suspend fun synthesizeToFile(text: String, out: java.io.File): Boolean =
+            delegate.synthesizeToFile(text, out, rate, pitch)
+
+        override suspend fun synthesizeToFile(text: String, out: java.io.File, rate: Float?, pitch: Float?): Boolean =
+            delegate.synthesizeToFile(text, out, rate ?: this.rate, pitch ?: this.pitch)
+    }
+
+    // 单例实例缓存（App 的朗读配置）
     private var instance: VoiceService? = null
     private var currentProfile: SpeechServiceProfilesPreferences.TtsProfile? = null
 
+    // 某个 Orbit 自己选的声音单独一个实例，App 那边换配置或关悬浮窗都不会把它关掉
+    private var ownInstance: VoiceService? = null
+    private var ownProfile: SpeechServiceProfilesPreferences.TtsProfile? = null
+
     /**
-     * 获取语音服务单例实例
+     * 获取语音服务单例实例（App 当前的朗读配置）
      *
      * @param context 应用上下文
      * @return VoiceService实例
@@ -138,6 +169,38 @@ object VoiceServiceFactory {
             currentProfile = profile
         }
         return instance!!
+    }
+
+    /**
+     * The service for a voice one Orbit uses instead of the app's ([profile]), kept apart from the
+     * app's so neither replaces the other. Only one such voice is kept; another replaces it.
+     */
+    @Synchronized
+    fun getOwnInstance(context: Context, profile: SpeechServiceProfilesPreferences.TtsProfile): VoiceService {
+        if (ownInstance == null || profile != ownProfile) {
+            ownInstance?.shutdown()
+            // Cleared first: if making the new one fails, no closed service is left to be handed out.
+            ownInstance = null
+            ownProfile = null
+            ownInstance = createProfileVoiceService(context, profile)
+            ownProfile = profile
+        }
+        return ownInstance!!
+    }
+
+    /** Shuts down [service] if it is the Orbit voice kept here, and forgets it so the next use makes a new one. */
+    @Synchronized
+    fun releaseOwnInstance(service: VoiceService) {
+        if (ownInstance !== service) return
+        ownInstance?.shutdown()
+        ownInstance = null
+        ownProfile = null
+    }
+
+    /** Stops whatever is being read aloud, the app's voice and an Orbit's own, without starting anything. */
+    suspend fun stopAll() {
+        val services = synchronized(this) { listOfNotNull(instance, ownInstance) }
+        services.forEach { runCatching { it.stop() } }
     }
 
     /** 重置单例实例 在需要更改语音服务类型或释放资源时调用 */

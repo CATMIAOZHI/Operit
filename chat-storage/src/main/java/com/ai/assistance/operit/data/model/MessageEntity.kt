@@ -16,7 +16,11 @@ import androidx.room.PrimaryKey
                                 childColumns = ["chatId"],
                                 onDelete = ForeignKey.CASCADE
                         )],
-        indices = [Index("chatId"), Index(value = ["chatId", "timestamp"])]
+        indices = [
+                Index("chatId"),
+                Index(value = ["chatId", "timestamp"]),
+                Index(value = ["chatId", "orderIndex"]),
+        ]
 )
 data class MessageEntity(
         @PrimaryKey(autoGenerate = true) val messageId: Long = 0,
