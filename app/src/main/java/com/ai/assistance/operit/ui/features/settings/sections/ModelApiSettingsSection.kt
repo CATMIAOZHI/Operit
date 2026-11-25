@@ -104,6 +104,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -121,6 +122,8 @@ private val modelReadaptScope = CoroutineScope(SupervisorJob() + Dispatchers.Mai
 
 /** The configurations being re-matched, for a page shown again meanwhile. */
 private val modelsReadapting = MutableStateFlow(emptySet<String>())
+/** Configurations whose newly added models are being matched against a freshly downloaded catalog. */
+private val modelsAdaptingNew = MutableStateFlow(emptyMap<String, Int>())
 
 /**
  * One settings page's models with edits not saved yet. While the page shows it reads the page; once
@@ -379,6 +382,8 @@ fun ModelApiSettingsSection(
     val multimodalCatalogUpdatedAt by officialModelCapabilitiesRepository.updatedAt.collectAsState()
     val readapting by modelsReadapting.collectAsState()
     val isReadapting = config.id in readapting
+    val adaptingNew by modelsAdaptingNew.collectAsState()
+    val isAdaptingNew = (adaptingNew[config.id] ?: 0) > 0
 
     // Only the models listed now: one removed and added back must not bring its old values along.
     fun currentAutoFields() = ModelAutoFields(
@@ -577,6 +582,29 @@ fun ModelApiSettingsSection(
             }
             // Taken in before the services restart, so a failing restart cannot lose it.
             adoptSaved(ApiAutoSaveState.of(saved), state)
+            // Models just added that the local catalogs do not know: fetch the newest ones and
+            // match those models in the background; the page shows the result as it is stored.
+            val added = getModelList(saved.modelName) - getModelList(page.modelName).toSet()
+            if (added.isNotEmpty()) {
+                val appContext = context.applicationContext
+                val configId = config.id
+                // Counted per run: one ending must not clear the note while another still waits.
+                modelsAdaptingNew.update { it + (configId to (it[configId] ?: 0) + 1) }
+                modelReadaptScope.launch {
+                    try {
+                        ModelAutoConfig.adaptNewModels(appContext, configId, added)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        AppLogger.w(TAG, "Matching new models failed: ${e.message}")
+                    } finally {
+                        modelsAdaptingNew.update {
+                            val left = (it[configId] ?: 1) - 1
+                            if (left > 0) it + (configId to left) else it - configId
+                        }
+                    }
+                }
+            }
             if (changed) {
                 withContext(Dispatchers.IO) {
                     EnhancedAIService.refreshAllServices(configManager.appContext)
@@ -917,7 +945,6 @@ fun ModelApiSettingsSection(
 
             SettingsSelectorRow(
                     title = stringResource(R.string.api_provider),
-                    subtitle = stringResource(R.string.select_api_provider),
                     value = getProviderDisplayName(selectedProviderTypeId, context),
                     onClick = { showApiProviderDialog = true }
             )
@@ -968,6 +995,11 @@ fun ModelApiSettingsSection(
                 )
             } else if (browserAccountType != null) {
                 ProviderAccountSettings(browserAccountType) {
+                    // The model list on screen, or one still loading, belongs to the account before.
+                    modelFetchGeneration++
+                    isLoadingModels = false
+                    modelsList = emptyList()
+                    showModelsDialog = false
                     scope.launch { EnhancedAIService.refreshAllServices(configManager.appContext) }
                 }
             } else if (isCodexProvider) {
@@ -1155,6 +1187,8 @@ fun ModelApiSettingsSection(
                                 modelNameInput = it.replace("\n", "").replace("\r", "")
                             }
                         },
+                    // Wraps so every model of a long list stays in sight.
+                    singleLine = false,
                     enabled = canEditModelName,
                     trailingContent = {
                 val fillEndpointKeyText = stringResource(R.string.fill_endpoint_and_key)
@@ -1335,7 +1369,6 @@ fun ModelApiSettingsSection(
                     // 选择器：先选择一个模型，再配置它的能力
                     SettingsSelectorRow(
                         title = stringResource(R.string.model_multimodal_select_model),
-                        subtitle = stringResource(R.string.select),
                         value = activeModel,
                         onClick = { showMultimodalModelPicker = true }
                     )
@@ -1347,8 +1380,11 @@ fun ModelApiSettingsSection(
                         Column {
                             val check = catalogCheck?.takeIf { it.key == catalogCheckKey }
                             if (check != null && modelName in check.names && modelName !in check.matched) {
+                                // While a newly added model is matched against a fresh catalog, asking
+                                // the user to set it by hand would come too early.
                                 Text(
-                                    text = stringResource(R.string.model_catalog_not_found),
+                                    text = stringResource(if (isAdaptingNew) R.string.model_catalog_adapting
+                                        else R.string.model_catalog_not_found),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
@@ -1677,10 +1713,19 @@ fun ModelApiSettingsSection(
                     .toSet()
             )
         }
+        // Models already chosen that the list does not offer (an id from before, like a fixed
+        // Antigravity tier) stay listed and checked, so confirming keeps them unless unchecked.
+        val chosenBefore = remember { getModelList(modelNameInput) }
+        val offered = remember(modelsList) { modelsList.mapTo(HashSet()) { it.id } }
+        // Also one checked here that a refreshed list no longer offers, so it is not dropped unseen.
+        val unlisted = remember(offered, selectedModels.value) {
+            (chosenBefore + selectedModels.value).distinct().filter { it !in offered }
+        }
+        val dialogModels = remember(unlisted, modelsList) { unlisted.map { ModelOption(it, it) } + modelsList }
         val filteredModelsList =
-                remember(searchQuery, modelsList) {
-                    if (searchQuery.isEmpty()) modelsList
-                    else modelsList.filter { it.id.contains(searchQuery, ignoreCase = true) }
+                remember(searchQuery, dialogModels) {
+                    if (searchQuery.isEmpty()) dialogModels
+                    else dialogModels.filter { it.id.contains(searchQuery, ignoreCase = true) }
                 }
 
         Dialog(onDismissRequest = { showModelsDialog = false }) {
@@ -1780,6 +1825,14 @@ fun ModelApiSettingsSection(
                         }
                     }
 
+                    if (selectedApiProvider == ApiProviderType.GOOGLE_ANTIGRAVITY) {
+                        Text(
+                            text = stringResource(R.string.antigravity_models_tier_hint),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(bottom = 8.dp),
+                        )
+                    }
                     // 搜索框 - 用普通的OutlinedTextField替代实验性的SearchBar
                     OutlinedTextField(
                             value = searchQuery,
@@ -1946,7 +1999,7 @@ fun ModelApiSettingsSection(
                         Button(
                                 onClick = {
                                     // 将选中的模型用逗号连接
-                                    val orderedSelection = modelsList.map { it.id }
+                                    val orderedSelection = dialogModels.map { it.id }
                                         .filter { selectedModels.value.contains(it) }
                                     modelNameInput = orderedSelection.joinToString(",")
                                     showModelsDialog = false
@@ -2221,7 +2274,7 @@ private fun getProviderDisplayName(providerTypeId: String, context: android.cont
 
 private fun getProviderSelectionOptions(context: android.content.Context): List<ProviderSelectionOption> {
     val builtInProviders =
-        ApiProviderType.values().filterNot { it.isRetired }.map { provider ->
+        ApiProviderType.values().filter { it.isOffered }.map { provider ->
             ProviderSelectionOption(
                 id = provider.name,
                 displayName = getBuiltInProviderDisplayName(provider, context)
@@ -2229,7 +2282,9 @@ private fun getProviderSelectionOptions(context: android.content.Context): List<
         }
     val toolPkgProviders =
         // A plugin cannot bring back a removed provider under its name.
-        ToolPkgAiProviderRegistry.list().filterNot { ApiProviderType.isRetiredId(it.providerId) }.map { provider ->
+        ToolPkgAiProviderRegistry.list().filter {
+            ApiProviderType.fromProviderTypeId(it.providerId)?.isOffered != false
+        }.map { provider ->
             ProviderSelectionOption(
                 id = provider.providerId,
                 displayName = provider.displayName
@@ -2422,10 +2477,11 @@ internal fun SettingsTextField(
 @Composable
 internal fun SettingsSelectorRow(
         title: String,
-        subtitle: String,
+        subtitle: String? = null,
         value: String,
         onClick: () -> Unit
 ) {
+    // The chosen value sits under its title across the whole row, so a long name is shown whole.
     Surface(
             modifier = Modifier
                     .fillMaxWidth()
@@ -2441,27 +2497,28 @@ internal fun SettingsSelectorRow(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                         text = title,
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Medium
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                        text = subtitle,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                        text = value,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                )
+                subtitle?.let {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                            text = it,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
-            Spacer(modifier = Modifier.width(12.dp))
-            Text(
-                    text = value,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier
-                            .padding(end = 8.dp)
-                            .weight(0.5f, fill = false),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-            )
+            Spacer(modifier = Modifier.width(8.dp))
             Icon(
                     imageVector = Icons.Default.KeyboardArrowDown,
                     contentDescription = null,

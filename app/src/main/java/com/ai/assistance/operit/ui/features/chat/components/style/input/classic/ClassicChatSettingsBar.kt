@@ -286,6 +286,17 @@ fun ClassicChatSettingsBar(
         }
     }
     val claudeThinkingFormats by ClaudeThinkingFormatState.formats.collectAsState()
+    val antigravityFamilies by com.ai.assistance.operit.api.chat.llmprovider.AntigravityFamilies.shown.collectAsState()
+    // An Antigravity chat follows its account from the start, so the menu shows that account's tiers.
+    val usesAntigravity = currentConfig?.apiProviderTypeId?.let {
+        com.ai.assistance.operit.data.model.ApiProviderType.fromProviderTypeId(it)
+    } == com.ai.assistance.operit.data.model.ApiProviderType.GOOGLE_ANTIGRAVITY
+    val antigravityContext = androidx.compose.ui.platform.LocalContext.current.applicationContext
+    androidx.compose.runtime.LaunchedEffect(usesAntigravity) {
+        if (usesAntigravity) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            com.ai.assistance.operit.api.chat.llmprovider.watchAntigravityAccount(antigravityContext)
+        }
+    }
     val thinkingRequestSummary =
         remember(
             currentConfig,
@@ -295,6 +306,7 @@ fun ClassicChatSettingsBar(
             currentModelParameters,
             currentIsToolPkgProvider,
             claudeThinkingFormats,
+            antigravityFamilies,
         ) {
             currentConfig?.let { config ->
                 ThinkingRequestSemantics.resolve(

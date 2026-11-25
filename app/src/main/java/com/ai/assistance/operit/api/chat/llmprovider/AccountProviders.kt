@@ -50,7 +50,80 @@ internal fun antigravityThinkingEffort(
     return when ((explicit ?: ApiPreferences.thinkingQualityEffort(quality)).lowercase()) {
         "minimal", "low" -> "low"
         "medium" -> "medium"
+        // Kept as asked: the request picks xhigh where the account's model has that tier, else high.
+        "xhigh", "max", "ultra" -> "xhigh"
         else -> "high"
+    }
+}
+
+/**
+ * The level shown for a request (the chat's thinking menu): xhigh only where the model has that
+ * tier, the way the request will pick it, by the signed-in account's families.
+ */
+internal fun antigravityShownEffort(
+    model: String, quality: Int, enabled: Boolean, parameters: List<ModelParameter<*>>,
+): String {
+    val effort = antigravityThinkingEffort(model, quality, enabled, parameters)
+    // Read off the id the request will send: a family picks its tier, a fixed id (gemini-4-argon-low)
+    // keeps its own, and anything else sends at most high.
+    val wire = AntigravityFamilies.wire(model, effort, AntigravityFamilies.shown.value)
+    Regex(".*-(low|medium|high|xhigh)").matchEntire(wire)?.let { return it.groupValues[1] }
+    return if (effort == "xhigh") "high" else effort
+}
+
+/** Starts following the signed-in Antigravity account, so the thinking menu shows its tiers. */
+fun watchAntigravityAccount(context: Context) {
+    // Only for the menu: storage that cannot be opened now leaves it on the known tiers, and a
+    // request reports the same failure the usual way.
+    try {
+        ProviderAccountManager.get(context, AccountProvider.ANTIGRAVITY)
+    } catch (e: Exception) {
+        com.ai.assistance.operit.util.AppLogger.w("AntigravityFamilies", "Account could not be opened: ${e.message}")
+    }
+}
+
+/**
+ * Models Antigravity lists as one wire id per tier (gemini-4-carbon-low/-medium/-high) show as one
+ * model; the tier is picked from the chat's thinking level when the request is sent, as opencodex
+ * does. The account's model list says which families exist; a few are known before it is read.
+ */
+internal object AntigravityFamilies {
+    val TIERS = listOf("low", "medium", "high", "xhigh")
+    private val BASE_TIERS = setOf("low", "medium", "high")
+    // Used only until the signed-in account's own list has been read.
+    private val KNOWN: Map<String, Set<String>> = mapOf(
+        "gemini-3.8-flash" to BASE_TIERS, "claude-opus-5-5" to BASE_TIERS, "claude-sonnet-5-5" to BASE_TIERS,
+        "gemini-4-argon" to BASE_TIERS, "gemini-4-carbon" to BASE_TIERS,
+        "gemini-4-neon" to BASE_TIERS + "xhigh", "gemini-4-hydrogen" to BASE_TIERS + "xhigh",
+    )
+    private val shownFamilies = kotlinx.coroutines.flow.MutableStateFlow<Map<String, Set<String>>?>(null)
+    /**
+     * The signed-in account's families, for showing a level in the thinking menu; a request uses
+     * its own account's families (see ProviderAccountManager.antigravityFamilies).
+     */
+    val shown: kotlinx.coroutines.flow.StateFlow<Map<String, Set<String>>?> = shownFamilies
+
+    fun publish(families: Map<String, Set<String>>?) { shownFamilies.value = families }
+
+    /**
+     * [model]'s tiers under [families], the account's families as its list showed them; with no
+     * list read yet (null) only the known families count.
+     */
+    fun tiers(model: String, families: Map<String, Set<String>>?): Set<String> =
+        families?.let { it[model] ?: emptySet() } ?: KNOWN[model] ?: emptySet()
+
+    /** The wire id to send for [model] at [effort]; the model itself when it is not a family. */
+    fun wire(model: String, effort: String, families: Map<String, Set<String>>?): String {
+        val tiers = tiers(model, families).takeIf { it.isNotEmpty() } ?: return model
+        val wanted = when (effort.lowercase()) {
+            "minimal", "low" -> "low"
+            "medium" -> "medium"
+            "high" -> "high"
+            "xhigh", "max", "ultra" -> if ("xhigh" in tiers) "xhigh" else "high"
+            // No level asked: Hydrogen's default is high, others medium.
+            else -> if (model == "gemini-4-hydrogen" || "medium" !in tiers) "high" else "medium"
+        }
+        return "$model-${if (wanted in tiers) wanted else "high"}"
     }
 }
 
@@ -139,16 +212,18 @@ class AntigravityTransport(private val manager: ProviderAccountManager, private 
 
     suspend fun request(body: RequestBody, streaming: Boolean): Request {
         val account = manager.validAccount()
+        // This account's own families, fixed for this request whatever another account loads meanwhile.
+        val families = manager.antigravityFamilies(account.identity)
         activeReplayScope = "${account.identity}:$model"
         val raw = Buffer().also { body.writeTo(it) }.readUtf8()
         names.clear()
         val session = currentCoroutineContext()[OpenCodeSessionContext]?.sessionId ?: fallbackSession
-        val compiled = compile(JSONObject(raw), model, session, names)
+        val compiled = compile(JSONObject(raw), model, session, names, families)
         val envelope = JSONObject().put("project", account.projectId).put("model", compiled.first)
             .put("userAgent", "antigravity").put("requestType", "agent")
             .put("requestId", "agent-${UUID.randomUUID()}").put("request", compiled.second)
         return Request.Builder()
-            .url("${ProviderAccountManager.CCA}/v1internal:" +
+            .url("${ProviderAccountManager.CCA_DAILY}/v1internal:" +
                 if (streaming) "streamGenerateContent?alt=sse" else "generateContent")
             .header("Authorization", "Bearer ${account.accessToken}")
             .header("User-Agent", ProviderAccountManager.antigravityUserAgent(compiled.first))
@@ -170,10 +245,25 @@ class AntigravityTransport(private val manager: ProviderAccountManager, private 
         return response
     }
 
-    suspend fun models(): List<ModelOption> = parseModels(manager.availableModels())
+    suspend fun models(): List<ModelOption> {
+        val (identity, body) = manager.availableModelsOfAccount()
+        val catalog = parseCatalog(body)
+        // A list that arrives after the account changed describes the old account: not kept or shown.
+        if (!manager.rememberAntigravityFamilies(identity, catalog.second)) {
+            throw IOException(manager.accountChangedMessage())
+        }
+        return catalog.first
+    }
 
     companion object {
-        internal fun parseModels(root: JSONObject): List<ModelOption> {
+        private val TIER_SUFFIX = Regex("(.+)-(low|medium|high|xhigh)")
+        private val TIERED_ALIAS = Regex("(.+)-tiered(?:-(?:low|medium|high|xhigh))?")
+        private val TIER_LABEL = Regex("\\s*\\((?:low|medium|high|xhigh|extra high)\\)\\s*$", RegexOption.IGNORE_CASE)
+
+        internal fun parseModels(root: JSONObject): List<ModelOption> = parseCatalog(root).first
+
+        /** The model list, and which listed models are tier families (base id to its tiers). */
+        internal fun parseCatalog(root: JSONObject): Pair<List<ModelOption>, Map<String, Set<String>>> {
             val models = root.optJSONObject("models") ?: throw IOException("Antigravity models are missing")
             val ids = linkedSetOf<String>()
             val sorts = root.optJSONArray("agentModelSorts") ?: JSONArray()
@@ -190,13 +280,35 @@ class AntigravityTransport(private val manager: ProviderAccountManager, private 
             if (images != null && (0 until images.length()).any { images.optString(it) == "gemini-3.1-flash-image" }) {
                 ids.add("gemini-3.1-flash-image")
             }
-            return ids.mapNotNull { id ->
-                models.optJSONObject(id)?.let { ModelOption(id, it.optString("displayName").ifBlank { id }) }
-            }.also { if (it.isEmpty()) throw IOException("No Antigravity agent models available") }
+            val usable = ids.filter { id ->
+                val info = models.optJSONObject(id)
+                info != null && !info.optBoolean("disabled") && !id.endsWith("-disabled")
+            }.toSet()
+            // Only a complete low/medium/high family becomes one model; a partial one stays as listed.
+            val families = LinkedHashMap<String, Set<String>>()
+            for (id in usable) {
+                val base = TIER_SUFFIX.matchEntire(id)?.groupValues?.get(1) ?: continue
+                if (base in families || listOf("low", "medium", "high").any { "$base-$it" !in usable }) continue
+                families[base] = AntigravityFamilies.TIERS.filter { "$base-$it" in usable }.toSet()
+            }
+            val out = LinkedHashMap<String, ModelOption>()
+            for (id in usable) {
+                // A tiered alias (gemini-3.8-flash-tiered) of a family shown as one model is that model.
+                if (TIERED_ALIAS.matchEntire(id)?.groupValues?.get(1) in families) continue
+                val base = TIER_SUFFIX.matchEntire(id)?.groupValues?.get(1)?.takeIf { it in families }
+                val shown = base ?: id
+                if (shown in out) continue
+                val name = models.optJSONObject(id)?.optString("displayName").orEmpty()
+                    .let { if (base != null) it.replace(TIER_LABEL, "") else it }.ifBlank { shown }
+                out[shown] = ModelOption(shown, name)
+            }
+            if (out.isEmpty()) throw IOException("No Antigravity agent models available")
+            return out.values.toList() to families
         }
 
         internal fun compile(input: JSONObject, model: String, session: String,
-            names: MutableMap<String, String> = mutableMapOf()): Pair<String, JSONObject> {
+            names: MutableMap<String, String> = mutableMapOf(),
+            families: Map<String, Set<String>>? = null): Pair<String, JSONObject> {
             val body = JSONObject(input.toString())
             // CCA accepts the Gemini wire shape, not arbitrary GenerateContent extensions.
             body.keys().asSequence().toList().filter {
@@ -210,7 +322,7 @@ class AntigravityTransport(private val manager: ProviderAccountManager, private 
             val thinking = generation?.optJSONObject("thinkingConfig")
             val effort = thinking?.optString("thinkingLevel").orEmpty()
             generation?.remove("thinkingConfig")
-            val wire = if (model == "gemini-3.7-flash") "gemini-3.7-flash-tiered" else model
+            val wire = if (model == "gemini-3.7-flash") "gemini-3.7-flash-tiered" else AntigravityFamilies.wire(model, effort, families)
             // A tier-suffixed wire id (gemini-4-argon-low, ...) already names its effort; a second,
             // possibly contradicting thinkingLevel is not what the real client sends.
             val tierInName = Regex(".*-(low|medium|high|xhigh)").matches(wire)

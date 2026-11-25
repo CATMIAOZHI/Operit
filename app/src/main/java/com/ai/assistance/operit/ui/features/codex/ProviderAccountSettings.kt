@@ -104,12 +104,19 @@ fun ProviderAccountSettings(provider: AccountProvider, onAccountChanged: () -> U
         }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { error = null; login = true }) {
-                Text(stringResource(R.string.provider_account_login))
+            // Signed in, logging in again only switches the account, so it is not the main action.
+            if (account == null) {
+                Button(onClick = { error = null; login = true }) {
+                    Text(stringResource(R.string.provider_account_login))
+                }
+            } else {
+                OutlinedButton(onClick = { error = null; login = true }) {
+                    Text(stringResource(R.string.provider_account_switch))
+                }
+                TextButton(onClick = {
+                    scope.launch { manager.logout(); onAccountChanged() }
+                }) { Text(stringResource(R.string.provider_account_logout)) }
             }
-            if (account != null) TextButton(onClick = {
-                scope.launch { manager.logout(); onAccountChanged() }
-            }) { Text(stringResource(R.string.provider_account_logout)) }
         }
         if (hasQuotaProbe && account != null) {
             ProviderQuotaPanel(

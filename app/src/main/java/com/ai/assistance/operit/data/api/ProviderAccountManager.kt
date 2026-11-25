@@ -17,6 +17,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -89,7 +93,77 @@ class ProviderAccountManager private constructor(context: Context, val provider:
     }
     private val mutex = Mutex()
     private val mutableAccount = MutableStateFlow(readAccount())
+
+    private val familiesLock = Any()
+    /** Each account's Antigravity tier families once read, kept in memory; a null value: none saved. */
+    private val familiesByAccount = HashMap<String, Map<String, Set<String>>?>()
+
+    /**
+     * The tier families [identity]'s model list last showed, as saved, so a request after a restart
+     * still picks a tier; null when that account's list was never read. Never another account's.
+     */
+    suspend fun antigravityFamilies(identity: String): Map<String, Set<String>>? = withContext(Dispatchers.IO) {
+        synchronized(familiesLock) {
+            if (familiesByAccount.containsKey(identity)) return@synchronized familiesByAccount[identity]
+            val saved = runCatching {
+                preferences.getString(FAMILIES_KEY, null)?.let(::decodeFamilies)
+                    ?.takeIf { it.first == identity }?.second
+            }.getOrNull()
+            familiesByAccount[identity] = saved
+            saved
+        }
+    }
+
+    /** Shows the signed-in account's families (for the chat's thinking menu), read on a background thread. */
+    private suspend fun publishAntigravityFamilies(identity: String?) {
+        val families = identity?.let { antigravityFamilies(it) }
+        synchronized(familiesLock) {
+            // Published under the lock with the account checked, so an older read never replaces a newer one.
+            if (account.value?.identity != identity) return
+            com.ai.assistance.operit.api.chat.llmprovider.AntigravityFamilies.publish(identity?.let { familiesByAccount[it] } ?: families)
+        }
+    }
+
+    fun accountChangedMessage(): String =
+        appContext.getString(com.ai.assistance.operit.R.string.provider_account_changed_reload)
+
+    /**
+     * Keeps [families] from [identity]'s model list; false, keeping nothing, when the signed-in
+     * account changed since that list was asked for.
+     */
+    suspend fun rememberAntigravityFamilies(identity: String, families: Map<String, Set<String>>): Boolean =
+        withContext(Dispatchers.IO) {
+            synchronized(familiesLock) {
+                if (account.value?.identity != identity) return@synchronized false
+                familiesByAccount[identity] = families
+                com.ai.assistance.operit.api.chat.llmprovider.AntigravityFamilies.publish(families)
+                val tiers = JSONObject().apply {
+                    families.forEach { (base, set) -> put(base, org.json.JSONArray(set.toList())) }
+                }
+                preferences.edit().putString(FAMILIES_KEY,
+                    JSONObject().put("identity", identity).put("families", tiers).toString()).commit()
+                true
+            }
+        }
+
+    private fun decodeFamilies(raw: String): Pair<String, Map<String, Set<String>>> {
+        val root = JSONObject(raw)
+        val json = root.getJSONObject("families")
+        return root.getString("identity") to json.keys().asSequence().associateWith { base ->
+            val tiers = json.getJSONArray(base)
+            (0 until tiers.length()).map { tiers.getString(it) }.toSet()
+        }
+    }
     val account = mutableAccount.asStateFlow()
+
+    init {
+        // The thinking menu shows the tier a request will use, so it follows the signed-in account.
+        if (provider == AccountProvider.ANTIGRAVITY) {
+            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO).launch {
+                account.map { it?.identity }.distinctUntilChanged().collectLatest { publishAntigravityFamilies(it) }
+            }
+        }
+    }
     private val client = OkHttpClient.Builder().callTimeout(30, TimeUnit.SECONDS).build()
 
     private fun readAccount(): ProviderAccount? {
@@ -449,10 +523,14 @@ class ProviderAccountManager private constructor(context: Context, val provider:
         throw IOException("No Cloud Code Assist project is available for this account")
     }
 
-    suspend fun availableModels(): JSONObject {
+    suspend fun availableModels(): JSONObject = availableModelsOfAccount().second
+
+    /** The model list with the identity of the account it was asked for. */
+    suspend fun availableModelsOfAccount(): Pair<String, JSONObject> {
         val value = validAccount()
-        // Gemini 4 models are listed only to the CLI client; the list is otherwise the IDE one.
-        return requestJson("$CCA/v1internal:fetchAvailableModels",
+        // Gemini 4 models are listed only to the CLI client; the list is otherwise the IDE one. The
+        // daily host is the one the IDE and opencodex use: only it lists Gemini 4 Neon, Carbon and Hydrogen.
+        return value.identity to requestJson("$CCA_DAILY/v1internal:fetchAvailableModels",
             JSONObject().put("project", value.projectId).toBody(), value.accessToken,
             mapOf("User-Agent" to ANTIGRAVITY_CLI_UA))
     }
@@ -465,6 +543,32 @@ class ProviderAccountManager private constructor(context: Context, val provider:
     suspend fun fetchAntigravityQuota(): ProviderQuota {
         check(provider == AccountProvider.ANTIGRAVITY)
         val value = validAccount()
+        // The account's 5-hour and weekly allowance per model family, as opencodex reads it. The
+        // CLI client also gets the Gemini 4 group; an account that refuses it for this is asked
+        // again as the plain client. Only a server that says it has no summary for this account falls
+        // back to the model list below; an unreachable or busy server fails this check as it is.
+        val body = JSONObject().put("project", value.projectId).toBody()
+        fun unsupported(failure: AccountHttpException) =
+            failure.status in 400..499 && failure.status !in setOf(401, 408, 429)
+        val summary = try {
+            try {
+                requestJson("$CCA_DAILY/v1internal:retrieveUserQuotaSummary", body, value.accessToken,
+                    mapOf("User-Agent" to ANTIGRAVITY_CLI_UA), readOAuthError = false)
+            } catch (refused: AccountHttpException) {
+                if (refused.status != 403) throw refused
+                requestJson("$CCA_DAILY/v1internal:retrieveUserQuotaSummary",
+                    JSONObject().put("project", value.projectId).toBody(), value.accessToken,
+                    mapOf("User-Agent" to "antigravity/1.0"), readOAuthError = false)
+            }
+        } catch (denied: AccountHttpException) {
+            if (!unsupported(denied)) throw denied
+            null
+        } catch (unreadable: AccountResponseException) {
+            // A body cut off while it was read is a network failure; only an empty or invalid one falls back.
+            if (unreadable.cause is IOException) throw unreadable
+            null
+        }
+        AntigravityQuota.summaryWindows(summary).takeIf { it.isNotEmpty() }?.let { return ProviderQuota(windows = it) }
         val models = requestJson("$CCA_DAILY/v1internal:fetchAvailableModels",
             JSONObject().put("project", value.projectId).toBody(), value.accessToken,
             mapOf("User-Agent" to ANTIGRAVITY_UA))
@@ -553,6 +657,8 @@ class ProviderAccountManager private constructor(context: Context, val provider:
         body: RequestBody? = null,
         token: String? = null,
         extraHeaders: Map<String, String> = emptyMap(),
+        /** False where the OAuth error code is of no use: a refusal is reported without reading its body. */
+        readOAuthError: Boolean = true,
     ): JSONObject = withContext(Dispatchers.IO) {
             val grokHeaders = if (token != null && provider == AccountProvider.GROK) GrokClientIdentity.headers() else emptyMap()
             val request = Request.Builder().url(url).header("Accept", "application/json").apply {
@@ -566,7 +672,9 @@ class ProviderAccountManager private constructor(context: Context, val provider:
             }.build()
             client.newCall(request).execute().use { response ->
                 currentCoroutineContext().ensureActive()
-                if (!response.isSuccessful) throw AccountHttpException(response.code, oauthError(response))
+                if (!response.isSuccessful) {
+                    throw AccountHttpException(response.code, if (readOAuthError) oauthError(response) else null)
+                }
                 val text = try {
                     response.body?.string()
                 } catch (error: IOException) {
@@ -587,6 +695,7 @@ class ProviderAccountManager private constructor(context: Context, val provider:
 
     companion object {
         private const val TAG = "ProviderAccountManager"
+        private const val FAMILIES_KEY = "antigravity_tier_families"
         const val CCA = "https://cloudcode-pa.googleapis.com"
         /** The host the Antigravity IDE reads its model list and allowance from. */
         const val CCA_DAILY = "https://daily-cloudcode-pa.googleapis.com"
@@ -595,10 +704,9 @@ class ProviderAccountManager private constructor(context: Context, val provider:
             "antigravity/ide/$ANTIGRAVITY_IDE_VERSION (os_type=windows; arch=amd64; aidev_client; auth_method=oauth)"
         const val ANTIGRAVITY_CLI_UA =
             "antigravity/cli/1.3.4 (os_type=darwin; arch=arm64; aidev_client; auth_method=oauth)"
-        private val GEMINI_4_WIRE_MODEL = Regex("gemini-4-[a-z][a-z0-9]*(-(low|medium|high|xhigh))?")
-        /** CCA serves Gemini 4 only to the CLI client and other agent models only to the IDE client. */
+        /** CCA serves Gemini 4 (any of its ids) only to the CLI client and other agent models only to the IDE client. */
         fun antigravityUserAgent(wireModel: String) =
-            if (GEMINI_4_WIRE_MODEL.matches(wireModel)) ANTIGRAVITY_CLI_UA else ANTIGRAVITY_UA
+            if (wireModel.startsWith("gemini-4-")) ANTIGRAVITY_CLI_UA else ANTIGRAVITY_UA
         private const val GOOGLE_TOKEN = "https://oauth2.googleapis.com/token"
         private const val COMMAND_CODE_WHOAMI = "https://api.commandcode.ai/alpha/whoami"
         private const val COMMAND_CODE_CREDITS = "https://api.commandcode.ai/alpha/billing/credits"

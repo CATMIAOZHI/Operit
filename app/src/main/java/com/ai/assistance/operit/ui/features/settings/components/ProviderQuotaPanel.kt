@@ -117,12 +117,14 @@ fun ProviderQuotaPanel(
 
 @Composable
 private fun QuotaWindowRow(window: ProviderQuotaWindow, nowEpochMillis: Long) {
-    val label = when (window.window) {
+    val period = when (window.window) {
         QuotaWindow.FIVE_HOUR -> stringResource(R.string.quota_window_five_hour)
         QuotaWindow.WEEKLY -> stringResource(R.string.quota_window_weekly)
         QuotaWindow.MONTHLY -> stringResource(R.string.quota_window_monthly)
-        QuotaWindow.MODEL -> window.label.orEmpty()
+        QuotaWindow.MODEL -> null
     }
+    // A family's own window (Antigravity's Gemini 5 hours) names both.
+    val label = listOfNotNull(window.label?.takeIf { it.isNotBlank() }, period).joinToString(" · ")
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Row {
             Text(label, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
