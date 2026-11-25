@@ -4203,7 +4203,7 @@
     <string name="provider_novita">Novita AI</string>
     <string name="provider_openai_generic">OpenAI通用</string>
     <string name="provider_other">其他供应商</string>
-    <string name="select_api_provider_title">选择API提供商</string>
+    <string name="select_api_provider_title">选择 API 提供商</string>
     <string name="search_providers">搜索提供商</string>
     <!-- ModelParametersSection strings -->
     <string name="max_tokens_name">最大生成Token数</string>
@@ -8223,7 +8223,7 @@
     <string name="favorite_model_label">%1$s：%2$s</string>
     <string name="add_model_to_favorites">收藏模型</string>
     <string name="remove_model_from_favorites">取消收藏模型</string>
-    <string name="collapsed_providers_count">已折叠提供商 (%d)</string>
+    <string name="collapsed_providers_count">已隐藏 %d 个</string>
     <string name="collapsed_model_configs_count">已折叠模型配置 (%d)</string>
     <string name="collapse_model_config">折叠模型配置</string>
     <string name="uncollapse_model_config">取消折叠模型配置</string>
@@ -10298,4 +10298,14 @@
     <string name="orbit_geofence_place_detail">%1$s · 半径 %2$d 米\n%3$s, %4$s（WGS84）</string>
     <string name="orbit_geofence_help">稳定进入或离开后提醒。刚创建或恢复时的位置仅作起点，不会立即提醒。系统省电可能延迟检测或漏掉短暂经过。</string>
     <string name="orbit_file_changed_meanwhile">文件刚被改过，没有覆盖。先复制你的修改，重新打开再改。</string>
+    <string name="provider_group_account">账户登录</string>
+    <string name="provider_group_official">官方 API</string>
+    <string name="provider_group_platform">模型平台</string>
+    <string name="provider_group_custom">自定义接口</string>
+    <string name="provider_group_plugin">插件提供</string>
+    <string name="provider_picker_hide">隐藏</string>
+    <string name="provider_picker_unhide">取消隐藏</string>
+    <string name="provider_picker_hide_hint">长按提供商可以隐藏不用的</string>
+    <string name="provider_picker_no_match">没有找到匹配的提供商</string>
+    <string name="provider_picker_hidden_state">已隐藏</string>
 </resources>

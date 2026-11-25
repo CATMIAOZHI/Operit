@@ -7702,7 +7702,7 @@
     <string name="favorite_model_label">%1$s: %2$s</string>
     <string name="add_model_to_favorites">Add model to favorites</string>
     <string name="remove_model_from_favorites">Remove model from favorites</string>
-    <string name="collapsed_providers_count">Collapsed Providers (%d)</string>
+    <string name="collapsed_providers_count">Hidden (%d)</string>
     <string name="collapsed_model_configs_count">Collapsed Model Configs (%d)</string>
     <string name="collapse_model_config">Collapse model config</string>
     <string name="uncollapse_model_config">Uncollapse model config</string>
@@ -10323,4 +10323,14 @@
     <string name="orbit_geofence_place_detail">%1$s · %2$d m radius\n%3$s, %4$s (WGS84)</string>
     <string name="orbit_geofence_help">Reminds after a stable arrival or departure. The position at creation or resume is only the baseline. Android power saving may delay detection or miss brief visits.</string>
     <string name="orbit_file_changed_meanwhile">The file changed meanwhile, so nothing was overwritten. Copy your edit, reopen the file, and try again.</string>
+    <string name="provider_group_account">Account login</string>
+    <string name="provider_group_official">Official APIs</string>
+    <string name="provider_group_platform">Model platforms</string>
+    <string name="provider_group_custom">Custom endpoints</string>
+    <string name="provider_group_plugin">From plugins</string>
+    <string name="provider_picker_hide">Hide</string>
+    <string name="provider_picker_unhide">Show again</string>
+    <string name="provider_picker_hide_hint">Long-press a provider to hide it</string>
+    <string name="provider_picker_no_match">No matching providers</string>
+    <string name="provider_picker_hidden_state">Hidden</string>
 </resources>
