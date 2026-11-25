@@ -542,7 +542,9 @@ object OrbitSpeech {
         RegexOption.IGNORE_CASE,
     )
 
-    fun of(content: String): String {
+    /** [splitSteps] off: words after a tool step join the words before, as a channel sends them. */
+    fun of(content: String, splitSteps: Boolean = true): String {
+        if (!splitSteps) return clean(content, splitSteps = false)
         cleaned[content]?.let { return if (it === unchanged) content else it }
         val result = clean(content)
         cleaned[content] = if (result === content) unchanged else result
@@ -562,7 +564,14 @@ object OrbitSpeech {
     }
 
     /** Orbit puts this between messages it sends one after another (Muse's "separate bubbles"). */
-    internal val messageBreak = Regex("<message_break\\s*/?>(?:\\s*</message_break>)?", RegexOption.IGNORE_CASE)
+    internal val messageBreak = Regex("<message_break(?:\\s+auto)?\\s*/?>(?:\\s*</message_break>)?", RegexOption.IGNORE_CASE)
+
+    /**
+     * The break the chat itself puts where Orbit goes on talking after a tool step (see [clean]).
+     * It draws like Orbit's own. A channel that sends each reply as one message cleans without it
+     * (`splitSteps = false`), so what it sends stays exactly as before.
+     */
+    const val AUTO_BREAK = "\n<message_break auto/>\n"
 
     /** One Orbit reply as the bubbles it sends: its words split at each message break, then its cards. */
     fun bubbles(shown: String): Pair<List<String>, List<String>> {
@@ -684,11 +693,11 @@ object OrbitSpeech {
         return m.value.substringAfter("![").substringBefore("](").trim()
     }
 
-    private fun clean(content: String): String {
+    private fun clean(content: String, splitSteps: Boolean = true): String {
         // A card a tool put in the chat (a secure entry card, a picture or file Orbit sent) stays
         // where the tool ran; every other step and result goes.
         val cards = mutableListOf<String>()
-        var text = withoutThinkingOrSteps(content, cards)
+        var text = withoutThinkingOrSteps(content, cards, splitSteps)
         text = ChatMarkupRegex.removeGeminiThoughtSignatureMeta(text)
         text = ChatMarkupRegex.removeOpenAiResponsesReasoningMeta(text)
         // "Viewed N images": the pictures Orbit looked at while working, which the user never sees.
@@ -717,7 +726,114 @@ object OrbitSpeech {
             }
         }
         // A reply cut off mid-step (cancelled, interrupted) can end in a step that never closed.
-        return text.replace(unclosedStepAtEnd, "").replace(blank, "\n\n").trim()
+        text = text.replace(unclosedStepAtEnd, "")
+        if (text.indexOf(STEP_MARK) >= 0) text = withStepBreaks(text)
+        return tidyBreaks(text.replace(blank, "\n\n").trim())
+    }
+
+    // Where words follow a tool step, until [clean] turns it into a break. The card mark's opening
+    // character, already kept out of the text; once the card marks are replaced, a lone one can
+    // only be this.
+    private const val STEP_MARK = '\uE000'
+
+    /**
+     * [text] with each [STEP_MARK] made an [AUTO_BREAK], except one inside code (a block or an
+     * inline span), where a step was only written as an example. Code is found in the text without
+     * the marks, so a mark right before a fence line cannot hide the fence.
+     */
+    private fun withStepBreaks(text: String): String {
+        val plain = StringBuilder(text.length)
+        val marks = mutableListOf<Int>() // positions in [plain]
+        for (c in text) if (c == STEP_MARK) marks += plain.length else plain.append(c)
+        val words = plain.toString()
+        val code = codeRanges(words)
+        val out = StringBuilder(words.length + marks.size * AUTO_BREAK.length)
+        var copied = 0
+        var block = 0
+        for (at in marks) {
+            while (block < code.size && code[block].last < at) block++
+            // Between two characters of the same code span or block.
+            val inCode = block < code.size && code[block].first < at
+            if (inCode) continue
+            out.append(words, copied, at).append(AUTO_BREAK)
+            copied = at
+        }
+        return out.append(words, copied, words.length).toString()
+    }
+
+    /**
+     * The code blocks and inline code spans of [text], in order, found in linear time: each run of
+     * backticks outside a block closes at the next run of the same length on its line (as the chat's
+     * Markdown renderer ends inline code at a line break), or is plain text.
+     */
+    private fun codeRanges(text: String): List<IntRange> {
+        if (text.indexOf('`') < 0 && !text.contains("~~~")) return emptyList()
+        val blocks = com.ai.assistance.operit.ui.common.markdown.markdownFenceRanges(text).sortedBy { it.first }
+        val runs = mutableListOf<IntRange>()
+        // Which line outside the code blocks each run is on: a run never pairs across a line or block.
+        val gaps = mutableListOf<Int>()
+        var line = 0
+        var i = 0
+        var b = 0
+        while (i < text.length) {
+            while (b < blocks.size && blocks[b].last < i) b++
+            if (b < blocks.size && blocks[b].first <= i) { i = blocks[b].last + 1; line++; continue }
+            if (text[i] != '`') { if (text[i] == '\n') line++; i++; continue }
+            var j = i
+            while (j < text.length && text[j] == '`') j++
+            runs += i until j
+            gaps += line
+            i = j
+        }
+        // For each run, the next run of the same length on the same line.
+        val next = IntArray(runs.size) { -1 }
+        var lastOfLength = HashMap<Int, Int>()
+        for (k in runs.indices.reversed()) {
+            // A new map, as clearing a large one keeps its size.
+            if (k + 1 < runs.size && gaps[k + 1] != gaps[k]) lastOfLength = HashMap()
+            val n = runs[k].last - runs[k].first + 1
+            lastOfLength[n]?.let { next[k] = it }
+            lastOfLength[n] = k
+        }
+        val out = blocks.toMutableList()
+        var k = 0
+        while (k < runs.size) {
+            val close = next[k]
+            if (close < 0) { k++; continue }
+            out += runs[k].first..runs[close].last
+            k = close + 1
+        }
+        return out.sortedBy { it.first }
+    }
+
+    /**
+     * [text] without message breaks that end up with nothing on one side, such as one put after a
+     * step before words that turned out to be only markup, before a step still being written, or
+     * between two cards moved out of the words. Without this a row could look visible while
+     * drawing no bubble, and a streaming reply would change text without changing what shows.
+     * Every other part, and each break kept, stays exactly as written.
+     */
+    internal fun tidyBreaks(text: String): String {
+        if (!text.contains("message_break", ignoreCase = true)) return text
+        val out = StringBuilder(text.length)
+        var from = 0
+        var pending: String? = null
+        fun part(end: Int): Boolean {
+            val words = text.substring(from, end)
+            if (words.isBlank()) return false
+            if (out.isNotEmpty()) pending?.let(out::append)
+            out.append(words)
+            return true
+        }
+        for (m in messageBreak.findAll(text)) {
+            val kept = part(m.range.first)
+            // Two breaks with nothing between are one; Orbit's own wins over the chat's.
+            val previous = pending
+            pending = if (!kept && previous != null && !previous.contains("auto", ignoreCase = true)) previous else m.value
+            from = m.range.last + 1
+        }
+        part(text.length)
+        return out.toString().trim()
     }
 
     // Where a tool, tool result or status tag starts: its name, whole.
@@ -791,14 +907,25 @@ object OrbitSpeech {
      * Orbit read, an old message) cannot hide the rest of the reply. A tool result carrying a card
      * leaves a mark for it in [cards]; the marks' own characters in the text itself are dropped.
      */
-    private fun withoutThinkingOrSteps(content: String, cards: MutableList<String>): String {
+    private fun withoutThinkingOrSteps(content: String, cards: MutableList<String>, splitSteps: Boolean): String {
         val marks = content.indexOf('\uE000') >= 0 || content.indexOf('\uE001') >= 0
         val out = StringBuilder()
         var whole = false
         // Where the card key comes next; a step without it holds no card and is not copied.
         var nextKey = -2
+        // Words after a tool step start a new bubble, as if Orbit had sent them as a new message.
+        var spoke = false
+        var stepped = false
         ChatUtils.visitOutsideThinking(content, object : ChatUtils.OutsideThinkingVisitor {
             override fun text(start: Int, end: Int) {
+                // A part that turns out to hold only markup cleaned away later is an empty bubble,
+                // which [bubbles] drops, so blank is the only check needed here.
+                val words = (start until end).any { !content[it].isWhitespace() }
+                if (stepped && words) {
+                    out.append(STEP_MARK)
+                    stepped = false
+                }
+                if (words) spoke = true
                 when {
                     marks -> for (i in start until end) {
                         val c = content[i]
@@ -811,6 +938,7 @@ object OrbitSpeech {
             }
 
             override fun toolBlock(start: Int, end: Int) {
+                if (spoke && splitSteps) stepped = true
                 if (nextKey != -1 && nextKey < start) {
                     nextKey = content.indexOf(com.ai.assistance.operit.features.orbit.OrbitChatCards.KEY, start)
                 }
@@ -871,7 +999,7 @@ object OrbitSpeech {
      * Cards Orbit's tools made during a turn are sent after its reply, like Muse: they move to the
      * last row of that turn, and while Orbit is still working ([busy]) the newest turn holds them back.
      */
-    fun history(messages: List<ChatMessage>, busy: Boolean = false): List<ChatMessage> {
+    fun history(messages: List<ChatMessage>, busy: Boolean = false, splitSteps: Boolean = true): List<ChatMessage> {
         val out = ArrayList<ChatMessage>(messages.size)
         val pending = mutableListOf<String>()
         var lastAi = -1
@@ -891,7 +1019,7 @@ object OrbitSpeech {
                 out += message
                 continue
             }
-            val (speech, cards) = splitCards(of(message.content))
+            val (speech, cards) = splitCards(of(message.content, splitSteps))
             // Each card remembers the message it came from, so it keeps its reactions once moved.
             // Writing the key writes the JSON again, so it is made inert again too.
             pending += cards.mapIndexed { i, card ->
@@ -911,7 +1039,8 @@ object OrbitSpeech {
     fun splitCards(shown: String): Pair<String, List<String>> {
         if (!shown.contains("```$ORBIT_CARD_FENCE\n")) return shown to emptyList()
         val cards = cardBlock.findAll(shown).map { it.groupValues[1] }.toList()
-        return shown.replace(cardBlock, "\n\n").replace(blank, "\n\n").trim() to cards
+        // Two cards a break stood between leave it with nothing on one side.
+        return tidyBreaks(shown.replace(cardBlock, "\n\n").replace(blank, "\n\n").trim()) to cards
     }
 
     /**
@@ -931,7 +1060,7 @@ object OrbitSpeech {
     )
 
     /** What Orbit has said so far in a reply still being written: finished words, no open steps. */
-    fun live(partial: String): String = splitCards(clean(partial)).first.replace(openTagAtEnd, "").trim()
+    fun live(partial: String): String = tidyBreaks(splitCards(clean(partial)).first.replace(openTagAtEnd, "").trim())
 
     /** Rows an Orbit chat does not draw: subagent cards, summaries, placeholders and empty replies. */
     fun hidden(message: ChatMessage): Boolean =

@@ -110,8 +110,10 @@ internal fun isLikelyAudioUrl(url: String): Boolean {
     return extension in MARKDOWN_AUDIO_EXTENSIONS
 }
 
-// A code fence line: its marker, and what follows it (a closing fence has nothing after).
-private val fenceLine = Regex("^ {0,3}(`{3,}|~{3,})(.*)$")
+// A code fence line: its marker, and what follows it (a closing fence has nothing after). The
+// rest takes every character of the line, a stray `\r` or U+2028 included, so a long marker is
+// never tried shorter and shorter.
+private val fenceLine = Regex("^ {0,3}(`{3,}|~{3,})(.*)$", RegexOption.DOT_MATCHES_ALL)
 // An inline code span: backticks, then anything up to as many backticks again.
 private val inlineCode = Regex("(`+)(?!`)[\\s\\S]*?(?<!`)\\1(?!`)")
 
