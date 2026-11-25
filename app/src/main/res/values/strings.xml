@@ -8803,8 +8803,10 @@
     <string name="screen_ocr_hint">用手指圈出想发送的地方</string>
     <string name="screen_ocr_reselect">重选</string>
     <string name="screen_ocr_add">添加</string>
-    <string name="model_catalog_auto_desc">添加模型后，会按模型目录自动填好协议、图片音视频能力和上下文上限，目录每周自动更新。「重新适配」会先更新目录，再按目录重设全部模型。</string>
+    <string name="model_catalog_auto_desc">添加模型后，会按模型目录自动填好协议、图片音视频能力和上下文上限。目录里还没有的新模型，会先自动更新目录再适配。「重新适配」会按最新目录重设全部模型。</string>
     <string name="model_catalog_readapt">重新适配</string>
+    <string name="model_catalog_adapting">模型目录里还没有这个模型，正在更新目录并适配…</string>
+    <string name="antigravity_models_tier_hint">同一个模型的不同档位已合成一项，发送时按当前对话的思考等级自动选择档位。</string>
     <string name="model_catalog_readapt_matched">已适配 %1$d 个模型</string>
     <string name="model_catalog_readapt_missing">%1$d 个目录里没有</string>
     <string name="model_catalog_readapt_partly_offline">有个目录没更新</string>
@@ -8915,6 +8917,8 @@
     <string name="provider_account_logged_in">账户已登录</string>
     <string name="provider_account_login">登录账户</string>
     <string name="provider_account_logout">退出登录</string>
+    <string name="provider_account_switch">切换账户</string>
+    <string name="provider_account_changed_reload">账户已切换，请重新加载模型列表</string>
     <string name="provider_account_login_failed">账户登录未完成</string>
     <string name="provider_account_completing">正在验证账户与服务权限</string>
     <string name="provider_oauth_client_settings">OAuth 客户端配置</string>

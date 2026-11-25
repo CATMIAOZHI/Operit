@@ -15,6 +15,8 @@ import com.ai.assistance.operit.data.preferences.ModelConfigManager
 import com.ai.assistance.operit.util.AppLogger
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -220,6 +222,39 @@ object ModelAutoConfig {
         }
         return Result(plan.protocols.keys.toList(), plan.images.toList())
     }
+
+    private const val NEW_MODEL_REFRESH_MS = 10L * 60 * 1000
+    private val newModelRefresh = Mutex()
+    private var newModelRefreshAt = 0L
+
+    /**
+     * Models just added to [configId] that the local catalogs do not know yet: downloads the newest
+     * catalogs (at most once every ten minutes) and fills those models in from them. Models the
+     * local catalogs know were filled in when the list was saved, so they need no download. A call
+     * made while a download runs waits for it and fills its own models from the result.
+     */
+    suspend fun adaptNewModels(context: Context, configId: String, models: Collection<String>): Result =
+        withContext(Dispatchers.IO) {
+            val app = context.applicationContext
+            val none = Result(emptyList(), emptyList())
+            val config = ModelConfigManager(app).getModelConfig(configId) ?: return@withContext none
+            val listed = getModelList(config.modelName).filter { it in models }
+            if (listed.isEmpty()) return@withContext none
+            // Matched and filled under the catalogs' lock: a refresh under way anywhere (one catalog
+            // new, the other not yet) is waited for, so the batch never reads a half-updated pair.
+            newModelRefresh.withLock {
+                val unknown = refreshing.withLock {
+                    listed - matched(config.apiProviderTypeId, config.apiEndpoint, listed, loadCatalogs(app))
+                }
+                val now = System.currentTimeMillis()
+                if (unknown.isNotEmpty() && now - newModelRefreshAt !in 0 until NEW_MODEL_REFRESH_MS) {
+                    newModelRefreshAt = now
+                    refreshCatalogs(app)
+                }
+            }
+            // The whole batch: one that became known after the save is filled in from the newest too.
+            refreshing.withLock { fill(app, configId, listed) }
+        }
 
     /**
      * Downloads the newest catalogs, then replaces what they know about every model of [configId]

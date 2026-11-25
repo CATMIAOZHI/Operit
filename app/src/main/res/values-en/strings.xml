@@ -8828,8 +8828,10 @@
     <string name="screen_ocr_hint">Circle the part you want to send</string>
     <string name="screen_ocr_reselect">Redo</string>
     <string name="screen_ocr_add">Add</string>
-    <string name="model_catalog_auto_desc">When you add models, their protocol, picture/audio/video input and context window are filled in from the model catalog, which updates itself every week. “Re-match” updates the catalog first, then resets every model from it.</string>
+    <string name="model_catalog_auto_desc">When you add models, their protocol, picture/audio/video input and context window are filled in from the model catalog. If a model is missing from the catalog, the app updates the catalog and tries again. “Re-match” resets every model from the newest catalog.</string>
     <string name="model_catalog_readapt">Re-match</string>
+    <string name="model_catalog_adapting">This model is not in the model catalog yet; updating the catalog and matching it…</string>
+    <string name="antigravity_models_tier_hint">Each model\'s tiers are shown as one entry; the tier is picked from the chat\'s thinking level when a message is sent.</string>
     <string name="model_catalog_readapt_matched">Models matched: %1$d</string>
     <string name="model_catalog_readapt_missing">not in catalog: %1$d</string>
     <string name="model_catalog_readapt_partly_offline">One catalog not updated</string>
@@ -8942,6 +8944,8 @@
     <string name="provider_account_logged_in">Account signed in</string>
     <string name="provider_account_login">Sign in</string>
     <string name="provider_account_logout">Sign out</string>
+    <string name="provider_account_switch">Switch account</string>
+    <string name="provider_account_changed_reload">The account changed. Load the model list again.</string>
     <string name="provider_account_login_failed">Account sign-in did not complete</string>
     <string name="provider_account_completing">Verifying account and service access</string>
     <string name="provider_oauth_client_settings">OAuth client settings</string>

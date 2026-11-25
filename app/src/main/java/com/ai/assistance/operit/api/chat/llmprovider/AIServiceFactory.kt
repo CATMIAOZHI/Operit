@@ -430,7 +430,7 @@ object AIServiceFactory {
                 val manager = com.ai.assistance.operit.data.api.ProviderAccountManager.get(context,
                     com.ai.assistance.operit.data.api.AccountProvider.ANTIGRAVITY)
                 GeminiProvider(
-                    apiEndpoint = com.ai.assistance.operit.data.api.ProviderAccountManager.CCA,
+                    apiEndpoint = com.ai.assistance.operit.data.api.ProviderAccountManager.CCA_DAILY,
                     apiKeyProvider = AccountApiKeyProvider(manager), modelName = config.modelName,
                     client = httpClient, providerType = providerType,
                     supportsVision = supportsVision, supportsAudio = supportsAudio, supportsVideo = supportsVideo,

@@ -277,6 +277,58 @@ internal fun quotaHttpClient(): OkHttpClient = OkHttpClient.Builder()
  * shows it: the first model of a family that reports a remaining share decides it.
  */
 internal object AntigravityQuota {
+    private val argon = Regex("(?:^|[^a-z0-9])argon(?:[^a-z0-9]|$)", RegexOption.IGNORE_CASE)
+    private val gemini = Regex("(?:^|[^a-z0-9])gemini(?:[^a-z0-9]|$)", RegexOption.IGNORE_CASE)
+    private val claude = Regex("(?:^|[^a-z0-9])(?:claude|3p|gpt|opus|sonnet)(?:[^a-z0-9]|$)", RegexOption.IGNORE_CASE)
+
+    /**
+     * The account's allowance from `retrieveUserQuotaSummary`, as opencodex reads it: groups of
+     * models (Gemini, Claude and other models, Gemini 4 Argon), each with a 5-hour and a weekly
+     * bucket. One row per family and window, Gemini first; empty when the body has none.
+     */
+    fun summaryWindows(body: JSONObject?): List<ProviderQuotaWindow> {
+        val groups = body?.optJSONArray("groups") ?: return emptyList()
+        val found = LinkedHashMap<Pair<String, QuotaWindow>, ProviderQuotaWindow>()
+        for (g in 0 until groups.length()) {
+            val group = groups.optJSONObject(g) ?: continue
+            val groupName = group.optString("displayName")
+            val groupText = "$groupName ${group.optString("description")}".lowercase()
+            // A description that only mentions Argon does not move a whole Gemini group.
+            // The shared third-party group names the models it covers (Claude and GPT-OSS).
+            val otherModels = if ("gpt" in groupText) "Claude / GPT" else "Claude"
+            val groupFamily = when {
+                argon.containsMatchIn(groupName) -> "Argon"
+                "gemini" in groupText -> "Gemini"
+                "claude" in groupText || "3p" in groupText || "gpt" in groupText -> otherModels
+                else -> null
+            }
+            val buckets = group.optJSONArray("buckets") ?: continue
+            for (b in 0 until buckets.length()) {
+                val bucket = buckets.optJSONObject(b) ?: continue
+                val id = "${bucket.optString("bucketId")} ${bucket.optString("displayName")}"
+                val text = "${bucket.optString("window")} $id".lowercase()
+                val window = when {
+                    "week" in text -> QuotaWindow.WEEKLY
+                    "5h" in text || "five" in text -> QuotaWindow.FIVE_HOUR
+                    else -> continue
+                }
+                val percent = usedPercent(bucket.optJSONObject("remaining") ?: bucket) ?: continue
+                val family = when {
+                    argon.containsMatchIn(id) -> "Argon"
+                    gemini.containsMatchIn(id) -> "Gemini"
+                    claude.containsMatchIn(id) -> otherModels
+                    else -> groupFamily ?: groupName.ifBlank { "Antigravity" }
+                }
+                found.putIfAbsent(family to window,
+                    ProviderQuotaWindow(window, percent, QuotaParsing.resetAt(bucket.opt("resetTime")), family))
+            }
+        }
+        val order = listOf("Gemini", "Claude", "Claude / GPT", "Argon")
+        return found.values.sortedWith(compareBy<ProviderQuotaWindow>(
+            { order.indexOf(it.label).let { i -> if (i < 0) order.size else i } }, { it.label }, { it.window.ordinal },
+        ))
+    }
+
     fun windows(body: JSONObject?): List<ProviderQuotaWindow> {
         val models = body?.optJSONObject("models") ?: return emptyList()
         val found = LinkedHashMap<String, ProviderQuotaWindow>()

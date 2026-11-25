@@ -68,9 +68,15 @@ enum class ApiProviderType {
         /** No longer offered or run; a configuration that still names one is asked to switch. */
         val isRetired: Boolean get() = this in RETIRED
 
+        /** Not offered for a new choice for now; a configuration that already uses one keeps working. */
+        val isOffered: Boolean get() = this !in RETIRED && this !in HIDDEN
+
         companion object {
                 /** Local model support that was removed: the on-device engines and the local model servers. */
                 val RETIRED: Set<ApiProviderType> = setOf(LMSTUDIO, OLLAMA, OPENAI_LOCAL, MNN, LLAMA_CPP)
+
+                /** Hidden from the provider lists for now (OpenCode Zen Free), not removed. */
+                val HIDDEN: Set<ApiProviderType> = setOf(OPENCODE_ZEN_FREE)
 
                 /** True for a retired provider id, whatever its case (a plugin cannot take one over). */
                 fun isRetiredId(providerTypeId: String): Boolean = fromProviderTypeId(providerTypeId)?.isRetired == true
