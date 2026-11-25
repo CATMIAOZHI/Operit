@@ -421,3 +421,42 @@ object OrbitWatchSources {
         return verdict(result.stdout, mask)
     }
 }
+
+/**
+ * How these failures read before Orbit stopped naming Operit. Runs saved then keep this text, so
+ * their "open settings" button and the stuck-notification check still recognize them.
+ */
+internal object OrbitWatchLegacyErrors {
+    val notificationsStuck = setOf(
+        "通知服务一直没连上，读不到通知。请在系统设置里把 Operit 的「通知使用权」关掉再打开一次。",
+        "The notification service still isn't connected, so notifications can't be read. In system settings, turn notification access for Operit off and on again.",
+    )
+    private val notificationsOff = setOf(
+        "Operit 还没有通知使用权，读不到通知。请在系统设置里给 Operit 打开「通知使用权」。",
+        "Operit has no notification access, so it cannot read notifications. Turn on notification access for Operit in system settings.",
+    )
+    private val sms = setOf(
+        "Operit 还没有读取短信的权限。请在系统设置的应用权限里给 Operit 打开「短信」。",
+        "Operit is not allowed to read text messages. Allow SMS for Operit in the app permissions in system settings.",
+    )
+    private val calendar = setOf(
+        "Operit 还没有读取日历的权限。请在系统设置的应用权限里给 Operit 打开「日历」。",
+        "Operit is not allowed to read the calendar. Allow Calendar for Operit in the app permissions in system settings.",
+    )
+    private val readingMissing = setOf(
+        "没装能配合 Operit 的「阅读」，看不到你在读的书",
+        "The Legado build that works with Operit is not installed, so the book you read cannot be seen",
+    )
+    val notifications = notificationsStuck + notificationsOff
+    val appPermissions = sms + calendar
+
+    /** A saved failure as shown now: an old one reads in today's words, the record itself stays. */
+    fun shown(context: Context, error: String): String = when (error) {
+        in notificationsStuck -> context.getString(R.string.orbit_watch_notifications_stuck)
+        in notificationsOff -> context.getString(R.string.orbit_watch_needs_notifications)
+        in sms -> context.getString(R.string.orbit_watch_needs_sms)
+        in calendar -> context.getString(R.string.orbit_watch_needs_calendar)
+        in readingMissing -> context.getString(R.string.orbit_watch_reading_not_installed)
+        else -> error
+    }
+}

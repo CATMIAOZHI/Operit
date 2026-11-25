@@ -213,13 +213,13 @@ internal object OrbitTaskBlock {
         return if (english) buildString {
             append("$MARKER Background tasks ran late\n")
             append("Some background tasks you set up could not start on time: from ${day.format(Date(episode.since))}, ")
-            append("Android did not let Operit start them in the background. They are running now that the user opened Operit. ")
+            append("Android did not let the app start them in the background. They are running now that the user opened Orbit. ")
             append("This is not a message from the user; they typed nothing and cannot see this note.\n")
             append("Late tasks:\n$listed\n")
             append("Why: ")
             append(when (episode.reason) {
-                KEEP_ALIVE_OFF -> "\"Background keep-alive\" is off in Operit's settings, so Android stops Operit from starting work in the background."
-                BATTERY_RESTRICTED -> "Background keep-alive is on, but battery optimization still restricts Operit (it is not exempt), so the background start was refused."
+                KEEP_ALIVE_OFF -> "\"Background keep-alive\" is off in the app's settings, so Android stops the app from starting work in the background."
+                BATTERY_RESTRICTED -> "Background keep-alive is on, but battery optimization still restricts the app (it is not exempt), so the background start was refused."
                 else -> "Background keep-alive and the battery exemption are both on, yet the system still refused, most likely the phone's own manager (auto-start or background limits)." +
                     if (detail.isNotEmpty()) " The system said: $detail" else ""
             })
@@ -230,18 +230,18 @@ internal object OrbitTaskBlock {
             append("1. Check the preferences and this chat first. If the user said not to bring this up (tasks held back, keep-alive, battery), call $nothing and stay quiet.\n")
             append("2. Otherwise tell them briefly, in your own words, which things ran late and why; do not alarm them. ")
             append("When the cause is keep-alive or battery optimization, call $card with permission=keep_alive so they can turn it on with one tap. ")
-            append("When it is the system, say they may need to allow Operit to auto-start and run in the background in the phone's manager app.\n")
+            append("When it is the system, say they may need to allow this app to auto-start and run in the background in the phone's manager app.\n")
             append("3. If they say not this time, leave it. If they say never mention it, write that into the \"Never tell me about\" section of PROACTIVE_PREFERENCES.md. Do not chase it or repeat it.\n")
             append("Do not mention hidden notes.")
         } else buildString {
             append("$MARKER 后台任务被延后\n")
-            append("你安排的一些后台任务没能按时开始：从 ${day.format(Date(episode.since))} 起，系统不让 Operit 在后台启动它们，")
-            append("刚才用户打开 Operit 后才开始补跑。这不是用户发的消息，用户没有打字，也看不到这段话。\n")
+            append("你安排的一些后台任务没能按时开始：从 ${day.format(Date(episode.since))} 起，系统不让 App 在后台启动它们，")
+            append("刚才用户打开 Orbit 后才开始补跑。这不是用户发的消息，用户没有打字，也看不到这段话。\n")
             append("延后的任务：\n$listed\n")
             append("原因：")
             append(when (episode.reason) {
-                KEEP_ALIVE_OFF -> "Operit 设置里的「后台保活」关着，系统不让 Operit 在后台启动任务。"
-                BATTERY_RESTRICTED -> "「后台保活」开着，但系统的电池优化还管着 Operit（没有允许“忽略电池优化”），后台启动被拦了。"
+                KEEP_ALIVE_OFF -> "设置里的「后台保活」关着，系统不让 App 在后台启动任务。"
+                BATTERY_RESTRICTED -> "「后台保活」开着，但系统的电池优化还管着这个 App（没有允许“忽略电池优化”），后台启动被拦了。"
                 else -> "后台保活和忽略电池优化都开着，系统还是拦了，多半是手机管家的自启动或后台限制。" +
                     if (detail.isNotEmpty()) "系统原话：$detail" else ""
             })
@@ -252,7 +252,7 @@ internal object OrbitTaskBlock {
             append("1. 先看偏好和聊天记录：用户说过不用提这类事（任务被拦、保活、电池），就调用 $nothing 保持安静。\n")
             append("2. 否则用你自己的话简短告诉用户哪些事晚了、为什么，别吓到他。")
             append("原因是保活或电池优化时，调用 $card（permission=keep_alive）放一张卡，让他一键打开；")
-            append("原因是系统限制时，告诉他可能要在手机管家里允许 Operit 自启动和后台运行。\n")
+            append("原因是系统限制时，告诉他可能要在手机管家里允许这个 App 自启动和后台运行。\n")
             append("3. 用户说这次不用，就算了；说以后都别提，就把它记进 PROACTIVE_PREFERENCES.md 的「别跟我说」。不要追问，不要重复提醒。\n")
             append("不要提“隐藏消息”这些内部说法。")
         }

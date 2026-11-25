@@ -35,6 +35,7 @@ internal object OrbitTools {
                         details = """
   - Use it when the user asks you to take a new name, or when you two agree on one.
   - The name is yours: the user cannot edit it directly, so only you can change it.
+  - The name cannot be Operit, Operit Ry or anything containing Operit; such a name is refused.
 """,
                     )
                 ),
@@ -60,6 +61,7 @@ internal object OrbitTools {
                         details = """
   - 用户请你换名字，或你们商量好一个名字时使用。
   - 名字属于你自己：用户不能直接修改，只能由你调用这个工具改。
+  - 名字不能是 Operit、Operit Ry 或任何带 Operit 的名字，这样的名字会被拒绝。
 """,
                     )
                 ),
@@ -252,6 +254,7 @@ internal object OrbitTools {
                 context.getString(R.string.orbit_tool_name_too_long, OrbitSettings.MAX_NAME_LENGTH)
             )
         }
+        if (OrbitSettings.isReservedName(name)) return failure(context.getString(R.string.orbit_tool_name_reserved))
         val preferences = OrbitPreferences.getInstance(context)
         return runBlockingIoPreservingToolRuntimeContext {
             val orbit =

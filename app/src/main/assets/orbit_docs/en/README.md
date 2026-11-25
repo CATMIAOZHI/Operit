@@ -44,7 +44,7 @@ Do not substitute one for another without evidence.
 
 ## Read-only reference
 
-Operit Team maintains these documents.
+Orbit Team maintains these documents.
 The app refreshes them from its built-in copies on every launch.
 They are read-only references: edits will be overwritten, so do not store memories, preferences, or task records here.
 

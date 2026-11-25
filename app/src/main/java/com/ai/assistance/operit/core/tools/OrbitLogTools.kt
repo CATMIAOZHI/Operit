@@ -29,7 +29,7 @@ internal object OrbitLogTools {
 
     val prompt = ToolPrompt(
         name = NAME,
-        description = "把应用日志或工具调用错误记录导出到你自己的 files/logs/。导出后你可以自己读来排查问题，也可以发给用户，让用户转给 Operit 开发者或附在 GitHub issue 里。",
+        description = "把应用日志或工具调用错误记录导出到你自己的 files/logs/。导出后你可以自己读来排查问题，也可以发给用户，让用户转给开发者。",
         parametersStructured = listOf(
             ToolParameterSchema("kind", description = "app：应用日志；tool_errors：工具调用错误记录", required = true),
             ToolParameterSchema("format", description = "text（默认）：存成 .txt，自己用 read_file_part 读；zip：完整不截断、体积小，适合发给用户", required = false),
@@ -234,7 +234,7 @@ internal object OrbitLogTools {
         val first = stamps.firstOrNull { it != null }
         val last = stamps.lastOrNull { it != null }
         val header = buildString {
-            append(if (kind == "app") "# Operit app log" else "# Operit tool errors (one JSON record per line)")
+            append(if (kind == "app") "# App log" else "# Tool errors (one JSON record per line)")
             append(" · exported ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())}")
             append(filter.describe(toolName))
             append("\n# $matched records matched")

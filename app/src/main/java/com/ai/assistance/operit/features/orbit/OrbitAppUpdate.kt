@@ -72,11 +72,11 @@ internal object OrbitAppUpdate {
         val fromEn = previous?.let { " from $it" }.orEmpty()
         // One key per update, so going back to a version told before is told again.
         OrbitNotices.once(app, orbit.id, "$KEY$version@$at",
-            "[orbit-app-updated] 应用已更新\n这是 App 发给你的说明，不是用户说的，用户也看不到。Operit ${fromZh}更新到了 $version。" +
+            "[orbit-app-updated] 应用已更新\n这是 App 发给你的说明，不是用户说的，用户也看不到。Orbit ${fromZh}更新到了 $version。" +
                 "这个版本的发布记录在 $releases ，用户问起这次更新时再去看，页面上没写的就如实说不清楚。" +
                 "不用主动告诉用户，现在调用 orbit_nothing_to_do 保持安静即可。",
             "[orbit-app-updated] The app was updated\nThis is a note from the app, not from the user; they cannot see it. " +
-                "Operit was updated$fromEn to $version. This version's release record is at $releases — look at it when " +
+                "Orbit was updated$fromEn to $version. This version's release record is at $releases — look at it when " +
                 "the user asks about the update, and say plainly when the page does not tell. No need to tell the user; " +
                 "call orbit_nothing_to_do now to stay quiet.")
     }
