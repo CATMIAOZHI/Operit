@@ -144,7 +144,7 @@ internal object OrbitTaskBlock {
                 if (lastTold > 0 && now - lastTold in 0 until QUIET_AFTER_TOLD_MS) return@mapNotNull null
                 // The same test the runner uses: a waiting event that is due (a quiet time or a busy
                 // chat moves it later), or a timed task whose next run has come; and a task that wakes
-                // Orbit in the chat also waits for the notification settings (quiet hours, digest time).
+                // Orbit in the chat also waits for the delivery rules (report interval, digest time).
                 val late = dao.activeTasks(orbit.id).mapNotNull { task ->
                     val event = dao.pendingEvent(task.id, task.version) ?: when {
                         task.scheduleMode == "EVENT" || task.kind == "GEOFENCE" -> null

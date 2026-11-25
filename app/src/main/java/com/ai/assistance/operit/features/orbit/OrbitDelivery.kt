@@ -19,24 +19,32 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 object OrbitDelivery {
+    /**
+     * The delivery rules every Orbit follows (no quiet hours, reports at least 15 minutes apart,
+     * digests at 9:00); only when this Orbit last reported is read from its stored row.
+     */
+    private suspend fun policyOf(context: Context, orbitId: String) =
+        com.ai.assistance.operit.data.model.OrbitNotificationEntity(
+            orbitId,
+            lastDeliveredAt = AppDatabase.getDatabase(context).orbitTaskDao().notificationPolicy(orbitId)?.lastDeliveredAt ?: 0,
+        )
+
     internal suspend fun dueAt(context: Context, item: com.ai.assistance.operit.data.model.OrbitDeliveryEntity, now: Long): Long {
         val dao = AppDatabase.getDatabase(context).orbitTaskDao()
-        val policy = dao.notificationPolicy(item.orbitId)
-            ?: com.ai.assistance.operit.data.model.OrbitNotificationEntity(item.orbitId)
+        val policy = policyOf(context, item.orbitId)
         return maxOf(item.retryAt,
             OrbitDeliveryPolicy.nextAllowed(if (item.messageId == null) policy else policy.copy(intervalMinutes = 0),
                 item.createdAt, item.messageId == null && dao.task(item.taskId)?.notifyPolicy == "DIGEST", now))
     }
 
     /**
-     * When Orbit may be woken for a due task, by the same notification settings its reports
-     * follow (quiet hours, interval, digest time). "Run now" is the user asking, so it goes at once.
+     * When Orbit may be woken for a due task, by the same rules its reports follow (interval,
+     * digest time). "Run now" is the user asking, so it goes at once.
      */
     internal suspend fun wakeAllowedAt(context: Context, task: com.ai.assistance.operit.data.model.OrbitTaskEntity,
         event: com.ai.assistance.operit.data.model.OrbitEventEntity, now: Long): Long {
         if (event.id.contains(":manual:")) return now
-        val policy = AppDatabase.getDatabase(context).orbitTaskDao().notificationPolicy(task.orbitId)
-            ?: com.ai.assistance.operit.data.model.OrbitNotificationEntity(task.orbitId)
+        val policy = policyOf(context, task.orbitId)
         return OrbitDeliveryPolicy.nextAllowed(policy, event.createdAt, task.notifyPolicy == "DIGEST", now,
             graceMs = DIGEST_WAKE_GRACE_MS)
     }

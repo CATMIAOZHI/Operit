@@ -6800,7 +6800,7 @@
     <!-- Global Display Settings Screen -->
     <string name="display_rainbow_border">全屏彩虹边框</string>
     <string name="display_top_hint">顶部提示条</string>
-    <string name="display_png_default">PNG（无损，默认）</string>
+    <string name="display_png_default">PNG（无损）</string>
     <string name="display_jpg_smaller">JPG（有损，体积更小）</string>
 
     <!-- Script Execution Dialog -->
@@ -7560,9 +7560,10 @@
     <string name="root_custom_su_command_description">仅在 KernelSU 模式生效，可填写 su 或 su --mount-master 等命令。</string>
     <string name="global_display_virtual_screen_bitrate">虚拟屏幕码率</string>
     <string name="global_display_status_indicator_style">自动化状态指示样式</string>
-    <string name="global_display_screenshot_settings">自动化截图设置</string>
+    <string name="global_display_screenshot_settings">截图</string>
+    <string name="global_display_virtual_screen_section">虚拟屏幕</string>
     <string name="global_display_image_format">图片格式</string>
-    <string name="global_display_image_quality">画质（仅对 JPG 生效）</string>
+    <string name="global_display_image_quality">JPG 画质</string>
     <string name="global_display_resolution_scale">分辨率缩放（发送前缩小截图）</string>
     <string name="visit_web_wait_time_title">Visit Web 网页访问等待时间</string>
     <string name="visit_web_wait_time_description">控制 visit_web 在提取页面内容后自动返回前的等待时长。设为 0 秒会立即返回。</string>
@@ -9424,8 +9425,6 @@
     <string name="attachment_edit_color_blue">蓝色</string>
     <string name="attachment_edit_color_white">白色</string>
     <string name="attachment_edit_color_black">黑色</string>
-    <string name="orbit_notifications_row">通知方式</string>
-    <string name="orbit_notifications_row_desc">安静时段和汇报频率</string>
     <string name="orbit_profile_open">查看 %1$s 的资料</string>
     <string name="orbit_profile_tab_activity">任务</string>
     <string name="orbit_profile_tab_approvals">批准</string>
@@ -9527,11 +9526,6 @@
     <string name="orbit_artifact_revise">继续修改</string>
     <string name="orbit_previous_page">上一页</string>
     <string name="orbit_next_page">下一页</string>
-    <string name="orbit_notifications_help">任务继续执行，汇报可以稍后一起送达。选择“每日汇总”的任务从次日可用的早上 9 点开始汇报。</string>
-    <string name="orbit_quiet_hours">夜间安静 · 22:00–08:00</string>
-    <string name="orbit_delivery_interval">两次主动汇报之间至少间隔</string>
-    <string name="orbit_delivery_immediate">立即汇报</string>
-    <string name="orbit_delivery_minutes">%1$d 分钟</string>
     <string name="orbit_goal_title">目标名称</string>
     <string name="orbit_goal_plan">计划与期望</string>
     <string name="orbit_revision_request">这次想修改什么？</string>
@@ -10052,6 +10046,7 @@
     <string name="orbit_approval_voice_local">本机模型：%1$s</string>
     <string name="orbit_approval_voice_current">现在用的：%1$s</string>
     <string name="orbit_approval_voice_create_note">新建后马上换用它</string>
+    <string name="orbit_approval_voice_create_keep_note">只保存，不换用：现在的声音不变</string>
     <string name="orbit_approval_voice_delete_note">删除后不能恢复</string>
     <string name="orbit_approval_voice_key_needed">同意时需要你填 API 密钥</string>
     <string name="orbit_approval_voice_key_promise">密钥直接存进语音配置，不会出现在聊天里，%1$s 也看不到。</string>
@@ -10079,7 +10074,7 @@
     <string name="orbit_text_settings_row">字体、字号、行距和段距</string>
     <string name="orbit_section_device">手机与终端</string>
     <string name="orbit_automation_settings_title">自动化与截图</string>
-    <string name="orbit_automation_settings_row">截图、虚拟屏幕、Root 执行方式、后台保活</string>
+    <string name="orbit_automation_settings_row">屏幕常亮、网页等待、虚拟屏幕、截图</string>
     <string name="orbit_backup_title">数据备份</string>
     <string name="orbit_backup_row">备份或恢复聊天记录、记忆、模型配置和数据库</string>
     <string name="orbit_about_row">版本、检查更新、更新日志和开源许可</string>
@@ -10106,7 +10101,7 @@
     <string name="orbit_voice_own_err_sample_changed">录音被改过了，请拒绝后让它重新申请</string>
     <string name="orbit_voice_own_err_key_gone">卡片上的 MiMo 密钥变了，请拒绝后让它重新申请</string>
     <string name="orbit_voice_own_err_profile_gone">这个语音配置被删了，请拒绝后让它重新申请</string>
-    <string name="orbit_voice_shared_note">下面的朗读和语音输入设置和 App 其他地方共用。</string>
+    <string name="orbit_voice_shared_note">下面的朗读设置和 App 其他地方共用，语音输入标签里的设置也一样。</string>
     <string name="orbit_chat_search_open">搜索聊天记录</string>
     <string name="orbit_find_title">搜索指定内容</string>
     <string name="orbit_find_date">日期</string>

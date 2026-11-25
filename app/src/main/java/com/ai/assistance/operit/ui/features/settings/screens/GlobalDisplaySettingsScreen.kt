@@ -68,10 +68,13 @@ fun GlobalDisplaySettingsScreen(
     val enableNavigationAnimation by displayPreferencesManager.enableNavigationAnimation.collectAsState(initial = true)
     val startWithNewChat by displayPreferencesManager.startWithNewChat.collectAsState(initial = false)
     val enableBackgroundKeepAlive by displayPreferencesManager.enableBackgroundKeepAlive.collectAsState(initial = true)
-    val enableExperimentalVirtualDisplay by displayPreferencesManager.enableExperimentalVirtualDisplay.collectAsState(initial = true)
+    // Null until read, so the rows that depend on these never show for a moment and then go.
+    val virtualDisplaySetting by displayPreferencesManager.enableExperimentalVirtualDisplay.collectAsState<Boolean, Boolean?>(initial = null)
+    val enableExperimentalVirtualDisplay = virtualDisplaySetting ?: true
     val hideRuntimeTaskView by displayPreferencesManager.hideRuntimeTaskView.collectAsState(initial = false)
     val globalUserName by displayPreferencesManager.globalUserName.collectAsState(initial = null)
-    val screenshotFormat by displayPreferencesManager.screenshotFormat.collectAsState(initial = "JPG")
+    val screenshotFormatSetting by displayPreferencesManager.screenshotFormat.collectAsState<String, String?>(initial = null)
+    val screenshotFormat = screenshotFormatSetting ?: "JPG"
     val screenshotQuality by displayPreferencesManager.screenshotQuality.collectAsState(initial = 75)
     val screenshotScalePercent by displayPreferencesManager.screenshotScalePercent.collectAsState(initial = 75)
     val visitWebWaitSeconds by displayPreferencesManager.visitWebWaitSeconds.collectAsState(initial = 5)
@@ -485,6 +488,8 @@ fun GlobalDisplaySettingsScreen(
                     backgroundColor = componentBackgroundColor
                 )
 
+                // Orbit keeps this switch on its phone permissions page, next to battery optimization.
+                if (!automationOnly) {
                 SettingsRowDivider(inset = false)
                 DisplayToggleItem(
                     title = stringResource(R.string.enable_background_keep_alive),
@@ -500,21 +505,7 @@ fun GlobalDisplaySettingsScreen(
                     },
                     backgroundColor = componentBackgroundColor
                 )
-
-                SettingsRowDivider(inset = false)
-                DisplayToggleItem(
-                    title = stringResource(R.string.experimental_virtual_display),
-                    subtitle = stringResource(R.string.experimental_virtual_display_description),
-                    checked = enableExperimentalVirtualDisplay,
-                    onCheckedChange = {
-                        scope.launch {
-                            displayPreferencesManager.saveDisplaySettings(
-                                enableExperimentalVirtualDisplay = it
-                            )
-                        }
-                    },
-                    backgroundColor = componentBackgroundColor
-                )
+                }
 
                 SettingsRowDivider(inset = false)
                 DisplayToggleItem(
@@ -531,6 +522,80 @@ fun GlobalDisplaySettingsScreen(
                     backgroundColor = componentBackgroundColor
                 )
 
+                SettingsRowDivider(inset = false)
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 10.dp)
+                ) {
+                    Text(
+                        text = stringResource(id = R.string.global_display_status_indicator_style),
+                        modifier = Modifier.fillMaxWidth().settingsSearchTarget(stringResource(R.string.global_display_status_indicator_style)),
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        FilterChip(
+                            selected = statusIndicatorStyle == StatusIndicatorStyle.FULLSCREEN_RAINBOW,
+                            onClick = {
+                                statusIndicatorStyle = StatusIndicatorStyle.FULLSCREEN_RAINBOW
+                                statusIndicatorPrefs.edit()
+                                    .putString(
+                                        "status_indicator_style",
+                                        StatusIndicatorStyle.FULLSCREEN_RAINBOW.name
+                                    )
+                                    .apply()
+                            },
+                            label = { Text(stringResource(R.string.display_rainbow_border)) }
+                        )
+                        FilterChip(
+                            selected = statusIndicatorStyle == StatusIndicatorStyle.TOP_BAR,
+                            onClick = {
+                                statusIndicatorStyle = StatusIndicatorStyle.TOP_BAR
+                                statusIndicatorPrefs.edit()
+                                    .putString(
+                                        "status_indicator_style",
+                                        StatusIndicatorStyle.TOP_BAR.name
+                                    )
+                                    .apply()
+                            },
+                            label = { Text(stringResource(R.string.display_top_hint)) }
+                        )
+                    }
+                }
+            }
+
+            // ======= 虚拟屏幕 =======
+            Spacer(modifier = Modifier.height(16.dp))
+            SettingsSectionTitle(
+                text = stringResource(id = R.string.global_display_virtual_screen_section),
+                icon = Icons.Default.Monitor
+            )
+            SettingsCard(backgroundColor = componentBackgroundColor, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)) {
+                // While the bitrate is hidden, a search for it lands on the switch that shows it.
+                val bitrateTitle = stringResource(R.string.global_display_virtual_screen_bitrate)
+                Box(if (virtualDisplaySetting == false) Modifier.settingsSearchTarget(bitrateTitle) else Modifier) {
+                DisplayToggleItem(
+                    title = stringResource(R.string.experimental_virtual_display),
+                    subtitle = stringResource(R.string.experimental_virtual_display_description),
+                    checked = enableExperimentalVirtualDisplay,
+                    onCheckedChange = {
+                        scope.launch {
+                            displayPreferencesManager.saveDisplaySettings(
+                                enableExperimentalVirtualDisplay = it
+                            )
+                        }
+                    },
+                    backgroundColor = componentBackgroundColor
+                )
+                }
+
+                // The bitrate only matters while the virtual screen is on.
+                if (virtualDisplaySetting == true) {
                 SettingsRowDivider(inset = false)
                 Column(
                     modifier = Modifier
@@ -595,70 +660,29 @@ fun GlobalDisplaySettingsScreen(
                         )
                     }
                 }
-
-                SettingsRowDivider(inset = false)
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 10.dp)
-                ) {
-                    Text(
-                        text = stringResource(id = R.string.global_display_status_indicator_style),
-                        modifier = Modifier.fillMaxWidth().settingsSearchTarget(stringResource(R.string.global_display_status_indicator_style)),
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        FilterChip(
-                            selected = statusIndicatorStyle == StatusIndicatorStyle.FULLSCREEN_RAINBOW,
-                            onClick = {
-                                statusIndicatorStyle = StatusIndicatorStyle.FULLSCREEN_RAINBOW
-                                statusIndicatorPrefs.edit()
-                                    .putString(
-                                        "status_indicator_style",
-                                        StatusIndicatorStyle.FULLSCREEN_RAINBOW.name
-                                    )
-                                    .apply()
-                            },
-                            label = { Text(stringResource(R.string.display_rainbow_border)) }
-                        )
-                        FilterChip(
-                            selected = statusIndicatorStyle == StatusIndicatorStyle.TOP_BAR,
-                            onClick = {
-                                statusIndicatorStyle = StatusIndicatorStyle.TOP_BAR
-                                statusIndicatorPrefs.edit()
-                                    .putString(
-                                        "status_indicator_style",
-                                        StatusIndicatorStyle.TOP_BAR.name
-                                    )
-                                    .apply()
-                            },
-                            label = { Text(stringResource(R.string.display_top_hint)) }
-                        )
-                    }
                 }
+            }
 
-                SettingsRowDivider(inset = false)
+            // ======= 截图 =======
+            Spacer(modifier = Modifier.height(16.dp))
+            SettingsSectionTitle(
+                text = stringResource(id = R.string.global_display_screenshot_settings),
+                icon = Icons.Default.Screenshot
+            )
+            SettingsCard(backgroundColor = componentBackgroundColor, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 8.dp, vertical = 10.dp)
                 ) {
-                    Text(
-                        text = stringResource(id = R.string.global_display_screenshot_settings),
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Medium
-                    )
 
-                    Spacer(modifier = Modifier.height(8.dp))
-
+                    val jpg = screenshotFormat.equals("JPG", ignoreCase = true) || screenshotFormat.equals("JPEG", ignoreCase = true)
+                    // While the quality is hidden (PNG), a search for it lands on the format.
+                    val qualityTitle = stringResource(R.string.global_display_image_quality)
                     Text(
                         text = stringResource(id = R.string.global_display_image_format),
-                        modifier = Modifier.fillMaxWidth().settingsSearchTarget(stringResource(R.string.global_display_image_format)),
+                        modifier = Modifier.fillMaxWidth().settingsSearchTarget(stringResource(R.string.global_display_image_format))
+                            .then(if (screenshotFormatSetting != null && !jpg) Modifier.settingsSearchTarget(qualityTitle) else Modifier),
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.Normal
                     )
@@ -688,6 +712,8 @@ fun GlobalDisplaySettingsScreen(
                         )
                     }
 
+                    // Only JPG has a quality to set.
+                    if (screenshotFormatSetting != null && jpg) {
                     Spacer(modifier = Modifier.height(12.dp))
 
                     Text(
@@ -712,6 +738,7 @@ fun GlobalDisplaySettingsScreen(
                             text = "${qualitySliderValue.roundToInt()}%",
                             style = MaterialTheme.typography.bodySmall
                         )
+                    }
                     }
 
                     Spacer(modifier = Modifier.height(12.dp))
@@ -741,8 +768,11 @@ fun GlobalDisplaySettingsScreen(
                     }
                 }
 
-                if (preferredPermissionLevel == AndroidPermissionLevel.ROOT) {
-                    SettingsRowDivider(inset = false)
+            }
+
+            if (preferredPermissionLevel == AndroidPermissionLevel.ROOT) {
+                Spacer(modifier = Modifier.height(16.dp))
+                SettingsCard(backgroundColor = componentBackgroundColor, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()

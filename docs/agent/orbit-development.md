@@ -86,7 +86,7 @@ or failed model turn is surfaced as interrupted even if it did not submit a fina
 
 Chat messages and delivery receipts commit atomically, so delivery retries do not duplicate
 messages. Notification IDs are stable, but system notifications are not a database transaction.
-Quiet hours, delivery spacing and per-task digests delay messages rather than task execution.
+Delivery spacing (fixed at 15 minutes between proactive reports) and per-task digests delay both messages and automatic task wakes; "run now" wakes at once. There are no quiet hours.
 
 ## Goals, artifacts and identity
 

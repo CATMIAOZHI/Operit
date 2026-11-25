@@ -151,9 +151,6 @@ import kotlinx.coroutines.withTimeoutOrNull
 /**
  * 清理复制文本中的内部标记，保留Markdown格式和纯文本内容
  */
-/** Room on the empty side of a message for the mark and "select to here" while picking. */
-private val ORBIT_PICK_SIDE = 76.dp
-
 internal fun cleanMessageContentForCopy(content: String): String {
     return content
         // Provider元数据必须保留在消息中供后续轮次使用，但不能暴露在复制内容中
@@ -260,10 +257,14 @@ fun ChatArea(
     bubbleAiBubbleLiquidGlass: Boolean = false,
     bubbleAiBubbleWaterGlass: Boolean = false,
     isMultiSelectMode: Boolean = false, // 是否处于多选模式
-    selectedMessageIndices: Set<Int> = emptySet(), // 已选中的消息索引集合
+    selectedTimestamps: Set<Long> = emptySet(), // 已选中的消息（按时间）
     onToggleMultiSelectMode: ((Int?) -> Unit)? = null, // 切换多选模式的回调，可传入要初始选中的消息索引
     onToggleMessageSelection: ((Int) -> Unit)? = null, // 切换消息选中状态的回调
     onSelectMessageRangeTo: ((Int) -> Unit)? = null, // Orbit：把已选消息到这条之间的都选上
+    // Orbit: the bubbles picked of a reply picked only in part, by message time; the reply and its
+    // bubble count go to [onPickMessagePieces] with the bubbles to pick (none: the reply is unpicked).
+    selectedMessagePieces: Map<Long, Set<Int>> = emptyMap(),
+    onPickMessagePieces: ((Int, Set<Int>, Int) -> Unit)? = null,
     horizontalPadding: Dp = 16.dp, // 水平内边距，可自定义
     bubbleUserImageStyle: BubbleImageStyleConfig? = null,
     bubbleAiImageStyle: BubbleImageStyleConfig? = null,
@@ -626,10 +627,12 @@ fun ChatArea(
                             isHidden = shouldHideLastAiMessage && renderIndex == messagesCount - 1,
                             isWriting = isLoading && renderIndex == lastAiIndex && lastAiWritable,
                             isMultiSelectMode = isMultiSelectMode,
-                            isSelected = selectedMessageIndices.contains(renderIndex),
+                            isSelected = renderedMessage.timestamp in selectedTimestamps,
                             onToggleSelection = { onToggleMessageSelection?.invoke(renderIndex) },
-                            onSelectRangeHere = if (onSelectMessageRangeTo != null && selectedMessageIndices.isNotEmpty() &&
-                                !selectedMessageIndices.contains(renderIndex)) {
+                            pickedPieces = selectedMessagePieces[renderedMessage.timestamp],
+                            onPickPieces = onPickMessagePieces?.let { pick -> { pieces, count -> pick(renderIndex, pieces, count) } },
+                            onSelectRangeHere = if (onSelectMessageRangeTo != null && selectedTimestamps.isNotEmpty() &&
+                                renderedMessage.timestamp !in selectedTimestamps) {
                                 { onSelectMessageRangeTo(renderIndex) }
                             } else null,
                             onToggleMultiSelectMode = onToggleMultiSelectMode,
@@ -860,6 +863,8 @@ private fun MessageItem(
     isMultiSelectMode: Boolean = false, // 是否处于多选模式
     isSelected: Boolean = false, // 是否被选中
     onToggleSelection: (() -> Unit)? = null, // 切换选中状态的回调
+    pickedPieces: Set<Int>? = null, // Orbit：只选了这条回复的这几个气泡；null 为整条
+    onPickPieces: ((Set<Int>, Int) -> Unit)? = null, // Orbit：改选这条回复的气泡（气泡集合、气泡总数）
     onSelectRangeHere: (() -> Unit)? = null, // 不为空时显示「选到这里」
     onToggleMultiSelectMode: ((Int?) -> Unit)? = null, // 切换多选模式的回调，可传入要初始选中的消息索引
     messageIndex: Int, // 消息索引，用于进入多选时自动选中
@@ -1056,6 +1061,34 @@ private fun MessageItem(
     }
     // A long press on a voice bar opens this same menu, for that recording; none while it takes no menu.
     val canOpenVoiceMenu = !isMultiSelectMode && isActionable
+    // An Orbit reply drawn as several bubbles: while picking, each bubble is picked on its own.
+    val english = !androidx.compose.ui.platform.LocalConfiguration.current.locales[0].language.startsWith("zh")
+    val orbitPieces = if (orbitMessageHost != null && message.sender == "ai" && chatStyle == ChatStyle.BUBBLE &&
+        message.contentStream == null && !message.displayMode.isCollaborationEvent) {
+        // Only read while picking; the bubble reads its own pieces for drawing.
+        remember(message.content, message.timestamp, english, isMultiSelectMode) {
+            if (isMultiSelectMode) OrbitSpeech.pieceList(message.content, message.timestamp, english, splitVoice = true) else null
+        }
+    } else null
+    // A reply still being written is picked whole: its bubbles may yet be saved as messages of their own.
+    // The reply being written is known by its time: another reply may land below it meanwhile.
+    val beingWritten = isWriting || LocalOrbitWritingTimestamp.current == message.timestamp
+    val pickByPiece = isMultiSelectMode && isActionable && !beingWritten && onPickPieces != null && (orbitPieces?.size ?: 0) > 1
+    val roomyPieces = remember(message.timestamp) { androidx.compose.runtime.mutableStateMapOf<Int, Boolean>() }
+    val rangeSpot = remember(roomyPieces, orbitPieces) {
+        androidx.compose.runtime.derivedStateOf { orbitPieces?.let { com.ai.assistance.operit.ui.features.chat.components.orbitRangeSpot(roomyPieces, it) } }
+    }
+    val piecePick = if (pickByPiece && orbitPieces != null) {
+        val now = if (isSelected) pickedPieces?.filterTo(HashSet()) { it in orbitPieces.indices } ?: orbitPieces.indices.toSet() else emptySet()
+        OrbitPiecePick(
+            picked = { it in now },
+            toggle = { i -> onPickPieces?.invoke(if (i in now) now - i else now + i, orbitPieces.size) },
+            rangeHere = onSelectRangeHere,
+            count = orbitPieces.size,
+            roomy = roomyPieces,
+            spot = rangeSpot,
+        )
+    } else null
     val voiceHost = remember(canOpenVoiceMenu) {
         val open: (String) -> Unit = { url -> latestOpenMenuFor.value { url } }
         com.ai.assistance.operit.ui.common.markdown.VoiceMenuHost(
@@ -1126,7 +1159,8 @@ private fun MessageItem(
         Modifier
             .alpha(if (isHidden) 0f else 1f)
             .then(
-                if (isSelected) {
+                // A reply picked bubble by bubble shows each picked bubble instead.
+                if (isSelected && !pickByPiece) {
                     Modifier.background(
                         color = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
                         shape = RoundedCornerShape(8.dp)
@@ -1136,6 +1170,8 @@ private fun MessageItem(
             .combinedClickable(
                 interactionSource = messageInteractionSource,
                 indication = null,
+                // Picked bubble by bubble, the row itself takes nothing; each bubble does.
+                enabled = !pickByPiece,
                 onClick = {
                     if (isMultiSelectMode && isActionable) {
                         onToggleSelection?.invoke()
@@ -1154,6 +1190,7 @@ private fun MessageItem(
             LocalOrbitMessageGestures provides
                 if (orbitLook) OrbitMessageGestures(quickLike, openMessageMenu) else null,
             LocalOrbitPieceActions provides pieceActions,
+            LocalOrbitPiecePick provides piecePick,
             com.ai.assistance.operit.ui.common.markdown.LocalVoiceMenu provides voiceHost,
             LocalOrbitUnsentMessages provides unsentMessages.takeUnless { isMultiSelectMode && orbitMessageHost != null },
         ) {
@@ -1169,7 +1206,7 @@ private fun MessageItem(
         // leaves empty (a bubble is at most 80% wide), so picking never narrows, rewraps or
         // stretches a message and the list stays where it was.
         Column(
-            if (orbitMessageHost != null && isMultiSelectMode && isActionable && !isHiddenUserMessage) {
+            if (orbitMessageHost != null && isMultiSelectMode && isActionable && !isHiddenUserMessage && !pickByPiece) {
                 Modifier.clearAndSetSemantics {}
             } else Modifier
         ) {
@@ -1254,8 +1291,9 @@ private fun MessageItem(
         }
 
         // Selecting in an Orbit chat: a tap anywhere on the row picks it, even on a card or a link
-        // that takes taps itself, and a round mark shows on the empty side of the bubble.
-        if (orbitMessageHost != null && isMultiSelectMode && isActionable && !isHiddenUserMessage) {
+        // that takes taps itself, and a round mark shows on the empty side of the bubble. A reply of
+        // several bubbles has a mark on each bubble instead (see OrbitPieceFrame).
+        if (orbitMessageHost != null && isMultiSelectMode && isActionable && !isHiddenUserMessage && !pickByPiece) {
             val selectLabel = stringResource(R.string.multi_select)
             // Read for the screen reader off the main thread; a long reply must not slow picking.
             val words by androidx.compose.runtime.produceState("", message.timestamp, message.content) {
@@ -1275,58 +1313,14 @@ private fun MessageItem(
                         contentDescription = words
                     },
             ) {
-                val tint = MaterialTheme.colorScheme.primary
                 val mark: @Composable () -> Unit = {
                     // Its own tap, so a finger on the mark picks this row even where the touch area of
                     // "select to here" below reaches up.
-                    Box(
-                        Modifier.size(22.dp)
-                            .clip(androidx.compose.foundation.shape.CircleShape)
-                            // The row already reads as one selectable item to a screen reader.
-                            .clearAndSetSemantics {}
-                            .clickable(
-                                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                                indication = null,
-                                onClickLabel = selectLabel,
-                            ) { onToggleSelection?.invoke() }
-                            .then(
-                                if (isSelected) Modifier.background(tint)
-                                // Filled, so it still shows where it lies over a wide card.
-                                else Modifier.background(MaterialTheme.colorScheme.surface)
-                                    .border(1.5.dp, MaterialTheme.colorScheme.outline, androidx.compose.foundation.shape.CircleShape)
-                            ),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        if (isSelected) {
-                            Icon(Icons.Default.Check, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onPrimary)
-                        }
-                    }
+                    OrbitPickMark(isSelected, selectLabel) { onToggleSelection?.invoke() }
                 }
                 // Like QQ: an unpicked row offers "select to here", which picks every message between.
                 // It sits under the mark, on the side the bubble leaves empty.
-                val rangeHere: @Composable () -> Unit = {
-                    onSelectRangeHere?.let { selectRange ->
-                        // Only its own pill takes the tap; a bigger touch area would reach the mark above.
-                        androidx.compose.runtime.CompositionLocalProvider(
-                            androidx.compose.material3.LocalMinimumInteractiveComponentSize provides androidx.compose.ui.unit.Dp.Unspecified,
-                        ) {
-                        Surface(
-                            onClick = selectRange,
-                            shape = RoundedCornerShape(50),
-                            color = MaterialTheme.colorScheme.secondaryContainer,
-                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                        ) {
-                            Text(
-                                stringResource(R.string.orbit_selection_range_here),
-                                style = MaterialTheme.typography.labelSmall,
-                                maxLines = 1,
-                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                                modifier = Modifier.widthIn(max = 64.dp).padding(horizontal = 6.dp, vertical = 4.dp),
-                            )
-                        }
-                        }
-                    }
-                }
+                val rangeHere: @Composable () -> Unit = { onSelectRangeHere?.let { OrbitSelectRangePill(it) } }
                 // A reply holding a card may use the whole row (cards are not held to 80%, as words
                 // are), so it leaves no empty side: there only the mark shows, in the top corner,
                 // over as little of the card as it can.
@@ -1645,7 +1639,15 @@ private fun MessageItem(
                         text = { Text(stringResource(R.string.multi_select), style = MaterialTheme.typography.bodyMedium) },
                         onClick = {
                             showContextMenu = false
+                            // Opened on one bubble of a reply of several: picking starts with that bubble.
+                            val opened = menuPiece ?: menuWords
                             onToggleMultiSelectMode?.invoke(messageIndex)
+                            if (opened != null && onPickPieces != null && !beingWritten &&
+                                message.sender == "ai" && chatStyle == ChatStyle.BUBBLE) {
+                                val pieces = OrbitSpeech.pieceList(message.content, message.timestamp, english, splitVoice = true)
+                                // The bubble's own place, so of two alike the one pressed is picked.
+                                if (pieces.size > 1 && pieces.getOrNull(opened.index) == opened) onPickPieces.invoke(setOf(opened.index), pieces.size)
+                            }
                         },
                         leadingIcon = {
                             Icon(Icons.Default.CheckCircle, null, Modifier.size(20.dp),

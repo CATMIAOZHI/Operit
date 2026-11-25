@@ -49,14 +49,70 @@ internal object OrbitMessageActions {
     fun shownText(context: Context, message: ChatMessage): String =
         if (message.sender == "ai") {
             OrbitSpeech.pieceList(message.content, message.timestamp, english(context))
-                .joinToString("\n\n") { it.summary ?: cleanMessageContentForCopy(it.content).trim() }
+                .joinToString("\n\n") { piece ->
+                    piece.summary ?: cleanMessageContentForCopy(
+                        OrbitSpeech.voiceAsWords(piece.content, context.getString(R.string.ai_message_quoted_voice)),
+                    ).trim()
+                }
                 .trim()
         } else {
             OrbitWork.userText(message.content, context.getString(R.string.orbit_user_sent_attachment)).trim()
         }
 
-    /** [message], or one card of it ([piece]), as a favorite of [host]'s chat. */
-    fun favoriteOf(context: Context, host: OrbitMessageHost, message: ChatMessage, piece: OrbitPiece? = null): OrbitFavorites.Favorite {
+    /**
+     * The bubbles [message] shows as, the way the chat on screen draws them (a voice line is one),
+     * in the language the chat draws them in, so the split the chat made is reused.
+     */
+    private fun bubblesOf(context: Context, message: ChatMessage): List<OrbitPiece> =
+        OrbitSpeech.pieceList(message.content, message.timestamp, english(context), splitVoice = true)
+
+    /** How many bubbles [message] shows as. */
+    fun bubbleCount(context: Context, message: ChatMessage): Int =
+        if (message.sender == "ai") bubblesOf(context, message).size.coerceAtLeast(1) else 1
+
+    /** [bubbleCount] when the chat has already split [message], else null; quick on the main thread. */
+    fun knownBubbleCount(context: Context, message: ChatMessage): Int? =
+        if (message.sender != "ai") 1
+        else OrbitSpeech.cachedPieceList(message.content, message.timestamp, english(context), splitVoice = true)
+            ?.size?.coerceAtLeast(1)
+
+    /**
+     * [message] with only its bubbles at [pieces] (places top to bottom), each still its own bubble;
+     * null when none of them is there any more (the reply changed since they were picked).
+     */
+    fun partOf(context: Context, message: ChatMessage, pieces: Set<Int>): ChatMessage? {
+        val kept = bubblesOf(context, message).filterIndexed { i, _ -> i in pieces }
+        if (kept.isEmpty()) return null
+        return message.copy(content = kept.joinToString("\n<message_break/>\n") { it.content }, contentStream = null)
+    }
+
+    /** The bubbles of [message], in order (see [bubblesOf]). */
+    fun bubbles(context: Context, message: ChatMessage): List<OrbitPiece> = bubblesOf(context, message)
+
+    /**
+     * [message], or one card of it ([piece]), as a favorite of [host]'s chat. [part]: only these
+     * bubbles of it were picked (see [partOf]); one card alone is kept as that card.
+     */
+    fun favoriteOf(
+        context: Context,
+        host: OrbitMessageHost,
+        message: ChatMessage,
+        piece: OrbitPiece? = null,
+        part: Set<Int>? = null,
+    ): OrbitFavorites.Favorite {
+        if (part != null && piece == null) {
+            val kept = bubblesOf(context, message).filterIndexed { i, _ -> i in part }
+            kept.singleOrNull()?.takeIf { it.summary != null }?.let { return favoriteOf(context, host, message, it) }
+            return OrbitFavorites.Favorite(
+                // Its own entry, so keeping another part of the same reply keeps that too.
+                id = OrbitFavorites.idOf(host.chatId, "${message.timestamp}#${part.sorted().joinToString(",")}"),
+                chatId = host.chatId,
+                timestamp = message.timestamp,
+                sender = message.sender,
+                text = partOf(context, message, part)?.let { shownText(context, it) }.orEmpty(),
+                savedAt = System.currentTimeMillis(),
+            )
+        }
         val card = piece?.takeIf { it.summary != null }
         // A card moved to the end of its reply still points at the message it came from.
         val time = card?.let { OrbitReactions.timeOf(it.key) }?.takeIf { it > 0 } ?: message.timestamp

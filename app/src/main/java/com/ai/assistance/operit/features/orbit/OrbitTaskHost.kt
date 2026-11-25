@@ -227,7 +227,7 @@ object OrbitTaskHost {
                 }
                 if (!again) break
             }
-            // What is still waiting (a busy chat, quiet hours) gets its wake-up. Reports change no
+            // What is still waiting (a busy chat, the report interval) gets its wake-up. Reports change no
             // watched place, so this only reads the tasks, without a location fix.
             if (reschedule) {
                 try {

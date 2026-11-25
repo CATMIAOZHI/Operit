@@ -54,7 +54,7 @@ Ordinary reminders should generally use `ALWAYS`, unless the user asks for a dif
 Monitoring can use `CHANGES` to report relevant changes; `DIGEST` is for consolidated delivery.
 When the user has not requested routine status updates, keep unchanged and non-actionable checks quiet.
 
-Delivery also follows current notification, quiet-hours, and digest policies.
+Delivery also follows the reporting interval (proactive reports at least 15 minutes apart) and the daily digest.
 Permission to execute a task is different from permission to show system notifications.
 Use `pending` to inspect matters waiting for the user, awaiting verification, or requiring failure handling.
 

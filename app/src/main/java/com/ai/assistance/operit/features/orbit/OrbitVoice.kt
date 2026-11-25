@@ -232,10 +232,11 @@ object OrbitVoice {
         return buildString {
             append("You have no cloud voice for voice messages or podcasts yet: the voice you read aloud with is $what")
             append(if (own) ", chosen for you alone. " else ", the app's read-aloud voice. ")
-            append("Recommend the user set up a cloud voice for you. If profiles lists a cloud tts profile, use request_own_voice with that profile. ")
-            append("Otherwise the easiest is Xiaomi MiMo, one key for both read aloud and voice input: design a voice from the user's ")
-            append("description and then request_own_voice, or request_create with kind=tts and service=MIMO_TTS (the user types the key on the card)")
-            append(if (own) ", which changes only the app's voice, so then also request_own_voice with follow_app=true. " else ". ")
+            append("Recommend the user set up a cloud voice for you. If profiles lists a cloud tts profile that is not MiMo, you may offer it ")
+            append("with request_own_voice. Otherwise the easiest is Xiaomi MiMo, one key for both read aloud and voice input. With MiMo the ")
+            append("user always picks the voice first: ask what voice they want, design 2-3 different samples, wait for them to choose, then ")
+            append("request_own_voice with the chosen sample (steps in docs/voice.md). If no MiMo key is saved, design fails: first ")
+            append("request_create with kind=tts, service=MIMO_TTS and switch=false so the user types the key on the card, then design. ")
             append("If the user would rather use the phone's built-in voice, put a request_settings card so they turn on ")
             append("\"发语音用手机自带的声音\" (Use the phone's own voice) there. Do not switch to the phone's voice yourself.")
         }
