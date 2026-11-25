@@ -202,11 +202,6 @@ private fun mergedModelNames(stored: String, base: String, mine: String): String
     return (mineList.filter { it !in removed } + added).joinToString(",")
 }
 
-private data class ProviderSelectionOption(
-    val id: String,
-    val displayName: String
-)
-
 @Composable
 @SuppressLint("MissingPermission")
 fun ModelApiSettingsSection(
@@ -1001,7 +996,8 @@ fun ModelApiSettingsSection(
 
                             showApiProviderDialog = false
                         },
-                        configManager = configManager
+                        configManager = configManager,
+                        selectedProviderId = selectedProviderTypeId,
                 )
             }
 
@@ -2321,7 +2317,7 @@ private fun getProviderDisplayName(providerTypeId: String, context: android.cont
     return ToolPkgAiProviderRegistry.get(providerTypeId)?.displayName ?: providerTypeId
 }
 
-private fun getProviderSelectionOptions(context: android.content.Context): List<ProviderSelectionOption> {
+internal fun getProviderSelectionOptions(context: android.content.Context): List<ProviderSelectionOption> {
     val builtInProviders =
         ApiProviderType.values().filter { it.isOffered }.map { provider ->
             ProviderSelectionOption(
@@ -2339,7 +2335,9 @@ private fun getProviderSelectionOptions(context: android.content.Context): List<
                 displayName = provider.displayName
             )
         }
-    return builtInProviders + toolPkgProviders
+    // One row per id: the picker cannot tell two apart, and this page reads a shared id as built in.
+    // Which one a chat request runs is unchanged.
+    return (builtInProviders + toolPkgProviders).distinctBy { normalizeProviderId(it.id) }
 }
 
 
@@ -2617,313 +2615,6 @@ internal fun SettingsSwitchRow(
 }
 
 
-
-@Composable
-private fun ApiProviderDialog(
-        onDismissRequest: () -> Unit,
-        onProviderSelected: (ProviderSelectionOption) -> Unit,
-        configManager: ModelConfigManager
-) {
-    val context = LocalContext.current
-    val providers = remember { getProviderSelectionOptions(context) }
-    var searchQuery by remember { mutableStateOf("") }
-    val scope = rememberCoroutineScope()
-    val collapsedProviderIds by configManager.collapsedProviderIdsFlow.collectAsState(initial = emptySet())
-    
-    // 投影为正常/折叠两组
-    val normalProviders: List<ProviderSelectionOption>
-    val collapsedProviders: List<ProviderSelectionOption>
-    if (searchQuery.isNotEmpty()) {
-        normalProviders = providers
-        collapsedProviders = emptyList()
-    } else {
-        val norm = mutableListOf<ProviderSelectionOption>()
-        val coll = mutableListOf<ProviderSelectionOption>()
-        for (p in providers) {
-            val normalized = normalizeProviderId(p.id)
-            if (normalized.isNotEmpty() && collapsedProviderIds.contains(normalized)) {
-                coll.add(p)
-            } else {
-                norm.add(p)
-            }
-        }
-        normalProviders = norm
-        collapsedProviders = coll
-    }
-    var collapsedExpanded by remember { mutableStateOf(false) }
-
-    val filteredProviders = remember(searchQuery, providers) {
-        if (searchQuery.isEmpty()) {
-            providers
-        } else {
-            providers.filter { provider ->
-                provider.displayName.contains(searchQuery, ignoreCase = true) ||
-                    provider.id.contains(searchQuery, ignoreCase = true)
-            }
-        }
-    }
-
-    val showSearchResults = searchQuery.isNotEmpty()
-
-    Dialog(onDismissRequest = onDismissRequest) {
-        SettingsDialogSurface(
-                modifier = Modifier.fillMaxWidth().heightIn(max = 520.dp),
-                shape = MaterialTheme.shapes.extraLarge,
-                tonalElevation = 6.dp,
-                shadowElevation = 8.dp
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                // 标题和搜索框
-                Text(
-                        stringResource(R.string.select_api_provider_title),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.padding(bottom = 12.dp)
-                )
-                
-                // 搜索框
-                OutlinedTextField(
-                        value = searchQuery,
-                        onValueChange = { searchQuery = it },
-                        placeholder = { Text(stringResource(R.string.search_providers), fontSize = 14.sp) },
-                        leadingIcon = {
-                            Icon(
-                                    Icons.Default.Search,
-                                    contentDescription = stringResource(R.string.search),
-                                    modifier = Modifier.size(18.dp)
-                            )
-                        },
-                        trailingIcon = {
-                            if (searchQuery.isNotEmpty()) {
-                                IconButton(
-                                        onClick = { searchQuery = "" },
-                                        modifier = Modifier.size(36.dp)
-                                ) {
-                                    Icon(
-                                            Icons.Default.Clear,
-                                            contentDescription = stringResource(R.string.clear),
-                                            modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                            }
-                        },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
-                        shape = RoundedCornerShape(8.dp)
-                )
-
-                // 提供商列表
-                androidx.compose.foundation.lazy.LazyColumn(
-                        modifier = Modifier.weight(1f)
-                ) {
-                    // 搜索结果或正常模式
-                    if (showSearchResults) {
-                        items(filteredProviders.size) { index ->
-                            val provider = filteredProviders[index]
-                            ProviderRow(
-                                provider = provider,
-                                onSelect = { onProviderSelected(provider) },
-                                collapsed = collapsedProviderIds.contains(normalizeProviderId(provider.id)),
-                                onToggleCollapse = {
-                                    scope.launch {
-                                        configManager.toggleProviderCollapsed(provider.id)
-                                    }
-                                },
-                            )
-                        }
-                    } else {
-                        // 正常提供商
-                        items(normalProviders.size) { index ->
-                            val provider = normalProviders[index]
-                            ProviderRow(
-                                provider = provider,
-                                onSelect = { onProviderSelected(provider) },
-                                collapsed = false,
-                                onToggleCollapse = {
-                                    scope.launch {
-                                        configManager.toggleProviderCollapsed(provider.id)
-                                    }
-                                },
-                            )
-                        }
-                        // 已折叠提供商分区
-                        if (collapsedProviders.isNotEmpty()) {
-                            item {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable { collapsedExpanded = !collapsedExpanded }
-                                        .padding(vertical = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Text(
-                                        stringResource(R.string.collapsed_providers_count, collapsedProviders.size),
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.weight(1f),
-                                    )
-                                    Icon(
-                                        imageVector = if (collapsedExpanded) Icons.Default.KeyboardArrowUp
-                                        else Icons.Default.KeyboardArrowDown,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(18.dp),
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                            }
-                            if (collapsedExpanded) {
-                                items(collapsedProviders.size) { index ->
-                                    val provider = collapsedProviders[index]
-                                    ProviderRow(
-                                        provider = provider,
-                                        onSelect = { onProviderSelected(provider) },
-                                        collapsed = true,
-                                        onToggleCollapse = {
-                                            scope.launch {
-                                                configManager.toggleProviderCollapsed(provider.id)
-                                            }
-                                        },
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                // 底部按钮
-                Row(
-                        modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
-                        horizontalArrangement = Arrangement.End
-                ) {
-                    TextButton(onClick = onDismissRequest) {
-                        Text(stringResource(R.string.cancel))
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ProviderRow(
-    provider: ProviderSelectionOption,
-    onSelect: () -> Unit,
-    collapsed: Boolean,
-    onToggleCollapse: () -> Unit,
-) {
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp)
-            .clickable { onSelect() },
-        shape = RoundedCornerShape(8.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-    ) {
-        Row(
-            modifier = Modifier.padding(vertical = 12.dp, horizontal = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            // 提供商图标（使用圆形背景色）
-            Box(
-                modifier = Modifier
-                    .size(32.dp)
-                    .background(
-                        getProviderColor(provider.id),
-                        CircleShape,
-                    ),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = provider.displayName.firstOrNull()?.toString() ?: "?",
-                    color = MaterialTheme.colorScheme.onPrimary,
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.Bold,
-                )
-            }
-
-            Spacer(modifier = Modifier.width(16.dp))
-
-            Text(
-                text = provider.displayName,
-                style = MaterialTheme.typography.bodyLarge,
-                modifier = Modifier.weight(1f),
-            )
-
-            // 折叠/取消折叠按钮
-            IconButton(
-                onClick = {
-                    onToggleCollapse()
-                },
-                modifier = Modifier.size(36.dp),
-            ) {
-                Text(
-                    text = if (collapsed) "+" else "\u2212", // × -> − for collapse icon
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-    }
-}
-
-// 为不同提供商生成不同的颜色
-@Composable
-private fun getProviderColor(providerTypeId: String): androidx.compose.ui.graphics.Color {
-    val provider = ApiProviderType.fromProviderTypeId(providerTypeId)
-    if (provider == null) {
-        val palette = listOf(
-            MaterialTheme.colorScheme.primary,
-            MaterialTheme.colorScheme.secondary,
-            MaterialTheme.colorScheme.tertiary,
-            MaterialTheme.colorScheme.primaryContainer,
-            MaterialTheme.colorScheme.secondaryContainer
-        )
-        val paletteIndex = kotlin.math.abs(providerTypeId.lowercase().hashCode()) % palette.size
-        return palette[paletteIndex]
-    }
-    return when (provider) {
-        ApiProviderType.OPENAI -> MaterialTheme.colorScheme.primary
-        ApiProviderType.OPENAI_RESPONSES -> MaterialTheme.colorScheme.primary.copy(alpha = 0.92f)
-        ApiProviderType.GROK_ACCOUNT,
-        ApiProviderType.COMMAND_CODE,
-        ApiProviderType.GOOGLE_ANTIGRAVITY,
-        ApiProviderType.CLAUDE_ACCOUNT,
-        ApiProviderType.OPENAI_CODEX -> MaterialTheme.colorScheme.primary.copy(alpha = 0.98f)
-        ApiProviderType.OPENAI_RESPONSES_GENERIC -> MaterialTheme.colorScheme.primary.copy(alpha = 0.88f)
-        ApiProviderType.OPENAI_GENERIC -> MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)
-        ApiProviderType.ANTHROPIC -> MaterialTheme.colorScheme.tertiary
-        ApiProviderType.ANTHROPIC_GENERIC -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.85f)
-        ApiProviderType.GOOGLE -> MaterialTheme.colorScheme.secondary
-        ApiProviderType.GEMINI_GENERIC -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.9f)
-        ApiProviderType.BAIDU -> MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
-        ApiProviderType.ALIYUN -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.8f)
-        ApiProviderType.XUNFEI -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.8f)
-        ApiProviderType.ZHIPU -> MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
-        ApiProviderType.BAICHUAN -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.7f)
-        ApiProviderType.MOONSHOT -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.7f)
-        ApiProviderType.MIMO -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.66f)
-        ApiProviderType.DEEPSEEK -> MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
-        ApiProviderType.MISTRAL -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.65f)
-        ApiProviderType.SILICONFLOW -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.6f)
-        ApiProviderType.IFLOW -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.55f)
-        ApiProviderType.OPENROUTER -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.6f)
-        ApiProviderType.OPENCODE_GO -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f)
-        ApiProviderType.OPENCODE_ZEN_FREE -> MaterialTheme.colorScheme.tertiary
-        ApiProviderType.FOUR_ROUTER -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.56f)
-        ApiProviderType.NOUS_PORTAL -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.52f)
-        ApiProviderType.INFINIAI -> MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
-        ApiProviderType.ALIPAY_BAILING -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.45f)
-        ApiProviderType.DOUBAO -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.4f)
-        ApiProviderType.NVIDIA -> MaterialTheme.colorScheme.primary.copy(alpha = 0.72f)
-        ApiProviderType.OLLAMA_CLOUD -> MaterialTheme.colorScheme.primary.copy(alpha = 0.9f)
-        ApiProviderType.PPINFRA -> MaterialTheme.colorScheme.primaryContainer
-        ApiProviderType.NOVITA -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.75f)
-        ApiProviderType.OTHER,
-        ApiProviderType.LMSTUDIO, ApiProviderType.OLLAMA, ApiProviderType.OPENAI_LOCAL,
-        ApiProviderType.MNN, ApiProviderType.LLAMA_CPP -> MaterialTheme.colorScheme.surfaceVariant
-    }
-}
 
 /**
  * One short line on a re-match: how many models were set, missing or kept as they were (changed
