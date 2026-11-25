@@ -27,7 +27,6 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Login
-import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -219,10 +218,12 @@ fun ModelApiSettingsSection(
     val context = LocalContext.current
     val resources = LocalResources.current
     val scope = rememberCoroutineScope()
-    val codexLogoutSuccessText = stringResource(R.string.codex_logout_success)
+    val codexAccountRemovedText = stringResource(R.string.provider_account_removed)
     val codexLoginSuccessText = stringResource(R.string.codex_login_success)
     val codexAuthManager = remember { CodexAuthManager.getInstance(context) }
     val codexAuthState by codexAuthManager.authState.collectAsState()
+    val codexAccounts by codexAuthManager.accounts.collectAsState()
+    var codexRemoving by remember { mutableStateOf(false) }
     val persistedCodexUsage by codexAuthManager.usageSnapshotFlow.collectAsState(initial = null)
     var showCodexLoginDialog by remember(config.id) { mutableStateOf(false) }
     var showCodexDeviceLoginDialog by remember(config.id) { mutableStateOf(false) }
@@ -268,7 +269,11 @@ fun ModelApiSettingsSection(
         ?.takeIf { it.accountId == codexAuthState?.accountId }
         ?.usage
 
+    // A probe still running belongs to the account before; its result and spinner are dropped.
+    var codexUsageRequest by remember { mutableLongStateOf(0L) }
     LaunchedEffect(codexAuthState?.accountId) {
+        codexUsageRequest++
+        codexUsageLoading = false
         codexUsageError = false
     }
 
@@ -281,6 +286,7 @@ fun ModelApiSettingsSection(
 
     fun refreshCodexUsage() {
         if (!isCodexProvider || codexAuthState == null || codexUsageLoading) return
+        val request = ++codexUsageRequest
         scope.launch {
             codexUsageLoading = true
             codexUsageError = false
@@ -288,6 +294,7 @@ fun ModelApiSettingsSection(
             result.exceptionOrNull()?.let { error ->
                 AppLogger.e(TAG, "获取 Codex 额度失败", error)
             }
+            if (request != codexUsageRequest) return@launch
             codexUsageError = result.isFailure
             codexUsageLoading = false
         }
@@ -811,15 +818,33 @@ fun ModelApiSettingsSection(
     LaunchedEffect(config.id, selectedProviderTypeId) {
         modelFetchGeneration++
     }
+    // A model list on screen belongs to the account it was asked for; when the account in use
+    // changes (picked, or moved on by a chat after a refusal), it goes.
+    val shownAccountKey = if (isCodexProvider) codexAuthState?.accountId else browserAccountState?.identity
+    var listedAccountKey by remember(config.id) { mutableStateOf(shownAccountKey) }
+    LaunchedEffect(shownAccountKey) {
+        if (listedAccountKey != null && listedAccountKey != shownAccountKey) {
+            showModelsDialog = false
+            modelsList = emptyList()
+        }
+        listedAccountKey = shownAccountKey
+    }
+    // The signed-in account a model list is asked for: a list from another account is not shown.
+    fun currentAccountKey(wasCodexProvider: Boolean): String? =
+        if (wasCodexProvider) codexAuthManager.currentAccountId()
+        else browserAccountManager?.account?.value?.identity
     fun isCurrentModelRequest(
         selection: Pair<String, String>,
         generation: Int,
-        codexAccountId: String?,
+        accountKey: String?,
         wasCodexProvider: Boolean,
     ): Boolean =
         selection == currentModelSelection &&
             generation == modelFetchGeneration &&
-            (!wasCodexProvider || codexAccountId == codexAuthManager.currentAccountId())
+            accountKey == currentAccountKey(wasCodexProvider)
+    // The spinner belongs to the request still running, whichever account answered it.
+    fun isCurrentModelLoad(selection: Pair<String, String>, generation: Int): Boolean =
+        selection == currentModelSelection && generation == modelFetchGeneration
 
     // 检查是否未填写API密钥（仅用于UI显示）
     val isUsingDefaultApiKey = apiKeyInput.isBlank()
@@ -994,7 +1019,16 @@ fun ModelApiSettingsSection(
                     )
                 )
             } else if (browserAccountType != null) {
-                ProviderAccountSettings(browserAccountType) {
+                ProviderAccountSettings(
+                    browserAccountType,
+                    // The model list on screen belongs to the account before (see the account effect).
+                    onActiveAccountChanged = {
+                        modelFetchGeneration++
+                        isLoadingModels = false
+                        modelsList = emptyList()
+                        showModelsDialog = false
+                    },
+                ) {
                     // The model list on screen, or one still loading, belongs to the account before.
                     modelFetchGeneration++
                     isLoadingModels = false
@@ -1005,6 +1039,8 @@ fun ModelApiSettingsSection(
             } else if (isCodexProvider) {
                 CodexAuthSettingsBlock(
                      authState = codexAuthState,
+                     accounts = codexAccounts,
+                     accountsBusy = codexRemoving,
                      usage = codexUsage,
                      usageLoading = codexUsageLoading,
                      usageError = codexUsageError,
@@ -1012,17 +1048,33 @@ fun ModelApiSettingsSection(
                      onLogin = { showCodexLoginDialog = true },
                      onDeviceLogin = { showCodexDeviceLoginDialog = true },
                       onRefreshUsage = ::refreshCodexUsage,
-                      onLogout = {
+                      onUse = { accountId ->
                           scope.launch {
                               modelFetchGeneration++
                               isLoadingModels = false
-                              codexAuthManager.logout()
+                              codexAuthManager.setActive(accountId)
+                              modelsList = emptyList()
+                              showModelsDialog = false
+                              modelLoadError = null
+                              codexUsageError = false
+                          }
+                      },
+                      onRemove = { accountId ->
+                          codexRemoving = true
+                          scope.launch {
+                              modelFetchGeneration++
+                              isLoadingModels = false
+                              try {
+                                  codexAuthManager.removeAccount(accountId)
+                              } finally {
+                                  codexRemoving = false
+                              }
                              modelsList = emptyList()
                              showModelsDialog = false
                              modelLoadError = null
                              codexUsageError = false
                              EnhancedAIService.refreshAllServices(configManager.appContext)
-                             showNotification(codexLogoutSuccessText)
+                             showNotification(codexAccountRemovedText)
                          }
                     },
                 )
@@ -1210,7 +1262,7 @@ fun ModelApiSettingsSection(
                             val requestGeneration = ++modelFetchGeneration
                             val wasCodexProvider = isCodexProvider
                             val requestAccountId =
-                                if (wasCodexProvider) codexAuthManager.currentAccountId() else null
+                                currentAccountKey(wasCodexProvider)
                             scope.launch {
                                 if (canRequestModelList) {
                                     isLoadingModels = true
@@ -1254,13 +1306,7 @@ fun ModelApiSettingsSection(
                                         modelLoadError = getModelsFailedText.format(e.message ?: "")
                                         showNotification(modelLoadError ?: getModelsFailedText.format(""))
                                     } finally {
-                                        if (isCurrentModelRequest(
-                                                requestSelection,
-                                                requestGeneration,
-                                                requestAccountId,
-                                                wasCodexProvider,
-                                            )
-                                        ) isLoadingModels = false
+                                        if (isCurrentModelLoad(requestSelection, requestGeneration)) isLoadingModels = false
                                         AppLogger.d(TAG, "模型列表获取流程完成")
                                     }
                                 } else if (!isToolPkgProvider && isUsingDefaultApiKey && providerRequiresApiKey) {
@@ -1678,13 +1724,7 @@ fun ModelApiSettingsSection(
                             )
                         }
                     } finally {
-                        if (isCurrentModelRequest(
-                                requestSelection,
-                                requestGeneration,
-                                state.accountId,
-                                wasCodexProvider = true,
-                            )
-                        ) isLoadingModels = false
+                        if (isCurrentModelLoad(requestSelection, requestGeneration)) isLoadingModels = false
                     }
                 }
     }
@@ -1757,7 +1797,7 @@ fun ModelApiSettingsSection(
                                     val requestGeneration = ++modelFetchGeneration
                                     val wasCodexProvider = isCodexProvider
                                     val requestAccountId =
-                                        if (wasCodexProvider) codexAuthManager.currentAccountId() else null
+                                        currentAccountKey(wasCodexProvider)
                                     scope.launch {
                                         if (canRequestModelList) {
                                             isLoadingModels = true
@@ -1789,13 +1829,7 @@ fun ModelApiSettingsSection(
                                                 modelLoadError = refreshModelsListFailedText.format(errorMsg)
                                                 showNotification(modelLoadError ?: refreshModelsFailedText)
                                             } finally {
-                                                if (isCurrentModelRequest(
-                                                        requestSelection,
-                                                        requestGeneration,
-                                                        requestAccountId,
-                                                        wasCodexProvider,
-                                                    )
-                                                ) isLoadingModels = false
+                                                if (isCurrentModelLoad(requestSelection, requestGeneration)) isLoadingModels = false
                                             }
                                         }
                                     }
@@ -2023,6 +2057,8 @@ fun ModelApiSettingsSection(
 @Composable
 private fun CodexAuthSettingsBlock(
     authState: CodexAuthState?,
+    accounts: List<CodexAuthState>,
+    accountsBusy: Boolean,
     usage: CodexUsageSnapshot?,
     usageLoading: Boolean,
     usageError: Boolean,
@@ -2030,7 +2066,8 @@ private fun CodexAuthSettingsBlock(
     onLogin: () -> Unit,
     onDeviceLogin: () -> Unit,
     onRefreshUsage: () -> Unit,
-    onLogout: () -> Unit,
+    onUse: (String) -> Unit,
+    onRemove: (String) -> Unit,
 ) {
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -2056,12 +2093,18 @@ private fun CodexAuthSettingsBlock(
                 Text(stringResource(R.string.codex_device_login_action))
             }
         } else {
-            Text(
-                text = authState.email?.let { email ->
-                    stringResource(R.string.codex_auth_account, email)
-                } ?: stringResource(R.string.codex_auth_account, authState.accountId),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            com.ai.assistance.operit.ui.features.codex.AccountPoolList(
+                rows = accounts.map { state ->
+                    com.ai.assistance.operit.ui.features.codex.AccountPoolRow(
+                        id = state.accountId,
+                        label = state.email?.takeIf { it.isNotBlank() } ?: state.accountId,
+                        inUse = state.accountId == authState.accountId,
+                        needsLogin = state.needsLogin,
+                    )
+                },
+                enabled = !accountsBusy,
+                onUse = onUse,
+                onRemove = onRemove,
             )
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -2101,10 +2144,16 @@ private fun CodexAuthSettingsBlock(
                 nowEpochSeconds = usageNowEpochSeconds,
             )
 
-            OutlinedButton(onClick = onLogout, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Default.Logout, contentDescription = null)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(stringResource(R.string.codex_logout_action))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                OutlinedButton(onClick = onLogin, modifier = Modifier.weight(1f)) {
+                    Text(stringResource(R.string.provider_account_add))
+                }
+                OutlinedButton(onClick = onDeviceLogin, modifier = Modifier.weight(1f)) {
+                    Text(stringResource(R.string.codex_device_add_action))
+                }
             }
         }
     }

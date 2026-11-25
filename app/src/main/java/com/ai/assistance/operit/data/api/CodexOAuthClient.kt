@@ -30,6 +30,8 @@ data class CodexJwtClaims(
     val residency: String?,
     val email: String?,
     val expiresAtMillis: Long?,
+    /** The token issuer's stable id for the signed-in person (`sub`). */
+    val subject: String? = null,
 )
 
 data class CodexOAuthTokenResponse(
@@ -145,6 +147,7 @@ object CodexOAuthProtocol {
             residency = residency,
             email = email,
             expiresAtMillis = expiresAtMillis,
+            subject = json.optString("sub", "").takeIf { it.isNotBlank() },
         )
     }
 

@@ -24,14 +24,22 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 
 @Composable
-fun ProviderAccountSettings(provider: AccountProvider, onAccountChanged: () -> Unit) {
+fun ProviderAccountSettings(
+    provider: AccountProvider,
+    /** Picking another signed-in account: requests read the account as they go, so nothing else must change. */
+    onActiveAccountChanged: () -> Unit = {},
+    onAccountChanged: () -> Unit,
+) {
+    val onPicked = onActiveAccountChanged
     val context = LocalContext.current
     val manager = remember(provider) { ProviderAccountManager.get(context, provider) }
     if (provider == AccountProvider.COMMAND_CODE) {
-        CommandCodeAccountSettings(manager, onAccountChanged)
+        CommandCodeAccountSettings(manager, onPicked, onAccountChanged)
         return
     }
     val account by manager.account.collectAsState()
+    val accounts by manager.accounts.collectAsState()
+    var removing by remember(provider) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     var login by remember(provider) { mutableStateOf(false) }
     var showClientConfig by remember(provider) { mutableStateOf(false) }
@@ -86,9 +94,19 @@ fun ProviderAccountSettings(provider: AccountProvider, onAccountChanged: () -> U
         if (hasQuotaProbe && account != null) refreshQuota()
     }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(stringResource(if (account == null) R.string.provider_account_not_logged_in
-            else R.string.provider_account_logged_in), style = MaterialTheme.typography.bodyMedium)
-        account?.email?.takeIf { it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+        if (accounts.isEmpty()) {
+            Text(stringResource(R.string.provider_account_not_logged_in), style = MaterialTheme.typography.bodyMedium)
+        } else {
+            AccountPoolList(
+                rows = accountPoolRows(accounts, account?.identity),
+                enabled = !removing,
+                onUse = { id -> scope.launch { manager.setActive(id); onPicked() } },
+                onRemove = { id ->
+                    removing = true
+                    scope.launch { try { manager.remove(id); onAccountChanged() } finally { removing = false } }
+                },
+            )
+        }
         if (provider == AccountProvider.ANTIGRAVITY) {
             TextButton(onClick = { showClientConfig = !showClientConfig }) {
                 Text(stringResource(R.string.provider_oauth_client_settings))
@@ -104,18 +122,15 @@ fun ProviderAccountSettings(provider: AccountProvider, onAccountChanged: () -> U
         }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            // Signed in, logging in again only switches the account, so it is not the main action.
-            if (account == null) {
+            // Signed in, another login adds one more account, so it is not the main action.
+            if (accounts.isEmpty()) {
                 Button(onClick = { error = null; login = true }) {
                     Text(stringResource(R.string.provider_account_login))
                 }
             } else {
                 OutlinedButton(onClick = { error = null; login = true }) {
-                    Text(stringResource(R.string.provider_account_switch))
+                    Text(stringResource(R.string.provider_account_add))
                 }
-                TextButton(onClick = {
-                    scope.launch { manager.logout(); onAccountChanged() }
-                }) { Text(stringResource(R.string.provider_account_logout)) }
             }
         }
         if (hasQuotaProbe && account != null) {

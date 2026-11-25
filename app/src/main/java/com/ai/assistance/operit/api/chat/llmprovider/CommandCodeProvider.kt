@@ -30,6 +30,24 @@ class CommandCodeProvider(
 ) {
     override val requiresStreamingResponse = true
     private val fallbackSession = UUID.randomUUID().toString()
+
+    /**
+     * A key refused with 401 was already set aside by the account pool: the next signed-in account
+     * answers at once, and with none left the chat says the sign-in expired instead of retrying.
+     */
+    override suspend fun recoverUnauthorizedAuthentication(
+        request: Request, status: Int, body: String, recoveryAllowed: Boolean,
+    ): Boolean {
+        val next = manager.account.value
+        if (next == null || next.needsLogin) {
+            throw com.ai.assistance.operit.data.api.AccountLoginExpiredException(manager.loginExpiredMessage())
+        }
+        return recoveryAllowed
+    }
+
+    // Keyed by the key sent, so each account gets one immediate retry.
+    override fun authenticationAccount(request: Request): String? =
+        request.header("Authorization")?.removePrefix("Bearer ")?.trim()
     override suspend fun applyAuthenticationHeaders(builder: Request.Builder, currentApiKey: String) {
         super.applyAuthenticationHeaders(builder, currentApiKey)
         val session = currentCoroutineContext()[OpenCodeSessionContext]

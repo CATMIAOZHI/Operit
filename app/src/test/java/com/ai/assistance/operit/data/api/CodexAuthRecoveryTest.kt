@@ -84,6 +84,24 @@ class CodexAuthRecoveryTest {
         assertEquals(1, attempts)
     }
 
+    @Test fun revokedRefreshNamesTheAccountItBelongsTo() = runBlocking {
+        val auth = CodexAuthRecovery({ initial }, { throw CodexRefreshRejectedException(400, true) }, messages, { 0L })
+        val failure = runCatching { auth.afterUnauthorized(auth.credentials()) }.exceptionOrNull()
+        assertEquals("account-a", (failure as? CodexLoginRequiredException)?.accountId)
+    }
+
+    @Test fun poolMovingToAnotherAccountLetsTheRequestContinueWithIt() = runBlocking {
+        var saved = initial
+        var refreshes = 0
+        val auth = CodexAuthRecovery({ saved }, { refreshes++; it }, messages, { 0L })
+        val old = auth.credentials()
+        saved = initial.copy(accessToken = "fake-access-b", accountId = "account-b")
+        val recovered = auth.afterUnauthorized(old)
+        assertEquals("account-b", recovered.state.accountId)
+        assertEquals(old.generation, recovered.generation)
+        assertEquals(0, refreshes)
+    }
+
     @Test fun cancellationStillSavesRotatedCredentialsAndReleasesLock() = runBlocking {
         var saved = initial
         val entered = CompletableDeferred<Unit>()

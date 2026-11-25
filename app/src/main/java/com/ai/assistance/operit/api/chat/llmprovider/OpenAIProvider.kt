@@ -603,6 +603,9 @@ open class OpenAIProvider(
 
     protected open fun checkAuthenticationContinuity(previous: Request?, current: Request) {}
 
+    /** The signed-in account [request] went out with, when the provider has a pool of them. */
+    protected open fun authenticationAccount(request: Request): String? = null
+
     /** The endpoint and credential headers of a request: equal ones answer for the same account. */
     private fun credentialsOf(request: Request): Pair<okhttp3.HttpUrl, List<List<String>>> =
         request.url to CREDENTIAL_HEADERS.map { request.headers.values(it) }
@@ -2209,13 +2212,21 @@ open class OpenAIProvider(
         checkCancellation(context, exception)
 
         if (exception is CommandCodeProtocolException || exception is RepetitionTruncationException ||
-            exception is com.ai.assistance.operit.data.api.CodexAuthenticationException) throw exception
+            exception is com.ai.assistance.operit.data.api.CodexAuthenticationException ||
+            exception is com.ai.assistance.operit.data.api.AccountLoginExpiredException) throw exception
 
         val errorText = resolveRetryErrorText(context, exception)
 
         // The same request would be rejected as too long again; the caller compacts or shortens it.
         if (!enableRetry || com.ai.assistance.operit.api.chat.compaction.ContextCompaction.isContextOverflow(exception)) {
             throw IOException(errorText, exception)
+        }
+
+        // A server refused the account and the pool moved to one this request has not tried:
+        // trying it does not spend a retry. Once per account, so this ends with the pool.
+        if (freeAccountSwitchRetry(apiKeyProvider, exception)) {
+            delay(LlmRetryPolicy.nextDelayMs(1))
+            return retryCount
         }
 
         val newRetryCount = retryCount + 1
@@ -2237,9 +2248,8 @@ open class OpenAIProvider(
             context.getString(R.string.orbit_dev_event_retry, newRetryCount, maxRetries, retryDelayMs, errorText),
         )
         AppLogger.w("AIService", "【发送消息】$errorText，将在 ${retryDelayMs}ms 后进行第 $newRetryCount 次重试...", exception)
-        if (!shouldSuppressKeyPoolRateLimitNotice(apiKeyProvider, exception, "AIService")) {
-            onNonFatalError(buildRetryMessage(errorText, newRetryCount))
-        }
+        retryNotice(apiKeyProvider, exception, "AIService") { buildRetryMessage(errorText, newRetryCount) }
+            ?.let { onNonFatalError(it) }
         delay(retryDelayMs)
 
         return newRetryCount
@@ -3422,7 +3432,8 @@ open class OpenAIProvider(
             var retryCount = 0
             var repetitionRetryCount = 0
             var lastException: Exception? = null
-            var authenticationRecoveryAllowed = true
+            // One refresh per signed-in account: an account pool may move on to another one.
+            val recoveredAuthAccounts = HashSet<String?>()
             var firstAuthenticatedRequest: Request? = null
 
             // 用于保存当前 attempt 已接收到的内容；一旦需要重试，会整体回滚到请求起点
@@ -3556,6 +3567,7 @@ open class OpenAIProvider(
                     ?.bindAbort { call.cancel() }
                 // A stop pressed while the attempt was being prepared reached only the previous call.
                 checkCancellation(context)
+                announceAccountSwitch(apiKeyProvider, onNonFatalError)
 
                 AppLogger.d("AIService", "[req=$requestTraceId] 【发送消息】正在建立连接到服务器...")
 
@@ -3579,8 +3591,9 @@ open class OpenAIProvider(
                                     ?: context.getString(R.string.openai_error_no_error_details)
                             if (response.code == 401) {
                                 response.close()
-                                if (recoverUnauthorizedAuthentication(request, response.code, errorBody, authenticationRecoveryAllowed)) {
-                                    authenticationRecoveryAllowed = false
+                                val authAccount = authenticationAccount(request)
+                                if (recoverUnauthorizedAuthentication(request, response.code, errorBody, authAccount !in recoveredAuthAccounts)) {
+                                    recoveredAuthAccounts.add(authAccount)
                                     throw AuthenticationRecoveredException()
                                 }
                             }
@@ -3803,7 +3816,7 @@ open class OpenAIProvider(
                 emitter.emitRollback(requestSavepointId)
                 if (e is AuthenticationRecoveredException) {
                     // Authentication recovery does not consume the ordinary network retry budget.
-                    // The operation-wide flag prevents a later network retry refreshing again.
+                    // Each account is refreshed at most once per operation, so retries stay bounded.
                     continue
                 }
                 if (e is ReplayedReasoningRejectedException) {
