@@ -23,23 +23,23 @@ internal object OrbitPermissionTools {
         description = "Put a card in the chat that lets the user turn on a phone setting you need, with one tap. " +
             "在聊天里放一张权限卡片，用户点一下就能打开你需要的手机设置。",
         parametersStructured = listOf(
-            ToolParameterSchema("permission", description = "One of: keep_alive (Operit's background keep-alive plus the " +
-                "battery-optimization exemption, so background tasks start on time while Operit is closed); notify (send " +
+            ToolParameterSchema("permission", description = "One of: keep_alive (the app's background keep-alive plus the " +
+                "battery-optimization exemption, so background tasks start on time while the app is closed); notify (send " +
                 "phone notifications); notification_read (read other apps' notifications, for watching deliveries and the " +
                 "like); sms (read text messages); contacts (read contacts); calendar (read calendar events); " +
                 "microphone (record audio); location (current location, approximate is enough); " +
                 "geofence (arrival/departure reminders: precise and background location); overlay (display over other " +
                 "apps, which the browser needs to open full screen when the user watches or takes over a page); " +
-                "accessibility (Operit's accessibility service, a small app bundled with Operit that the user installs and " +
+                "accessibility (the app's accessibility service, a small bundled app that the user installs and " +
                 "turns on; used by tools and packages that read or tap the screen without ADB/Root. Your background " +
-                "phone screen does not need it); device_access (Operit's " +
+                "phone screen does not need it); device_access (the app's " +
                 "elevated access through ADB debugging/Shizuku or Root, which your background phone screen, app installs " +
                 "and system settings need; the device admin level only allows locking the screen and a few similar actions)", required = true),
         ),
         details = """
   - Checks what is on first. When it is already on, no card is placed and the result says so.
   - To see every permission at once without placing any card, call orbit_device action=describe and read its permissions; the app reads them itself, so no ADB, Shizuku or terminal command is needed.
-  - device_access is set up on the card itself: one Root button on a rooted phone, otherwise Shizuku one step at a time (install the Shizuku bundled with Operit, turn on developer options, turn on wireless debugging, start Shizuku, allow Operit; below Android 11 it is started from a computer instead). The result gives the current level, whether it answers now, and either rooted (the card shows the Root button) or shizuku_step, the step the card shows. Each time the user finishes a step you get a hidden note with the next one: walk them through it in one or two plain sentences.
+  - device_access is set up on the card itself: one Root button on a rooted phone, otherwise Shizuku one step at a time (install the bundled Shizuku, turn on developer options, turn on wireless debugging, start Shizuku, allow this app; below Android 11 it is started from a computer instead). The result gives the current level, whether it answers now, and either rooted (the card shows the Root button) or shizuku_step, the step the card shows. Each time the user finishes a step you get a hidden note with the next one: walk them through it in one or two plain sentences.
   - accessibility has two steps on the card: install the bundled service app (or update an old one), then turn its service on (done for the user when ADB debugging works, otherwise the system's accessibility settings open). The result gives installed, update_needed and enabled.
   - overlay: before orbit_browser_handoff or showing the browser full screen, check it; when it is off, put this card so the user's tap on the page opens.
   - Otherwise the card shows the setting with a button that opens the system prompt or settings screen, and a "Don't remind me" button; then it returns at once. End the turn with one short line.
@@ -72,7 +72,7 @@ internal object OrbitPermissionTools {
                 result.put("card", "none")
                     .put("note", "Background keep-alive and the battery exemption are both on already, so no card was placed. " +
                         "If background tasks are still held back, the phone's own manager is the likely cause: tell the user to " +
-                        "allow Operit to auto-start and run in the background there.")
+                        "allow this app to auto-start and run in the background there.")
             } else {
                 result.put("card", "placed")
                     .put("note", "A card is now in the chat with a button for each setting that is off. End this turn with one " +

@@ -925,7 +925,7 @@ internal object OrbitWeixin {
         OrbitOptions.load(context)
         val out = mutableListOf<Outbound>()
         fun text(t: String, key: String) = chunks(t).forEachIndexed { i, c -> out += Outbound("$key-$i", "text", c, "", "") }
-        val inApp = if (english) " (open Operit to see it)" else "（请在 Operit 里查看）"
+        val inApp = if (english) " (open Orbit to see it)" else "（请在 Orbit 里查看）"
         // The chat splits words after a tool step into a new bubble; WeChat keeps them one message.
         OrbitSpeech.history(rows, splitSteps = false).filter { it.sender == "ai" && !OrbitSpeech.hidden(it) }.forEach { row ->
             OrbitSpeech.pieceList(row.content, row.timestamp, english).forEachIndexed { n, piece ->
@@ -1022,8 +1022,8 @@ internal object OrbitWeixin {
                 val english = english(context)
                 val missingOrLarge = withContext(Dispatchers.IO) { !file.isFile || file.length() > MAX_OUT_BYTES }
                 if (missingOrLarge) {
-                    val note = if (english) "[${item.name}: too large to send here; open Operit to see it]"
-                        else "[${item.name}：文件太大，请在 Operit 里查看]"
+                    val note = if (english) "[${item.name}: too large to send here; open Orbit to see it]"
+                        else "[${item.name}：文件太大，请在 Orbit 里查看]"
                     api.send(s.baseUrl, s.token, s.userId, s.contextToken, api.textItem(note), item.clientId)
                     return
                 }
