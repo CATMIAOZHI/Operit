@@ -22,6 +22,7 @@ object OrbitVoiceText {
     private const val FOLDER = ".text"
     /** Far more than the longest words a recording can have (6000 characters). */
     private const val MAX_BYTES = 128 * 1024L
+    private val AUDIO = setOf("mp3", "wav", "ogg", "oga", "m4a", "aac", "flac", "opus", "weba")
 
     private val forgottenCount = kotlinx.coroutines.flow.MutableStateFlow(0)
 
@@ -84,14 +85,17 @@ object OrbitVoiceText {
     /** Drops the words kept for [audio], when it is deleted (called by [OrbitFiles] under its lock). */
     internal fun forget(audio: File, within: File) {
         val gone = runCatching { wordsFor(audio, within)?.let { Files.deleteIfExists(it.toPath()) } }.getOrNull() == true
-        // Only a recording that had words can have them on screen.
-        if (gone) forgottenCount.update { it + 1 }
+        // Only a recording can have words on screen: kept ones, or ones recognized from it.
+        if (gone || audio.extension.lowercase() in AUDIO) forgottenCount.update { it + 1 }
     }
 
-    /** A folder holding recordings ([folder], short path) was deleted whole, words and all. */
+    /**
+     * A folder ([folder], short path) was deleted whole: any recording in it may have had words on
+     * screen (kept, or recognized from it). Rare, so every one counts.
+     */
+    @Suppress("UNUSED_PARAMETER")
     internal fun forgetFolder(folder: String) {
-        val p = folder.trimEnd('/')
-        if (p == "files" || p == "files/voice" || p.startsWith("files/voice/")) forgottenCount.update { it + 1 }
+        forgottenCount.update { it + 1 }
     }
 
     /** The words for [lines] of a podcast, one speaker's line a row; a single voice is just its text. */
@@ -129,7 +133,8 @@ object OrbitVoiceText {
         "${audio.length()}:${audio.lastModified()}:${words.length()}:${words.lastModified()}"
     }.getOrNull()
 
-    private fun fileOf(url: String): File? {
+    /** The file a ile:// url or a plain path names, or null for anything else (a web address). */
+    fun fileOf(url: String): File? {
         val raw = url.substringBefore('#').substringBefore('?').trim()
         val path = when {
             raw.startsWith("file://") -> raw.removePrefix("file://")

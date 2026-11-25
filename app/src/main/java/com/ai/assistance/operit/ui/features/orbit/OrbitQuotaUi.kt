@@ -376,8 +376,7 @@ private fun QuotaSmallButton(label: String, icon: String, enabled: Boolean = tru
 /**
  * Changes both allowances and what they count. Money is typed in US dollars (two decimals at most);
  * tokens in millions, the unit people use for numbers this big. The week's allowance cannot go
- * under its floor and the extra one can be 0. With money, model configurations on a monthly plan
- * can be marked so their calls are free here.
+ * under its floor and the extra one can be 0.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -426,21 +425,6 @@ private fun OrbitQuotaSheet(state: OrbitQuota.State, orbitName: String, onDismis
     val format = OrbitQuota.State(byMoney = byMoney)
     val unitLabel = stringResource(if (byMoney) R.string.orbit_quota_money_unit else R.string.orbit_quota_unit)
     val invalid = stringResource(if (byMoney) R.string.orbit_quota_money_invalid else R.string.orbit_quota_tokens_invalid)
-    val configs by androidx.compose.runtime.produceState<Result<List<com.ai.assistance.operit.data.model.ModelConfigSummary>>?>(null) {
-        value = withContext(Dispatchers.IO) {
-            try {
-                Result.success(com.ai.assistance.operit.data.preferences.ModelConfigManager(context).getAllConfigSummaries())
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Result.failure(e)
-            }
-        }
-    }
-    val savedPlans by remember { OrbitQuota.subscriptionsFlow(context) }.collectAsState(initial = null as Set<String>?)
-    var plans by rememberSaveable { mutableStateOf<List<String>?>(null) }
-    LaunchedEffect(savedPlans) { if (plans == null) savedPlans?.let { plans = it.toList() } }
-    val chosen = remember(plans) { plans?.toHashSet() }
     var saving by remember { mutableStateOf(false) }
     var saveFailed by remember { mutableStateOf(false) }
     // A save that ends after this sheet is gone must not close the next one opened.
@@ -544,47 +528,6 @@ private fun OrbitQuotaSheet(state: OrbitQuota.State, orbitName: String, onDismis
                     onClick = { extraWeeklyDraft = true },
                 )
             }
-            if (byMoney) {
-                Text(stringResource(R.string.orbit_quota_plan_title), style = MaterialTheme.typography.titleSmall,
-                    modifier = Modifier.padding(top = 4.dp))
-                Text(stringResource(R.string.orbit_quota_plan_help), style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                val list = configs?.getOrNull()
-                val note = when {
-                    configs == null || chosen == null -> stringResource(R.string.orbit_quota_plan_loading)
-                    configs?.isFailure == true -> stringResource(R.string.orbit_quota_plan_failed)
-                    list.isNullOrEmpty() -> stringResource(R.string.orbit_quota_plan_none)
-                    else -> null
-                }
-                if (note != null) {
-                    Text(note, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                } else if (list != null && chosen != null) {
-                    Column {
-                        list.forEach { config ->
-                            val on = config.id in chosen
-                            Row(
-                                Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
-                                    .toggleable(on, enabled = !saving, role = Role.Switch) { checked ->
-                                        plans = if (checked) (chosen + config.id).toList() else (chosen - config.id).toList()
-                                    }
-                                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Column(Modifier.weight(1f)) {
-                                    Text(config.name.ifBlank { config.modelName }, style = MaterialTheme.typography.bodyLarge)
-                                    if (config.modelName.isNotBlank() && config.name.isNotBlank()) {
-                                        Text(config.modelName, style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    }
-                                }
-                                Spacer(Modifier.width(12.dp))
-                                Switch(checked = on, onCheckedChange = null, enabled = !saving)
-                            }
-                        }
-                    }
-                }
-            }
             if (saveFailed) {
                 Text(stringResource(R.string.orbit_quota_save_failed), style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error)
@@ -597,17 +540,13 @@ private fun OrbitQuotaSheet(state: OrbitQuota.State, orbitName: String, onDismis
                     val e = if (extraDraft != null) extraValue else null
                     val weeklyReset = extraWeeklyDraft
                     val money = byMoney
-                    val before = savedPlans
-                    val after = chosen
                     saving = true
                     saveFailed = false
                     // Everything goes in one save; the sheet closes only once it is saved, and keeps
                     // what was typed when it was not. The save runs on even if the sheet is closed.
                     CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
                         val saved = try {
-                            OrbitQuota.setLimits(context, w, e, weeklyReset, byMoney = money, confirm = true,
-                                subscribe = if (before != null && after != null) after - before else emptySet(),
-                                unsubscribe = if (before != null && after != null) before - after else emptySet())
+                            OrbitQuota.setLimits(context, w, e, weeklyReset, byMoney = money, confirm = true)
                             true
                         } catch (failure: Exception) {
                             com.ai.assistance.operit.util.AppLogger.w("OrbitQuotaUi", "Could not save the allowance", failure)

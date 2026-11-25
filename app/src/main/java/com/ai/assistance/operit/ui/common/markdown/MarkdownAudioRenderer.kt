@@ -110,6 +110,58 @@ internal fun isLikelyAudioUrl(url: String): Boolean {
     return extension in MARKDOWN_AUDIO_EXTENSIONS
 }
 
+// A code fence line: its marker, and what follows it (a closing fence has nothing after).
+private val fenceLine = Regex("^ {0,3}(`{3,}|~{3,})(.*)$")
+// An inline code span: backticks, then anything up to as many backticks again.
+private val inlineCode = Regex("(`+)(?!`)[\\s\\S]*?(?<!`)\\1(?!`)")
+
+/**
+ * The ranges of [text]'s fenced code blocks, each to its closing fence or the end. As in
+ * Markdown, a block closes on a fence of the same mark at least as long as its opening.
+ */
+internal fun markdownFenceRanges(text: String): List<IntRange> {
+    val out = mutableListOf<IntRange>()
+    var open: String? = null
+    var start = 0
+    var at = 0
+    while (at <= text.length) {
+        val end = text.indexOf('\n', at).let { if (it < 0) text.length else it }
+        val m = fenceLine.find(text.substring(at, end).trimEnd('\r'))
+        if (m != null) {
+            val mark = m.groupValues[1]
+            val opening = open
+            if (opening == null) {
+                open = mark
+                start = at
+            } else if (mark[0] == opening[0] && mark.length >= opening.length && m.groupValues[2].isBlank()) {
+                out += start..end
+                open = null
+            }
+        }
+        at = end + 1
+    }
+    if (open != null) out += start..text.length
+    return out
+}
+
+/** The ranges of [text] that are code (fenced blocks and inline spans): a media link in them is shown as text. */
+internal fun markdownCodeRanges(text: String): List<IntRange> {
+    if (!text.contains('`') && !text.contains("~~~")) return emptyList()
+    val fences = markdownFenceRanges(text)
+    val out = fences.toMutableList()
+    // Inline code only between the blocks: a backtick inside one never pairs with one outside.
+    var from = 0
+    for (block in fences.sortedBy { it.first } + listOf(text.length..text.length)) {
+        if (block.first > from) {
+            inlineCode.findAll(text.substring(from, block.first)).forEach { m ->
+                out += (m.range.first + from)..(m.range.last + from)
+            }
+        }
+        from = maxOf(from, block.last + 1)
+    }
+    return out
+}
+
 /** One chat's place for voice: when it leaves (another chat, another page, the app lock), its voice stops. */
 class VoiceScope
 
@@ -120,22 +172,42 @@ val LocalVoiceScope = staticCompositionLocalOf<VoiceScope?> { null }
  * Given by a chat message for the voice bars in it. [open], a long press on a bar, opens the
  * message's own menu for that recording (one menu, as in a messenger; "to text" is one of its
  * items), and is null while the message takes no menu (picking messages). [words] are the words
- * this message shows under a bar. Elsewhere (a preview, a shared picture) there is neither.
+ * this message shows under a bar, and [pending] whether they are being recognized. Elsewhere (a
+ * preview, a shared picture) there is none.
  */
-class VoiceMenuHost(val open: ((String) -> Unit)?, val words: (String) -> String?)
+class VoiceMenuHost(
+    val open: ((String) -> Unit)?,
+    val words: (String) -> VoiceTranscripts.Found?,
+    val pending: (String) -> Boolean,
+)
 
 val LocalVoiceMenu = androidx.compose.runtime.compositionLocalOf<VoiceMenuHost?> { null }
 
 /**
- * A speed-up for finding the words of a recording again: the words of recordings already checked,
- * by url, each with a cheap mark of its recording, so finding them again only looks at the files
- * (see [com.ai.assistance.operit.features.orbit.OrbitVoiceText.stamp]) and checks them in full only
- * when the recording changed. What a bubble shows is its message's own state, never read from here.
+ * The words of recordings, for "to text": first the words Orbit kept when it made the voice (see
+ * [com.ai.assistance.operit.features.orbit.OrbitVoiceText]), then words recognized before, and,
+ * only when the user asks ([recognize]), their speech recognition. Words recognized are kept in the
+ * app's cache by the recording's content, with a small index by its path, size and time, so they
+ * come back without reading the recording and the same recording is never sent twice. Words found
+ * once are also kept here by url with a cheap mark of their recording. What a bubble shows is its
+ * message's own state, never read from here. A file that cannot be read counts as no words.
  */
 object VoiceTranscripts {
-    /** Words checked against their recording, with the [mark] it had then. */
-    class Found(val text: String, val mark: String)
+    /** Words checked against their recording, with the [mark] it had then; [recognized] when they were heard, not kept. */
+    class Found(val text: String, val mark: String, val recognized: Boolean = false)
+
+    sealed interface Recognized {
+        class Words(val found: Found) : Recognized
+        class Problem(val message: String) : Recognized
+    }
+
+    private class Snapshot(val file: java.io.File, val hash: String, val mark: String)
+
     private const val MAX = 64
+    private const val MAX_KEPT_RECOGNIZED = 200
+    private const val MAX_TEXT_BYTES = 256 * 1024L
+    /** Far more than 20 minutes of any audio worth recognizing; a bigger file is not copied. */
+    private const val MAX_SNAPSHOT_BYTES = 256L * 1024 * 1024
     // Least recently used first; the oldest goes when full.
     private val found = object : LinkedHashMap<String, Found>(16, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Found>?) = size > MAX
@@ -143,31 +215,212 @@ object VoiceTranscripts {
     // One look at a recording at a time, wherever it is shown, so the next one finds it checked.
     // A fixed few locks by url: two recordings sharing one only wait for each other.
     private val reading = Array(16) { kotlinx.coroutines.sync.Mutex() }
+    // One recognition of a recording at a time: a second bubble asking waits and finds its words.
+    // Kept only while someone holds or waits for it.
+    private class Gate { val mutex = kotlinx.coroutines.sync.Mutex(); var users = 0 }
+    private val gates = HashMap<String, Gate>()
+    private val voiceText = com.ai.assistance.operit.features.orbit.OrbitVoiceText
+    // Words just recognized, by content hash: a second request for the same content takes them.
+    private val heard = object : LinkedHashMap<String, String>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?) = size > 16
+    }
 
-    /** The mark of the recording at [url] and its words now, null when either is gone. Reads files. */
-    fun markOf(context: Context, url: String): String? =
-        com.ai.assistance.operit.features.orbit.OrbitVoiceText.stamp(url, context.filesDir)
+    private fun lockOf(url: String) = reading[(url.hashCode() and Int.MAX_VALUE) % reading.size]
+    private fun fileMark(file: java.io.File): String? = if (file.isFile) "${file.length()}:${file.lastModified()}" else null
+    private fun keptFolder(context: Context) = java.io.File(context.cacheDir, "voice-text")
+    private fun indexFolder(context: Context) = java.io.File(keptFolder(context), "by-file")
 
-    /** Whether the recording at [url] has words kept for it (a quick look at the files). Reads files. */
-    fun available(context: Context, url: String): Boolean = markOf(context, url) != null
+    private suspend fun <T> oneAtATime(url: String, block: suspend () -> T): T {
+        val gate = synchronized(gates) { gates.getOrPut(url) { Gate() }.also { it.users++ } }
+        try {
+            return gate.mutex.withLock { block() }
+        } finally {
+            synchronized(gates) { if (--gate.users == 0) gates.remove(url) }
+        }
+    }
+
+    private val audioLink = Regex("!\\[[^\\]\\n]*\\]\\(([^)\\s]+)\\)")
 
     /**
-     * The words of the recording at [url] now, checked against it; null when there are none (a
-     * cancelled [kotlinx.coroutines.CoroutineScope] stops the reading). Reads files.
+     * The one recording [markdown] shows, or null when it shows none or several: a long press
+     * anywhere on a bubble with one voice message is for that voice (several need their own bar).
      */
-    suspend fun find(context: Context, url: String): Found? =
-        reading[(url.hashCode() and Int.MAX_VALUE) % reading.size].withLock { findNow(context, url) }
+    fun onlyVoiceIn(markdown: String): String? {
+        if (!markdown.contains("](")) return null
+        val code = markdownCodeRanges(markdown)
+        var one: String? = null
+        for (m in audioLink.findAll(markdown)) {
+            val url = m.groupValues[1]
+            // An example in code shows no voice bar.
+            if (!isLikelyAudioUrl(url) || url == one || code.any { m.range.first in it }) continue
+            if (one != null) return null
+            one = url
+        }
+        return one
+    }
+
+    /** Whether the recording at [url] is on the phone, so its words can be recognized. No file is read. */
+    fun canRecognize(url: String): Boolean = voiceText.fileOf(url) != null
+
+    /** The mark [words] would have now, null when their recording (or kept words) is gone. Reads files. */
+    fun markOf(context: Context, url: String, words: Found): String? = runCatching {
+        if (words.recognized) voiceText.fileOf(url)?.let(::fileMark) else voiceText.stamp(url, context.filesDir)
+    }.getOrNull()
+
+    /**
+     * The words of the recording at [url] now, checked against it, kept or recognized before;
+     * null when there are none. Never sends anything; a cancelled scope stops the reading. Reads files.
+     */
+    suspend fun find(context: Context, url: String): Found? = lockOf(url).withLock { findNow(context, url) }
 
     private suspend fun findNow(context: Context, url: String): Found? {
-        val voiceText = com.ai.assistance.operit.features.orbit.OrbitVoiceText
         val before = synchronized(found) { found[url] }
         val now = withContext(Dispatchers.IO) {
-            val mark = voiceText.stamp(url, context.filesDir) ?: return@withContext null
-            if (before != null && mark == before.mark) before
-            else voiceText.read(url, context.filesDir) { isActive }?.let { Found(it, mark) }
+            try {
+                if (before?.recognized == true && voiceText.fileOf(url)?.let(::fileMark) == before.mark) return@withContext before
+                val mark = voiceText.stamp(url, context.filesDir)
+                when {
+                    mark == null -> recognizedBefore(context, url)
+                    before != null && !before.recognized && mark == before.mark -> before
+                    else -> voiceText.read(url, context.filesDir) { isActive }?.let { Found(it, mark) }
+                        ?: recognizedBefore(context, url)
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                null
+            }
         }
         synchronized(found) { if (now == null) found.remove(url) else found[url] = now }
         return now
+    }
+
+    /** The index name for [file] as it is ([mark]): its path, size and time, hashed. */
+    private fun indexName(file: java.io.File, mark: String): String =
+        java.security.MessageDigest.getInstance("SHA-256").digest("${file.absolutePath}\n$mark".toByteArray())
+            .joinToString("") { "%02x".format(it) }
+
+    /** Words recognized before for the recording at [url] as it is now, through the index: no recording is read. */
+    private fun recognizedBefore(context: Context, url: String): Found? {
+        val file = voiceText.fileOf(url)?.takeIf { it.isFile } ?: return null
+        val mark = fileMark(file) ?: return null
+        val entry = java.io.File(indexFolder(context), indexName(file, mark)).takeIf { it.isFile && it.length() <= 128 } ?: return null
+        val text = readKept(context, entry.readText().trim()) ?: return null
+        return Found(text, mark, recognized = true)
+    }
+
+    private fun readKept(context: Context, hash: String): String? {
+        if (!hash.matches(Regex("[0-9a-f]{64}"))) return null
+        val kept = java.io.File(keptFolder(context), "$hash.txt").takeIf { it.isFile && it.length() <= MAX_TEXT_BYTES } ?: return null
+        return kept.readText().trim().takeIf { it.isNotEmpty() }
+    }
+
+    /**
+     * The words of the recording at [url]: found ([find]), or else heard with the user's speech
+     * recognition (which may cost money: only when the user asks) and kept for next time. What is
+     * sent is a copy taken first, so the words kept always belong to the content they name.
+     */
+    suspend fun recognize(context: Context, url: String): Recognized {
+        val app = context.applicationContext
+        return oneAtATime(url) {
+            try {
+                recognizeNow(app, url)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Recognized.Problem(app.getString(R.string.voice_stt_failed, e.message ?: e.javaClass.simpleName))
+            }
+        }
+    }
+
+    private suspend fun recognizeNow(app: Context, url: String): Recognized {
+        find(app, url)?.let { return Recognized.Words(it) }
+        val file = voiceText.fileOf(url)?.takeIf { it.isFile }
+            ?: return Recognized.Problem(app.getString(R.string.voice_no_transcript))
+        // The copy's place is taken first, so it goes however this ends (cancelled included).
+        val copy = withContext(Dispatchers.IO) { snapshotPlace(app, file) }
+        try {
+            val snapshot = withContext(Dispatchers.IO) { snapshotOf(file, copy) }
+                ?: return Recognized.Problem(app.getString(R.string.voice_no_transcript))
+            // One recognition of a content at a time, whatever its name: a second waits and finds its words.
+            return oneAtATime("sha256:${snapshot.hash}") {
+                // The same content recognized before (under this or another name): just now, or kept.
+                val kept = synchronized(heard) { heard[snapshot.hash] }
+                    ?: withContext(Dispatchers.IO) { readKept(app, snapshot.hash) }
+                if (kept != null) {
+                    withContext(Dispatchers.IO) { runCatching { keepIndex(app, file, snapshot) } }
+                    Recognized.Words(Found(kept, snapshot.mark, recognized = true).also { remember(url, it) })
+                } else when (val heard = com.ai.assistance.operit.api.speech.AudioFileTranscriber.transcribe(app, snapshot.file)) {
+                    is com.ai.assistance.operit.api.speech.AudioFileTranscriber.Outcome.Problem -> Recognized.Problem(heard.message)
+                    is com.ai.assistance.operit.api.speech.AudioFileTranscriber.Outcome.Words -> {
+                        // Shared with anyone waiting for the same content, even when it cannot be kept on disk.
+                        synchronized(this@VoiceTranscripts.heard) { this@VoiceTranscripts.heard[snapshot.hash] = heard.text }
+                        withContext(Dispatchers.IO) { keepRecognized(app, file, snapshot, heard.text) }
+                        Recognized.Words(Found(heard.text, snapshot.mark, recognized = true).also { remember(url, it) })
+                    }
+                }
+            }
+        } finally {
+            withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) { copy.delete() }
+        }
+    }
+
+    private fun remember(url: String, words: Found) = synchronized(found) { found[url] = words }
+
+    /** Where the copy of [file] goes; copies left by a run the system ended are cleared first. */
+    private fun snapshotPlace(app: Context, file: java.io.File): java.io.File {
+        val folder = java.io.File(app.cacheDir, "voice-snapshot").apply { mkdirs() }
+        val hourAgo = System.currentTimeMillis() - 3_600_000L
+        folder.listFiles()?.filter { it.lastModified() < hourAgo }?.forEach { it.delete() }
+        return java.io.File(folder, "${java.util.UUID.randomUUID()}.${file.extension.take(8)}")
+    }
+
+    /**
+     * Copies [file] to [copy] and hashes what was copied; null when the file changed while it was
+     * copied, or is bigger than [MAX_SNAPSHOT_BYTES] (counted as it is read, so a growing file stops too).
+     */
+    private suspend fun snapshotOf(file: java.io.File, copy: java.io.File): Snapshot? {
+        val mark = fileMark(file) ?: return null
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        var total = 0L
+        file.inputStream().use { input ->
+            copy.outputStream().use { output ->
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    kotlin.coroutines.coroutineContext.ensureActive()
+                    val n = input.read(buffer)
+                    if (n < 0) break
+                    total += n
+                    if (total > MAX_SNAPSHOT_BYTES) return null
+                    digest.update(buffer, 0, n)
+                    output.write(buffer, 0, n)
+                }
+            }
+        }
+        if (fileMark(file) != mark) return null
+        return Snapshot(copy, digest.digest().joinToString("") { "%02x".format(it) }, mark)
+    }
+    private fun keepIndex(app: Context, file: java.io.File, snapshot: Snapshot) {
+        val index = indexFolder(app).apply { mkdirs() }
+        java.io.File(index, indexName(file, snapshot.mark)).writeText(snapshot.hash)
+        prune(index, MAX_KEPT_RECOGNIZED * 2)
+    }
+
+    /** Keeps [text] for the content of [snapshot], and its index for [file]; only the newest few hundred stay. A failure is ignored. */
+    private fun keepRecognized(app: Context, file: java.io.File, snapshot: Snapshot, text: String) {
+        runCatching {
+            // Words too long to be read back are not kept (read and write share the limit).
+            if (text.toByteArray().size > MAX_TEXT_BYTES) return
+            val folder = keptFolder(app).apply { mkdirs() }
+            java.io.File(folder, "${snapshot.hash}.txt").writeText(text)
+            prune(folder, MAX_KEPT_RECOGNIZED)
+            keepIndex(app, file, snapshot)
+        }
+    }
+
+    private fun prune(folder: java.io.File, keep: Int) {
+        val files = folder.listFiles { f -> f.isFile }.orEmpty()
+        if (files.size > keep) files.sortedBy { it.lastModified() }.take(files.size - keep).forEach { it.delete() }
     }
 }
 /** Stops the voice playing for [scope], if any; voice another chat started keeps playing. */
@@ -415,6 +668,7 @@ private fun VoiceBar(audioUrl: String, audioAlt: String, ink: Color, bubble: Col
     val host = LocalVoiceMenu.current
     // Only this bar's own words: another bar showing or hiding its words does not redraw it.
     val words by remember(host, audioUrl) { androidx.compose.runtime.derivedStateOf { host?.words(audioUrl) } }
+    val hearing by remember(host, audioUrl) { androidx.compose.runtime.derivedStateOf { host?.pending(audioUrl) == true } }
     val longPress = host?.open
     val haptics = LocalHapticFeedback.current
     val openMenu: (() -> Unit)? = longPress?.let { open ->
@@ -541,19 +795,29 @@ private fun VoiceBar(audioUrl: String, audioAlt: String, ink: Color, bubble: Col
             )
         }
       }
-        words?.let { text ->
-            SelectionContainer {
-                Text(
-                    text = text,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = ink,
-                    modifier = Modifier
-                        .padding(top = 6.dp)
-                        .widthIn(max = 300.dp)
-                        .clip(RoundedCornerShape(if (bubble != null) 16.dp else 12.dp))
-                        .background(bubble ?: ink.copy(alpha = 0.06f))
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                )
+        val shownWords = words
+        if (shownWords != null || hearing) {
+            Column(
+                Modifier
+                    .padding(top = 6.dp)
+                    .widthIn(max = 300.dp)
+                    .clip(RoundedCornerShape(if (bubble != null) 16.dp else 12.dp))
+                    .background(bubble ?: ink.copy(alpha = 0.06f))
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+            ) {
+                if (shownWords == null) {
+                    Text(stringResource(R.string.voice_recognizing), style = MaterialTheme.typography.bodyMedium,
+                        color = ink.copy(alpha = 0.6f))
+                } else {
+                    SelectionContainer {
+                        Text(text = shownWords.text, style = MaterialTheme.typography.bodyMedium, color = ink)
+                    }
+                    // Heard by speech recognition, not the words Orbit said: there may be mistakes.
+                    if (shownWords.recognized) {
+                        Text(stringResource(R.string.voice_recognized_note), style = MaterialTheme.typography.labelSmall,
+                            color = ink.copy(alpha = 0.55f), modifier = Modifier.padding(top = 4.dp))
+                    }
+                }
             }
         }
         // A voice message of its own shows no title under it, as in a messenger.

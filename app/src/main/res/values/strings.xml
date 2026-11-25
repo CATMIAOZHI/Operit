@@ -5967,7 +5967,15 @@
     <string name="voice_to_text">转文字</string>
     <string name="voice_options">语音选项</string>
     <string name="voice_hide_text">收起文字</string>
-    <string name="voice_no_transcript">这段音频没有文字稿</string>
+    <string name="voice_no_transcript">这段音频转不了文字</string>
+    <string name="voice_recognizing">正在识别…</string>
+    <string name="voice_recognized_note">自动识别，可能有错字</string>
+    <string name="voice_stt_live_only">现在用的 Sherpa-ncnn 只能边说边认，认不了录好的音频。可以在「语音服务设置」里换成 MiMo 语音识别</string>
+    <string name="voice_stt_not_set_up">还没配好语音识别，先去「语音服务设置」里填上密钥</string>
+    <string name="voice_stt_model_missing">本地识别模型还没下载，先去「语音服务设置」里下载</string>
+    <string name="voice_stt_too_long">超过 %1$d 分钟的音频认不了</string>
+    <string name="voice_stt_failed">识别失败：%1$s</string>
+    <string name="voice_stt_nothing">没听出说了什么</string>
     <string name="video_block">视频</string>
     <string name="image_load_failed">图片加载失败</string>
     <string name="save_image">保存图片</string>
@@ -9231,9 +9239,6 @@
     <string name="orbit_quota_mode_tokens">按 token</string>
     <string name="orbit_quota_mode_tokens_desc">按用掉的 token 数算，不管模型贵不贵</string>
     <string name="orbit_quota_money_unit">美元</string>
-    <string name="orbit_quota_plan_title">包月套餐</string>
-    <string name="orbit_quota_plan_help">打开的模型配置算包月套餐，用它们不扣额度。常用 Orbit 的话，包月套餐（比如 OpenCode Go）通常比按量付费便宜很多。</string>
-    <string name="orbit_quota_plan_none">还没有模型配置</string>
     <string name="orbit_quota_unpriced">本周有 %1$d 次调用算不出花费（%2$s 多半没填价格），没算进额度。可以去「模型定价」补上价格。</string>
     <string name="orbit_quota_confirm_prompt">默认按花费算：每周 %1$s，额外额度 %2$s。点「调整额度」看看合不合适，保存一次就不再提示。</string>
     <string name="orbit_quota_weekly_field">每周额度</string>
@@ -9680,8 +9685,6 @@
     <string name="orbit_open_blocked_unsaved">有没保存的修改，所以没打开聊天。保存或放弃后，从聊天列表打开它。</string>
     <string name="orbit_quota_money_invalid">请输入金额，比如 100 或 12.5，最多两位小数</string>
     <string name="orbit_quota_tokens_invalid">请输入整数</string>
-    <string name="orbit_quota_plan_loading">正在读取模型配置…</string>
-    <string name="orbit_quota_plan_failed">读不出模型配置，稍后再试</string>
     <string name="orbit_quota_save_failed">没保存成功，请再试一次</string>
     <string name="orbit_quota_saving">正在保存…</string>
     <string name="orbit_feed_card_failed">这张卡片没能打开。</string>
