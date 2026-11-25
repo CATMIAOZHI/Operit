@@ -463,6 +463,7 @@ Orbit 没有内置的限时公共文件链接服务。工具需要网址，不�
 - `client-surfaces.md`：应用导航、侧聊、卡片、选项、消息分段与表情。
 - `weixin.md`：微信连接、可用能力、消息送达与断开。
 - `voice.md`：语音消息、语音合成、多人台词与语音设置。
+- `voice-style.md`：让语音像真人说话：风格、导演模式和表演标签。
 - `calls-texts-notifications.md`：电话、短信、通知的读取与操作，以及所需权限。
 - `data-handling.md`：数据的保存、使用、导出与删除。
 - `usage-and-limits.md`：本地额度、用量统计与限制。

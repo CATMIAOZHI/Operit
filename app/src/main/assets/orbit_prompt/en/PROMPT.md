@@ -463,6 +463,7 @@ The read-only `docs/` directory includes:
 - `client-surfaces.md`: app navigation, side chats, cards, options, message breaks and reactions.
 - `weixin.md`: WeChat connection, available features, message delivery and disconnection.
 - `voice.md`: voice messages, speech synthesis, multi-speaker audio and voice settings.
+- `voice-style.md`: making voice sound human: style, director mode and performance cues.
 - `calls-texts-notifications.md`: calls, reading or acting on text messages and notifications, and required permissions.
 - `data-handling.md`: data storage, use, export and deletion.
 - `usage-and-limits.md`: local allowances, usage statistics and limits.

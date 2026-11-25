@@ -23,6 +23,8 @@ import java.util.UUID
 /** Voice messages and multi-voice audio (podcasts, dialogues) saved in Orbit's files/voice/. */
 internal object OrbitVoiceTools {
     const val NAME = "orbit_voice"
+    /** How long a style may be: a director's note of a role, a scene and guidance fits. */
+    private const val MAX_STYLE = 800
 
     val prompt = ToolPrompt(
         name = NAME,
@@ -33,11 +35,12 @@ internal object OrbitVoiceTools {
             ToolParameterSchema("action", description = "voices（列出可用声音）/ speak（一段语音）/ podcast（多人对话）/ profiles（语音配置）/ " +
                 "request_switch / request_create / request_key / request_delete（申请改语音配置）/ request_settings（放一张语音设置卡片）/ " +
                 "design（按描述设计声音、做一段试听）/ request_own_voice（申请定你自己的声音）", required = true),
-            ToolParameterSchema("text", description = "speak：要读的文字，最多6000字（约20分钟）；design：试听说的话，最多${OrbitVoice.MAX_SAMPLE_TEXT}字", required = false),
+            ToolParameterSchema("text", description = "speak：要读的文字，最多6000字（约20分钟），可带 (风格) 和（叹气）这类表演标签；design：试听说的话，最多${OrbitVoice.MAX_SAMPLE_TEXT}字", required = false),
+            ToolParameterSchema("style", description = "speak：用一段话说怎么读（语气、情绪、语速、导演模式的角色/场景/指导），最多${MAX_STYLE}字，可省略；写法见 docs/voice-style.md", required = false),
             ToolParameterSchema("description", description = "design：声音描述，如“二十多岁的女生，声音温柔，语速偏慢”，最多${OrbitVoice.MAX_DESCRIPTION}字", required = false),
             ToolParameterSchema("sample", description = "request_own_voice：照着复刻的录音，files/ 里的 mp3 或 wav 路径（design 返回的 path，或用户发来的录音）", required = false),
             ToolParameterSchema("voice", description = "speak：手机声音名（来自 voices），只在用户选了手机自带声音时能写，可省略", required = false),
-            ToolParameterSchema("script", description = "podcast：JSON 数组，如 [{\"speaker\":\"A\",\"text\":\"…\"},{\"speaker\":\"B\",\"text\":\"…\"}]", required = false),
+            ToolParameterSchema("script", description = "podcast：JSON 数组，如 [{\"speaker\":\"A\",\"text\":\"…\"},{\"speaker\":\"B\",\"text\":\"…\",\"style\":\"压低声音，带点坏笑\"}]，style 可省略", required = false),
             ToolParameterSchema("voices", description = "podcast：JSON 对象，说话人到声音名（来自 voices），如 {\"A\":\"orbit\",\"B\":\"MiMo·苏打\"}；可省略，自动给每人分不同声音", required = false),
             ToolParameterSchema("title", description = "speak / podcast / design：文件名（不含扩展名），可省略", required = false),
             ToolParameterSchema("kind", description = "request_*：tts（朗读）或 stt（语音输入）", required = false),
@@ -61,6 +64,7 @@ internal object OrbitVoiceTools {
   - 用户选了手机自带声音时，speak 和 podcast 都用手机的语音引擎，效果取决于手机；voice / voices 写手机声音名（来自 voices）。
   - 一个文件最多6000字（podcast 是所有台词加起来）。更长就拆成几段分别生成。
   - 生成后把返回的 markdown 单独放一行，聊天里显示成语音条，用户点一下就播放；文件也会出现在构建页的文件里。像发语音一样：前后最多一句短话，不要把语音的内容再用文字写一遍（用户长按语音条、点「转文字」就能看到原文），用户要文字版时再给。title 写几个字的话题，用作文件名。
+  - 让语音像真人说话：你的声音是小米 MiMo 时，可以用 style 写怎么读，在 text 里加 (风格) 和（叹气）（轻笑）这类表演标签。第一次用或想做得更好时，先读 docs/voice-style.md。MiMo 会把括号里的短内容当表演提示、不读出来，所以要读的话别放括号里。表演标签不会出现在「转文字」里；别的声音会去掉它们和 style，结果里 styled=false。
   - podcast 的台词要像真人对话：短句、有来有回，每人一段不要太长。
   - App 的语音配置分两类：tts 是朗读（文字转语音），stt 是语音输入（听写）。每类可以有多个配置，同一时间各用一个。先用 profiles 看有哪些、正在用哪个；里面没有密钥，只有 has_key。
   - 换用另一个配置用 request_switch；新建用 request_create（新建后马上换用它；从正在用的配置复制设置，换了服务就从空白开始）；换密钥用 request_key；删除用 request_delete（正在用的不能删）。这些都会在聊天里放一张批准卡片，要填密钥时用户在卡片里填，你看不到。放完用一句话结束这一轮，用户批准后你会收到一条隐藏消息说明结果。
@@ -125,7 +129,9 @@ internal object OrbitVoiceTools {
                     val temp = File(context.cacheDir, "orbit-voice-${UUID.randomUUID()}.wav")
                     try {
                         OrbitVoice.designVoice(context, key, description, text, temp)
-                        val entry = temp.inputStream().use { files.saveBytes("files/voice/$name.wav", it, voiceText = text) }
+                        val entry = temp.inputStream().use {
+                            files.saveBytes("files/voice/$name.wav", it, voiceText = com.ai.assistance.operit.api.voice.MimoVoiceProvider.withoutCues(text))
+                        }
                         JSONObject().put("path", entry.path).put("bytes", entry.size)
                             .put("markdown", OrbitFileTools.mediaMarkdown(files.fileFor(entry.path)))
                             .put("note", "If this turn has ${com.ai.assistance.operit.features.orbit.OrbitTaskRunner.FINISH} (a separate task run), " +
@@ -262,8 +268,11 @@ internal object OrbitVoiceTools {
                     })).toString()
                 }
                 "speak", "podcast" -> {
+                    val style = arg("style")
+                    require(style.length <= MAX_STYLE) { "style has ${style.length} characters; at most $MAX_STYLE" }
+                    require(style.isEmpty() || args["action"] == "speak") { "In a podcast, give each line its own style in the script" }
                     val lines = if (args["action"] == "speak") {
-                        listOf(OrbitVoice.Line("voice", args["text"]?.takeIf { it.isNotBlank() } ?: error("speak needs text")))
+                        listOf(OrbitVoice.Line("voice", args["text"]?.takeIf { it.isNotBlank() } ?: error("speak needs text"), style))
                     } else {
                         val raw = args["script"]?.takeIf { it.isNotBlank() } ?: error("podcast needs script")
                         val script = runCatching { JSONArray(raw) }.getOrElse {
@@ -274,9 +283,20 @@ internal object OrbitVoiceTools {
                             val line = script.optJSONObject(i) ?: error("Line ${i + 1} of the script is not an object with speaker and text")
                             val text = line.optString("text")
                             require(text.isNotBlank()) { "Line ${i + 1} of the script has no text" }
-                            OrbitVoice.Line(line.optString("speaker").ifBlank { "A" }.take(40), text)
+                            val lineStyle = line.optString("style").trim()
+                            require(lineStyle.length <= MAX_STYLE) { "The style of line ${i + 1} has ${lineStyle.length} characters; at most $MAX_STYLE" }
+                            OrbitVoice.Line(line.optString("speaker").ifBlank { "A" }.take(40), text, lineStyle)
                         }
                     }
+                    // One file holds at most this much of what was written, for any voice.
+                    val written = lines.sumOf { it.text.length }
+                    require(written <= OrbitVoice.MAX_CHARS) {
+                        "The text has $written characters; one file allows at most ${OrbitVoice.MAX_CHARS}. Split it into several parts"
+                    }
+                    // The words shown under "to text": what is said, without the performance cues.
+                    val words = com.ai.assistance.operit.features.orbit.OrbitVoiceText.of(
+                        lines.map { it.speaker to com.ai.assistance.operit.api.voice.MimoVoiceProvider.withoutCues(it.text) })
+                    val styledAsked = lines.any { it.style.isNotEmpty() || com.ai.assistance.operit.api.voice.MimoVoiceProvider.hasCues(it.text) }
                     val voices = if (args["action"] == "speak") {
                         args["voice"]?.takeIf { it.isNotBlank() }?.let { mapOf("voice" to it) }.orEmpty()
                     } else {
@@ -296,8 +316,9 @@ internal object OrbitVoiceTools {
                         val made = File(context.cacheDir, "orbit-voice-${UUID.randomUUID()}.audio")
                         try {
                             val (extension, details) = if (args["action"] == "speak") {
-                                when (val r = OrbitVoice.synthesizeWithReadAloud(context, lines[0].text, made, orbit.id)) {
+                                when (val r = OrbitVoice.synthesizeWithReadAloud(context, lines[0].text, made, orbit.id, style)) {
                                     is OrbitVoice.ServiceResult.Made -> r.extension to JSONObject().put("service", r.profile)
+                                        .apply { if (styledAsked) put("styled", r.styled) }
                                     OrbitVoice.ServiceResult.NotSetUp -> error(OrbitVoice.notSetUp(context, orbit.id))
                                     is OrbitVoice.ServiceResult.Failed -> error("No audio was made: ${r.reason}. " +
                                         "Tell the user in one line; do not make it with the phone's voice instead")
@@ -306,8 +327,8 @@ internal object OrbitVoiceTools {
                                 val podcast = OrbitVoice.synthesizePodcast(context, lines, voices, made, orbit.id)
                                 podcast.extension to JSONObject().put("lines", lines.size).put("voices", JSONObject(podcast.voices))
                                     .apply { if (podcast.shared) put("note", "There were not enough different voices, so some speakers share one. Tell the user in one line if it matters.") }
+                                    .apply { if (styledAsked) put("styled", podcast.styled) }
                             }
-                            val words = com.ai.assistance.operit.features.orbit.OrbitVoiceText.of(lines.map { it.speaker to it.text })
                             val entry = made.inputStream().use { files.saveBytes("files/voice/$name.$extension", it, voiceText = words) }
                             return@withContext ToolResult(tool.name, true, StringResultData(
                                 details.put("path", entry.path).put("chars", lines.sumOf { it.text.length })
@@ -318,15 +339,18 @@ internal object OrbitVoiceTools {
                         }
                     }
                     // The user chose the phone's voice: a plain message keeps their phone voice settings.
-                    val style = if (args["action"] == "speak" && voices.isEmpty()) OrbitVoice.phoneStyle(context, orbit.id) else null
+                    val phoneStyle = if (args["action"] == "speak" && voices.isEmpty()) OrbitVoice.phoneStyle(context, orbit.id) else null
                     val temp = File(context.cacheDir, "orbit-voice-${UUID.randomUUID()}.wav")
                     try {
-                        val used = OrbitVoice.synthesize(context, lines, voices, temp, style)
-                        val words = com.ai.assistance.operit.features.orbit.OrbitVoiceText.of(lines.map { it.speaker to it.text })
+                        // The phone's voice would read the cues out.
+                        val plain = lines.map { it.copy(text = com.ai.assistance.operit.api.voice.MimoVoiceProvider.withoutCues(it.text), style = "") }
+                        require(plain.all { it.text.isNotBlank() }) { "Without its performance cues a line has no words left" }
+                        val used = OrbitVoice.synthesize(context, plain, voices, temp, phoneStyle)
                         val entry = temp.inputStream().use { files.saveBytes("files/voice/$name.wav", it, voiceText = words) }
                         JSONObject().put("path", entry.path).put("chars", lines.sumOf { it.text.length })
                             .put("lines", lines.size).put("bytes", entry.size)
                             .put("engine", "phone")
+                            .apply { if (styledAsked) put("styled", false) }
                             .put("voices", JSONObject(used.mapValues { it.value.ifEmpty { "default" } }))
                             .put("markdown", OrbitFileTools.mediaMarkdown(files.fileFor(entry.path))).toString()
                     } finally {
