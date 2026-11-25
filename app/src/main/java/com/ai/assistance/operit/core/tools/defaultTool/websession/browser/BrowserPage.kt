@@ -26,8 +26,9 @@ internal interface BrowserPage {
     var userAgent: String
 
     /**
-     * Makes the page's client hints name Chrome on Android, or Chrome on Windows in desktop mode,
-     * to match [userAgent]. The WebView's are set with its settings when the tab is configured.
+     * Makes the page's client hints name Chrome on Android, or in desktop mode Chrome on Android's
+     * "Desktop site" (Linux), to match [userAgent]. The WebView's are set with its settings when
+     * the tab is configured.
      */
     fun applyChromeClientHints(desktop: Boolean) {}
 

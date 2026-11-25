@@ -280,8 +280,9 @@ internal class CefriumBrowserPage private constructor(
                 .put("brands", brands)
                 .put("fullVersionList", fullList)
                 .put("fullVersion", full)
-                .put("platform", if (desktop) "Windows" else "Android")
-                .put("platformVersion", if (desktop) "10.0.0" else Build.VERSION.RELEASE.orEmpty())
+                // Desktop: what Chrome on Android sends for "Desktop site", matching the user agent.
+                .put("platform", if (desktop) "Linux" else "Android")
+                .put("platformVersion", if (desktop) "" else Build.VERSION.RELEASE.orEmpty())
                 .put("architecture", if (desktop) "x86" else "")
                 .put("model", if (desktop) "" else Build.MODEL.orEmpty())
                 .put("mobile", !desktop)

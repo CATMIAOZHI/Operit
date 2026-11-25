@@ -994,10 +994,32 @@ internal fun StandardBrowserSessionTools.applySessionUserAgent(
             val userAgentMetadataBuilder =
                 UserAgentMetadata.Builder()
                     .setMobile(!isDesktopMode)
-                    .setPlatform(if (isDesktopMode) "Windows" else "Android")
-            // Name Chrome rather than "Android WebView", matching the user agent string.
+                    .setPlatform(if (isDesktopMode) "Linux" else "Android")
+            // Name Chrome rather than "Android WebView", matching the user agent string. The
+            // engine's own list is kept otherwise: its placeholder brand, versions and order
+            // follow Chrome's for this version, which a fixed list would not. Only when it is the
+            // version the user agent names: in the browser build a tab that fell back to the
+            // WebView still names the built-in engine's version.
+            val engineBrands =
+                runCatching { WebSettingsCompat.getUserAgentMetadata(this).brandVersionList }
+                    .getOrNull()
+                    .orEmpty()
             val brandVersions =
-                listOf("Chromium", "Google Chrome").map { brand ->
+                if (engineBrands.any {
+                        it.brand == "Chromium" &&
+                            it.fullVersion == StandardBrowserSessionTools.chromeFullVersion
+                    } &&
+                    engineBrands.any { it.brand == "Android WebView" || it.brand == "Google Chrome" }
+                ) {
+                    engineBrands.map { brand ->
+                        if (brand.brand != "Android WebView") brand
+                        else UserAgentMetadata.BrandVersion.Builder()
+                            .setBrand("Google Chrome")
+                            .setMajorVersion(brand.majorVersion)
+                            .setFullVersion(brand.fullVersion)
+                            .build()
+                    }
+                } else listOf("Chromium", "Google Chrome").map { brand ->
                     UserAgentMetadata.BrandVersion.Builder()
                         .setBrand(brand)
                         .setMajorVersion(StandardBrowserSessionTools.chromeMajorVersion)
@@ -1013,9 +1035,10 @@ internal fun StandardBrowserSessionTools.applySessionUserAgent(
                 .setBrandVersionList(brandVersions)
                 .setFullVersion(StandardBrowserSessionTools.chromeFullVersion)
             if (isDesktopMode) {
-                // Null fields inherit Android WebView defaults, which would contradict the desktop UA.
+                // Null fields inherit Android WebView defaults, which would contradict the desktop
+                // UA; these are the hints Chrome on Android sends for "Desktop site".
                 userAgentMetadataBuilder
-                    .setPlatformVersion("10.0.0")
+                    .setPlatformVersion("")
                     .setArchitecture("x86")
                     .setModel("")
                     .setBitness(64)
