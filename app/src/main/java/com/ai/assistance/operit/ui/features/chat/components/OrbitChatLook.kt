@@ -376,6 +376,8 @@ class OrbitPieceActions(
     val like: ((OrbitPiece) -> Unit)?,
     val menu: ((OrbitPiece) -> Unit)?,
     val reply: ((OrbitPiece) -> Unit)?,
+    /** A long press on a voice bar inside the bubble: the menu for that bubble and that recording. */
+    val voiceMenu: ((OrbitPiece, String) -> Unit)? = null,
 )
 
 val LocalOrbitPieceActions = compositionLocalOf<OrbitPieceActions?> { null }
@@ -430,6 +432,17 @@ private fun OrbitPieceGestures(piece: OrbitPiece, content: @Composable () -> Uni
     val like = actions?.like?.let { { it(piece) } }
     val menu = actions?.menu?.let { { it(piece) } }
     val gestures = if (actions != null) OrbitMessageGestures(like, menu) else LocalOrbitMessageGestures.current
+    // A voice bar here opens the menu for this very bubble, so "reply" quotes it.
+    val voiceHost = com.ai.assistance.operit.ui.common.markdown.LocalVoiceMenu.current
+    // The actions are new on every redraw of the row: the host stays the same, so the bars keep theirs.
+    val voiceMenu = androidx.compose.runtime.rememberUpdatedState(actions?.voiceMenu)
+    val hasVoiceMenu = actions?.voiceMenu != null
+    val bubbleVoiceHost = androidx.compose.runtime.remember(voiceHost, hasVoiceMenu, piece) {
+        if (voiceHost?.open == null || !hasVoiceMenu) voiceHost
+        else com.ai.assistance.operit.ui.common.markdown.VoiceMenuHost(
+            open = { url -> voiceMenu.value?.invoke(piece, url) }, words = voiceHost.words, pending = voiceHost.pending,
+        )
+    }
     val source = androidx.compose.runtime.remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     OrbitSwipeToReply(enabled = actions?.reply != null, onReply = { actions?.reply?.invoke(piece) }) {
         Column(Modifier.fillMaxWidth()) {
@@ -443,6 +456,7 @@ private fun OrbitPieceGestures(piece: OrbitPiece, content: @Composable () -> Uni
             ) {
                 androidx.compose.runtime.CompositionLocalProvider(
                     LocalOrbitMessageGestures provides gestures,
+                    com.ai.assistance.operit.ui.common.markdown.LocalVoiceMenu provides bubbleVoiceHost,
                 ) {
                     content()
                 }
@@ -658,6 +672,17 @@ object OrbitSpeech {
     }
 
     private fun hasVoiceLine(text: String) = text.contains("](") && voiceLines(text).isNotEmpty()
+
+    /**
+     * When [piece] is a voice message bubble (a voice line alone), its caption ("" when it has
+     * none); null for any other bubble. A reply to it quotes this instead of the link.
+     */
+    fun voiceCaption(piece: OrbitPiece): String? {
+        if (piece.summary != null || !piece.content.contains("](")) return null
+        val m = voiceLine.matchEntire(piece.content.trim()) ?: return null
+        if (!com.ai.assistance.operit.ui.common.markdown.isLikelyAudioUrl(m.groupValues[1])) return null
+        return m.value.substringAfter("![").substringBefore("](").trim()
+    }
 
     private fun clean(content: String): String {
         // A card a tool put in the chat (a secure entry card, a picture or file Orbit sent) stays

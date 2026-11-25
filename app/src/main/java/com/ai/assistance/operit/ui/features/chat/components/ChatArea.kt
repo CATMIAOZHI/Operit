@@ -902,6 +902,8 @@ private fun MessageItem(
     var showEmojiPicker by remember { mutableStateOf(false) }
     // The bubble the long-press menu is for: a card inside the reply, or null for the message itself.
     var menuPiece by remember { mutableStateOf<OrbitPiece?>(null) }
+    // The words or voice bubble of Orbit's reply the menu was opened on, so a reply quotes just it.
+    var menuWords by remember { mutableStateOf<OrbitPiece?>(null) }
     // The voice message the long-press menu was opened on (its "to text"), and whether it has words.
     var menuVoice by remember { mutableStateOf<String?>(null) }
     val reactionKey = menuPiece?.reactionKey(orbitUserReactions?.byMessage) ?: message.timestamp.toString()
@@ -916,9 +918,18 @@ private fun MessageItem(
         }
     }
     val quickLike: (() -> Unit)? = if (canReactToOrbit) { { like(message.timestamp.toString(), null) } } else null
-    /** What a reply to [piece] quotes: a card's summary, or the message's words without its cards. */
+    /**
+     * What a reply to [piece] quotes: a card's summary, a voice message as "[Voice] caption", one
+     * bubble's words; with no bubble, the message's words without its cards.
+     */
     fun replyTarget(piece: OrbitPiece?): ChatMessage = when {
         piece?.summary != null -> message.copy(content = piece.summary, contentStream = null)
+        piece != null && message.sender == "ai" && orbitLook -> {
+            val caption = OrbitSpeech.voiceCaption(piece)
+            val quote = if (caption == null) piece.content
+                else "[" + context.getString(R.string.ai_message_quoted_voice) + "]" + (if (caption.isEmpty()) "" else " $caption")
+            message.copy(content = quote, contentStream = null)
+        }
         message.sender == "ai" && orbitLook -> message.copy(content = OrbitSpeech.splitCards(message.content).first, contentStream = null)
         else -> message
     }
@@ -939,6 +950,7 @@ private fun MessageItem(
     val openMenuFor: (voice: () -> String?) -> Unit = { voice ->
         if (!isMultiSelectMode && isActionable) {
             menuPiece = null
+            menuWords = null
             menuVoice = voice()
             pluginMenuItems =
                 if (!isHiddenUserMessage && allowTranscriptMutation) {
@@ -1064,10 +1076,16 @@ private fun MessageItem(
                         else com.ai.assistance.operit.ui.common.markdown.VoiceTranscripts.onlyVoiceIn(piece.content)
                     }
                     menuPiece = piece.takeIf { it.summary != null }
+                    menuWords = piece.takeIf { it.summary == null }
                 },
                 reply = if (allowTranscriptMutation && onReplyToMessage != null) {
-                    { piece -> onReplyToMessage.invoke(replyTarget(piece.takeIf { it.summary != null })) }
+                    { piece -> onReplyToMessage.invoke(replyTarget(piece)) }
                 } else null,
+                // The voice bar pressed, in its own bubble: "to text" for it, "reply" quoting the bubble.
+                voiceMenu = { piece, url ->
+                    openMenuFor { url }
+                    menuWords = piece.takeIf { it.summary == null }
+                },
             )
         } else null
     // The statistics are drawn outside the card, and only by the row that closes it: drawn inside,
@@ -1129,11 +1147,15 @@ private fun MessageItem(
                 onDoubleClick = quickLike,
             ),
     ) {
+        // While picking, a message that did not go out hides its resend mark (no tap reaches it
+        // then): the pick mark has that empty side to itself. The bubble keeps its place on the right.
+        val unsentMessages = LocalOrbitUnsentMessages.current
         androidx.compose.runtime.CompositionLocalProvider(
             LocalOrbitMessageGestures provides
                 if (orbitLook) OrbitMessageGestures(quickLike, openMessageMenu) else null,
             LocalOrbitPieceActions provides pieceActions,
             com.ai.assistance.operit.ui.common.markdown.LocalVoiceMenu provides voiceHost,
+            LocalOrbitUnsentMessages provides unsentMessages.takeUnless { isMultiSelectMode && orbitMessageHost != null },
         ) {
         OrbitSwipeToReply(
             enabled = orbitLook && isActionable && !isHiddenUserMessage && !isMultiSelectMode &&
@@ -1143,16 +1165,12 @@ private fun MessageItem(
         ) {
         // While picking messages the whole row is one choice; its cards and links do not take
         // screen-reader actions underneath it.
-        // The empty side keeps room for the round mark and "select to here", so they never sit on
-        // the message.
+        // Nothing else changes: the round mark and "select to here" float on the side the bubble
+        // leaves empty (a bubble is at most 80% wide), so picking never narrows, rewraps or
+        // stretches a message and the list stays where it was.
         Column(
             if (orbitMessageHost != null && isMultiSelectMode && isActionable && !isHiddenUserMessage) {
                 Modifier.clearAndSetSemantics {}
-                    .padding(
-                        start = if (message.sender == "user") ORBIT_PICK_SIDE else 0.dp,
-                        end = if (message.sender == "user") 0.dp else ORBIT_PICK_SIDE,
-                    )
-                    .heightIn(min = 56.dp)
             } else Modifier
         ) {
             if (quietOrbitReply) {
@@ -1273,7 +1291,9 @@ private fun MessageItem(
                             ) { onToggleSelection?.invoke() }
                             .then(
                                 if (isSelected) Modifier.background(tint)
-                                else Modifier.border(1.5.dp, MaterialTheme.colorScheme.outline, androidx.compose.foundation.shape.CircleShape)
+                                // Filled, so it still shows where it lies over a wide card.
+                                else Modifier.background(MaterialTheme.colorScheme.surface)
+                                    .border(1.5.dp, MaterialTheme.colorScheme.outline, androidx.compose.foundation.shape.CircleShape)
                             ),
                         contentAlignment = Alignment.Center,
                     ) {
@@ -1307,15 +1327,35 @@ private fun MessageItem(
                         }
                     }
                 }
-                // Same size whether "select to here" shows or not, so the mark never moves under a finger.
-                Column(
-                    Modifier.align(if (message.sender == "user") Alignment.CenterStart else Alignment.CenterEnd)
-                        .requiredWidth(ORBIT_PICK_SIDE),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    mark()
-                    Box(Modifier.height(26.dp), contentAlignment = Alignment.Center) { rangeHere() }
+                // A reply holding a card may use the whole row (cards are not held to 80%, as words
+                // are), so it leaves no empty side: there only the mark shows, in the top corner,
+                // over as little of the card as it can.
+                // The same test the bubble uses to give it the whole row.
+                val holdsCard = message.sender == "ai" && remember(message.content) {
+                    com.ai.assistance.operit.ui.features.chat.components.style.bubble.OrbitCardFence.containsMatchIn(message.content)
+                }
+                androidx.compose.foundation.layout.BoxWithConstraints(Modifier.matchParentSize()) {
+                    // Words and a picture alone take at most 80% of the row: the rest is the empty side.
+                    val side = minOf(maxWidth * 0.2f, ORBIT_PICK_SIDE)
+                    when {
+                        holdsCard -> Box(Modifier.align(Alignment.TopEnd).padding(6.dp)) { mark() }
+                        // "Select to here" goes under the mark only where both fit inside the row, so
+                        // nothing ever lies on the message or on the row next to it.
+                        side >= 64.dp && maxHeight >= 52.dp -> Column(
+                            Modifier.align(if (message.sender == "user") Alignment.CenterStart else Alignment.CenterEnd)
+                                .requiredWidth(side),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            mark()
+                            Box(Modifier.height(26.dp), contentAlignment = Alignment.Center) { rangeHere() }
+                        }
+                        else -> Box(
+                            Modifier.align(if (message.sender == "user") Alignment.CenterStart else Alignment.CenterEnd)
+                                .requiredWidth(side),
+                            contentAlignment = Alignment.Center,
+                        ) { mark() }
+                    }
                 }
             }
         }
@@ -1566,7 +1606,7 @@ private fun MessageItem(
                         )
                     },
                     onClick = {
-                        onReplyToMessage?.invoke(replyTarget(menuPiece))
+                        onReplyToMessage?.invoke(replyTarget(menuPiece ?: menuWords))
                         showContextMenu = false
                     },
                     leadingIcon = {

@@ -5970,8 +5970,8 @@
     <string name="voice_no_transcript">这段音频转不了文字</string>
     <string name="voice_recognizing">正在识别…</string>
     <string name="voice_recognized_note">自动识别，可能有错字</string>
-    <string name="voice_stt_live_only">现在用的 Sherpa-ncnn 只能边说边认，认不了录好的音频。可以在「语音服务设置」里换成 MiMo 语音识别</string>
-    <string name="voice_stt_not_set_up">还没配好语音识别，先去「语音服务设置」里填上密钥</string>
+    <string name="voice_stt_live_only">现在用的 Sherpa-ncnn 认不了录好的音频。在「语音服务设置」里下载 SenseVoice 或 Paraformer 本地模型就能认，不用联网</string>
+    <string name="voice_stt_not_set_up">还没配好语音识别。在「语音服务设置」里填上密钥，或下载 SenseVoice 本地模型</string>
     <string name="voice_stt_model_missing">本地识别模型还没下载，先去「语音服务设置」里下载</string>
     <string name="voice_stt_too_long">超过 %1$d 分钟的音频认不了</string>
     <string name="voice_stt_failed">识别失败：%1$s</string>
@@ -10156,6 +10156,7 @@
     <string name="orbit_emoji_load_failed">表情列表没能读取出来</string>
     <string name="orbit_sent_card">发来一张卡片</string>
     <string name="ai_message_quoted_card">卡片</string>
+    <string name="ai_message_quoted_voice">语音</string>
     <string name="orbit_emoji_group_smileys">笑脸和情绪</string>
     <string name="orbit_emoji_group_people">人物和身体</string>
     <string name="orbit_emoji_group_animals">动物和自然</string>
