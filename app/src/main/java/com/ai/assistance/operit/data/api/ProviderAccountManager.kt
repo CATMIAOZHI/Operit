@@ -457,6 +457,22 @@ class ProviderAccountManager private constructor(context: Context, val provider:
             mapOf("User-Agent" to ANTIGRAVITY_CLI_UA))
     }
 
+    /**
+     * Antigravity has no billing endpoint; what is left shows in its model list, per model. One
+     * row each for Gemini and Claude, the way opencodex asks and shows it: the IDE's daily host and
+     * the IDE client, which serves the agent models (Claude among them) whose allowance is shown.
+     */
+    suspend fun fetchAntigravityQuota(): ProviderQuota {
+        check(provider == AccountProvider.ANTIGRAVITY)
+        val value = validAccount()
+        val models = requestJson("$CCA_DAILY/v1internal:fetchAvailableModels",
+            JSONObject().put("project", value.projectId).toBody(), value.accessToken,
+            mapOf("User-Agent" to ANTIGRAVITY_UA))
+        val quota = ProviderQuota(windows = AntigravityQuota.windows(models))
+        if (quota.isEmpty) throw IOException("Antigravity reported no quota")
+        return quota
+    }
+
     suspend fun availableGrokModels(): List<com.ai.assistance.operit.data.model.ModelOption> {
         val value = validAccount()
         val root = requestJson("https://cli-chat-proxy.grok.com/v1/models", token = value.accessToken)
@@ -572,6 +588,8 @@ class ProviderAccountManager private constructor(context: Context, val provider:
     companion object {
         private const val TAG = "ProviderAccountManager"
         const val CCA = "https://cloudcode-pa.googleapis.com"
+        /** The host the Antigravity IDE reads its model list and allowance from. */
+        const val CCA_DAILY = "https://daily-cloudcode-pa.googleapis.com"
         const val ANTIGRAVITY_IDE_VERSION = "2.5.5"
         const val ANTIGRAVITY_UA =
             "antigravity/ide/$ANTIGRAVITY_IDE_VERSION (os_type=windows; arch=amd64; aidev_client; auth_method=oauth)"

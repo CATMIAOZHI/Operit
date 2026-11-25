@@ -12,8 +12,11 @@ import org.json.JSONObject
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-/** The subscription windows Operit knows how to display. */
-enum class QuotaWindow { FIVE_HOUR, WEEKLY, MONTHLY }
+/**
+ * The subscription windows Operit knows how to display. [MODEL] is one group of models' own
+ * allowance (Antigravity's Gemini and Claude), named by its label.
+ */
+enum class QuotaWindow { FIVE_HOUR, WEEKLY, MONTHLY, MODEL }
 
 /** One window exactly as the provider reports it, normalized to a 0–100 percentage. */
 data class ProviderQuotaWindow(
@@ -21,6 +24,8 @@ data class ProviderQuotaWindow(
     val percent: Double,
     /** Rollover time, or null when the provider sent no usable clock (0 and negative are sentinels). */
     val resetAtEpochMillis: Long? = null,
+    /** The name shown for a [QuotaWindow.MODEL] window, such as "Gemini". */
+    val label: String? = null,
 )
 
 /** Account-level quota for a subscription provider, as reported by that provider. */
@@ -265,3 +270,76 @@ internal fun quotaHttpClient(): OkHttpClient = OkHttpClient.Builder()
     .followRedirects(false)
     .followSslRedirects(false)
     .build()
+
+/**
+ * Antigravity reports what is left per model in its model list (`fetchAvailableModels`), not per
+ * account. Models share an allowance by family, so one row each for Gemini and Claude, as opencodex
+ * shows it: the first model of a family that reports a remaining share decides it.
+ */
+internal object AntigravityQuota {
+    fun windows(body: JSONObject?): List<ProviderQuotaWindow> {
+        val models = body?.optJSONObject("models") ?: return emptyList()
+        val found = LinkedHashMap<String, ProviderQuotaWindow>()
+        for (id in models.keys()) {
+            val model = models.optJSONObject(id) ?: continue
+            for (info in quotaInfos(model)) {
+                val family = family(id, model, info) ?: continue
+                val resetAt = QuotaParsing.resetAt(info.opt("resetTime"))
+                val known = found[family]
+                if (known != null) {
+                    // The first share stands; a later entry with the very same share (the same
+                    // allowance listed again) may still give it the reset time.
+                    if (known.resetAtEpochMillis == null && resetAt != null && usedPercent(info) == known.percent) {
+                        found[family] = known.copy(resetAtEpochMillis = resetAt)
+                    }
+                    continue
+                }
+                val percent = usedPercent(info) ?: continue
+                found[family] = ProviderQuotaWindow(QuotaWindow.MODEL, percent, resetAt, family)
+            }
+        }
+        return listOf("Gemini", "Claude").mapNotNull { found[it] }
+    }
+
+    /**
+     * The quota entries of one model, in the shapes opencodex reads: `quotaInfo` (one or a list),
+     * `quotaInfos` (a list), `quotaInfoByTier` (one or a list per tier). Lists are one level deep.
+     */
+    private fun quotaInfos(model: JSONObject): List<JSONObject> {
+        val found = ArrayList<JSONObject>()
+        fun one(value: Any?, tier: String? = null) {
+            if (value is JSONObject) found += if (tier == null) value else JSONObject(value.toString()).put("tier", tier)
+        }
+        fun list(value: Any?, tier: String? = null) {
+            if (value is org.json.JSONArray) for (i in 0 until value.length()) one(value.opt(i), tier)
+        }
+        model.opt("quotaInfo").let { if (it is org.json.JSONArray) list(it) else one(it) }
+        list(model.opt("quotaInfos"))
+        model.optJSONObject("quotaInfoByTier")?.let { byTier ->
+            for (tier in byTier.keys()) byTier.opt(tier).let { if (it is org.json.JSONArray) list(it, tier) else one(it, tier) }
+        }
+        return found
+    }
+
+    private fun family(id: String, model: JSONObject, info: JSONObject): String? {
+        val name = model.opt("displayName") as? String ?: ""
+        val tier = info.opt("tier") as? String ?: ""
+        val text = "$id $name $tier".lowercase()
+        return when {
+            "gemini" in text -> "Gemini"
+            listOf("claude", "opus", "sonnet", "gpt-oss", "gpt_oss").any { it in text } -> "Claude"
+            else -> null
+        }
+    }
+
+    /** Used share from the remaining one (`remainingFraction`, else `remainingPercentage`, both 0–1). */
+    private fun usedPercent(info: JSONObject): Double? {
+        val remaining = QuotaParsing.number(info.opt("remainingFraction"))
+            ?: QuotaParsing.number(info.opt("remainingPercentage"))
+            ?: return null
+        // Worked out in decimals: 0.55 left is 45% used, not 44.999… shown as 44%.
+        val used = java.math.BigDecimal.ONE.subtract(java.math.BigDecimal.valueOf(remaining.coerceIn(0.0, 1.0)))
+            .multiply(java.math.BigDecimal(100))
+        return QuotaParsing.percent(used.toDouble())
+    }
+}

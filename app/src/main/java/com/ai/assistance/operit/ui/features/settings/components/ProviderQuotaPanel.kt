@@ -117,13 +117,12 @@ fun ProviderQuotaPanel(
 
 @Composable
 private fun QuotaWindowRow(window: ProviderQuotaWindow, nowEpochMillis: Long) {
-    val label = stringResource(
-        when (window.window) {
-            QuotaWindow.FIVE_HOUR -> R.string.quota_window_five_hour
-            QuotaWindow.WEEKLY -> R.string.quota_window_weekly
-            QuotaWindow.MONTHLY -> R.string.quota_window_monthly
-        }
-    )
+    val label = when (window.window) {
+        QuotaWindow.FIVE_HOUR -> stringResource(R.string.quota_window_five_hour)
+        QuotaWindow.WEEKLY -> stringResource(R.string.quota_window_weekly)
+        QuotaWindow.MONTHLY -> stringResource(R.string.quota_window_monthly)
+        QuotaWindow.MODEL -> window.label.orEmpty()
+    }
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Row {
             Text(label, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
