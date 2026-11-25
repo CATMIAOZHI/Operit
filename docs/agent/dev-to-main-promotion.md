@@ -273,8 +273,8 @@ APK="$WORK/apk/release/app-release.apk"
 ```bash
 # 必须出现：package: name='com.rainy.operitry' versionCode='<本轮>' versionName='<本轮>'
 #           application-label:'Orbit'、native-code: 'arm64-v8a'
-#           （应用名取自 orbit_launcher_name；用户可在设置里把桌面图标切成 Operit Ry，
-#           那是另一个默认关闭的入口，不影响这里的检查）
+#           （应用名取自 orbit_launcher_name；清单里另一个默认关闭的 Operit Ry 入口
+#           只用来把旧版选过它的手机换回 Orbit，不影响这里的检查）
 # 不得出现：application-debuggable
 aapt dump badging "$APK" | grep -E "^package:|application-label:|native-code:|application-debuggable"
 

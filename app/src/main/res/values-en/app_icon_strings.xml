@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <string name="app_icon_setting_title">Home screen icon and name</string>
-    <string name="app_icon_switch_title">Switch to “%1$s”?</string>
-    <string name="app_icon_switch_body">The app may go back to the home screen when it switches. The new icon may take a few seconds to appear; tap it to open the app.</string>
-    <string name="app_icon_switch_confirm">Switch</string>
-</resources>

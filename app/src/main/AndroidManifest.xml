@@ -285,8 +285,8 @@
             </intent-filter>
         </activity>
 
-        <!-- The home-screen entry: Orbit's name and icon by default, or Operit Ry's. Settings turns one
-             on and the other off (AppLauncherIdentity); exactly one stays enabled. -->
+        <!-- The home-screen entry is always Orbit. The Operit Ry entry stays declared, off, only so a
+             phone that picked it in an older version is turned back to Orbit (AppLauncherIdentity). -->
         <activity-alias
             android:name=".launcher.OrbitLauncher"
             android:targetActivity=".ui.main.MainActivity"
