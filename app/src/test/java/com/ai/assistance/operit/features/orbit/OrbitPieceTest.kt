@@ -40,6 +40,44 @@ class OrbitPieceTest {
         assertTrue(pieces.single().showsBadge)
     }
 
+    @Test fun wordsAfterAToolStepAreANewBubbleLikeAMessageBreak() {
+        val step = "<tool name=\"trade\"><param name=\"side\">buy</param></tool>\n" +
+            "<tool_result name=\"trade\" status=\"success\"><content>ok</content></tool_result>"
+        val raw = "$step\n我挂一张多单。\n$step\n$step\n开了。\n<think>想一下</think>\n止损挂上了。\n$step"
+        val shown = OrbitSpeech.of(raw)
+        // A step before the first words or after the last ones splits nothing; thinking never splits.
+        assertEquals(listOf("我挂一张多单。", "开了。\n\n止损挂上了。"),
+            OrbitSpeech.pieceList(shown, 5, english = false).map { it.content })
+        assertEquals("我挂一张多单。\n\n开了。\n\n止损挂上了。", OrbitSpeech.words(raw, ""))
+        assertEquals("先说\n\n后说", OrbitSpeech.of("先说\n<think>x</think>\n后说"))
+    }
+
+    @Test fun anAutoBreakNeedsWordsOnBothSidesAndNeverSplitsCode() {
+        val step = "<tool name=\"trade\"></tool><tool_result name=\"trade\" status=\"success\"><content>ok</content></tool_result>"
+        // Only markup on one side, cleaned away later: no break, so the row stays empty and hidden.
+        assertEquals("", OrbitSpeech.of("<emotion>开心</emotion>$step<emotion>开心</emotion>"))
+        assertEquals("说完了", OrbitSpeech.of("说完了$step<status type=\"done\">完成</status>"))
+        // A step written as an example inside a code block is not a place to split.
+        val code = "看这个：\n```\n<foo>\n<tool name=\"demo\"><param name=\"x\">x</param></tool>\n</foo>\n```\n完"
+        assertFalse(OrbitSpeech.of(code).contains("message_break"))
+        assertFalse(OrbitSpeech.of("看 `前<tool name=\"demo\"><param name=\"x\">x</param></tool>后` 完").contains("message_break"))
+        assertFalse(OrbitSpeech.of("看 ``a ` 前${step}后`` 完").contains("message_break"))
+        // An unclosed backtick run is plain text, so the split still happens after it.
+        assertTrue(OrbitSpeech.of("看 ``` 没闭合 前${step}后").contains("message_break"))
+        // A backtick before a code block never pairs with one after it.
+        assertTrue(OrbitSpeech.of("有个 ` 号\n```txt\n代码\n```\n先查。\n$step\n查好了，是 `。").contains("message_break"))
+        // Nor across a line break: inline code ends at the end of its line.
+        assertTrue(OrbitSpeech.of("前文有个 ` 号。\n$step\n查好了，是 `。").contains("message_break"))
+        // Orbit's own break is kept exactly as written, and wins over the chat's right next to it.
+        assertEquals("甲<message_break/>乙", OrbitSpeech.tidyBreaks("甲<message_break/>乙"))
+        assertEquals("甲<message_break/>\n乙", OrbitSpeech.of("甲<message_break/>${step}乙"))
+        // A channel cleans without the chat's breaks: exactly the text it sent before.
+        assertEquals("甲乙", OrbitSpeech.of("甲${step}乙", splitSteps = false))
+        assertEquals("甲<message_break/>乙", OrbitSpeech.of("甲<message_break/>${step}乙", splitSteps = false))
+        // Private-use text Orbit wrote is left alone.
+        assertEquals("甲\uE002乙", OrbitSpeech.of("甲\uE002${step}乙", splitSteps = false))
+    }
+
     @Test fun aVoiceLineAfterCodeClosedByALongerFenceIsItsOwnBubble() {
         val voice = "![语音](file:///data/files/voice/a.wav)"
         val shown = "看这段\n```\n$voice\n````\n$voice"
@@ -132,7 +170,8 @@ class OrbitPieceTest {
     @Test fun aStepMentionedInThinkingDoesNotSwallowTheReply() {
         val content = "<think>准备调用 <tool_x name=\"a\"> 看看</think>先说一句" +
             "<tool_x name=\"b\"><param name=\"p\"><think>log</param></tool_x>结论"
-        assertEquals("先说一句结论", OrbitSpeech.of(content))
+        // The words after the step are a bubble of their own.
+        assertEquals("先说一句\n<message_break auto/>\n结论", OrbitSpeech.of(content))
     }
 
     // A broken step whose thinking runs on came out of Orbit's own thinking: finished or cut off,

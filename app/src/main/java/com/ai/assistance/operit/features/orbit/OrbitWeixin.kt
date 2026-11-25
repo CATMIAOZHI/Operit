@@ -926,7 +926,8 @@ internal object OrbitWeixin {
         val out = mutableListOf<Outbound>()
         fun text(t: String, key: String) = chunks(t).forEachIndexed { i, c -> out += Outbound("$key-$i", "text", c, "", "") }
         val inApp = if (english) " (open Operit to see it)" else "（请在 Operit 里查看）"
-        OrbitSpeech.history(rows).filter { it.sender == "ai" && !OrbitSpeech.hidden(it) }.forEach { row ->
+        // The chat splits words after a tool step into a new bubble; WeChat keeps them one message.
+        OrbitSpeech.history(rows, splitSteps = false).filter { it.sender == "ai" && !OrbitSpeech.hidden(it) }.forEach { row ->
             OrbitSpeech.pieceList(row.content, row.timestamp, english).forEachIndexed { n, piece ->
                 val key = "${row.timestamp}-$n"
                 if (piece.summary == null) {

@@ -1487,7 +1487,10 @@ private fun MessageItem(
                         )
                     },
                     onClick = {
-                        val cleanContent = cleanMessageContentForCopy(message.content)
+                        // In an Orbit reply shown as several bubbles, the one pressed. A voice
+                        // bubble copies the whole reply, as its link alone says nothing.
+                        val pressed = menuWords?.takeIf { orbitLook && OrbitSpeech.voiceCaption(it) == null }
+                        val cleanContent = cleanMessageContentForCopy(pressed?.content ?: message.content)
                         copyPreviewText = cleanContent
                         onCopyMessage?.invoke(message)
                         showContextMenu = false
@@ -1987,10 +1990,21 @@ private fun MessageItem(
         }
 
         if (showDeleteMessageConfirmDialog) {
+            // Every bubble of the reply goes with it, so say so when there are several.
+            val parts = if (orbitLook && message.sender == "ai") {
+                val english = !androidx.compose.ui.platform.LocalConfiguration.current.locales[0].language.startsWith("zh")
+                remember(message.content, message.timestamp, english) {
+                    // Counted as the chat draws them, a voice message alone on its line included.
+                    OrbitSpeech.pieceList(message.content, message.timestamp, english, splitVoice = true).count { it.summary == null }
+                }
+            } else 1
             OrbitAwareAlertDialog(
                 onDismissRequest = { showDeleteMessageConfirmDialog = false },
                 title = { Text(text = stringResource(R.string.confirm_delete)) },
-                text = { Text(text = stringResource(R.string.chat_delete_message_confirm_message)) },
+                text = {
+                    Text(text = if (parts > 1) stringResource(R.string.orbit_delete_split_reply_confirm, parts)
+                        else stringResource(R.string.chat_delete_message_confirm_message))
+                },
                 confirmButton = {
                     TextButton(
                         onClick = {
