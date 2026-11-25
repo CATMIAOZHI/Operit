@@ -649,41 +649,9 @@ object OrbitSpeech {
     // A Markdown audio link alone on its line (Orbit's voice messages are written so). At most three
     // spaces before it: four make it code.
     private val voiceLine = Regex("(?m)^ {0,3}!\\[[^\\]\\n]*\\]\\(([^)\\s]+)\\)[ \\t]*$")
-    // A code fence line: its marker, and what follows it (a closing fence has nothing after).
-    private val fenceLine = Regex("^ {0,3}(`{3,}|~{3,})(.*)$")
-
-    /**
-     * The ranges of [text]'s fenced code blocks, each to its closing fence or the end. As in
-     * Markdown, a block closes on a fence of the same mark at least as long as its opening.
-     */
-    private fun codeBlocks(text: String): List<IntRange> {
-        val out = mutableListOf<IntRange>()
-        var open: String? = null
-        var start = 0
-        var at = 0
-        while (at <= text.length) {
-            val end = text.indexOf('\n', at).let { if (it < 0) text.length else it }
-            val m = fenceLine.find(text.substring(at, end).trimEnd('\r'))
-            if (m != null) {
-                val mark = m.groupValues[1]
-                val opening = open
-                if (opening == null) {
-                    open = mark
-                    start = at
-                } else if (mark[0] == opening[0] && mark.length >= opening.length && m.groupValues[2].isBlank()) {
-                    out += start..end
-                    open = null
-                }
-            }
-            at = end + 1
-        }
-        if (open != null) out += start..text.length
-        return out
-    }
-
     /** The voice lines of [text] outside code blocks. */
     private fun voiceLines(text: String): List<MatchResult> {
-        val code = if (text.contains("```") || text.contains("~~~")) codeBlocks(text) else emptyList()
+        val code = if (text.contains("```") || text.contains("~~~")) com.ai.assistance.operit.ui.common.markdown.markdownFenceRanges(text) else emptyList()
         return voiceLine.findAll(text).filter { m ->
             com.ai.assistance.operit.ui.common.markdown.isLikelyAudioUrl(m.groupValues[1]) && code.none { m.range.first in it }
         }.toList()

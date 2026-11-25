@@ -388,7 +388,6 @@ class TokenTrackingAIService(
                     cost = frozen?.cost,
                     // The currency of whichever price the amounts were worked out at.
                     currency = (priced ?: frozen?.pricing)?.currency ?: com.ai.assistance.operit.data.collects.PricingCurrency.CNY,
-                    configId = request.configId,
                     allowanceCost = allowanceCost,
                 )
                 com.ai.assistance.operit.features.orbit.OrbitQuota.record(appContext, tag, input, output, bill,

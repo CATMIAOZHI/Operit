@@ -904,7 +904,6 @@ private fun MessageItem(
     var menuPiece by remember { mutableStateOf<OrbitPiece?>(null) }
     // The voice message the long-press menu was opened on (its "to text"), and whether it has words.
     var menuVoice by remember { mutableStateOf<String?>(null) }
-    var menuVoiceHasWords by remember { mutableStateOf(false) }
     val reactionKey = menuPiece?.reactionKey(orbitUserReactions?.byMessage) ?: message.timestamp.toString()
     val canReactToOrbit = orbitLook && message.sender == "ai" && orbitUserReactions != null && isActionable &&
         !isMultiSelectMode && !isWriting && message.contentStream == null
@@ -936,11 +935,11 @@ private fun MessageItem(
             messageIndex = messageIndex,
             message = message
         )
-    val openMessageMenu: () -> Unit = {
+    /** Opens the message menu; [voice] gives the recording it is for (its "to text"), found only when needed. */
+    val openMenuFor: (voice: () -> String?) -> Unit = { voice ->
         if (!isMultiSelectMode && isActionable) {
             menuPiece = null
-            menuVoice = null
-            menuVoiceHasWords = false
+            menuVoice = voice()
             pluginMenuItems =
                 if (!isHiddenUserMessage && allowTranscriptMutation) {
                     ChatMessageMenuItemRegistry.createMenuItems(buildPluginMenuItemParams())
@@ -950,7 +949,11 @@ private fun MessageItem(
             showContextMenu = true
         }
     }
-    val latestOpenMessageMenu = androidx.compose.runtime.rememberUpdatedState(openMessageMenu)
+    // Held anywhere on a message with one voice message, the menu is for that voice too.
+    val openMessageMenu: () -> Unit = {
+        openMenuFor { com.ai.assistance.operit.ui.common.markdown.VoiceTranscripts.onlyVoiceIn(message.content) }
+    }
+    val latestOpenMenuFor = androidx.compose.runtime.rememberUpdatedState(openMenuFor)
     // The voice messages here showing their words ("to text"): which ones is kept with the message
     // (also while it is scrolled away), and the words themselves only while it is on screen. Both the
     // bars and the menu read [voiceWords], so they always agree.
@@ -959,6 +962,8 @@ private fun MessageItem(
         androidx.compose.runtime.mutableStateMapOf<String, com.ai.assistance.operit.ui.common.markdown.VoiceTranscripts.Found>()
     }
     val voiceNoWords = stringResource(R.string.voice_no_transcript)
+    // Recordings whose words are being recognized (it takes a while, and may cost money).
+    val voiceHearing = remember { androidx.compose.runtime.mutableStateListOf<String>() }
     // At most one look at each recording at a time; hiding its words stops it.
     val voiceJobs = remember { java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Job>() }
     fun showVoiceWords(url: String, words: com.ai.assistance.operit.ui.common.markdown.VoiceTranscripts.Found?) {
@@ -967,20 +972,49 @@ private fun MessageItem(
     }
     fun hideVoiceWords(url: String) {
         voiceJobs.remove(url)?.cancel()
+        // Stopped at once, even while the recognition under way is being cancelled.
+        voiceHearing.remove(url)
         showVoiceWords(url, null)
     }
+    /**
+     * Shows the words of [url]. Asked for by the user ([quiet] false): kept or recognized before, or
+     * else recognized now with their speech recognition, showing "Recognizing…" from the tap on.
+     * Brought back ([quiet]): only words found, never recognized.
+     */
     fun requestVoiceWords(url: String, quiet: Boolean) {
         if (voiceJobs[url]?.isActive == true) return
+        val transcripts = com.ai.assistance.operit.ui.common.markdown.VoiceTranscripts
+        if (!quiet) voiceHearing.add(url)
         val job = coroutineScope.launch {
-            val deletions = com.ai.assistance.operit.features.orbit.OrbitVoiceText.forgotten
-            val before = deletions.value
-            var found = com.ai.assistance.operit.ui.common.markdown.VoiceTranscripts.find(context, url)
-            // A recording deleted (or replaced) while it was being read shows nothing.
-            if (found != null && deletions.value != before &&
-                withContext(Dispatchers.IO) { com.ai.assistance.operit.ui.common.markdown.VoiceTranscripts.markOf(context, url) } != found.mark
-            ) found = null
-            if (found == null && !quiet) Toast.makeText(context, voiceNoWords, Toast.LENGTH_SHORT).show()
-            showVoiceWords(url, found)
+            val self = coroutineContext[kotlinx.coroutines.Job]
+            try {
+                val deletions = com.ai.assistance.operit.features.orbit.OrbitVoiceText.forgotten
+                val before = deletions.value
+                var found = if (quiet) transcripts.find(context, url) else {
+                    when (val heard = transcripts.recognize(context, url)) {
+                        is com.ai.assistance.operit.ui.common.markdown.VoiceTranscripts.Recognized.Words -> heard.found
+                        is com.ai.assistance.operit.ui.common.markdown.VoiceTranscripts.Recognized.Problem -> {
+                            Toast.makeText(context, heard.message, Toast.LENGTH_LONG).show()
+                            null
+                        }
+                    }
+                }
+                // A recording deleted (or replaced) while it was being read shows nothing.
+                val checked = found
+                if (checked != null && deletions.value != before &&
+                    withContext(Dispatchers.IO) { transcripts.markOf(context, url, checked) } != checked.mark
+                ) found = null
+                showVoiceWords(url, found)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (!quiet) Toast.makeText(context, voiceNoWords, Toast.LENGTH_SHORT).show()
+                showVoiceWords(url, null)
+            } finally {
+                // Not when hidden meanwhile and asked again: that newer look shows its own state.
+                val now = voiceJobs[url]
+                if (now == null || now === self) voiceHearing.remove(url)
+            }
         }
         voiceJobs[url] = job
         job.invokeOnCompletion { voiceJobs.remove(url, job) }
@@ -997,33 +1031,26 @@ private fun MessageItem(
         LaunchedEffect(Unit) {
             // Also looks once when its words first show, for a deletion just before.
             com.ai.assistance.operit.features.orbit.OrbitVoiceText.forgotten.collect {
-                val shown = voiceWords.mapValues { it.value.mark }
+                val shown = voiceWords.toMap()
                 val gone = withContext(Dispatchers.IO) {
-                    shown.filter { (url, mark) -> com.ai.assistance.operit.ui.common.markdown.VoiceTranscripts.markOf(context, url) != mark }.keys
+                    shown.filter { (url, words) ->
+                        com.ai.assistance.operit.ui.common.markdown.VoiceTranscripts.markOf(context, url, words) != words.mark
+                    }.keys
                 }
                 // Only words still the ones checked go (hidden or shown again meanwhile, they stay as they are).
-                gone.filter { voiceWords[it]?.mark == shown[it] }.forEach(::hideVoiceWords)
+                gone.filter { voiceWords[it] === shown[it] }.forEach(::hideVoiceWords)
             }
         }
-    }    // A long press on a voice bar opens this same menu, for that recording; none while it takes no menu.
+    }
+    // A long press on a voice bar opens this same menu, for that recording; none while it takes no menu.
     val canOpenVoiceMenu = !isMultiSelectMode && isActionable
     val voiceHost = remember(canOpenVoiceMenu) {
-        val open: (String) -> Unit = { url ->
-            latestOpenMessageMenu.value()
-            if (showContextMenu) menuVoice = url
-        }
+        val open: (String) -> Unit = { url -> latestOpenMenuFor.value { url } }
         com.ai.assistance.operit.ui.common.markdown.VoiceMenuHost(
             open = open.takeIf { canOpenVoiceMenu },
-            words = { url -> voiceWords[url]?.text },
+            words = { url -> voiceWords[url] },
+            pending = { url -> url in voiceHearing },
         )
-    }    // Whether the recording has words is looked up only while its menu is open.
-    val menuVoiceOpen = menuVoice?.takeIf { showContextMenu }
-    if (menuVoiceOpen != null) {
-        LaunchedEffect(menuVoiceOpen) {
-            menuVoiceHasWords = withContext(Dispatchers.IO) {
-                com.ai.assistance.operit.ui.common.markdown.VoiceTranscripts.available(context, menuVoiceOpen)
-            }
-        }
     }
     // In an Orbit reply each bubble (words, a card, a Dynamic UI card) takes its own gestures.
     val pieceActions: OrbitPieceActions? =
@@ -1031,7 +1058,11 @@ private fun MessageItem(
             OrbitPieceActions(
                 like = { piece -> like(piece.reactionKey(orbitUserReactions?.byMessage), piece.summary) },
                 menu = { piece ->
-                    openMessageMenu()
+                    // This bubble's own voice, if it shows one (a card shows none).
+                    openMenuFor {
+                        if (piece.summary != null) null
+                        else com.ai.assistance.operit.ui.common.markdown.VoiceTranscripts.onlyVoiceIn(piece.content)
+                    }
                     menuPiece = piece.takeIf { it.summary != null }
                 },
                 reply = if (allowTranscriptMutation && onReplyToMessage != null) {
@@ -1383,8 +1414,9 @@ private fun MessageItem(
             if (!isHiddenUserMessage && menuPiece == null) {
                 // A voice message's words, kept when it was made ("to text", as in a messenger).
                 val voice = menuVoice
-                val voiceShown = voice != null && voiceHost.words(voice) != null
-                if (voice != null && (voiceShown || menuVoiceHasWords)) {
+                // While its words are being recognized, the item stops that.
+                val voiceShown = voice != null && (voiceHost.words(voice) != null || voiceHost.pending(voice))
+                if (voice != null && (voiceShown || com.ai.assistance.operit.ui.common.markdown.VoiceTranscripts.canRecognize(voice))) {
                     DropdownMenuItem(
                         text = {
                             Text(

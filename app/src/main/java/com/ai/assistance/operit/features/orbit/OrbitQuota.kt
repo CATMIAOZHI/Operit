@@ -216,8 +216,6 @@ object OrbitQuota {
      * reported, or the price could not be read). [cached] is null when the provider did not say.
      */
     class Bill(val model: String, val cached: Long?, val cost: Double?, val currency: PricingCurrency,
-        /** The model configuration the call went through, for configurations marked as a subscription. */
-        val configId: String = "",
         /** What the money allowance counts, in [currency]: [cost], or an estimate when the provider reported no usage. */
         val allowanceCost: Double? = cost)
 
@@ -252,7 +250,7 @@ object OrbitQuota {
     private val UNPRICED_CALLS = longPreferencesKey("unpriced_calls")
     private val UNPRICED_MODEL = stringPreferencesKey("unpriced_model")
     private val CONFIRMED = booleanPreferencesKey("limits_confirmed")
-    /** Model configurations on a monthly plan: their calls are free here. */
+    /** Once: model configurations marked as a monthly plan (no longer offered); removed on the next save. */
     private val SUBSCRIPTIONS = androidx.datastore.preferences.core.stringSetPreferencesKey("subscription_configs")
     /**
      * Where earlier versions kept every day's use in one value. At the next call counted it moves
@@ -324,14 +322,9 @@ object OrbitQuota {
         p[UNPRICED_MODEL] = money.unpricedModel
     }
 
-    /** Model configurations the user marked as a monthly plan. */
-    fun subscriptionsFlow(context: Context): Flow<Set<String>> =
-        context.applicationContext.orbitQuotaStore.data.map { it[SUBSCRIPTIONS].orEmpty() }.distinctUntilChanged()
-
     /**
-     * What [bill] costs, in [MICROS]; null when its model has no price. A monthly plan is only
-     * known inside the save ([record]); here only the price is worked out, and the exchange rate
-     * read only for a price in yuan.
+     * What [bill] costs, in [MICROS]; null when its model has no price. The exchange rate is read
+     * only for a price in yuan.
      */
     private suspend fun moneyOf(app: Context, bill: Bill?): Long? {
         bill ?: return null
@@ -410,9 +403,7 @@ object OrbitQuota {
      * [confirm]: the user saved them, so the first-time prompt to look at them goes away.
      */
     suspend fun setLimits(context: Context, weekly: Long? = null, extra: Long? = null, extraWeekly: Boolean? = null,
-        byMoney: Boolean? = null, confirm: Boolean = false, expected: ((State) -> Boolean)? = null,
-        /** Model configurations to put on and take off a monthly plan, in the same save. */
-        subscribe: Set<String> = emptySet(), unsubscribe: Set<String> = emptySet()) {
+        byMoney: Boolean? = null, confirm: Boolean = false, expected: ((State) -> Boolean)? = null) {
         val now = System.currentTimeMillis()
         val app = context.applicationContext
         app.orbitQuotaStore.edit { p ->
@@ -429,9 +420,7 @@ object OrbitQuota {
             }
             p[BY_MONEY] = money
             p[EXTRA_WEEKLY] = extraWeekly ?: stored.extraWeekly
-            if (subscribe.isNotEmpty() || unsubscribe.isNotEmpty()) {
-                p[SUBSCRIPTIONS] = p[SUBSCRIPTIONS].orEmpty() - unsubscribe + subscribe
-            }
+            p.remove(SUBSCRIPTIONS)
             if (confirm) p[CONFIRMED] = true
             if (!read(p).paused) p.remove(PAUSED_WARNED_WEEK)
         }
@@ -479,8 +468,7 @@ object OrbitQuota {
         val priced = moneyOf(app, bill)
         var after = State()
         app.orbitQuotaStore.edit { p ->
-            // A call through a model configuration on a monthly plan costs the allowance nothing.
-            val spent = if (bill != null && bill.configId.isNotEmpty() && bill.configId in p[SUBSCRIPTIONS].orEmpty()) 0L else priced
+            val spent = priced
             // The allowances are spent at the moment of counting, as always; only the history's day
             // and hour follow when the call ended (counting waits a moment for the call's price).
             // Both kinds count every call, so switching between them later shows this week's real use.

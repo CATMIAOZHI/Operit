@@ -5547,7 +5547,15 @@
     <string name="voice_to_text">Show text</string>
     <string name="voice_options">Voice options</string>
     <string name="voice_hide_text">Hide text</string>
-    <string name="voice_no_transcript">No text for this audio</string>
+    <string name="voice_no_transcript">This audio cannot be turned into text</string>
+    <string name="voice_recognizing">Recognizing…</string>
+    <string name="voice_recognized_note">Recognized automatically; may have mistakes</string>
+    <string name="voice_stt_live_only">Sherpa-ncnn, the speech recognition in use, only works while you speak, not on recorded audio. You can switch to MiMo speech recognition in Speech Services Settings</string>
+    <string name="voice_stt_not_set_up">Speech recognition is not set up yet. Add its key in Speech services settings first</string>
+    <string name="voice_stt_model_missing">The local recognition model is not downloaded yet. Download it in Speech services settings first</string>
+    <string name="voice_stt_too_long">Audio longer than %1$d minutes cannot be recognized</string>
+    <string name="voice_stt_failed">Recognition failed: %1$s</string>
+    <string name="voice_stt_nothing">No speech was heard</string>
     <string name="video_block">Video</string>
     <string name="image_load_failed">Image failed to load</string>
     <string name="save_image">Save Image</string>
@@ -9255,9 +9263,6 @@
     <string name="orbit_quota_mode_tokens">Tokens</string>
     <string name="orbit_quota_mode_tokens_desc">The number of tokens used, whatever the model costs</string>
     <string name="orbit_quota_money_unit">USD</string>
-    <string name="orbit_quota_plan_title">Monthly plans</string>
-    <string name="orbit_quota_plan_help">Model configurations switched on here are on a monthly plan, so their calls do not count against the allowance. If you use Orbit a lot, a monthly plan (like OpenCode Go) is usually much cheaper than paying per call.</string>
-    <string name="orbit_quota_plan_none">No model configurations yet</string>
     <string name="orbit_quota_unpriced">This week %1$d call(s) had no cost (%2$s most likely has no price), so they were not counted. You can add the price in Model pricing.</string>
     <string name="orbit_quota_confirm_prompt">Counted by spending by default: %1$s a week, with %2$s extra. Tap Change allowances to check it; once you save, this note goes away.</string>
     <string name="orbit_quota_weekly_field">Weekly allowance</string>
@@ -9705,8 +9710,6 @@
     <string name="orbit_open_blocked_unsaved">You have unsaved changes, so the chat did not open. Save or discard them, then open it from the chat list.</string>
     <string name="orbit_quota_money_invalid">Enter an amount such as 100 or 12.5, at most two decimals</string>
     <string name="orbit_quota_tokens_invalid">Enter a whole number</string>
-    <string name="orbit_quota_plan_loading">Reading model configurations…</string>
-    <string name="orbit_quota_plan_failed">Could not read model configurations; try again later</string>
     <string name="orbit_quota_save_failed">Could not save; please try again</string>
     <string name="orbit_quota_saving">Saving…</string>
     <string name="orbit_feed_card_failed">This card could not be opened.</string>

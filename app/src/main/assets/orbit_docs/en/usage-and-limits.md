@@ -11,7 +11,7 @@ The weekly allowance is spent first, followed by the extra allowance.
 
 The user picks how the allowance is counted:
 
-- By spending (the default): money at the prices under Model pricing, in US dollars. When the provider reports no usage, the call's own token count is priced as uncached input. A call whose model has no price has no cost and does not count; the allowance card asks the user to add the price. Model configurations the user marks as a monthly plan in the allowance settings count nothing.
+- By spending (the default): money at the prices under Model pricing, in US dollars. When the provider reports no usage, the call's own token count is priced as uncached input. A call whose model has no price has no cost and does not count; the allowance card asks the user to add the price.
 - By tokens: input plus output tokens, whatever the model costs.
 
 Both kinds are counted all the time, so after switching the user sees this week's real use.
@@ -63,7 +63,6 @@ You can first use `orbit_settings action=get` for current values, ranges and sha
 | `refill_extra` | Accepts only `true`; clears extra usage to restore the current extra limit. |
 
 Read `quota_mode` and the unit with `get` first; do not pass millions, currency signs or display units as parameter values.
-Only the user can mark monthly plans, in the allowance settings; you cannot request it.
 You may request several changes together. The card lists old and new values; end the turn after placing it and wait for approval.
 After approval, the app checks and applies each item, then sends a hidden result showing successes and skipped items. Follow the actual result.
 Do not edit preference files to bypass approval.
