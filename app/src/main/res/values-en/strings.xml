@@ -5550,8 +5550,8 @@
     <string name="voice_no_transcript">This audio cannot be turned into text</string>
     <string name="voice_recognizing">Recognizing…</string>
     <string name="voice_recognized_note">Recognized automatically; may have mistakes</string>
-    <string name="voice_stt_live_only">Sherpa-ncnn, the speech recognition in use, only works while you speak, not on recorded audio. You can switch to MiMo speech recognition in Speech Services Settings</string>
-    <string name="voice_stt_not_set_up">Speech recognition is not set up yet. Add its key in Speech services settings first</string>
+    <string name="voice_stt_live_only">Sherpa-ncnn, the speech recognition in use, cannot recognize recorded audio. Download the SenseVoice or Paraformer local model in Speech services settings to do it offline</string>
+    <string name="voice_stt_not_set_up">Speech recognition is not set up yet. Add its key in Speech services settings, or download the SenseVoice local model</string>
     <string name="voice_stt_model_missing">The local recognition model is not downloaded yet. Download it in Speech services settings first</string>
     <string name="voice_stt_too_long">Audio longer than %1$d minutes cannot be recognized</string>
     <string name="voice_stt_failed">Recognition failed: %1$s</string>
@@ -10182,6 +10182,7 @@
     <string name="orbit_emoji_load_failed">Couldn\'t load the emoji list</string>
     <string name="orbit_sent_card">Sent a card</string>
     <string name="ai_message_quoted_card">Card</string>
+    <string name="ai_message_quoted_voice">Voice</string>
     <string name="orbit_emoji_group_people">People and body</string>
     <string name="orbit_emoji_group_animals">Animals and nature</string>
     <string name="orbit_emoji_group_food">Food and drink</string>

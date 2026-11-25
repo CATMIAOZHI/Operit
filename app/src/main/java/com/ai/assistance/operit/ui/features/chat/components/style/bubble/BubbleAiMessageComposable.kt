@@ -78,7 +78,7 @@ private val ExpandedBubbleLayoutNodeTypes =
 @SuppressLint("UnusedBoxWithConstraintsScope")
 @OptIn(ExperimentalFoundationApi::class)
 /** A reply that draws a card (an Orbit card or a Dynamic UI) needs the chat's full width. */
-private val OrbitCardFence = Regex("```\\s*(?:a2ui|orbit-card)")
+internal val OrbitCardFence = Regex("```\\s*(?:a2ui|orbit-card)")
 
 /** A message that is one Markdown picture or audio and nothing else; group 1 is its url. */
 private val SoloMedia = Regex("""^\s*!\[[^\]]*\]\(([^)]+)\)\s*$""")
@@ -366,16 +366,21 @@ fun BubbleAiMessageComposable(
             if (section != ResponseMessageSection.HEADER) Box(modifier = Modifier.fillMaxWidth()) {
                 if (orbitVoiceOnly && inlineContent == null && !sharedCard) {
                     // Through the Markdown media renderer, so the chat search can still land on it.
-                    com.ai.assistance.operit.ui.common.markdown.MarkdownImageRenderer(
-                        imageMarkdown = message.content.trim(),
-                        contentColor = textColor,
-                        bubbleColor = backgroundColor,
-                    )
+                    // At most 80% of the row, as words, so a narrow window still has its empty side.
+                    Box(Modifier.maxWidthFraction(0.8f)) {
+                        com.ai.assistance.operit.ui.common.markdown.MarkdownImageRenderer(
+                            imageMarkdown = message.content.trim(),
+                            contentColor = textColor,
+                            bubbleColor = backgroundColor,
+                        )
+                    }
                 } else if (imageUrl != null && inlineContent == null && !sharedCard) {
                     AsyncImage(
                         model = Uri.parse(imageUrl),
                         contentDescription = "Image from AI",
                         modifier = Modifier
+                            // In Orbit a wide picture leaves the same room on the right as words do.
+                            .then(if (orbitLook) Modifier.maxWidthFraction(0.8f) else Modifier)
                             .heightIn(max = 80.dp)
                             .clip(RoundedCornerShape(16.dp)),
                         contentScale = ContentScale.Fit,

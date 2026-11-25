@@ -12,6 +12,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.nio.ByteOrder
@@ -22,6 +23,8 @@ import kotlin.coroutines.coroutineContext
  * one voice input uses). The recording is decoded to 16 kHz mono and recognized in pieces of
  * [PIECE_SECONDS], since every engine takes only so much at once; the words of the pieces are
  * joined. Only on demand: every piece may cost money with a cloud service.
+ * When that recognition cannot take a recording (Sherpa-ncnn only listens live) or has no key, a
+ * local recognition model already on the phone (SenseVoice, Paraformer) does it instead.
  */
 object AudioFileTranscriber {
     sealed interface Outcome {
@@ -41,22 +44,47 @@ object AudioFileTranscriber {
         val app = context.applicationContext
         if (!file.isFile) return@withContext Outcome.Problem(app.getString(R.string.voice_no_transcript))
         val profile = SpeechServiceProfilesPreferences(app).getCurrentSttProfile()
-        when (profile.serviceType) {
+        // The one setting read decides both what is checked and what is made.
+        val local: String? = when (profile.serviceType) {
+            SpeechServiceFactory.SpeechServiceType.SHERPA_ONNX -> localModel(app, profile.localModelId)
+                ?: return@withContext Outcome.Problem(app.getString(R.string.voice_stt_model_missing))
             // It only listens as you speak; it cannot be given a recording.
-            SpeechServiceFactory.SpeechServiceType.SHERPA_NCNN ->
-                return@withContext Outcome.Problem(app.getString(R.string.voice_stt_live_only))
-            SpeechServiceFactory.SpeechServiceType.SHERPA_ONNX -> Unit
+            SpeechServiceFactory.SpeechServiceType.SHERPA_NCNN -> localModel(app, null)
+                ?: return@withContext Outcome.Problem(app.getString(R.string.voice_stt_live_only))
             else -> if (profile.httpConfig.apiKey.isBlank()) {
-                return@withContext Outcome.Problem(app.getString(R.string.voice_stt_not_set_up))
+                localModel(app, null) ?: return@withContext Outcome.Problem(app.getString(R.string.voice_stt_not_set_up))
+            } else null
+        }
+        if (local == null) {
+            val service = SpeechServiceFactory.createSpeechService(app, profile.serviceType, profile.httpConfig, profile.localModelId)
+            try {
+                transcribeWith(app, file, service)
+            } finally {
+                runCatching { service.shutdown() }
+            }
+        } else {
+            // A local model takes a few hundred MB: one recording at a time, each model gone from
+            // memory before the next one loads.
+            localGate.withLock {
+                val service = OnnxSpeechProvider(app, local)
+                try {
+                    transcribeWith(app, file, service)
+                } finally {
+                    withContext(kotlinx.coroutines.NonCancellable) { runCatching { service.release() } }
+                }
             }
         }
-        val service = SpeechServiceFactory.createSpeechService(app)
-        try {
-            if (!service.canStartWithoutPrompt(app)) return@withContext Outcome.Problem(app.getString(R.string.voice_stt_model_missing))
+    }
+
+    private val localGate = kotlinx.coroutines.sync.Mutex()
+
+    private suspend fun transcribeWith(app: Context, file: File, service: SpeechService): Outcome {
+        return try {
+            if (!service.canStartWithoutPrompt(app)) return Outcome.Problem(app.getString(R.string.voice_stt_model_missing))
             // The whole recording is decoded once first: one too long (or not audio) is refused
             // before anything is sent, even when it does not say how long it is.
-            decode(app, file, null)?.let { return@withContext Outcome.Problem(it) }
-            if (!service.initialize()) return@withContext Outcome.Problem(problemOf(app, service))
+            decode(app, file, null)?.let { return Outcome.Problem(it) }
+            if (!service.initialize()) return Outcome.Problem(problemOf(app, service))
             val words = StringBuilder()
             val failed = decode(app, file) { piece ->
                 recognizeOrStop(service, piece)
@@ -77,10 +105,16 @@ object AudioFileTranscriber {
             throw e
         } catch (e: Exception) {
             Outcome.Problem(app.getString(R.string.voice_stt_failed, e.message ?: e.javaClass.simpleName))
-        } finally {
-            runCatching { service.shutdown() }
         }
     }
+
+    /** The local recognition model that is downloaded, [preferred] first; null when there is none. */
+    private fun localModel(context: Context, preferred: String?): String? =
+        LocalVoiceModels.models
+            .filter { it.recognition }
+            .sortedByDescending { it.id == preferred }
+            .firstOrNull { it.downloaded(context) }
+            ?.id
 
     /**
      * Recognizes [piece]; when the caller stops waiting, the request under way is cancelled at once

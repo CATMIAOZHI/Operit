@@ -320,6 +320,16 @@ internal class OnnxSpeechProvider(private val context: Context, private val mode
             scope.cancel()
         }
     }
+
+    /** As [shutdown], but returns only once the model is out of memory. */
+    suspend fun release() {
+        closed = true
+        epoch.begin()
+        cancelRecognition()
+        nativeMutex.withLock { recognizer?.release(); recognizer = null }
+        isInitialized.value = false
+        scope.cancel()
+    }
     override suspend fun getSupportedLanguages() =
         if (modelId == "sensevoice-int8") listOf("zh","yue","en","ja","ko") else listOf("zh","en")
     override suspend fun recognize(audioData: FloatArray) {

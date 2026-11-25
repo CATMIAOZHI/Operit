@@ -62,7 +62,7 @@ object SpeechServiceFactory {
         return createSpeechService(context, type, config)
     }
 
-    private fun createSpeechService(
+    fun createSpeechService(
         context: Context,
         type: SpeechServiceType,
         httpConfig: SttHttpConfig,

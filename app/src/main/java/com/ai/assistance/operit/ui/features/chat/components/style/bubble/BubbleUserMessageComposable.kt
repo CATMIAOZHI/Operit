@@ -255,7 +255,8 @@ fun BubbleUserMessageComposable(
                 horizontalArrangement = Arrangement.End
             ) {
                 Surface(
-                    modifier = Modifier.padding(start = 32.dp),
+                    // In Orbit no wider than the bubble under it (80%), leaving the same empty side.
+                    modifier = if (orbitLook) Modifier.fillMaxWidth(0.8f) else Modifier.padding(start = 32.dp),
                     color = MaterialTheme.colorScheme.surfaceVariant,
                     shape = RoundedCornerShape(8.dp, 8.dp, 2.dp, 8.dp)
                 ) {

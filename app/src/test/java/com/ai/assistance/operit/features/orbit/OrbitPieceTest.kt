@@ -1,5 +1,6 @@
 package com.ai.assistance.operit.features.orbit
 
+import com.ai.assistance.operit.ui.features.chat.components.OrbitPiece
 import com.ai.assistance.operit.ui.features.chat.components.OrbitSpeech
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -45,6 +46,14 @@ class OrbitPieceTest {
         val pieces = OrbitSpeech.pieceList(shown, 3, english = false, splitVoice = true)
         // The voice inside the code stays code; the one after the code is a bubble of its own.
         assertEquals(listOf("看这段\n```\n$voice\n````", voice), pieces.map { it.content })
+    }
+
+    // A reply to a voice bubble quotes its caption; one to the words beside it quotes only them.
+    @Test fun aVoiceBubbleIsToldApartFromTheWordsBesideIt() {
+        val pieces = OrbitSpeech.pieceList("好，我改了\n![录音室版](file:///data/files/voice/a.wav)\n记下了", 3, english = false, splitVoice = true)
+        assertEquals(listOf(null, "录音室版", null), pieces.map { OrbitSpeech.voiceCaption(it) })
+        assertEquals("", OrbitSpeech.voiceCaption(OrbitPiece("![](file:///data/files/voice/b.mp3)", "3", null, false)))
+        assertEquals(null, OrbitSpeech.voiceCaption(OrbitPiece("![图](file:///data/files/a.png)", "3", null, false)))
     }
 
     @Test fun summariesNeverCarryAPathOrCode() {
