@@ -292,7 +292,7 @@ internal object OrbitPermissionCards {
         KEEP_ALIVE -> if (english) "background keep-alive" else "后台保活"
         DEVICE_ACCESS -> if (english) "device control access (ADB / Root)" else "设备控制权限（ADB / Root）"
         OVERLAY -> if (english) "display over other apps" else "显示在其他应用上层（悬浮窗）"
-        ACCESSIBILITY -> if (english) "the app's accessibility service" else "App 的无障碍服务"
+        ACCESSIBILITY -> if (english) "Orbit's accessibility service" else "Orbit 的无障碍服务"
         NOTIFY -> if (english) "sending notifications" else "发送通知"
         NOTIFICATION_READ -> if (english) "reading notifications" else "读取通知"
         SMS -> if (english) "reading SMS" else "读取短信"
@@ -491,12 +491,12 @@ internal object OrbitPermissionCards {
         DeviceStep.DEVELOPER -> if (english) "Turn on developer options" else "打开开发者选项"
         DeviceStep.WIRELESS -> if (english) "Turn on wireless debugging" else "打开无线调试"
         DeviceStep.START -> if (english) "Start Shizuku" else "启动 Shizuku"
-        DeviceStep.ALLOW -> if (english) "Allow this app in Shizuku" else "在 Shizuku 里允许这个 App"
+        DeviceStep.ALLOW -> if (english) "Allow Orbit in Shizuku" else "在 Shizuku 里允许 Orbit"
         DeviceStep.DONE -> if (english) "Done" else "完成"
     }
 
     private fun deviceStepHow(english: Boolean, step: DeviceStep): String = when (step) {
-        DeviceStep.INSTALL -> if (english) "tap Install on the card; the app carries Shizuku." else "点卡片上的「安装」，Shizuku 是 App 自带的。"
+        DeviceStep.INSTALL -> if (english) "tap Install on the card; Orbit carries Shizuku." else "点卡片上的「安装」，Shizuku 是 Orbit 自带的。"
         DeviceStep.DEVELOPER -> if (english) "the button opens About phone; tapping the build number (on some phones the OS version) 7 times turns developer options on."
             else "按钮打开「关于手机」，连点版本号（有的手机是 OS 版本）7 次就能打开开发者选项。"
         DeviceStep.WIRELESS -> if (english) "the button opens Developer options; turn on Wireless debugging there (Wi-Fi must be on) and allow it."

@@ -80,12 +80,12 @@ Last, look at the permissions you need. One card at a time, one thing at a time:
    When the result has `background_phone_screen_supported=false` (below Android 10), working in phone apps in the background is not
    available on this phone: mention only app installs and settings, and skip it if they do not need that. The background phone
    screen does not need the accessibility service; do not install it for that.
-   With `rooted` in the result, the card shows one Root button: tell them to tap it and allow this app in their root manager.
+   With `rooted` in the result, the card shows one Root button: tell them to tap it and allow Orbit in their root manager.
    Without Root, Shizuku is set up one step at a time and the card shows only the current step. Explain the first step in one
    or two sentences (see `shizuku_step` in the result); each time they finish a step you get a hidden note with the next one,
    and you walk them through it in plain words. If they get stuck, ask where they stopped and give the place for their phone's brand.
 3. Background keep-alive: `orbit_permission_card permission=keep_alive`. Say in one line that some things you do for them
-   run in the background on time (reminders, watching pages, tidying up at night), so the app needs to stay awake.
+   run in the background on time (reminders, watching pages, tidying up at night), so Orbit needs to stay awake.
 
 To see every permission at once without placing a card, call `orbit_device action=describe`.
 Do not place a card again after they chose "Don't remind me" or said no.

@@ -2446,8 +2446,6 @@ private fun OrbitSettingsPage(
                         com.ai.assistance.operit.ui.features.settings.components.LaunchModeSettingsRow(searchable = false)
                     }
                     SettingsRowDivider(inset = false)
-                    com.ai.assistance.operit.ui.features.settings.components.AppIconSettingsRow(searchable = false)
-                    SettingsRowDivider(inset = false)
                     SettingsNavRow(
                         title = stringResource(R.string.orbit_appearance_title),
                         subtitle = stringResource(R.string.orbit_appearance_note),

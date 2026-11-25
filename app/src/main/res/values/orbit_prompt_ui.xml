@@ -208,7 +208,7 @@
     <string name="orbit_permission_name_overlay">显示在其他应用上层</string>
     <string name="orbit_permission_name_accessibility">无障碍服务</string>
     <string name="orbit_overlay_card_note">浏览器全屏给你看、或请你接手页面时需要它</string>
-    <string name="orbit_accessibility_card_note">一个随 App 自带的小应用（系统无障碍设置里显示为 Operit Ry）。先安装，再开启它的无障碍服务。没有 ADB 或 Root 时，读屏和点屏幕的功能靠它</string>
+    <string name="orbit_accessibility_card_note">一个随 Orbit 自带的小应用（系统无障碍设置里显示为 Operit Ry）。先安装，再开启它的无障碍服务。没有 ADB 或 Root 时，读屏和点屏幕的功能靠它</string>
     <string name="orbit_accessibility_install">安装无障碍组件</string>
     <string name="orbit_accessibility_install_action">安装</string>
     <string name="orbit_accessibility_update">更新</string>

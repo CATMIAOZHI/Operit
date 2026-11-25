@@ -75,6 +75,6 @@ The source file, artifact version, and new task's output may be separate objects
 It supports basic headings, paragraphs, lists, quotations, code, and text styling; tables may become fixed-width text, and embedded images are not guaranteed.
 Inspect the actual output when layout fidelity matters; a successful export does not prove identical formatting.
 
-`prompt_copy` copies Orbit's own prompt content, not every system instruction from the app or the model service.
+`prompt_copy` copies Orbit's own prompt content, not every system instruction from Operit Ry or the model service.
 The user can also export and share an Orbit data archive under “Identity” in the details page.
 Data export is for saving and inspection; do not promise one-click reimport, restored account sessions, or complete credential coverage.

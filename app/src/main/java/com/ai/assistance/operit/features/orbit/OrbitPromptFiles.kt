@@ -1,10 +1,8 @@
 package com.ai.assistance.operit.features.orbit
 
 import android.content.Context
-import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.preferences.LearnedSkillRepository
 import com.ai.assistance.operit.data.preferences.OrbitPreferences
-import com.ai.assistance.operit.data.preferences.OrbitSettings
 import com.ai.assistance.operit.util.LocaleUtils
 import java.io.File
 import java.nio.file.Files
@@ -79,37 +77,15 @@ object OrbitPromptFiles {
     /** IDENTITY.md, made from the template the first time it is read. */
     suspend fun identity(context: Context, orbitId: String): String {
         val file = File(dir(context, orbitId), IDENTITY_FILE)
-        read(file)?.let { body ->
-            // A reserved name written before the rule, or restored from a backup, reads as the Orbit's own.
-            if (!hasReservedName(body)) return body
-            return withName(body, savedName(context, orbitId).ifBlank { "Orbit" })
-        }
-        val name = savedName(context, orbitId)
+        read(file)?.let { return it }
+        val name = OrbitPreferences.getInstance(context).current().orbits.firstOrNull { it.id == orbitId }?.name.orEmpty()
         val template = identityTemplate(context, name)
         withContext(Dispatchers.IO) { lock(file).withLock { if (!file.isFile) atomic(file, template) } }
         return read(file) ?: template
     }
 
-    private suspend fun savedName(context: Context, orbitId: String): String =
-        OrbitPreferences.getInstance(context).current().orbits.firstOrNull { it.id == orbitId }?.name.orEmpty()
-
-    /** IDENTITY.md cannot name the Orbit Operit; the message says why, for the editor and the tool. */
-    class ReservedNameException(message: String) : IllegalArgumentException(message)
-
-    // "Name: x", "- name: x", "- **Name**: x", "- **Name:** x", "名字：x". Spacing stays within the line
-    // (\h, possessive), so blank lines and long runs of spaces are not rescanned.
-    private val NAME_LINE = Regex("""(?mi)^(\h*+(?:[-*+]\h*+)?(?:\*\*|__)?(?:名字|name)\h*+(?:(?:\*\*|__)\h*+)?[:：]\h*+(?:(?:\*\*|__)\h*+)?)(.*)$""")
-
-    internal fun hasReservedName(body: String): Boolean =
-        NAME_LINE.findAll(body).any { OrbitSettings.isReservedName(it.groupValues[2]) }
-
-    private fun withName(body: String, name: String): String =
-        NAME_LINE.replace(body) { if (OrbitSettings.isReservedName(it.groupValues[2])) it.groupValues[1] + name else it.value }
-
     suspend fun saveIdentity(context: Context, orbitId: String, body: String) {
         require(body.isNotBlank()) { "IDENTITY.md cannot be empty" }
-        require(body.length <= MAX_CHARS) { "At most $MAX_CHARS characters" }
-        if (hasReservedName(body)) throw ReservedNameException(context.getString(R.string.orbit_tool_name_reserved))
         write(File(dir(context, orbitId), IDENTITY_FILE), body)
     }
 
@@ -117,7 +93,7 @@ object OrbitPromptFiles {
     suspend fun syncIdentityName(context: Context, orbitId: String, name: String) {
         identity(context, orbitId) // Makes the file from the template if it is missing.
         val file = File(dir(context, orbitId), IDENTITY_FILE)
-        val pattern = NAME_LINE
+        val pattern = Regex("""(?m)^(\h*+[-*]\h*+(?:\*\*)?(?:名字|Name)(?:\*\*)?\h*+[:：]\h*+).*$""")
         // Read and write under one lock so a save from the editor is not lost.
         withContext(Dispatchers.IO) {
             lock(file).withLock {

@@ -162,25 +162,6 @@ data class OrbitSettings(
         const val LIBRARY_KEEP_FILES = 100
         const val MAX_FOCUS_NOTES_LENGTH = 1000
         const val MAX_NAME_LENGTH = 24
-
-        /**
-         * Orbit is built on Operit but keeps its own name, so an Orbit is never called Operit: no word
-         * of the name holds "operit" (case, full-width letters and symbols inside a word ignored, so
-         * "Operit-Ry" and "O.P.E.R.I.T" count), nor does a run of single letters ("O P E R I T").
-         * Words are not joined, so "Proper Iteration" stays a fine name.
-         */
-        fun isReservedName(name: String): Boolean {
-            val words = java.text.Normalizer.normalize(name, java.text.Normalizer.Form.NFKC)
-                .lowercase()
-                .split(Regex("\\s+"))
-                .map { word -> word.filter { it.isLetterOrDigit() } }
-                .filter { it.isNotEmpty() }
-            if (words.any { "operit" in it }) return true
-            return "operit" in words.joinToString("") { if (it.length == 1) it else " " }
-        }
-
-        /** A saved name as shown and told: a reserved one, from before the rule or a backup, reads as Orbit. */
-        fun shownName(name: String): String = if (isReservedName(name)) "Orbit" else name
         const val MAX_SIDE_CHATS = 20
         /** Archived side chats keep their history; this only keeps the list from growing without end. */
         const val MAX_ALL_SIDE_CHATS = 100
@@ -666,8 +647,7 @@ class OrbitPreferences private constructor(context: Context) {
                         id = id,
                         sourceRoleCardId = item.optString("sourceRoleCardId"),
                         chatId = chatId,
-                        // A reserved name saved before the rule, or restored from a backup, reads as Orbit.
-                        name = OrbitSettings.shownName(item.optString("name")),
+                        name = item.optString("name"),
                         avatarUri = item.optString("avatarUri").takeIf { it.isNotBlank() },
                         avatarPetId = item.optString("avatarPetId").takeIf { it.isNotBlank() },
                         appearance = OrbitAppearance.fromJson(item.optJSONObject("appearance")),

@@ -65,7 +65,7 @@ Check existing tasks first to avoid duplicates.
 - `calendar`, or `calendar:days` to inspect the next 1–30 days of calendar events, default 7. Calendar permission is required.
 
 These are periodic reads and change checks, not real-time triggers for every incoming message.
-Notification watches inspect notifications still present at check time, excluding this app and ongoing notifications. SMS and notification watches each take at most 50 items, with up to 500 characters per item.
+Notification watches inspect notifications still present at check time, excluding ongoing notifications and those from the app that hosts Orbit (Operit Ry, including its classic chat). SMS and notification watches each take at most 50 items, with up to 500 characters per item.
 Fleeting notifications and messages outside these bounds can be missed. Do not promise a complete record.
 After a change wakes you, still decide whether it matches the user's request. Do not copy unrelated private content.
 See [scheduling-and-watching.md](scheduling-and-watching.md) for location arrival/departure and script conditions. Do not assume arbitrary phone event subscriptions exist.
@@ -74,7 +74,7 @@ See [scheduling-and-watching.md](scheduling-and-watching.md) for location arriva
 
 Task reminders and background results first return to their source chat for you to tell the user. If that chat was deleted, they return to the main chat.
 After you speak proactively, the app marks the chat unread. When the app is not open, system notifications are allowed and the “Message notifications” switch is on, the app attempts to show your messages (proactive or replies) as a notification with your picture that opens the chat.
-“Message notifications” is your own switch (Settings → Notifications, or `message_notifications` in `orbit_settings`), separate from the system notification permission: the permission only decides whether this app can post notifications, and the switch decides whether your messages also get their own notification. When it is off, messages stay in the chat only.
+“Message notifications” is your own switch (Settings → Notifications, or `message_notifications` in `orbit_settings`), separate from the system notification permission: the permission only decides whether Orbit can post notifications, and the switch decides whether your messages also get their own notification. When it is off, messages stay in the chat only.
 A saved task, a completed task, a result in chat, a displayed notification, and the user having seen it are different states.
 Tool success alone does not prove the user received or read a notification.
 

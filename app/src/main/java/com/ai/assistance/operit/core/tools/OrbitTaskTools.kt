@@ -18,7 +18,7 @@ internal object OrbitTaskTools {
             ToolParameterSchema("location", description = "GEOFENCE 地点 JSON：{\"name\":\"家\",\"latitude\":31.2,\"longitude\":121.4,\"radius\":200,\"transition\":\"ENTER\"}。坐标用 WGS84，不直接用地图 GCJ02/BD09。或用 {\"name\":\"家\",\"current\":true,\"radius\":200,\"transition\":\"EXIT\"} 取当前位置。radius 100-10000米，默认200；ENTER进入/EXIT离开。ONCE一次（默认）/INTERVAL每次，不填 run_at；update 传完整 location。后台监测需要精准位置和始终允许定位", required = false),
             ToolParameterSchema("watch", description = "WATCH 必填：notifications（通知栏里还在的通知）或 notifications:包名,包名；sms 或 sms:发件人；calendar 或 calendar:天数（1-30，默认7）；reading 或 reading:章数（阅读 App 伴读，默认提前准备 20 章段评，少于一半时叫醒你补满，2-50，见 docs/reading.md）；script（同时填 script）", required = false),
             ToolParameterSchema("script", description = "watch=script 时脚本全文，最多8000字符，语言看 language。没有系统沙箱：只读，不改文件、不下单、不上传私人数据，密码和密钥不写进脚本（用 vault_proxy/vault_env）。" +
-                "sh：在手机 shell 跑，沿用 App 当前的 shell 权限（含 root/Shizuku），25秒超时；每轮以 silent \"理由\" '{\"数据\":1}' 或 wake \"理由\" '{}' 结束。" +
+                "sh：在手机 shell 跑，沿用 Orbit 当前的 shell 权限（含 root/Shizuku），25秒超时；每轮以 silent \"理由\" '{\"数据\":1}' 或 wake \"理由\" '{}' 结束。" +
                 "python：在本机 Ubuntu 终端用 python3 跑（要先装终端），60秒超时；每轮调用 silent(\"理由\", {\"数据\": 1}) 或 wake(\"理由\", {})，第二个参数是 dict 或 JSON 字符串。" +
                 "函数已注入，调用后立即结束。silent 不叫醒 Orbit；wake 把理由和 JSON 对象交给 Orbit。输出最多20000字符，JSON最多8000字符。" +
                 "新建/换脚本后暂停，先 dry_run 看输出，核对通过再 resume；试跑时环境变量 HATCH_HOOK_DRY_RUN=1，不叫醒 Orbit", required = false),
@@ -70,7 +70,7 @@ internal object OrbitTaskTools {
             "中断过的操作先看 detail 核实，不能盲目重做。" +
             "子代理的工具过程保存在执行记录，它的结果先交给你，由你在安排它的聊天（主聊天或侧聊）里告诉用户。" +
             "用户说“有某某消息/短信/日程变化就告诉我”时用 WATCH+INTERVAL+notify_policy=CHANGES，间隔按急不急定（最少15分钟）。" +
-            "通知、短信、日历需要用户在系统设置里给这个 App 对应权限，没给时任务会记下原因并提醒用户一次。" +
+            "通知、短信、日历需要用户在系统设置里给 Orbit 对应权限，没给时任务会记下原因并提醒用户一次。" +
             "现成来源不够时写一个只读的小脚本（比如 GET 公开接口、看文件），sh 或 python 都行，每轮用 silent 或 wake 给出理由和 JSON 对象。" +
             "要用保险箱里的密钥时，调接口用 vault_proxy（替身值+代理，不用用户批准）；只有签名这类必须拿真值的才用 vault_env（仅 python，要用户批准）。" +
             "脚本新建后默认暂停；先 dry_run，核对返回的 outcome、reason、payload 和 output，再明确 resume 启用。修改脚本后也要重走这两步。通知/短信/日历不用试跑。" +

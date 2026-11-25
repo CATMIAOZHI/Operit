@@ -9336,7 +9336,6 @@
     <string name="toolreg_orbit_set_name_desc">修改 Orbit 自己的名字</string>
     <string name="orbit_tool_name_missing">名字不能为空</string>
     <string name="orbit_tool_name_too_long">名字太长了，最多 %1$d 个字符</string>
-    <string name="orbit_tool_name_reserved">这个名字不能用：Orbit 的名字里不能带 Operit 或它的变体（逐个字母拆开或加标点也算）。请换一个名字。</string>
     <string name="orbit_tool_name_set">名字已改为「%1$s」</string>
     <string name="orbit_tool_not_orbit_chat">只有 Orbit 在自己的聊天里才能改名字</string>
     <string name="orbit_action_receipt">操作记录</string>
@@ -10285,8 +10284,8 @@
     <string name="orbit_browser_task_stopping">正在停止</string>
     <string name="orbit_import_paste_label">别的 AI 的回答</string>
     <string name="orbit_import_too_long">%1$d / %2$d 字，太长了，请分几次导入</string>
-    <string name="orbit_geofence_needs_precise">位置提醒尚未开始：请长按桌面图标 → 应用信息 → 权限 → 位置信息，允许精准位置，再回到 Orbit。</string>
-    <string name="orbit_geofence_needs_background">位置提醒尚未开始：请长按桌面图标 → 应用信息 → 权限 → 位置信息，选择“始终允许”，再回到 Orbit。只有使用时允许无法后台提醒。</string>
+    <string name="orbit_geofence_needs_precise">位置提醒尚未开始：请长按桌面上的应用图标 → 应用信息 → 权限 → 位置信息，允许精准位置，再回到 Orbit。</string>
+    <string name="orbit_geofence_needs_background">位置提醒尚未开始：请长按桌面上的应用图标 → 应用信息 → 权限 → 位置信息，选择“始终允许”，再回到 Orbit。只有使用时允许无法后台提醒。</string>
     <string name="orbit_geofence_needs_location">位置提醒尚未开始：请打开手机的定位开关，再回到 Orbit。</string>
     <string name="orbit_geofence_no_fix">暂时无法取得准确的当前位置，请打开定位并到信号较好的地方重试；位置提醒尚未开始。</string>
     <string name="orbit_geofence_unavailable">系统暂时无法启用位置提醒，请检查定位权限后重试。</string>
