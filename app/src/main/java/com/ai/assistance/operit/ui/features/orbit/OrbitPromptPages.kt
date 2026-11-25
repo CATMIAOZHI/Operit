@@ -147,10 +147,6 @@ internal fun OrbitFilePage(
                 // The edit stays in the editor, so the user can copy it before reopening the file.
                 toast(R.string.orbit_file_changed_meanwhile)
             }
-            catch (e: com.ai.assistance.operit.features.orbit.OrbitPromptFiles.ReservedNameException) {
-                // The edit stays in the editor; the note says which name cannot be used.
-                android.widget.Toast.makeText(context, e.message, android.widget.Toast.LENGTH_LONG).show()
-            }
             catch (e: Exception) { toast(failedMessage) }
             finally { busy = false }
         }

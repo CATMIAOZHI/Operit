@@ -44,9 +44,9 @@ internal object OrbitBrowserHandoffTools {
             OrbitBrowserWatch.askUser(caller, reason)
             // Without it the page cannot open full screen; the card's button sends the user to allow it first.
             val overlay = if (android.provider.Settings.canDrawOverlays(context)) "" else
-                " The app is not allowed to display over other apps yet, which the page needs to open for the user. Tapping the " +
+                " Orbit is not allowed to display over other apps yet, which the page needs to open for the user. Tapping the " +
                     "card first opens that system setting and then the page by itself, so tell them in the same line to allow " +
-                    "\"display over other apps\" for this app when asked."
+                    "\"display over other apps\" for Orbit when asked."
             ToolResult(NAME, true, StringResultData(
                 "A card asking the user to take over is now in the chat (\"$reason\"). End this turn now with one short " +
                     "line telling them what to do. Do not call browser tools until they hand the page back; you will be " +

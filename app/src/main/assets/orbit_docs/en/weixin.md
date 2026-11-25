@@ -54,7 +54,7 @@ Use `orbit_channel action=status` to check whether it is connected and whether t
 
 After a long time with no interaction, WeChat may stop the bot from sending first.
 Messages then wait and go out automatically the next time the user writes in WeChat.
-The phone may also pause the app in the background, which can delay WeChat messages.
+The phone may also pause Orbit in the background, which can delay WeChat messages.
 
 Do not promise timely delivery to WeChat.
 For anything urgent, also remind the user inside Orbit.

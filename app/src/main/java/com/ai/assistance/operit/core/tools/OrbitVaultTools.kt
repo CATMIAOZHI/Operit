@@ -108,7 +108,7 @@ internal object OrbitVaultTools {
                     sentCards.entries.removeIf { now - it.value > CARD_REPEAT_MS }
                     when {
                         signedIn && !relogin -> JSONObject().put("already_logged_in", true)
-                            .put("note", "The $label account is already signed in in this app. To use it as a model, check orbit_models list " +
+                            .put("note", "The $label account is already connected to Orbit. To use it as a model, check orbit_models list " +
                                 "for a configuration with provider ${provider.type.name}; if there is none, request one with orbit_models " +
                                 "request_create provider=${provider.type.name} (leave endpoint and models out). If using it fails saying the sign-in " +
                                 "is no longer valid or must be redone, call again with relogin=true; if it only gives an HTTP code or says to try " +
@@ -135,7 +135,7 @@ internal object OrbitVaultTools {
                     sentCards.entries.removeIf { now - it.value > CARD_REPEAT_MS }
                     when {
                         signedIn && !relogin -> JSONObject().put("already_logged_in", true)
-                            .put("note", "ChatGPT is already signed in in this app; go ahead with what needed it. If using it fails " +
+                            .put("note", "The user is already signed in to ChatGPT through Orbit; go ahead with what needed it. If using it fails " +
                                 "saying the sign-in is no longer valid or must be redone, call again with relogin=true; if it only gives an " +
                                 "HTTP code or says to try again later, retry later first.")
                         sentCards.putIfAbsent(key, now) != null -> JSONObject().put("already_sent", true)

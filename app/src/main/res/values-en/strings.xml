@@ -9360,7 +9360,6 @@
     <string name="toolreg_orbit_set_name_desc">Change Orbit\'s own name</string>
     <string name="orbit_tool_name_missing">The name cannot be empty</string>
     <string name="orbit_tool_name_too_long">The name is too long; at most %1$d characters</string>
-    <string name="orbit_tool_name_reserved">That name cannot be used: an Orbit\'s name cannot contain Operit or a variant of it (including when spelled out letter by letter or separated by punctuation). Choose another name.</string>
     <string name="orbit_tool_name_set">Name changed to \"%1$s\"</string>
     <string name="orbit_tool_not_orbit_chat">Only an Orbit in its own chat can change its name</string>
     <string name="orbit_action_receipt">Action receipt</string>
@@ -10310,8 +10309,8 @@
     <string name="orbit_browser_task_stopping">Stopping</string>
     <string name="orbit_import_paste_label">The other AI\'s answer</string>
     <string name="orbit_import_too_long">%1$d / %2$d characters. Too long; import it in parts.</string>
-    <string name="orbit_geofence_needs_precise">Location monitoring has not started. Long-press the app icon → App info → Permissions → Location, and allow precise location, then return to Orbit.</string>
-    <string name="orbit_geofence_needs_background">Location monitoring has not started. Long-press the app icon → App info → Permissions → Location, and choose Allow all the time, then return to Orbit. While-in-use access cannot provide background reminders.</string>
+    <string name="orbit_geofence_needs_precise">Location monitoring has not started. Long-press the app icon on the home screen → App info → Permissions → Location, and allow precise location, then return to Orbit.</string>
+    <string name="orbit_geofence_needs_background">Location monitoring has not started. Long-press the app icon on the home screen → App info → Permissions → Location, and choose Allow all the time, then return to Orbit. While-in-use access cannot provide background reminders.</string>
     <string name="orbit_geofence_needs_location">Location monitoring has not started. Turn on the phone location switch, then return to Orbit.</string>
     <string name="orbit_geofence_no_fix">An accurate current position is unavailable. Turn on location and try somewhere with a better signal. Location monitoring has not started.</string>
     <string name="orbit_geofence_unavailable">The system could not enable location reminders. Check location permissions and try again.</string>
