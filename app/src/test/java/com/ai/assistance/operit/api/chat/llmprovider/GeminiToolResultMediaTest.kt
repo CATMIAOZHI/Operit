@@ -29,20 +29,45 @@ class GeminiToolResultMediaTest {
         return MediaLink("audio", tag.id, "Y2xpcA==", "audio/x-wav")
     }
 
-    @Test fun olderAudioIsReplacedBeforeLoadingAndKeepsTheFileNameAndImage() {
+    @Test fun olderEpochAudioIsReplacedBeforeLoadingAndKeepsTheFileNameAndImage() {
         val image = MediaLinkParser.buildImageLink("portrait")
         fun toolAudio(name: String) = PromptTurn(PromptTurnKind.TOOL_RESULT,
             """<tool_result name="read_file"><content>[android] Content of /music/$name.wav:
                 <link type="audio" id="$name"></link>$image</content></tool_result>""")
         val call = PromptTurn(PromptTurnKind.ASSISTANT, """<tool name="read_file"></tool>""")
         val original = listOf(call, toolAudio("first"), call, toolAudio("second"), call, toolAudio("third"))
-        val replay = limitGeminiAudioReplay(original)
+        // Each clip fills an epoch, so the third starts epoch 2 and only epochs 1 and 2 are sent.
+        val replay = limitGeminiAudioReplay(original, epoch = 10) { 10L }
         assertEquals(true, replay[1].content.contains("/music/first.wav:"))
-        assertEquals(true, replay[1].content.contains("Earlier audio attachment"))
+        assertEquals(true, replay[1].content.contains("Earlier audio omitted"))
         assertEquals(true, replay[1].content.contains(image))
         assertEquals(emptyList<IntRange>(), MediaLinkParser.audioLinkRanges(replay[1].content))
         assertEquals(original.subList(2, 6), replay.subList(2, 6))
         assertEquals(1, MediaLinkParser.audioLinkRanges(original[1].content).size)
+    }
+
+    @Test fun ordinaryAudioIsReplayedUnchangedSoTheCachedPrefixStaysTheSame() {
+        val call = PromptTurn(PromptTurnKind.ASSISTANT, """<tool name="read_file"></tool>""")
+        fun toolAudio(id: String) = PromptTurn(PromptTurnKind.TOOL_RESULT, """<link type="audio" id="$id"></link>""")
+        var history = emptyList<PromptTurn>()
+        var previous = emptyList<PromptTurn>()
+        for (n in 1..12) {
+            history = history + call + toolAudio("clip$n")
+            val replay = limitGeminiAudioReplay(history) { 2L shl 20 } // 2 MiB each, 24 MiB in all
+            assertEquals(history, replay)
+            assertEquals(previous, replay.take(previous.size))
+            previous = replay
+        }
+    }
+
+    @Test fun theOmittedSetOnlyGrowsWhenANewEpochStarts() {
+        val call = PromptTurn(PromptTurnKind.ASSISTANT, """<tool name="read_file"></tool>""")
+        fun toolAudio(id: String) = PromptTurn(PromptTurnKind.TOOL_RESULT, """<link type="audio" id="$id"></link>""")
+        val history = (1..9).flatMap { listOf(call, toolAudio("clip$it")) }
+        fun omitted(turns: Int) = limitGeminiAudioReplay(history.take(turns), epoch = 30) { 10L }
+            .count { it.content.contains("omitted from replay") }
+        // Clips 1-3 are epoch 0, 4-6 epoch 1, 7-9 epoch 2.
+        assertEquals(listOf(0, 0, 0, 0, 0, 0, 3, 3, 3), (1..9).map { omitted(it * 2) })
     }
 
     @Test fun currentParallelAudioAndUserAudioAreNeverDropped() {
