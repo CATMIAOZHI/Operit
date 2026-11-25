@@ -1,7 +1,12 @@
 package com.ai.assistance.operit.util
 
+import com.ai.assistance.operit.api.chat.llmprovider.MediaLinkParser
+import com.ai.assistance.operit.api.chat.llmprovider.MediaLinkTag
 import java.io.File
 import java.nio.file.Files
+import java.util.concurrent.CyclicBarrier
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
@@ -67,5 +72,44 @@ class MediaPersistenceTest {
     @Test fun `raw backups include durable chat media`() {
         assertFalse("image_pool" in OperitPaths.rawSnapshotExcludedFilesTopLevelDirNames())
         assertFalse("media_pool" in OperitPaths.rawSnapshotExcludedFilesTopLevelDirNames())
+    }
+
+    @Test fun `provider reuses the normalized pool string without Android base64 conversion`() {
+        MediaPoolManager.initialize(root, preloadNow = false)
+        val dir = OperitPaths.mediaPoolDir(root)
+        File(dir, "clip.b64").writeText("Y2xpcA==")
+        File(dir, "clip.meta").writeText("audio/mpeg")
+        val data = requireNotNull(MediaPoolManager.getMedia("clip"))
+        val link = requireNotNull(MediaLinkParser.resolveMediaLink(MediaLinkTag("audio", "clip")))
+        assertSame(data.base64, link.base64Data)
+        assertEquals(4, MediaBase64Limiter.estimateDecodedSizeBytes(link.base64Data, noWrap = true))
+    }
+
+    @Test fun `concurrent registrations of the same file encode outside the pool lock and persist complete entries`() {
+        MediaPoolManager.initialize(root, preloadNow = false)
+        val source = File(root, "recording.wav").apply { writeText("clip") }
+        val encoding = CyclicBarrier(2)
+        val workers = Executors.newFixedThreadPool(2)
+        try {
+            val pending = List(2) {
+                workers.submit<String> {
+                    Mockito.mockStatic(AppLogger::class.java).use {
+                        Mockito.mockStatic(android.util.Base64::class.java) { call ->
+                            check(call.method.name == "encodeToString")
+                            encoding.await(5, TimeUnit.SECONDS)
+                            java.util.Base64.getEncoder().encodeToString(call.getArgument<ByteArray>(0))
+                        }.use { MediaPoolManager.addMedia(source.path, "audio/wav") }
+                    }
+                }
+            }
+            val ids = pending.map { it.get(10, TimeUnit.SECONDS) }
+            assertEquals(2, ids.distinct().size)
+            assertFalse("error" in ids)
+            MediaPoolManager.initialize(File(root, "other"), preloadNow = false)
+            MediaPoolManager.initialize(root, preloadNow = false)
+            ids.forEach { assertEquals(MediaPoolManager.MediaData("Y2xpcA==", "audio/wav"), MediaPoolManager.getMedia(it)) }
+        } finally {
+            workers.shutdownNow()
+        }
     }
 }

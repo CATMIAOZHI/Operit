@@ -839,7 +839,8 @@ open class StandardFileSystemTools(protected val context: Context) {
 
             "mp3", "wav", "m4a", "aac", "flac", "ogg", "opus" -> {
                 val intent = tool.parameters.find { it.name == "intent" }?.value
-                val directAudio = tool.parameters.find { it.name == "direct_audio" }?.value?.toBoolean() ?: false
+                val directAudio = tool.parameters.find { it.name == "direct_audio" }?.value?.toBoolean()
+                    ?: (ToolExecutionManager.currentToolRuntimeContext()?.parentModelAcceptsToolAudio == true)
 
                 AppLogger.d(TAG, "Detected audio file, intent=${intent ?: "无"}, direct_audio=$directAudio")
 
@@ -847,7 +848,8 @@ open class StandardFileSystemTools(protected val context: Context) {
                     try {
                         val derivedMimeType =
                             MimeTypeMap.getSingleton().getMimeTypeFromExtension(fileExt)
-                                ?: "audio/*"
+                                ?.takeIf { it.startsWith("audio/") }
+                                ?: if (fileExt == "mp3") "audio/mpeg" else "audio/$fileExt"
                         val audioId = MediaPoolManager.addMedia(path, derivedMimeType)
                         if (audioId == "error") {
                             AppLogger.e(TAG, "Failed to register audio for direct_audio, falling back to intent/info: $path")

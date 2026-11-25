@@ -1,4 +1,6 @@
 <resources>
+    <string name="gemini_interactions_title">连续对话加速</string>
+    <string name="gemini_interactions_description">在 Google 保存对话，后续只上传新增消息。只用一个 Key 时生效。</string>
     <string name="web_session_download_storage_unavailable">无法读取或保存受保护的下载记录。记录已保留，请重启应用后再试；已有下载文件不会被删除。</string>
     <string name="memory_editor_process_records">过程记录 · 思考与工具</string>
     <string name="memory_editor_expand_process">展开过程记录</string>

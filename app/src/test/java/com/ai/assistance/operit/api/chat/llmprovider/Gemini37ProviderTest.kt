@@ -1,6 +1,8 @@
 package com.ai.assistance.operit.api.chat.llmprovider
 
 import android.content.Context
+import com.ai.assistance.operit.api.chat.enhance.ConversationMarkupManager
+import com.ai.assistance.operit.core.tools.FileContentData
 import com.ai.assistance.operit.core.chat.hooks.PromptTurn
 import com.ai.assistance.operit.core.chat.hooks.PromptTurnKind
 import com.ai.assistance.operit.data.collects.ApiProviderConfigs
@@ -10,8 +12,11 @@ import com.ai.assistance.operit.data.model.ParameterCategory
 import com.ai.assistance.operit.data.model.ParameterValueType
 import com.ai.assistance.operit.data.model.ToolParameterSchema
 import com.ai.assistance.operit.data.model.ToolPrompt
+import com.ai.assistance.operit.data.model.ToolResult
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.util.ChatMarkupRegex
+import com.ai.assistance.operit.util.ImagePoolManager
+import com.ai.assistance.operit.util.OperitPaths
 import com.ai.assistance.operit.util.stream.StreamLogger
 import java.io.File
 import java.nio.file.Files
@@ -309,6 +314,75 @@ class Gemini37ProviderTest {
                 .filter { it.has("functionCall") }
         assertEquals(1, callParts.size)
         assertEquals("skip_thought_signature_validator", callParts[0].getString("thought_signature"))
+    }
+
+    @Test
+    fun toolAudioSwitchReachesReadFileThroughTheServiceWrapper() {
+        val context = Mockito.mock(Context::class.java)
+        Mockito.`when`(context.applicationContext).thenReturn(context)
+        for (enabled in listOf(false, true)) {
+            val provider = GeminiProvider(
+                apiEndpoint = "https://proxy.example/v1beta/models",
+                apiKeyProvider = SingleApiKeyProvider("test-key"),
+                modelName = GEMINI_37_FLASH_MODEL,
+                client = OkHttpClient(),
+                supportsAudio = enabled,
+            )
+            assertEquals(enabled, TokenTrackingAIService(provider, context, "test").acceptsToolResultAudio)
+        }
+    }
+
+    @Test
+    fun toolAttachmentGetsItsOwnTurnAfterAllParallelResponses() = runBlocking {
+        val capturedBody = AtomicReference<JSONObject>()
+        val provider = GeminiProvider(
+            apiEndpoint = "https://proxy.example/v1beta/models",
+            apiKeyProvider = SingleApiKeyProvider("test-key"),
+            modelName = "gemini-2.5-pro",
+            client = clientForGemini { _, body -> capturedBody.set(body) },
+            enableToolCall = true,
+        )
+        val root = Files.createTempDirectory("gemini-tool-image").toFile()
+        val imageId = "tool-picture"
+        val payload = "cGljdHVyZQ=="
+        withoutAndroidLogging {
+            try {
+                val pool = OperitPaths.imagePoolDir(root)
+                File(pool, "$imageId.dat").writeText(payload)
+                File(pool, "$imageId.meta").writeText("""{"mimeType":"image/png","width":1,"height":1}""")
+                ImagePoolManager.initialize(root, preloadNow = false)
+                provider.sendMessage(
+                    context = mockContext(),
+                    chatHistory = listOf(
+                        PromptTurn(PromptTurnKind.USER, "Read files"),
+                        PromptTurn(PromptTurnKind.ASSISTANT, """<tool name="read_file"></tool><tool name="list_files"></tool>"""),
+                        PromptTurn(PromptTurnKind.TOOL_RESULT, ConversationMarkupManager.formatToolResultForMessage(
+                            ToolResult(toolName = "read_file", success = true, result = FileContentData(
+                                path = "/pictures/test.png", content = MediaLinkParser.buildImageLink(imageId), size = 7
+                            ))
+                        )),
+                    ),
+                    stream = false,
+                    enableRetry = false,
+                ).collect {}
+            } finally {
+                ImagePoolManager.removeImage(imageId)
+                root.deleteRecursively()
+            }
+        }
+        val contents = capturedBody.get().getJSONArray("contents")
+        assertEquals(5, contents.length())
+        val user = contents.getJSONObject(2)
+        assertEquals("user", user.getString("role"))
+        val parts = user.getJSONArray("parts")
+        assertEquals("read_file", parts.getJSONObject(0).getJSONObject("functionResponse").getString("name"))
+        assertEquals("list_files", parts.getJSONObject(1).getJSONObject("functionResponse").getString("name"))
+        assertEquals(2, parts.length())
+        assertEquals("model", contents.getJSONObject(3).getString("role"))
+        val attachments = contents.getJSONObject(4)
+        assertEquals("user", attachments.getString("role"))
+        assertEquals(payload, attachments.getJSONArray("parts").getJSONObject(1).getJSONObject("inline_data").getString("data"))
+        assertFalse(parts.getJSONObject(0).toString().contains(payload))
     }
 
     @Test
@@ -920,6 +994,11 @@ class Gemini37ProviderTest {
         OkHttpClient.Builder()
             .addInterceptor { chain ->
                 val request = chain.request()
+                // This fixture implements only generateContent, including on the official host.
+                if (request.url.encodedPath.endsWith("/interactions")) {
+                    return@addInterceptor Response.Builder().request(request).protocol(Protocol.HTTP_1_1)
+                        .code(404).message("Not Found").body("{}".toResponseBody()).build()
+                }
                 val buffer = Buffer()
                 request.body?.writeTo(buffer)
                 onRequest(request, JSONObject(buffer.readUtf8()))

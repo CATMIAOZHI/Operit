@@ -77,6 +77,7 @@ class TokenTrackingAIService(
     override val cachedInputTokenCount: Int get() = delegate.cachedInputTokenCount
     override val outputTokenCount: Int get() = delegate.outputTokenCount
     override val providerModel: String get() = delegate.providerModel
+    override val acceptsToolResultAudio: Boolean get() = delegate.acceptsToolResultAudio
 
     override fun resetTokenCounts() = delegate.resetTokenCounts()
     override fun cancelStreaming() = delegate.cancelStreaming()

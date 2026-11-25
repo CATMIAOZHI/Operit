@@ -498,6 +498,8 @@ object AIServiceFactory {
                     customHeaders = customHeaders,
                     providerType = providerType,
                     enableGoogleSearch = config.enableGoogleSearch,
+                    enableInteractions = config.enableGeminiInteractions,
+                    configurationId = config.id,
                     supportsVision = supportsVision,
                     supportsAudio = supportsAudio,
                     supportsVideo = supportsVideo,

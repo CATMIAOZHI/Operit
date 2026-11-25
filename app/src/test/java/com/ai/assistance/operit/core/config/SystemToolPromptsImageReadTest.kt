@@ -52,4 +52,16 @@ class SystemToolPromptsImageReadTest {
 
     private fun readFileTool(categories: List<SystemToolPromptCategory>): ToolPrompt =
         categories.flatMap { it.tools }.single { it.name == "read_file" }
+
+    @Test fun readFileExplainsDirectAudioOnlyWhenTheModelReceivesToolAudio() {
+        for (enabled in listOf(false, true)) {
+            // Direct audio for user attachments alone does not mean read_file audio reaches the model.
+            val english = readFileTool(SystemToolPrompts.getAIAllCategoriesEn(
+                chatModelHasDirectAudio = true, includeSubagentTools = false, toolResultAudio = enabled))
+            val chinese = readFileTool(SystemToolPrompts.getAIAllCategoriesCn(
+                chatModelHasDirectAudio = true, includeSubagentTools = false, toolResultAudio = enabled))
+            assertEquals(enabled, english.description.contains("given to you directly to listen to"))
+            assertEquals(enabled, chinese.description.contains("直接交给你收听"))
+        }
+    }
 }
