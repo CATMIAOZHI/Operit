@@ -177,6 +177,47 @@ private fun appendInlineChunk(
     return state
 }
 
+/**
+ * Settles [node], a '$' or '\(' group of [parent] shown as text so far: a formula when
+ * [com.ai.assistance.operit.util.markdown.InlineLatexRule] says so ([next] is the character after
+ * it, null at the end); otherwise (a price) its text after the first character is read again as
+ * ordinary Markdown, so a link or bold on that line still works. Returns whether it changed.
+ */
+private fun settleInlineLatex(parent: MarkdownNode, node: MarkdownNode, next: Char?): Boolean {
+    val index = parent.children.lastIndexOf(node)
+    if (index == -1) return false
+    val whole = node.content.toString()
+    // Line breaks carried over from before the group are layout, not part of it.
+    val lead = whole.takeWhile { it == '\n' || it == '\r' }
+    val text = whole.substring(lead.length)
+    val leadNodes =
+        if (lead.isEmpty()) emptyList()
+        else listOf(MarkdownNode(type = MarkdownProcessorType.PLAIN_TEXT, initialContent = lead))
+    if (com.ai.assistance.operit.util.markdown.InlineLatexRule.isFormula(text, next)) {
+        parent.children.removeAt(index)
+        parent.children.addAll(index,
+            leadNodes + MarkdownNode(type = MarkdownProcessorType.INLINE_LATEX, initialContent = text))
+        return true
+    }
+    if (text.length < 2) return false
+    val rest = com.ai.assistance.operit.util.streamnative.NativeMarkdownSplitter.parseInlineToStableNodes(text.substring(1), next)
+    // All plain: it already shows right as it is.
+    if (rest.all { it.type == MarkdownProcessorType.PLAIN_TEXT }) return false
+    parent.children.removeAt(index)
+    parent.children.addAll(index,
+        leadNodes + MarkdownNode(type = MarkdownProcessorType.PLAIN_TEXT, initialContent = text.take(1)) +
+            rest.map { MarkdownNode(type = it.type, initialContent = it.content) })
+    return true
+}
+
+/**
+ * The character in the message right after a '$' group, from the first [chunk] of the group after
+ * it: only plain text keeps its first character; others (bold, links) start with a delimiter the
+ * splitter left out, which is never a digit. Null while the chunk is still empty.
+ */
+private fun characterAfterLatex(type: MarkdownProcessorType, chunk: String): Char? =
+    if (type == MarkdownProcessorType.PLAIN_TEXT) chunk.firstOrNull() else '*'
+
 private fun canMergeWithHtmlBreak(node: MarkdownNode?): Boolean {
     return node?.type == MarkdownProcessorType.PLAIN_TEXT
 }
@@ -547,6 +588,8 @@ fun StreamMarkdownRenderer(
 
                 if (isInlineContainer) {
                     var pendingLineBreakState = PendingLineBreakState(count = pendingHtmlBreakCount)
+                    // A '$' group waits for the next character to know it is a formula ("$20–$30" is not).
+                    var pendingLatex: MarkdownNode? = null
 
                     blockStream.nativeMarkdownSplitByInline(flushIntervalMs = RENDER_INTERVAL_MS).collect { inlineGroup ->
                         val originalInlineType = inlineGroup.tag ?: MarkdownProcessorType.PLAIN_TEXT
@@ -557,13 +600,18 @@ fun StreamMarkdownRenderer(
                         var childNode: MarkdownNode? = null
 
                         inlineGroup.stream.collect { chunk ->
+                            val after = characterAfterLatex(originalInlineType, chunk)
+                            if (after != null) pendingLatex?.let { waiting ->
+                                pendingLatex = null
+                                if (settleInlineLatex(newNode, waiting, after)) batchUpdater.requestStructuralUpdate(nodeIndex)
+                            }
                             pendingLineBreakState =
                                 appendInlineChunk(
                                     parentNode = newNode,
                                     getOrCreateChildNode = {
                                         childNode
                                             ?: if (
-                                                mergeWithPrevious &&
+                                                mergeWithPrevious && !isInlineLatex &&
                                                     tempInlineType == MarkdownProcessorType.PLAIN_TEXT &&
                                                     newNode.children.lastOrNull()?.type == MarkdownProcessorType.PLAIN_TEXT
                                             ) {
@@ -581,16 +629,7 @@ fun StreamMarkdownRenderer(
                             batchUpdater.requestUpdate()
                         }
 
-                        if (isInlineLatex && childNode != null) {
-                            val latexContent = childNode!!.content.toString()
-                            val latexChildNode =
-                                MarkdownNode(type = MarkdownProcessorType.INLINE_LATEX, initialContent = latexContent)
-                            val childIndex = newNode.children.lastIndexOf(childNode)
-                            if (childIndex != -1) {
-                                newNode.children[childIndex] = latexChildNode
-                                batchUpdater.requestStructuralUpdate(nodeIndex)
-                            }
-                        }
+                        if (isInlineLatex && childNode != null) pendingLatex = childNode
 
                         if (childNode != null &&
                             childNode!!.content.toString().trimAll().isEmpty() &&
@@ -602,6 +641,9 @@ fun StreamMarkdownRenderer(
                                 batchUpdater.requestStructuralUpdate(nodeIndex)
                             }
                         }
+                    }
+                    pendingLatex?.let { waiting ->
+                        if (settleInlineLatex(newNode, waiting, null)) batchUpdater.requestStructuralUpdate(nodeIndex)
                     }
                 } else {
                     blockStream.collect { contentChunk ->
@@ -811,6 +853,8 @@ internal suspend fun parseMarkdownToNodes(content: String): List<MarkdownNode> {
             val blockText = blockTextBuilder.toString()
 
             var pendingLineBreakState = PendingLineBreakState(count = pendingHtmlBreakCount)
+            // A '$' group waits for the next character to know it is a formula ("$20–$30" is not).
+            var pendingLatex: MarkdownNode? = null
 
             stream { emit(blockText) }.nativeMarkdownSplitByInline().collect { inlineGroup ->
                 val originalInlineType = inlineGroup.tag ?: MarkdownProcessorType.PLAIN_TEXT
@@ -821,13 +865,18 @@ internal suspend fun parseMarkdownToNodes(content: String): List<MarkdownNode> {
                 var childNode: MarkdownNode? = null
 
                 inlineGroup.stream.collect { chunk ->
+                    val after = characterAfterLatex(originalInlineType, chunk)
+                    if (after != null) pendingLatex?.let { waiting ->
+                        pendingLatex = null
+                        settleInlineLatex(newNode, waiting, after)
+                    }
                     pendingLineBreakState =
                         appendInlineChunk(
                             parentNode = newNode,
                             getOrCreateChildNode = {
                                 childNode
                                     ?: if (
-                                        mergeWithPrevious &&
+                                        mergeWithPrevious && !isInlineLatex &&
                                             tempInlineType == MarkdownProcessorType.PLAIN_TEXT &&
                                             newNode.children.lastOrNull()?.type == MarkdownProcessorType.PLAIN_TEXT
                                     ) {
@@ -844,15 +893,7 @@ internal suspend fun parseMarkdownToNodes(content: String): List<MarkdownNode> {
                         )
                 }
 
-                if (isInlineLatex && childNode != null) {
-                    val latexContent = childNode!!.content.toString()
-                    val latexChildNode =
-                        MarkdownNode(type = MarkdownProcessorType.INLINE_LATEX, initialContent = latexContent)
-                    val childIndex = newNode.children.lastIndexOf(childNode)
-                    if (childIndex != -1) {
-                        newNode.children[childIndex] = latexChildNode
-                    }
-                }
+                if (isInlineLatex && childNode != null) pendingLatex = childNode
 
                 if (childNode != null &&
                     childNode!!.content.toString().trimAll().isEmpty() &&
@@ -864,6 +905,7 @@ internal suspend fun parseMarkdownToNodes(content: String): List<MarkdownNode> {
                     }
                 }
             }
+            pendingLatex?.let { settleInlineLatex(newNode, it, null) }
         } else {
             blockGroup.stream.collect { contentChunk ->
                 newNode.content + contentChunk

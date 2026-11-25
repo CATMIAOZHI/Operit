@@ -129,7 +129,8 @@ object NestedMarkdownProcessor {
                     StreamMarkdownStrikethroughPlugin(includeDelimiters = false),
                     StreamMarkdownUnderlinePlugin(),
                     // LaTeX 行内公式：支持 $...$ 与 \\(...\\)
-                    StreamMarkdownInlineLaTeXPlugin(includeDelimiters = false),
+                    // Delimiters kept: only a closed formula is shown as one (see StreamMarkdownRenderer).
+                    StreamMarkdownInlineLaTeXPlugin(includeDelimiters = true),
                     // 对 \(...\) 保留分隔符，避免在结束匹配失败分支吞掉反斜杠；
                     // 渲染阶段会通过 extractLatexContent 移除分隔符。
                     StreamMarkdownInlineParenLaTeXPlugin(includeDelimiters = true)
