@@ -8,7 +8,18 @@ import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
 
 /** Authentication failures must not enter the chat provider's generic network retry loop. */
-class CodexAuthenticationException(message: String) : IOException(message)
+open class CodexAuthenticationException(message: String) : IOException(message)
+
+/**
+ * [accountId]'s refresh grant was revoked: only signing that account in again brings it back.
+ * [refreshToken] is the grant refused, so a newer sign-in of the account is not set aside; it is
+ * never part of the message.
+ */
+class CodexLoginRequiredException(
+    message: String,
+    val accountId: String,
+    internal val refreshToken: String,
+) : CodexAuthenticationException(message)
 
 internal data class CodexAuthLease(val state: CodexAuthState, val generation: Long)
 
@@ -40,14 +51,24 @@ internal class CodexAuthRecovery(
     private val log: (String) -> Unit = {},
 ) {
     private val mutex = Mutex()
-    private var generation = 0L
+    @Volatile private var generation = 0L
     private var rejectedRefreshToken: String? = null
 
-    suspend fun <T> changeLogin(change: suspend () -> T): T = mutex.withLock {
+    suspend fun <T> changeLogin(change: suspend () -> T): T = underLock { endSession ->
         // Invalidate outstanding requests even when a logout's remote revocation fails.
-        generation++
-        rejectedRefreshToken = null
+        endSession()
         change()
+    }
+
+    /**
+     * Runs [change] under the same lock as refresh, sign-in and sign-out; it calls `endSession`
+     * when what it changed ends the requests still signed with the account in use.
+     */
+    suspend fun <T> underLock(change: suspend (endSession: () -> Unit) -> T): T = mutex.withLock {
+        change {
+            generation++
+            rejectedRefreshToken = null
+        }
     }
 
     suspend fun credentials(): CodexAuthLease = mutex.withLock {
@@ -57,15 +78,19 @@ internal class CodexAuthRecovery(
         CodexAuthLease(valid, generation)
     }
 
+    /** Whether no sign-in or sign-out happened since [lease] was handed out. */
+    fun isCurrent(lease: CodexAuthLease): Boolean = lease.generation == generation
+
     suspend fun ensureCurrent(lease: CodexAuthLease) = mutex.withLock {
         checkSession(lease, current())
     }
 
     suspend fun afterUnauthorized(failed: CodexAuthLease): CodexAuthLease = mutex.withLock {
         val state = current()
-        checkSession(failed, state)
-        if (state.accessToken != failed.state.accessToken) {
-            log("401 recovery reused concurrent refresh")
+        if (failed.generation != generation) throw changedLogin()
+        if (state.accountId != failed.state.accountId || state.accessToken != failed.state.accessToken) {
+            // Another request refreshed meanwhile, or the pool moved to another signed-in account.
+            log("401 recovery reused concurrent refresh or account switch")
             CodexAuthLease(state, generation)
         } else {
             val refreshed = refresh(state, "http_401_token_expired")
@@ -84,7 +109,7 @@ internal class CodexAuthRecovery(
     private fun changedLogin() = CodexAuthenticationException(messages.loginChanged)
 
     private suspend fun refresh(state: CodexAuthState, reason: String): CodexAuthState {
-        if (rejectedRefreshToken == state.refreshToken) throw loginRequired()
+        if (rejectedRefreshToken == state.refreshToken) throw loginRequired(state)
         log("refresh start reason=$reason remainingSeconds=${(state.expiresAtMillis - clock()) / 1000}")
         try {
             val refreshed = persistCodexRefreshBeforeCancellation { refreshAndSave(state) }
@@ -96,7 +121,7 @@ internal class CodexAuthRecovery(
             log("refresh failed httpStatus=${error.status} requiresLogin=${error.requiresLogin}")
             if (error.requiresLogin) {
                 rejectedRefreshToken = state.refreshToken
-                throw loginRequired()
+                throw loginRequired(state)
             }
             throw CodexAuthenticationException(messages.temporaryFailure)
         } catch (_: Exception) {
@@ -106,7 +131,8 @@ internal class CodexAuthRecovery(
         }
     }
 
-    private fun loginRequired() = CodexAuthenticationException(messages.loginRequired)
+    private fun loginRequired(state: CodexAuthState) =
+        CodexLoginRequiredException(messages.loginRequired, state.accountId, state.refreshToken)
 }
 
 /** One recovery per logical operation, including callers that have their own network retries. */

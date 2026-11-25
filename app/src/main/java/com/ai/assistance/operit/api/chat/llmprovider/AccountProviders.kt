@@ -13,6 +13,7 @@ import com.ai.assistance.operit.data.preferences.ApiPreferences
 import java.io.IOException
 import java.security.MessageDigest
 import java.util.UUID
+import kotlinx.coroutines.asContextElement
 import kotlinx.coroutines.currentCoroutineContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -146,9 +147,25 @@ internal fun prepareAccountReplay(content: JSONObject, expectedScope: String): J
     return value
 }
 
-class AccountApiKeyProvider(private val manager: ProviderAccountManager) : ApiKeyProvider {
-    override suspend fun getApiKey() = manager.validAccount().accessToken
-    override suspend fun getCandidateKeyCount() = if (manager.account.value == null) 0 else 1
+class AccountApiKeyProvider(private val manager: ProviderAccountManager) : ApiKeyProvider, AccountSwitchNotices {
+    private val notices = RequestSwitchNotices()
+
+    /**
+     * The account to sign the next request with. Moving to another account than the last request
+     * used, as when a revoked sign-in gives way, is told once with the next notice.
+     */
+    suspend fun account(): com.ai.assistance.operit.data.api.ProviderAccount {
+        val (value, moved) = manager.takeAccount()
+        notices.signed(value.identity, moved) { manager.switchedNotice(value) }
+        return value
+    }
+
+    override suspend fun getApiKey() = account().accessToken
+    override suspend fun getCandidateKeyCount() = manager.usableAccountCount()
+
+    override suspend fun takeSwitchNotice(): String? = notices.take()
+
+    override suspend fun claimSwitchRetry(): Boolean = notices.claimRetry { manager.account.value?.identity }
 }
 
 class GrokAccountProvider(
@@ -203,18 +220,37 @@ class GrokAccountProvider(
 }
 
 /** CCA transport reuses Gemini's native tool stream and lossless response-part replay. */
-class AntigravityTransport(private val manager: ProviderAccountManager, private val model: String) {
+class AntigravityTransport(
+    private val manager: ProviderAccountManager,
+    private val model: String,
+    private val keys: AccountApiKeyProvider = AccountApiKeyProvider(manager),
+) {
     private val fallbackSession = UUID.randomUUID().toString()
     private val names = mutableMapOf<String, String>()
-    var activeReplayScope: String = ""
-        private set
-    fun currentReplayScope() = "${manager.account.value?.identity}:$model"
+    /**
+     * The account of the attempt running on this coroutine (see [scoped]); one provider may serve
+     * several chats at once, so it is never kept on the provider itself.
+     */
+    private val attemptAccount = ThreadLocal<com.ai.assistance.operit.data.api.ProviderAccount?>()
 
-    suspend fun request(body: RequestBody, streaming: Boolean): Request {
-        val account = manager.validAccount()
+    /** The replay scope of the attempt running here: its history and reply follow its account. */
+    fun currentReplayScope() = "${(attemptAccount.get() ?: manager.account.value)?.identity}:$model"
+
+    /** The account the next attempt signs with, fixed before its history is built. */
+    suspend fun pick(): com.ai.assistance.operit.data.api.ProviderAccount = keys.account()
+
+    /** Carries [account] with the attempt's coroutine, for building its history and reading its reply. */
+    fun scoped(account: com.ai.assistance.operit.data.api.ProviderAccount): kotlin.coroutines.CoroutineContext =
+        attemptAccount.asContextElement(account)
+
+    suspend fun request(
+        body: RequestBody,
+        streaming: Boolean,
+        picked: com.ai.assistance.operit.data.api.ProviderAccount? = null,
+    ): Request {
+        val account = picked ?: keys.account()
         // This account's own families, fixed for this request whatever another account loads meanwhile.
         val families = manager.antigravityFamilies(account.identity)
-        activeReplayScope = "${account.identity}:$model"
         val raw = Buffer().also { body.writeTo(it) }.readUtf8()
         names.clear()
         val session = currentCoroutineContext()[OpenCodeSessionContext]?.sessionId ?: fallbackSession

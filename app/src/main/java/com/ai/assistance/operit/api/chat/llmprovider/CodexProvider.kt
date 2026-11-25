@@ -22,26 +22,44 @@ import org.json.JSONObject
 
 private class CodexAccessTokenProvider(
     private val authManager: CodexAuthManager,
-) : ApiKeyProvider {
-    override suspend fun getApiKey(): String = authManager.getValidAccessToken()
+) : ApiKeyProvider, AccountSwitchNotices {
+    private val notices = RequestSwitchNotices()
 
-    override suspend fun getCandidateKeyCount(): Int =
-        if (authManager.authState.value == null) 0 else 1
+    /**
+     * Remembers [state] as the account signing requests; a move from the last one, or one the
+     * credentials call itself made ([moved]), is told once.
+     */
+    suspend fun record(state: com.ai.assistance.operit.data.preferences.CodexAuthState, moved: Boolean) {
+        notices.signed(state.accountId, moved) { authManager.switchedNotice(state) }
+    }
+
+    override suspend fun getApiKey(): String {
+        val (lease, moved) = authManager.takeCredentials()
+        record(lease.state, moved)
+        return lease.state.accessToken
+    }
+
+    override suspend fun getCandidateKeyCount(): Int = authManager.usableAccountCount()
+
+    override suspend fun takeSwitchNotice(): String? = notices.take()
+
+    override suspend fun claimSwitchRetry(): Boolean = notices.claimRetry { authManager.authState.value?.accountId }
 }
 
-class CodexProvider(
+class CodexProvider private constructor(
     private val authManager: CodexAuthManager,
+    private val tokens: CodexAccessTokenProvider,
     modelName: String,
     private val httpClient: OkHttpClient,
-    customHeaders: Map<String, String> = emptyMap(),
-    supportsVision: Boolean = false,
-    supportsAudio: Boolean = false,
-    supportsVideo: Boolean = false,
-    supportsFiles: Boolean = false,
-    enableToolCall: Boolean = false,
+    customHeaders: Map<String, String>,
+    supportsVision: Boolean,
+    supportsAudio: Boolean,
+    supportsVideo: Boolean,
+    supportsFiles: Boolean,
+    enableToolCall: Boolean,
 ) : OpenAIResponsesProvider(
     responsesApiEndpoint = CodexOAuthProtocol.CODEX_RESPONSES_ENDPOINT,
-    apiKeyProvider = CodexAccessTokenProvider(authManager),
+    apiKeyProvider = tokens,
     modelName = modelName,
     client = httpClient,
     customHeaders = customHeaders,
@@ -52,6 +70,21 @@ class CodexProvider(
     supportsFiles = supportsFiles,
     enableToolCall = enableToolCall,
 ) {
+    constructor(
+        authManager: CodexAuthManager,
+    modelName: String,
+        httpClient: OkHttpClient,
+    customHeaders: Map<String, String> = emptyMap(),
+    supportsVision: Boolean = false,
+    supportsAudio: Boolean = false,
+    supportsVideo: Boolean = false,
+    supportsFiles: Boolean = false,
+    enableToolCall: Boolean = false,
+    ) : this(
+        authManager, CodexAccessTokenProvider(authManager), modelName, httpClient, customHeaders,
+        supportsVision, supportsAudio, supportsVideo, supportsFiles, enableToolCall,
+    )
+
     override val requiresStreamingResponse: Boolean = true
 
     override fun reasoningScopeAccount(request: Request?): String =
@@ -61,31 +94,38 @@ class CodexProvider(
     override suspend fun recoverUnauthorizedAuthentication(
         request: Request, status: Int, body: String, recoveryAllowed: Boolean,
     ): Boolean {
-        if (!isCodexExpiredToken(status, body)) {
-            throw CodexAuthenticationException(authManager.authMessages.loginRequired)
-        }
-        if (!recoveryAllowed) {
+        val expired = isCodexExpiredToken(status, body)
+        val lease = request.tag(CodexAuthLease::class.java)
+            ?: throw CodexAuthenticationException(authManager.authMessages.loginChanged)
+        // A refused sign-in gives way to the next account; each is set aside once, so this ends.
+        if (expired && !recoveryAllowed) {
+            // Refreshed once already and still refused: another account that can answer takes over.
+            if (authManager.setAsideAfterFailedRecovery(lease)) return true
             com.ai.assistance.operit.util.AppLogger.w("CodexAuthManager", "401 recovery rejected; stopping retries")
             throw CodexAuthenticationException(authManager.authMessages.recoveryRejected)
         }
-        val lease = request.tag(CodexAuthLease::class.java)
-            ?: throw CodexAuthenticationException(authManager.authMessages.loginChanged)
-        authManager.refreshAfterUnauthorized(lease)
+        // An expired token is refreshed; a sign-in the server refused gives way to the next account.
+        authManager.recoverUnauthorized(lease, expired)
         com.ai.assistance.operit.util.AppLogger.i("CodexAuthManager", "401 recovery ready; rebuilding request")
         return true
     }
 
+    override fun authenticationAccount(request: Request): String? =
+        request.tag(CodexAuthLease::class.java)?.state?.accountId
+
     override fun checkAuthenticationContinuity(previous: Request?, current: Request) {
         val first = previous?.tag(CodexAuthLease::class.java) ?: return
         val latest = current.tag(CodexAuthLease::class.java)
-        if (latest == null || first.generation != latest.generation ||
-            first.state.accountId != latest.state.accountId) {
+        // Moving to another signed-in account of the pool keeps the session; the request then
+        // goes without the first account's reasoning. A sign-in or sign-out in between ends it.
+        if (latest == null || first.generation != latest.generation) {
             throw CodexAuthenticationException(authManager.authMessages.loginChanged)
         }
     }
 
     override suspend fun authenticateRequest(builder: Request.Builder) {
-        val lease = authManager.credentials()
+        val (lease, moved) = authManager.takeCredentials()
+        tokens.record(lease.state, moved)
         super.applyAuthenticationHeaders(builder, lease.state.accessToken)
         val account = lease.state
         builder.tag(CodexAuthLease::class.java, lease)

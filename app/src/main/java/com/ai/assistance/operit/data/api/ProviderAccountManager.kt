@@ -65,6 +65,13 @@ data class ProviderAccount(
     val projectId: String = "",
     val email: String = "",
     val identity: String = UUID.randomUUID().toString(),
+    /** The server revoked this sign-in; it is skipped until the account is signed in again. */
+    val needsLogin: Boolean = false,
+    /** The provider's stable id for this account, so signing it in again replaces its row. */
+    val subject: String = "",
+    /** The OAuth client this account signed in with (Antigravity); its refresh grant only works with it. */
+    val clientId: String = "",
+    val clientSecret: String = "",
 )
 
 internal data class ProviderLoginSession(
@@ -92,7 +99,16 @@ class ProviderAccountManager private constructor(context: Context, val provider:
         createPreferences()
     }
     private val mutex = Mutex()
-    private val mutableAccount = MutableStateFlow(readAccount())
+
+    /** Every signed-in account in the order added, and which one requests use. */
+    private data class Pool(val accounts: List<ProviderAccount>, val activeId: String?) {
+        fun active() = accounts.firstOrNull { it.identity == activeId }
+    }
+    private val stateLock = Any()
+    private val resting = RestingAccounts()
+    private var pool = readPool()
+    private val mutableAccounts = MutableStateFlow(pool.accounts)
+    private val mutableAccount = MutableStateFlow(pool.active())
 
     private val familiesLock = Any()
     /** Each account's Antigravity tier families once read, kept in memory; a null value: none saved. */
@@ -106,7 +122,8 @@ class ProviderAccountManager private constructor(context: Context, val provider:
         synchronized(familiesLock) {
             if (familiesByAccount.containsKey(identity)) return@synchronized familiesByAccount[identity]
             val saved = runCatching {
-                preferences.getString(FAMILIES_KEY, null)?.let(::decodeFamilies)
+                (preferences.getString("$FAMILIES_KEY:$identity", null)
+                    ?: preferences.getString(FAMILIES_KEY, null))?.let(::decodeFamilies)
                     ?.takeIf { it.first == identity }?.second
             }.getOrNull()
             familiesByAccount[identity] = saved
@@ -128,20 +145,21 @@ class ProviderAccountManager private constructor(context: Context, val provider:
         appContext.getString(com.ai.assistance.operit.R.string.provider_account_changed_reload)
 
     /**
-     * Keeps [families] from [identity]'s model list; false, keeping nothing, when the signed-in
-     * account changed since that list was asked for.
+     * Keeps [families] from [identity]'s model list; false when that account is no longer the one
+     * in use (the list then belongs to another account than the one shown), or was removed.
      */
     suspend fun rememberAntigravityFamilies(identity: String, families: Map<String, Set<String>>): Boolean =
         withContext(Dispatchers.IO) {
             synchronized(familiesLock) {
-                if (account.value?.identity != identity) return@synchronized false
+                if (accounts.value.none { it.identity == identity }) return@synchronized false
                 familiesByAccount[identity] = families
-                com.ai.assistance.operit.api.chat.llmprovider.AntigravityFamilies.publish(families)
                 val tiers = JSONObject().apply {
                     families.forEach { (base, set) -> put(base, org.json.JSONArray(set.toList())) }
                 }
-                preferences.edit().putString(FAMILIES_KEY,
+                preferences.edit().putString("$FAMILIES_KEY:$identity",
                     JSONObject().put("identity", identity).put("families", tiers).toString()).commit()
+                if (account.value?.identity != identity) return@synchronized false
+                com.ai.assistance.operit.api.chat.llmprovider.AntigravityFamilies.publish(families)
                 true
             }
         }
@@ -154,7 +172,10 @@ class ProviderAccountManager private constructor(context: Context, val provider:
             (0 until tiers.length()).map { tiers.getString(it) }.toSet()
         }
     }
+    /** The account requests use now; null when none is signed in. */
     val account = mutableAccount.asStateFlow()
+    /** Every signed-in account, in the order they were added. */
+    val accounts = mutableAccounts.asStateFlow()
 
     init {
         // The thinking menu shows the tier a request will use, so it follows the signed-in account.
@@ -166,44 +187,208 @@ class ProviderAccountManager private constructor(context: Context, val provider:
     }
     private val client = OkHttpClient.Builder().callTimeout(30, TimeUnit.SECONDS).build()
 
-    private fun readAccount(): ProviderAccount? {
-        return try { readStoredAccount() } catch (_: SecurityException) {
+    private fun readPool(): Pool {
+        return try { readStoredPool() } catch (_: SecurityException) {
             appContext.deleteSharedPreferences(storeName)
             preferences = createPreferences()
-            null
+            Pool(emptyList(), null)
         } catch (_: JSONException) {
-            preferences.edit().remove("account").apply()
-            null
+            preferences.edit().remove(ACCOUNTS_KEY).remove(ACTIVE_KEY).remove(LEGACY_ACCOUNT_KEY).apply()
+            Pool(emptyList(), null)
         }
     }
 
-    private fun readStoredAccount(): ProviderAccount? {
-        val raw = preferences.getString("account", null) ?: return null
-        val json = JSONObject(raw)
-        return ProviderAccount(
-            json.getString("access"), json.getString("refresh"), json.getLong("expires"),
-            json.optString("project"), json.optString("email"), json.getString("identity"),
-        )
+    private fun readStoredPool(): Pool {
+        val raw = preferences.getString(ACCOUNTS_KEY, null)
+        if (raw != null) {
+            val rows = org.json.JSONArray(raw)
+            val list = (0 until rows.length()).map { decodeAccount(rows.getJSONObject(it)) }
+            val active = preferences.getString(ACTIVE_KEY, null)?.takeIf { id -> list.any { it.identity == id } }
+                ?: list.firstOrNull()?.identity
+            return Pool(list, active)
+        }
+        // One account from before the pool: it becomes the first, and the old row goes once the pool is written.
+        val legacy = preferences.getString(LEGACY_ACCOUNT_KEY, null) ?: return Pool(emptyList(), null)
+        // Read only: the next write (on a background thread) saves the pool and drops the old row.
+        val account = decodeAccount(JSONObject(legacy)).let {
+            // It signed in with the client saved then, which a later account may replace.
+            if (provider != AccountProvider.ANTIGRAVITY) it else it.copy(
+                clientId = preferences.getString("client_id", "").orEmpty(),
+                clientSecret = preferences.getString("client_secret", "").orEmpty(),
+            )
+        }
+        return Pool(listOf(account), account.identity)
     }
 
-    private fun save(value: ProviderAccount) {
-        val raw = JSONObject().apply {
-            put("access", value.accessToken); put("refresh", value.refreshToken)
-            put("expires", value.expiresAt); put("project", value.projectId)
-            put("email", value.email); put("identity", value.identity)
-        }.toString()
+    private fun decodeAccount(json: JSONObject) = ProviderAccount(
+        json.getString("access"), json.getString("refresh"), json.getLong("expires"),
+        json.optString("project"), json.optString("email"), json.getString("identity"),
+        json.optBoolean("needs_login"), json.optString("subject"),
+        json.optString("client_id"), json.optString("client_secret"),
+    )
+
+    private fun encodeAccount(value: ProviderAccount) = JSONObject().apply {
+        put("access", value.accessToken); put("refresh", value.refreshToken)
+        put("expires", value.expiresAt); put("project", value.projectId)
+        put("email", value.email); put("identity", value.identity)
+        if (value.needsLogin) put("needs_login", true)
+        if (value.subject.isNotBlank()) put("subject", value.subject)
+        if (value.clientId.isNotBlank()) put("client_id", value.clientId)
+        if (value.clientSecret.isNotBlank()) put("client_secret", value.clientSecret)
+    }
+
+    private fun writePool(next: Pool): Boolean {
+        val raw = org.json.JSONArray(next.accounts.map(::encodeAccount)).toString()
+        fun write() = preferences.edit().putString(ACCOUNTS_KEY, raw).remove(LEGACY_ACCOUNT_KEY).apply {
+            if (next.activeId == null) remove(ACTIVE_KEY) else putString(ACTIVE_KEY, next.activeId)
+        }.commit()
         // commit: a rotated refresh token lost to a process kill would leave only the spent one.
         // If storage still refuses, the new grant stays in memory so the spent one is never sent.
-        if (!preferences.edit().putString("account", raw).commit() &&
-            !preferences.edit().putString("account", raw).commit()) {
-            AppLogger.e(TAG, "${provider.name} sign-in could not be written to storage; kept in memory only")
-        }
-        mutableAccount.value = value
+        val written = write() || write()
+        if (!written) AppLogger.e(TAG, "${provider.name} sign-in could not be written to storage; kept in memory only")
+        return written
     }
 
-    suspend fun logout() = mutex.withLock {
-        preferences.edit().remove("account").apply()
-        mutableAccount.value = null
+    /** Saves and shows [next]; callers hold [stateLock]. */
+    private fun commit(next: Pool) {
+        if (next == pool) return
+        writePool(next)
+        pool = next
+        mutableAccounts.value = next.accounts
+        mutableAccount.value = next.active()
+    }
+
+    private fun usable(account: ProviderAccount) = !account.needsLogin && !resting.isResting(account.identity)
+
+    /** The account after [identity] that can still answer, made the one in use; null when there is none. */
+    private fun switchFrom(identity: String): ProviderAccount? {
+        val current = pool
+        val next = AccountPoolRules.nextUsable(current.accounts.map { it.identity }, identity) { id ->
+            current.accounts.first { it.identity == id }.let(::usable)
+        } ?: return null
+        commit(current.copy(activeId = next))
+        AppLogger.i(TAG, "${provider.name} switched to the next signed-in account")
+        return current.accounts.first { it.identity == next }
+    }
+
+    /** A refreshed sign-in replaces its own row; one removed meanwhile stays removed. */
+    private fun save(value: ProviderAccount) = synchronized(stateLock) {
+        val current = pool
+        if (current.accounts.none { it.identity == value.identity }) return@synchronized
+        commit(current.copy(accounts = current.accounts.map { if (it.identity == value.identity) value else it }))
+    }
+
+    /**
+     * A new sign-in joins the pool and is the one used; signing in an account already there (same
+     * provider id, else same email) replaces its row and keeps its identity.
+     */
+    private fun addOrReplace(value: ProviderAccount): ProviderAccount = synchronized(stateLock) {
+        val current = pool
+        val same = value.subject.takeIf { it.isNotBlank() }?.let { id -> current.accounts.firstOrNull { it.subject == id } }
+            ?: value.email.takeIf { it.isNotBlank() }?.let { email ->
+                current.accounts.firstOrNull {
+                    it.email.equals(email, ignoreCase = true) &&
+                        (it.subject.isBlank() || value.subject.isBlank())
+                }
+            }
+        val stored = if (same != null) value.copy(identity = same.identity, needsLogin = false) else value
+        val list = if (same != null) current.accounts.map { if (it.identity == same.identity) stored else it }
+            else current.accounts + stored
+        resting.clear(stored.identity)
+        commit(Pool(list, stored.identity))
+        stored
+    }
+
+    /** Makes [identity] the account requests use, as the user picked it. */
+    suspend fun setActive(identity: String) = withContext(Dispatchers.IO) {
+        synchronized(stateLock) {
+            val current = pool
+            if (current.accounts.none { it.identity == identity } || current.activeId == identity) return@synchronized
+            resting.clear(identity)
+            commit(current.copy(activeId = identity))
+        }
+    }
+
+    /** Signs [identity] out of this app; the next account that can answer takes over when it was in use. */
+    suspend fun remove(identity: String) = mutex.withLock {
+        withContext(Dispatchers.IO) {
+            synchronized(stateLock) {
+                val current = pool
+                if (current.accounts.none { it.identity == identity }) return@synchronized
+                val left = current.accounts.filter { it.identity != identity }
+                val active = if (current.activeId != identity) current.activeId else {
+                    AccountPoolRules.nextUsable(current.accounts.map { it.identity }, identity) { id ->
+                        left.first { it.identity == id }.let(::usable)
+                    } ?: left.firstOrNull()?.identity
+                }
+                resting.clear(identity)
+                commit(Pool(left, active))
+            }
+            synchronized(familiesLock) { familiesByAccount.remove(identity) }
+            preferences.edit().remove("$FAMILIES_KEY:$identity").apply()
+        }
+    }
+
+    /** Signs out the account in use. */
+    suspend fun logout() {
+        account.value?.identity?.let { remove(it) }
+    }
+
+    /** Accounts that can answer a request now, for the retry notice; at least one while any is signed in. */
+    fun usableAccountCount(): Int = synchronized(stateLock) {
+        if (pool.accounts.isEmpty()) 0 else pool.accounts.count(::usable).coerceAtLeast(1)
+    }
+
+    /** The short chat note for having moved to [account]. */
+    fun switchedNotice(account: ProviderAccount): String {
+        val label = account.email.ifBlank {
+            appContext.getString(com.ai.assistance.operit.R.string.provider_account_unnamed,
+                accounts.value.indexOfFirst { it.identity == account.identity } + 1)
+        }
+        return appContext.getString(com.ai.assistance.operit.R.string.provider_account_pool_switched, label)
+    }
+
+    /**
+     * A server refused the account [request] was signed with: a refused token (401) is refreshed
+     * before its next use, a spent quota or rate (402, 429) rests the account, and the next
+     * account that can answer takes over. Command Code keys cannot be refreshed, so a 401 there
+     * means the key is gone. Requests signed with a token no longer stored change nothing.
+     */
+    internal val refusalSink = AccountRefusalSink { request, status ->
+        val token = request.signedToken() ?: return@AccountRefusalSink
+        synchronized(stateLock) {
+            val current = pool
+            val used = current.accounts.firstOrNull { it.accessToken == token } ?: return@AccountRefusalSink
+            if (status == 401 && provider != AccountProvider.COMMAND_CODE) {
+                commit(current.copy(accounts = current.accounts.map {
+                    if (it.identity == used.identity) it.copy(expiresAt = 0) else it
+                }))
+                return@AccountRefusalSink
+            }
+            if (status == 401) {
+                commit(current.copy(accounts = current.accounts.map {
+                    if (it.identity == used.identity) it.copy(needsLogin = true) else it
+                }))
+            } else {
+                resting.rest(used.identity)
+            }
+            if (pool.activeId == used.identity) switchFrom(used.identity)
+        }
+    }
+
+    private val pooledClients = PooledClients(refusalSink)
+
+    /** [base] for chat requests, also telling this pool which account a server refused. */
+    fun requestClient(base: OkHttpClient): OkHttpClient = pooledClients.around(base)
+
+    /** Marks [identity]'s sign-in as revoked; true when another account is now in use. */
+    private fun loginRevoked(identity: String): Boolean = synchronized(stateLock) {
+        val current = pool
+        commit(current.copy(accounts = current.accounts.map {
+            if (it.identity == identity) it.copy(needsLogin = true) else it
+        }))
+        if (pool.activeId != identity) return@synchronized pool.active() != null
+        switchFrom(identity) != null
     }
 
     internal suspend fun startLogin(
@@ -302,20 +487,80 @@ class ProviderAccountManager private constructor(context: Context, val provider:
         }
         val value = parseTokens(tokens)
         val complete = if (provider == AccountProvider.ANTIGRAVITY) {
-            value.copy(projectId = discoverProject(value.accessToken))
+            // Google may answer without an ID token; its user info then names the account.
+            val named = if (value.subject.isNotBlank() && value.email.isNotBlank()) value else {
+                val info = try {
+                    requestJson(GOOGLE_USERINFO, token = value.accessToken)
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    null
+                }
+                value.copy(
+                    subject = value.subject.ifBlank { info?.optString("id").orEmpty().trim() },
+                    email = value.email.ifBlank { info?.optString("email").orEmpty().trim() },
+                )
+            }
+            named.copy(projectId = discoverProject(value.accessToken),
+                clientId = session.clientId, clientSecret = session.clientSecret)
         } else value
         currentCoroutineContext().ensureActive()
         withContext(Dispatchers.IO) {
             preferences.edit().putString("client_id", session.clientId)
                 .putString("client_secret", session.clientSecret).apply()
-            save(complete)
+            addOrReplace(complete)
         }
     }
 
-    suspend fun validAccount(): ProviderAccount = mutex.withLock {
-        val current = account.value ?: throw IOException("Account is not logged in")
-        if (provider == AccountProvider.COMMAND_CODE) return@withLock current
-        if (current.expiresAt - System.currentTimeMillis() > 120_000) return@withLock current
+    suspend fun validAccount(): ProviderAccount = takeAccount().first
+
+    /**
+     * The account to sign a request with, refreshed, and whether this call itself moved to it from
+     * the account in use before (so the chat can be told).
+     */
+    internal suspend fun takeAccount(): Pair<ProviderAccount, Boolean> = mutex.withLock {
+        var moved = false
+        while (true) {
+            val current = account.value ?: throw IOException("Account is not logged in")
+            // An account resting after a refusal, or whose sign-in was revoked, gives way to one
+            // that can answer now, when there is one. Checked again under the lock: the user may
+            // have picked another account meanwhile, which is then used as picked.
+            if (!usable(current)) {
+                val step = withContext(Dispatchers.IO) {
+                    synchronized(stateLock) {
+                        when {
+                            pool.activeId != current.identity -> 0
+                            !usable(pool.active() ?: current) -> if (switchFrom(current.identity) != null) 1 else -1
+                            else -> -1
+                        }
+                    }
+                }
+                if (step == 1) moved = true
+                if (step >= 0) continue
+            }
+            // Nothing else can answer: a revoked sign-in is not sent again; it needs a new login.
+            if (current.needsLogin) throw AccountLoginExpiredException(loginExpiredMessage())
+            if (provider == AccountProvider.COMMAND_CODE) return@withLock current to moved
+            if (current.expiresAt - System.currentTimeMillis() > 120_000) return@withLock current to moved
+            try {
+                return@withLock refresh(current) to moved
+            } catch (error: AccountHttpException) {
+                if (!error.loginRevoked) throw error
+                // This sign-in is over; the next account that still works answers instead.
+                if (!withContext(Dispatchers.IO) { loginRevoked(current.identity) }) {
+                    throw AccountLoginExpiredException(loginExpiredMessage())
+                }
+                moved = true
+            }
+        }
+        @Suppress("UNREACHABLE_CODE")
+        throw IllegalStateException()
+    }
+
+    internal fun loginExpiredMessage() =
+        appContext.getString(com.ai.assistance.operit.R.string.provider_account_login_expired)
+
+    private suspend fun refresh(current: ProviderAccount): ProviderAccount {
         val endpoint = when (provider) {
             AccountProvider.GROK -> retryTransient { discoverXai() }.second
             AccountProvider.CLAUDE -> ClaudeOAuthProtocol.TOKEN_ENDPOINT
@@ -324,10 +569,12 @@ class ProviderAccountManager private constructor(context: Context, val provider:
         val body = if (provider == AccountProvider.CLAUDE) {
             ClaudeOAuthProtocol.refreshBody(current.refreshToken).toBody()
         } else {
+            // Antigravity accounts refresh with the OAuth client they signed in with.
+            val clientId = current.clientId.ifBlank { preferences.getString("client_id", "").orEmpty() }
+            val clientSecret = current.clientSecret.ifBlank { preferences.getString("client_secret", "").orEmpty() }
             tokenForm(
-                if (provider == AccountProvider.GROK) XAI_CLIENT_ID
-                else preferences.getString("client_id", "").orEmpty(),
-                preferences.getString("client_secret", "").orEmpty(),
+                if (provider == AccountProvider.GROK) XAI_CLIENT_ID else clientId,
+                if (provider == AccountProvider.GROK) "" else clientSecret,
             ).add("grant_type", "refresh_token").add("refresh_token", current.refreshToken).build()
         }
         val updated = withContext(NonCancellable + Dispatchers.IO) {
@@ -342,7 +589,7 @@ class ProviderAccountManager private constructor(context: Context, val provider:
             parseTokens(tokens, current).also(::save)
         }
         currentCoroutineContext().ensureActive()
-        updated
+        return updated
     }
 
     /**
@@ -373,7 +620,7 @@ class ProviderAccountManager private constructor(context: Context, val provider:
         val name = user?.optString("userName").orEmpty()
         if (id.isBlank() || name.isBlank()) throw IOException("Invalid account identity")
         currentCoroutineContext().ensureActive()
-        withContext(Dispatchers.IO) { save(ProviderAccount(key, "", Long.MAX_VALUE, email = name)) }
+        withContext(Dispatchers.IO) { addOrReplace(ProviderAccount(key, "", Long.MAX_VALUE, email = name, subject = id)) }
     }
 
     suspend fun availableCommandCodeModels(): List<com.ai.assistance.operit.data.model.ModelOption> {
@@ -486,13 +733,18 @@ class ProviderAccountManager private constructor(context: Context, val provider:
         val seconds = json.optLong("expires_in", 3600).also { require(it in 1..31_536_000) }
         // Claude names the subscribed account in the token body; the OIDC providers put it in the
         // id token instead.
-        val email = ClaudeOAuthProtocol.accountEmail(json).ifBlank {
-            CodexOAuthProtocol.parseJwtClaims(json.optString("id_token"))?.email.orEmpty()
-        }
-        return ProviderAccount(access, refresh, System.currentTimeMillis() + seconds * 1000,
-            previous?.projectId.orEmpty(),
-            email.ifBlank { previous?.email.orEmpty() },
-            previous?.identity ?: UUID.randomUUID().toString())
+        val claims = CodexOAuthProtocol.parseJwtClaims(json.optString("id_token"))
+        val email = ClaudeOAuthProtocol.accountEmail(json).ifBlank { claims?.email.orEmpty() }
+        val subject = json.optJSONObject("account")?.optString("uuid").orEmpty().trim()
+            .ifBlank { claims?.subject.orEmpty() }
+        // A refresh keeps everything else the account row holds (project, OAuth client, identity).
+        val base = previous ?: ProviderAccount("", "", 0)
+        return base.copy(
+            accessToken = access, refreshToken = refresh,
+            expiresAt = System.currentTimeMillis() + seconds * 1000,
+            email = email.ifBlank { base.email }, subject = subject.ifBlank { base.subject },
+            needsLogin = false,
+        )
     }
 
     private suspend fun discoverXai(): Pair<String, String> {
@@ -696,6 +948,9 @@ class ProviderAccountManager private constructor(context: Context, val provider:
     companion object {
         private const val TAG = "ProviderAccountManager"
         private const val FAMILIES_KEY = "antigravity_tier_families"
+        private const val ACCOUNTS_KEY = "accounts"
+        private const val ACTIVE_KEY = "active_account"
+        private const val LEGACY_ACCOUNT_KEY = "account"
         const val CCA = "https://cloudcode-pa.googleapis.com"
         /** The host the Antigravity IDE reads its model list and allowance from. */
         const val CCA_DAILY = "https://daily-cloudcode-pa.googleapis.com"
@@ -708,6 +963,7 @@ class ProviderAccountManager private constructor(context: Context, val provider:
         fun antigravityUserAgent(wireModel: String) =
             if (wireModel.startsWith("gemini-4-")) ANTIGRAVITY_CLI_UA else ANTIGRAVITY_UA
         private const val GOOGLE_TOKEN = "https://oauth2.googleapis.com/token"
+        private const val GOOGLE_USERINFO = "https://www.googleapis.com/oauth2/v2/userinfo"
         private const val COMMAND_CODE_WHOAMI = "https://api.commandcode.ai/alpha/whoami"
         private const val COMMAND_CODE_CREDITS = "https://api.commandcode.ai/alpha/billing/credits"
         private const val COMMAND_CODE_SUBSCRIPTIONS = "https://api.commandcode.ai/alpha/billing/subscriptions"

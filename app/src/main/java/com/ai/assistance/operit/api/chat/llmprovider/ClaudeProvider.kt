@@ -1368,11 +1368,20 @@ class ClaudeProvider(
             AppLogger.d("AIService", "【Claude】请求被用户取消，停止重试。")
             throw UserCancellationException(context.getString(R.string.openai_error_request_cancelled), exception)
         }
+        // Only a new login brings the account back; retrying would only wait.
+        if (exception is com.ai.assistance.operit.data.api.AccountLoginExpiredException) throw exception
 
         val errorText = resolveRetryErrorText(context, exception)
 
         if (!enableRetry || com.ai.assistance.operit.api.chat.compaction.ContextCompaction.isContextOverflow(exception)) {
             throw IOException(errorText, exception)
+        }
+
+        // A server refused the account and the pool moved to one this request has not tried:
+        // trying it does not spend a retry. Once per account, so this ends with the pool.
+        if (freeAccountSwitchRetry(apiKeyProvider, exception)) {
+            delay(LlmRetryPolicy.nextDelayMs(1))
+            return retryCount
         }
 
         val newRetryCount = retryCount + 1
@@ -1394,9 +1403,8 @@ class ClaudeProvider(
             context.getString(R.string.orbit_dev_event_retry, newRetryCount, maxRetries, retryDelayMs, errorText),
         )
         AppLogger.w("AIService", "【Claude】$errorText，将在 ${retryDelayMs}ms 后进行第 $newRetryCount 次重试...", exception)
-        if (!shouldSuppressKeyPoolRateLimitNotice(apiKeyProvider, exception, "AIService")) {
-            onNonFatalError(buildRetryMessage(errorText, newRetryCount))
-        }
+        retryNotice(apiKeyProvider, exception, "AIService") { buildRetryMessage(errorText, newRetryCount) }
+            ?.let { onNonFatalError(it) }
         delay(retryDelayMs)
         return newRetryCount
     }
@@ -1536,6 +1544,7 @@ class ClaudeProvider(
                     tokenCacheManager.outputTokenCount
                 )
                 val request = createRequest(builtRequestBody.body, stream)
+                announceAccountSwitch(apiKeyProvider, onNonFatalError)
                 client.newCall(request.withPerf(perf))
             } catch (e: Exception) {
                 throw e
