@@ -38,11 +38,13 @@ fun ProviderAccountSettings(provider: AccountProvider, onAccountChanged: () -> U
     var clientId by remember(provider) { mutableStateOf("") }
     var clientSecret by remember(provider) { mutableStateOf("") }
     var error by remember(provider) { mutableStateOf<String?>(null) }
-    // Grok and Claude report their own subscription windows; Antigravity has no billing endpoint.
+    // Grok and Claude report their own subscription windows; Antigravity reports what is left per
+    // model family in its model list.
     // Their account row is the credential, so a probe cannot cross accounts the way a free-text key
     // field can; it still runs through the same request-id guard as the other account panels.
     val hasQuotaProbe =
-        provider == AccountProvider.GROK || provider == AccountProvider.CLAUDE
+        provider == AccountProvider.GROK || provider == AccountProvider.CLAUDE ||
+            provider == AccountProvider.ANTIGRAVITY
     var quota by remember(provider) { mutableStateOf<ProviderQuota?>(null) }
     var quotaLoading by remember(provider) { mutableStateOf(false) }
     var quotaFailed by remember(provider) { mutableStateOf(false) }
@@ -55,8 +57,11 @@ fun ProviderAccountSettings(provider: AccountProvider, onAccountChanged: () -> U
         scope.launch {
             val result = try {
                 withContext(Dispatchers.IO) {
-                    if (provider == AccountProvider.CLAUDE) manager.fetchClaudeQuota()
-                    else manager.fetchGrokQuota()
+                    when (provider) {
+                        AccountProvider.CLAUDE -> manager.fetchClaudeQuota()
+                        AccountProvider.ANTIGRAVITY -> manager.fetchAntigravityQuota()
+                        else -> manager.fetchGrokQuota()
+                    }
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -71,13 +76,13 @@ fun ProviderAccountSettings(provider: AccountProvider, onAccountChanged: () -> U
             quotaFailed = result == null
         }
     }
-    // A different account is a different meter, so never show the previous one's numbers.
-    LaunchedEffect(account?.accessToken) {
+    // A different account is a different meter, so never show the previous one's numbers. Keyed
+    // by the account, which a token refresh keeps, so a refreshed token does not ask twice.
+    LaunchedEffect(account?.identity) {
         quota = null
         quotaFailed = false
         quotaLoading = false
         quotaRequestId++
-        // Antigravity shares this composable but has no billing endpoint, so never probe for it.
         if (hasQuotaProbe && account != null) refreshQuota()
     }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {

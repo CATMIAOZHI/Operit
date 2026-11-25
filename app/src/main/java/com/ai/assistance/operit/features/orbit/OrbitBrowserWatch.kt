@@ -274,6 +274,7 @@ internal object OrbitBrowserWatch {
         caller ?: return
         loadCards()
         val now = System.currentTimeMillis()
+        val background = isTaskChat(caller.executorChatId)
         _works.update { all ->
             val old = all[caller.executorChatId]
             check(old?.stopping != true) { "The user stopped this browser task. Do not continue it." }
@@ -281,6 +282,12 @@ internal object OrbitBrowserWatch {
             // A page waiting for the user to take over still holds its place.
             check((old != null && !old.finished) || all.values.count { !it.finished || it.askAt != null } < BrowserTaskScope.MAX_TASKS) {
                 "All 3 background browser tasks are occupied. No browser page was changed. Wait for a task to finish, then retry; do not start more browser agents."
+            }
+            // Background task runs leave one page free for Orbit's chats with the user.
+            check(!background || (old != null && !old.finished) || all.values.count {
+                    (!it.finished || it.askAt != null) && isTaskChat(it.executorChatId)
+                } < BrowserTaskScope.MAX_TASKS - 1) {
+                "Background tasks already use ${BrowserTaskScope.MAX_TASKS - 1} browser pages; one is kept for Orbit's chats. No browser page was changed. Wait for another background task's page to finish, then retry."
             }
             // Browsing puts no card in the chat; the AI shows one with [show]. A card already shown
             // keeps following this page, also when a stopped task is used again.
@@ -293,6 +300,10 @@ internal object OrbitBrowserWatch {
         ensurePruner()
         if (_works.value.size > BrowserTaskScope.MAX_TASKS) prune()
     }
+
+    /** A background task's run, or an agent it started. */
+    private fun isTaskChat(chatId: String): Boolean =
+        CollaborationCoordinator.getInstance(app).rootChatOf(chatId).startsWith("orbit-task-")
 
     /**
      * The AI shows [caller]'s page in the chat as a browser card. Until the user writes again, showing

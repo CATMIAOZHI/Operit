@@ -61,6 +61,9 @@ class OrbitUsageTag(val orbitId: String, val purpose: OrbitQuota.Purpose) :
 /** Thrown before a model call once both of Orbit's allowances are used up: Orbit is paused. */
 class OrbitQuotaPausedException(message: String) : IllegalStateException(message)
 
+/** The allowance changed since an approved change was checked against it: nothing was saved. */
+class OrbitQuotaChangedException : IllegalStateException("The allowance changed")
+
 /**
  * Orbit's local token allowance, like Muse's plan bars but nothing is sold: a weekly allowance that
  * starts over every Monday at midnight, and an extra allowance that is only spent once the week's
@@ -79,6 +82,13 @@ object OrbitQuota {
     const val DEFAULT_EXTRA = 1_000_000_000L
     /** Far above any real use; only keeps a typo from becoming a number that overflows. */
     const val MAX_LIMIT = 1_000_000_000_000L
+    /** Money is kept in millionths of a US dollar, so one cheap call still counts. */
+    const val MICROS = 1_000_000L
+    const val DEFAULT_WEEKLY_MONEY = 100 * MICROS
+    const val DEFAULT_EXTRA_MONEY = 100 * MICROS
+    const val MIN_WEEKLY_MONEY = 1 * MICROS
+    /** A million dollars: only keeps a typo from becoming a number that overflows. */
+    const val MAX_MONEY = 1_000_000 * MICROS
     /** How far back the day totals for the activity heatmap go: a year, as the main app's shows. */
     const val HEATMAP_DAYS = 366
     const val MARKER = "[orbit-quota]"
@@ -95,8 +105,12 @@ object OrbitQuota {
     }
 
     data class State(
-        val weeklyLimit: Long = DEFAULT_WEEKLY,
-        val extraLimit: Long = DEFAULT_EXTRA,
+        /**
+         * The four amounts below are in the allowance's own unit: tokens, or (with [byMoney])
+         * millionths of a US dollar ([MICROS]).
+         */
+        val weeklyLimit: Long = DEFAULT_WEEKLY_MONEY,
+        val extraLimit: Long = DEFAULT_EXTRA_MONEY,
         /** Monday 00:00 (local time) of the week [weeklyUsed] belongs to. */
         val weekStart: Long = 0L,
         val weeklyUsed: Long = 0L,
@@ -104,7 +118,14 @@ object OrbitQuota {
         /** The week Orbit was last told its weekly allowance ran out. */
         val warnedWeek: Long = 0L,
         /** The extra allowance starts over with the week, instead of keeping until refilled. */
-        val extraWeekly: Boolean = false,
+        val extraWeekly: Boolean = true,
+        /** The allowance is what calls cost, at the model prices; otherwise their tokens. */
+        val byMoney: Boolean = true,
+        /** Calls this week whose model has no price: with [byMoney] they cost nothing here. */
+        val unpricedCalls: Long = 0L,
+        val unpricedModel: String = "",
+        /** The user has looked at and saved the allowances once. */
+        val confirmed: Boolean = false,
     ) {
         /**
          * Monday 00:00 of this allowance's week in the current time zone. [weekStart] was taken in
@@ -128,7 +149,8 @@ object OrbitQuota {
             val start = weekStartOf(now)
             val newWeek = weekStart == 0L || start - weekStart >= NEW_WEEK_GAP_MS
             return if (!newWeek) this
-            else copy(weekStart = start, weeklyUsed = 0L, extraUsed = if (extraWeekly) 0L else extraUsed)
+            else copy(weekStart = start, weeklyUsed = 0L, extraUsed = if (extraWeekly) 0L else extraUsed,
+                unpricedCalls = 0L, unpricedModel = "")
         }
     }
 
@@ -193,7 +215,9 @@ object OrbitQuota {
      * [currency], or null when it could not be worked out (no price for the model, no usage
      * reported, or the price could not be read). [cached] is null when the provider did not say.
      */
-    class Bill(val model: String, val cached: Long?, val cost: Double?, val currency: PricingCurrency)
+    class Bill(val model: String, val cached: Long?, val cost: Double?, val currency: PricingCurrency,
+        /** What the money allowance counts, in [currency]: [cost], or an estimate when the provider reported no usage. */
+        val allowanceCost: Double? = cost)
 
     /** One day's calls by one Orbit, by the hour of the day they were made in. */
     data class Hours(val day: String, val orbitId: String, val calls: List<Long>)
@@ -218,6 +242,16 @@ object OrbitQuota {
     private val EXTRA_USED = longPreferencesKey("extra_used")
     private val WARNED_WEEK = longPreferencesKey("warned_week")
     private val PAUSED_WARNED_WEEK = longPreferencesKey("paused_warned_week")
+    private val BY_MONEY = booleanPreferencesKey("by_money")
+    private val MONEY_WEEKLY_LIMIT = longPreferencesKey("money_weekly_limit")
+    private val MONEY_EXTRA_LIMIT = longPreferencesKey("money_extra_limit")
+    private val MONEY_WEEKLY_USED = longPreferencesKey("money_weekly_used")
+    private val MONEY_EXTRA_USED = longPreferencesKey("money_extra_used")
+    private val UNPRICED_CALLS = longPreferencesKey("unpriced_calls")
+    private val UNPRICED_MODEL = stringPreferencesKey("unpriced_model")
+    private val CONFIRMED = booleanPreferencesKey("limits_confirmed")
+    /** Once: model configurations marked as a monthly plan (no longer offered); removed on the next save. */
+    private val SUBSCRIPTIONS = androidx.datastore.preferences.core.stringSetPreferencesKey("subscription_configs")
     /**
      * Where earlier versions kept every day's use in one value. At the next call counted it moves
      * into the month files ([UsageFiles]) and is dropped from here.
@@ -248,16 +282,65 @@ object OrbitQuota {
     private const val WARN_IDLE_WAIT_MS = 2 * 60 * 60_000L
     private const val TAG = "OrbitQuota"
 
-    private fun read(p: Preferences) = State(
-        // A limit saved under an older, lower floor reads as today's floor.
-        weeklyLimit = (p[WEEKLY_LIMIT] ?: DEFAULT_WEEKLY).coerceIn(MIN_WEEKLY, MAX_LIMIT),
-        extraLimit = p[EXTRA_LIMIT] ?: DEFAULT_EXTRA,
-        weekStart = p[WEEK_START] ?: 0L,
-        weeklyUsed = p[WEEKLY_USED] ?: 0L,
-        extraUsed = p[EXTRA_USED] ?: 0L,
-        warnedWeek = p[WARNED_WEEK] ?: 0L,
-        extraWeekly = p[EXTRA_WEEKLY] ?: false,
-    )
+    /** The allowance in force: by money unless the user chose tokens. [money] reads the other kind. */
+    private fun read(p: Preferences, money: Boolean = p[BY_MONEY] ?: true): State {
+        val common = State(
+            weekStart = p[WEEK_START] ?: 0L,
+            warnedWeek = p[WARNED_WEEK] ?: 0L,
+            extraWeekly = p[EXTRA_WEEKLY] ?: true,
+            byMoney = money,
+            unpricedCalls = p[UNPRICED_CALLS] ?: 0L,
+            unpricedModel = p[UNPRICED_MODEL].orEmpty(),
+            confirmed = p[CONFIRMED] ?: false,
+        )
+        return if (money) common.copy(
+            weeklyLimit = (p[MONEY_WEEKLY_LIMIT] ?: DEFAULT_WEEKLY_MONEY).coerceIn(MIN_WEEKLY_MONEY, MAX_MONEY),
+            extraLimit = (p[MONEY_EXTRA_LIMIT] ?: DEFAULT_EXTRA_MONEY).coerceIn(0L, MAX_MONEY),
+            weeklyUsed = p[MONEY_WEEKLY_USED] ?: 0L,
+            extraUsed = p[MONEY_EXTRA_USED] ?: 0L,
+        ) else common.copy(
+            // A limit saved under an older, lower floor reads as today's floor.
+            weeklyLimit = (p[WEEKLY_LIMIT] ?: DEFAULT_WEEKLY).coerceIn(MIN_WEEKLY, MAX_LIMIT),
+            extraLimit = p[EXTRA_LIMIT] ?: DEFAULT_EXTRA,
+            weeklyUsed = p[WEEKLY_USED] ?: 0L,
+            extraUsed = p[EXTRA_USED] ?: 0L,
+        )
+    }
+
+    /**
+     * Settles both kinds of allowance at [now] and saves them: the week starts over for both at
+     * once, so the kind not in use is never left holding last week's use.
+     */
+    private fun settle(p: androidx.datastore.preferences.core.MutablePreferences, now: Long,
+        tokens: State = read(p, money = false).at(now), money: State = read(p, money = true).at(now)) {
+        p[WEEK_START] = tokens.weekStart
+        p[WEEKLY_USED] = tokens.weeklyUsed
+        p[EXTRA_USED] = tokens.extraUsed
+        p[MONEY_WEEKLY_USED] = money.weeklyUsed
+        p[MONEY_EXTRA_USED] = money.extraUsed
+        p[UNPRICED_CALLS] = money.unpricedCalls
+        p[UNPRICED_MODEL] = money.unpricedModel
+    }
+
+    /**
+     * What [bill] costs, in [MICROS]; null when its model has no price. The exchange rate is read
+     * only for a price in yuan.
+     */
+    private suspend fun moneyOf(app: Context, bill: Bill?): Long? {
+        bill ?: return null
+        val cost = bill.allowanceCost?.takeIf { it.isFinite() && it >= 0.0 && it <= MAX_CALL_COST } ?: return null
+        val usd = if (bill.currency == PricingCurrency.USD) cost else {
+            val rate = try {
+                com.ai.assistance.operit.data.preferences.ApiPreferences.getInstance(app).usdToCnyRateWithEstimate().first
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Double.NaN
+            }
+            cost / (rate.takeIf { it.isFinite() && it > 0.0 } ?: com.ai.assistance.operit.data.stats.TokenCostCurrency.DEFAULT_USD_TO_CNY_RATE)
+        }
+        return (usd * MICROS).toLong().coerceIn(0L, MAX_MONEY)
+    }
 
     /** The last state read, so a page can open with real numbers instead of a placeholder. */
     @Volatile
@@ -290,6 +373,10 @@ object OrbitQuota {
         read(context.applicationContext.orbitQuotaStore.data.first()).at(System.currentTimeMillis())
             .also { lastState = it }
 
+    /** One kind of allowance, in force or not: the place to change them shows the other kind's limits too. */
+    suspend fun state(context: Context, money: Boolean): State =
+        read(context.applicationContext.orbitQuotaStore.data.first(), money).at(System.currentTimeMillis())
+
     suspend fun paused(context: Context): Boolean = state(context).paused
 
     /** Throws [OrbitQuotaPausedException] when Orbit may not spend another token. */
@@ -308,28 +395,50 @@ object OrbitQuota {
      * old choice, so switching to "starts over with the week" never wipes extra spent in a past week
      * that was already counted as kept.
      */
-    /** A null value keeps what is stored, read inside the same edit so parallel changes never undo each other. */
-    suspend fun setLimits(context: Context, weekly: Long? = null, extra: Long? = null, extraWeekly: Boolean? = null) {
+    /**
+     * A null value keeps what is stored, read inside the same edit so parallel changes never undo each other.
+     * [byMoney] switches what the allowance counts; [weekly] and [extra] are then in that unit,
+     * otherwise in the unit in force. [expected]: checked against the allowance as it is inside the
+     * save; when it no longer holds nothing is saved and [OrbitQuotaChangedException] is thrown.
+     * [confirm]: the user saved them, so the first-time prompt to look at them goes away.
+     */
+    suspend fun setLimits(context: Context, weekly: Long? = null, extra: Long? = null, extraWeekly: Boolean? = null,
+        byMoney: Boolean? = null, confirm: Boolean = false, expected: ((State) -> Boolean)? = null) {
         val now = System.currentTimeMillis()
         val app = context.applicationContext
         app.orbitQuotaStore.edit { p ->
-            val stored = read(p)
-            val s = stored.at(now)
-            p[WEEK_START] = s.weekStart
-            p[WEEKLY_USED] = s.weeklyUsed
-            p[EXTRA_USED] = s.extraUsed
-            p[WEEKLY_LIMIT] = (weekly ?: stored.weeklyLimit).coerceIn(MIN_WEEKLY, MAX_LIMIT)
-            p[EXTRA_LIMIT] = (extra ?: stored.extraLimit).coerceIn(0L, MAX_LIMIT)
+            settle(p, now)
+            if (expected != null && !expected(read(p).at(now))) throw OrbitQuotaChangedException()
+            val money = byMoney ?: (p[BY_MONEY] ?: true)
+            val stored = read(p, money)
+            if (money) {
+                p[MONEY_WEEKLY_LIMIT] = (weekly ?: stored.weeklyLimit).coerceIn(MIN_WEEKLY_MONEY, MAX_MONEY)
+                p[MONEY_EXTRA_LIMIT] = (extra ?: stored.extraLimit).coerceIn(0L, MAX_MONEY)
+            } else {
+                p[WEEKLY_LIMIT] = (weekly ?: stored.weeklyLimit).coerceIn(MIN_WEEKLY, MAX_LIMIT)
+                p[EXTRA_LIMIT] = (extra ?: stored.extraLimit).coerceIn(0L, MAX_LIMIT)
+            }
+            p[BY_MONEY] = money
             p[EXTRA_WEEKLY] = extraWeekly ?: stored.extraWeekly
+            p.remove(SUBSCRIPTIONS)
+            if (confirm) p[CONFIRMED] = true
             if (!read(p).paused) p.remove(PAUSED_WARNED_WEEK)
         }
-        if (state(app).paused) OrbitPreferences.getInstance(app).current().active?.let { warnPaused(app, it.id) }
+        // The limits are saved by now: telling Orbit it is paused is apart, and its failure is not the save's.
+        try {
+            if (state(app).paused) OrbitPreferences.getInstance(app).current().active?.let { warnPaused(app, it.id) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            AppLogger.w("OrbitQuota", "Could not tell Orbit its allowance is used up: ${e.message}")
+        }
     }
 
     /** Fills the extra allowance again: what was spent from it no longer counts. */
-    suspend fun refillExtra(context: Context) {
+    suspend fun refillExtra(context: Context, expected: ((State) -> Boolean)? = null) {
         context.applicationContext.orbitQuotaStore.edit { p ->
-            p[EXTRA_USED] = 0L
+            if (expected != null && !expected(read(p).at(System.currentTimeMillis()))) throw OrbitQuotaChangedException()
+            if (p[BY_MONEY] ?: true) p[MONEY_EXTRA_USED] = 0L else p[EXTRA_USED] = 0L
             if (!read(p).at(System.currentTimeMillis()).paused) p.remove(PAUSED_WARNED_WEEK)
         }
     }
@@ -355,15 +464,23 @@ object OrbitQuota {
         val endedAt = at.takeIf { it in 1..now } ?: now
         val day = dayKey(endedAt)
         val hour = Calendar.getInstance().apply { timeInMillis = endedAt }.get(Calendar.HOUR_OF_DAY)
+        // Worked out before the save: the exchange rate is read from the app's settings.
+        val priced = moneyOf(app, bill)
         var after = State()
         app.orbitQuotaStore.edit { p ->
+            val spent = priced
             // The allowances are spent at the moment of counting, as always; only the history's day
             // and hour follow when the call ended (counting waits a moment for the call's price).
-            val s = read(p).at(now)
+            // Both kinds count every call, so switching between them later shows this week's real use.
+            val s = read(p, money = false).at(now)
             val toWeekly = minOf(total, s.weeklyLeft)
-            p[WEEK_START] = s.weekStart
-            p[WEEKLY_USED] = s.weeklyUsed + toWeekly
-            p[EXTRA_USED] = s.extraUsed + (total - toWeekly)
+            val m = read(p, money = true).at(now)
+            val toWeeklyMoney = minOf(spent ?: 0L, m.weeklyLeft)
+            settle(p, now,
+                s.copy(weeklyUsed = s.weeklyUsed + toWeekly, extraUsed = s.extraUsed + (total - toWeekly)),
+                m.copy(weeklyUsed = m.weeklyUsed + toWeeklyMoney, extraUsed = m.extraUsed + ((spent ?: 0L) - toWeeklyMoney),
+                    unpricedCalls = m.unpricedCalls + if (spent == null) 1 else 0,
+                    unpricedModel = if (spent == null) bill?.model.orEmpty() else m.unpricedModel))
             p[TOTALS] = addTotal(p[TOTALS], day, total, dayKey(now - HEATMAP_DAYS * 86_400_000L))
             // Queued in this same save, so the detail by day is never lost once the call is counted.
             val seq = (p[PENDING_SEQ] ?: 0L) + 1
@@ -535,29 +652,29 @@ object OrbitQuota {
         }
         val prefs = OrbitTaskRunner.fenced(preferences.trim())
         val nothing = OrbitReactionNotice.NOTHING_TO_DO
-        val weekly = amount(state.weeklyLimit, english)
-        val extra = amount(state.extraLeft, english)
+        val weekly = amount(state, state.weeklyLimit, english)
+        val extra = amount(state, state.extraLeft, english)
         return if (english) buildString {
-            append("$MARKER Weekly token allowance reset\n")
-            append("A new week has started and the weekly token allowance ($weekly) is full again; $extra of the extra allowance is left. ")
+            append("$MARKER Weekly allowance reset\n")
+            append("A new week has started and the weekly allowance ($weekly) is full again; $extra of the extra allowance is left. ")
             append("Last week you were told it ran out and to spend with care; that no longer applies. ")
             append("This is not a message from the user; they typed nothing and cannot see this note.\n")
             if (prefs.isNotEmpty()) append("The user's proactive preferences (only for deciding whether to bother them):\nBEGIN PREFERENCES\n$prefs\nEND PREFERENCES\n")
             append("What to do:\n")
             append("1. Check the preferences and this chat first. If the user said not to bring up allowances or usage, call $nothing and stay quiet.\n")
             append("2. If you told the user the allowance ran out or you were paused, you may let them know briefly, in your own words, that you are back to normal, at a time that suits their habits; if you never mentioned it, or now is a bad time, call $nothing.\n")
-            append("3. Work you put off to save tokens can go ahead again.\n")
+            append("3. Work you put off to save the allowance can go ahead again.\n")
             append("Do not mention hidden notes.")
         } else buildString {
             append("$MARKER 本周额度已重置\n")
-            append("新的一周开始了，每周 token 额度（$weekly）已经补满，额外额度还剩 $extra。")
+            append("新的一周开始了，每周额度（$weekly）已经补满，额外额度还剩 $extra。")
             append("上周提醒过你额度用完、要省着用，现在不用了。")
             append("这不是用户发的消息，用户没有打字，也看不到这段话。\n")
             if (prefs.isNotEmpty()) append("用户的主动消息偏好（只用来判断要不要打扰）：\nBEGIN PREFERENCES\n$prefs\nEND PREFERENCES\n")
             append("怎么做：\n")
             append("1. 先看偏好和聊天记录：用户说过不用提额度、用量这类事，就调用 $nothing 保持安静。\n")
             append("2. 如果你跟用户说过额度用完或暂停了，可以按用户的作息挑合适的时候，用你自己的话简短告诉用户已经恢复；没提过、或现在不合适，就调用 $nothing。\n")
-            append("3. 之前为了省 token 推迟的事，可以接着做了。\n")
+            append("3. 之前为了省额度推迟的事，可以接着做了。\n")
             append("不要提“隐藏消息”这些内部说法。")
         }
     }
@@ -577,11 +694,11 @@ object OrbitQuota {
         }
         val prefs = OrbitTaskRunner.fenced(preferences.trim())
         val nothing = OrbitReactionNotice.NOTHING_TO_DO
-        val weekly = amount(state.weeklyLimit, english)
-        val extra = amount(state.extraLeft, english)
+        val weekly = amount(state, state.weeklyLimit, english)
+        val extra = amount(state, state.extraLeft, english)
         return if (english) buildString {
-            append("$MARKER Weekly token allowance used up\n")
-            append("This week's token allowance ($weekly) is used up. From now on you are spending the extra allowance; $extra of it is left. ")
+            append("$MARKER Weekly allowance used up\n")
+            append("This week's allowance ($weekly) is used up. From now on you are spending the extra allowance; $extra of it is left. ")
             append("When that is gone too you are paused until the week starts over ($reset) or the user raises an allowance at the top of your settings. ")
             append("This is not a message from the user; they typed nothing and cannot see this note.\n")
             if (prefs.isNotEmpty()) append("The user's proactive preferences (only for deciding whether to bother them):\nBEGIN PREFERENCES\n$prefs\nEND PREFERENCES\n")
@@ -589,11 +706,11 @@ object OrbitQuota {
             append("1. Check the preferences and this chat first. If the user said not to bring up allowances or usage, call $nothing and stay quiet.\n")
             append("2. Otherwise decide from their habits and the time whether to say it now; if now is a bad time, call $nothing. ")
             append("When you do say it, keep it short and calm, in your own words: the week's allowance is gone, how much extra is left, when it starts over, and that they can change it at the top of your settings.\n")
-            append("3. Do not bring it up again this week. Spend tokens with care until then: skip work that can wait.\n")
+            append("3. Do not bring it up again this week. Spend with care until then: skip work that can wait.\n")
             append("Do not mention hidden notes.")
         } else buildString {
             append("$MARKER 本周额度用完了\n")
-            append("这周的 token 额度（$weekly）已经用完，从现在起用的是额外额度，还剩 $extra。")
+            append("这周的额度（$weekly）已经用完，从现在起用的是额外额度，还剩 $extra。")
             append("额外额度也用完的话你会暂停，直到 $reset 每周额度重置，或用户在你的设置顶部调高额度。")
             append("这不是用户发的消息，用户没有打字，也看不到这段话。\n")
             if (prefs.isNotEmpty()) append("用户的主动消息偏好（只用来判断要不要打扰）：\nBEGIN PREFERENCES\n$prefs\nEND PREFERENCES\n")
@@ -601,7 +718,7 @@ object OrbitQuota {
             append("1. 先看偏好和聊天记录：用户说过不用提额度、用量这类事，就调用 $nothing 保持安静。\n")
             append("2. 否则按用户的作息和现在的时间判断要不要现在说；现在不合适就调用 $nothing。")
             append("要说的话，用你自己的话简短、平和地讲清楚：本周额度用完了、额外额度还剩多少、什么时候重置、可以在你的设置顶部调整额度。\n")
-            append("3. 这周不要再提。在那之前省着用 token：能晚点做的事先放一放。\n")
+            append("3. 这周不要再提。在那之前省着用：能晚点做的事先放一放。\n")
             append("不要提“隐藏消息”这些内部说法。")
         }
     }
@@ -1048,6 +1165,20 @@ object OrbitQuota {
     }
 
     fun amount(context: Context, value: Long): String = amount(value, english(context))
+
+    /**
+     * An amount of [state]'s allowance: dollars for a money allowance, to the cent ($100, $100.01,
+     * and "<$0.01" for a little spent), tokens otherwise.
+     */
+    fun amount(state: State, value: Long, english: Boolean): String = if (!state.byMoney) amount(value, english) else {
+        // Checked before rounding: $0.009 is still under a cent.
+        if (value in 1 until 10_000) "<$0.01" else {
+            val cents = java.math.BigDecimal.valueOf(value, 6).setScale(2, java.math.RoundingMode.HALF_UP)
+            "$" + String.format(Locale.US, if (cents.stripTrailingZeros().scale() <= 0) "%,.0f" else "%,.2f", cents)
+        }
+    }
+
+    fun amount(context: Context, state: State, value: Long): String = amount(state, value, english(context))
 }
 
 /** Wakes at the start of a new week to tell Orbit its allowance is full again; see [OrbitQuota.tellReset]. */

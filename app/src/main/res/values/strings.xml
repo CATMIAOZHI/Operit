@@ -1,4 +1,6 @@
 <resources>
+    <string name="gemini_interactions_title">连续对话加速</string>
+    <string name="gemini_interactions_description">在 Google 保存对话，后续只上传新增消息。只用一个 Key 时生效。</string>
     <string name="web_session_download_storage_unavailable">无法读取或保存受保护的下载记录。记录已保留，请重启应用后再试；已有下载文件不会被删除。</string>
     <string name="memory_editor_process_records">过程记录 · 思考与工具</string>
     <string name="memory_editor_expand_process">展开过程记录</string>
@@ -3214,6 +3216,7 @@
     <string name="chat_delete_single_variant_unavailable">当前消息没有可删除的单次候选</string>
     <string name="chat_delete_single_variant_failed">删除单次消息失败: %1$s</string>
     <string name="chat_delete_message_confirm_message">确定要删除这条消息吗？此操作不可恢复。</string>
+    <string name="orbit_delete_split_reply_confirm">这条回复显示成了 %d 段，会一起删除。此操作不可恢复。</string>
     <string name="chat_switch_variant_failed">切换回答失败: %1$s</string>
     <string name="chat_message_variant_counter">%1$d/%2$d</string>
     <string name="chat_previous_variant">上一条回答</string>
@@ -5963,6 +5966,19 @@
     <string name="plan_execution_graph">计划执行图</string>
     <string name="image_block">图片</string>
     <string name="audio_block">音频</string>
+    <string name="audio_playback_failed">这段音频暂时放不了</string>
+    <string name="voice_to_text">转文字</string>
+    <string name="voice_options">语音选项</string>
+    <string name="voice_hide_text">收起文字</string>
+    <string name="voice_no_transcript">这段音频转不了文字</string>
+    <string name="voice_recognizing">正在识别…</string>
+    <string name="voice_recognized_note">自动识别，可能有错字</string>
+    <string name="voice_stt_live_only">现在用的 Sherpa-ncnn 认不了录好的音频。在「语音服务设置」里下载 SenseVoice 或 Paraformer 本地模型就能认，不用联网</string>
+    <string name="voice_stt_not_set_up">还没配好语音识别。在「语音服务设置」里填上密钥，或下载 SenseVoice 本地模型</string>
+    <string name="voice_stt_model_missing">本地识别模型还没下载，先去「语音服务设置」里下载</string>
+    <string name="voice_stt_too_long">超过 %1$d 分钟的音频认不了</string>
+    <string name="voice_stt_failed">识别失败：%1$s</string>
+    <string name="voice_stt_nothing">没听出说了什么</string>
     <string name="video_block">视频</string>
     <string name="image_load_failed">图片加载失败</string>
     <string name="save_image">保存图片</string>
@@ -9219,7 +9235,15 @@
     <string name="orbit_quota_status_extra">本周额度已用完，正在用额外额度</string>
     <string name="orbit_quota_usage">用量统计</string>
     <string name="orbit_quota_adjust">调整额度</string>
-    <string name="orbit_quota_adjust_help">每周额度每周一 0 点重置，最低 1 亿。额外额度在每周额度用完后才会用，设成 0 就是不用。两份都用完，%1$s 会暂停。</string>
+    <string name="orbit_quota_adjust_help">每周额度每周一 0 点重置。额外额度在每周额度用完后才会用，设成 0 就是不用。两份都用完，%1$s 会暂停。</string>
+    <string name="orbit_quota_mode">按什么算</string>
+    <string name="orbit_quota_mode_money">按花费</string>
+    <string name="orbit_quota_mode_money_desc">按模型定价算出的钱，单位美元。贵的模型（比如 Opus）和便宜的（比如 DeepSeek）放在一起也公平</string>
+    <string name="orbit_quota_mode_tokens">按 token</string>
+    <string name="orbit_quota_mode_tokens_desc">按用掉的 token 数算，不管模型贵不贵</string>
+    <string name="orbit_quota_money_unit">美元</string>
+    <string name="orbit_quota_unpriced">本周有 %1$d 次调用算不出花费（%2$s 多半没填价格），没算进额度。可以去「模型定价」补上价格。</string>
+    <string name="orbit_quota_confirm_prompt">默认按花费算：每周 %1$s，额外额度 %2$s。点「调整额度」看看合不合适，保存一次就不再提示。</string>
     <string name="orbit_quota_weekly_field">每周额度</string>
     <string name="orbit_quota_extra_field">额外额度</string>
     <string name="orbit_quota_unit">百万 token</string>
@@ -9233,7 +9257,7 @@
     <string name="orbit_quota_what_is_named">%1$s 是什么</string>
     <string name="orbit_quota_got_it">知道了</string>
     <string name="orbit_dialog_got_it">知道了</string>
-    <string name="orbit_quota_weekly_info">这是你给 %1$s 定的每周 token 上限，用来防止 token 被不知不觉用光。每周一 0 点自动重置，所有 Orbit 共用同一份。默认 10 亿，最低可以调到 1 亿。用完时会先告诉 %1$s，让它自己留意；之后开始用额外额度。</string>
+    <string name="orbit_quota_weekly_info">这是你给 %1$s 定的每周上限，可以按花费（美元）或按 token 算，防止不知不觉花太多。每周一 0 点自动重置。默认按花费，每周 100 美元。用完时会先告诉 %1$s，让它自己留意；之后开始用额外额度。</string>
     <string name="orbit_quota_extra_info">每周额度用完以后，%1$s 才会开始用这份额外额度。额外额度也用完，%1$s 就会暂停，等下周重置或你补满。可以设成 0（每周额度用完就直接暂停），也可以选「永久有效」（只有你点「重置额外额度」才会补满）或「每周重置」。随时都可以手动补满，不用等它用完。</string>
     <string name="orbit_quota_reset_extra">重置额外额度</string>
     <string name="orbit_quota_reset_extra_none">还没用过，不需要重置</string>
@@ -9411,7 +9435,7 @@
     <string name="orbit_profile_status_busy">正在忙</string>
     <string name="orbit_profile_today">今天</string>
     <string name="orbit_profile_yesterday">昨天</string>
-    <string name="orbit_profile_activity_empty">还没有执行过任务</string>
+    <string name="orbit_profile_activity_empty">暂无任务动态。脚本监控没发现情况的检查，在那个任务的详情里看</string>
     <string name="orbit_profile_run_interrupted">执行中断，已暂停</string>
     <string name="orbit_profile_approvals_empty">暂时没有批准记录</string>
     <string name="orbit_profile_waiting">等你处理</string>
@@ -9618,7 +9642,7 @@
     <string name="orbit_files_create">新建</string>
     <string name="orbit_files_exists">已经有同名的文件了</string>
     <string name="orbit_builds_files_empty">%1$s 存下的文件会出现在这里。</string>
-    <string name="orbit_builds_made">构件</string>
+    <string name="orbit_builds_made">作品</string>
     <string name="orbit_builds_uploads">文件库</string>
     <string name="orbit_builds_system">系统文件</string>
     <string name="orbit_system_hint">%1$s 自己的全部文件都在这里。这里只能查看，想改什么直接跟 %1$s 说。</string>
@@ -9661,6 +9685,11 @@
     <string name="orbit_feed_refresh_message">现在立马更新一条动态。</string>
     <string name="orbit_feed_card_message">我在动态「%1$s」的卡片里提交了：%2$s</string>
     <string name="orbit_feed_card_busy">%1$s 正在回复，等它说完再提交。</string>
+    <string name="orbit_open_blocked_unsaved">有没保存的修改，所以没打开聊天。保存或放弃后，从聊天列表打开它。</string>
+    <string name="orbit_quota_money_invalid">请输入金额，比如 100 或 12.5，最多两位小数</string>
+    <string name="orbit_quota_tokens_invalid">请输入整数</string>
+    <string name="orbit_quota_save_failed">没保存成功，请再试一次</string>
+    <string name="orbit_quota_saving">正在保存…</string>
     <string name="orbit_feed_card_failed">这张卡片没能打开。</string>
     <string name="orbit_feed_intro_title">动态是什么？</string>
     <string name="orbit_feed_intro_1">这是 %1$s 专门给你写的信息流。它会上网找你可能感兴趣的新鲜事，也会留意手机上和你有关的事（比如快递取件码），整理成一条条简短的帖子，有时还会附上能点的小卡片。</string>
@@ -9704,6 +9733,7 @@
     <string name="orbit_decision_chat_quiet">%1$s 看过了，这次没打扰你</string>
     <string name="orbit_decision_chat_pending">%1$s 看过了，还不确定有没有跟你说</string>
     <string name="orbit_hook_needs_dry_run">这个脚本还没试跑通过。请让 Orbit 先试跑、检查输出，再启用任务。</string>
+    <!-- Its start is OrbitRunEntity.HOOK_QUIET_ZH: these checks stay off the activity list by it. -->
     <string name="orbit_hook_silent">脚本判断这次不用叫醒 Orbit：%1$s</string>
     <string name="orbit_task_in_chat">到点后由 %1$s 在聊天里处理；聊天正忙时会稍后再提醒</string>
     <string name="orbit_run_in_chat">已交给 Orbit 在聊天里处理</string>
@@ -10083,7 +10113,11 @@
     <string name="orbit_find_media">图片与视频</string>
     <string name="orbit_find_files">文件</string>
     <string name="orbit_find_links">链接</string>
-    <string name="orbit_find_music">音乐</string>
+    <string name="orbit_find_music">音频</string>
+    <string name="orbit_find_voice">语音</string>
+    <string name="orbit_find_read_back_to">已查到 %1$s，暂时没找到更多</string>
+    <string name="orbit_find_nothing_yet">暂时没找到</string>
+    <string name="orbit_find_keep_looking">继续往前找</string>
     <string name="orbit_find_cards">卡片</string>
     <string name="orbit_find_approvals">批准</string>
     <string name="orbit_find_favorites">收藏</string>
@@ -10125,6 +10159,7 @@
     <string name="orbit_emoji_load_failed">表情列表没能读取出来</string>
     <string name="orbit_sent_card">发来一张卡片</string>
     <string name="ai_message_quoted_card">卡片</string>
+    <string name="ai_message_quoted_voice">语音</string>
     <string name="orbit_emoji_group_smileys">笑脸和情绪</string>
     <string name="orbit_emoji_group_people">人物和身体</string>
     <string name="orbit_emoji_group_animals">动物和自然</string>

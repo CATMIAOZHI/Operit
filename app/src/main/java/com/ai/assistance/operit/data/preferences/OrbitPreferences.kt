@@ -318,6 +318,15 @@ class OrbitPreferences private constructor(context: Context) {
         updateOrbits { orbits -> orbits.filterNot { it.id == profile.id } + profile }
     }
 
+    /** Replaces the saved Orbit with [profile] only while it is still there and not being deleted. */
+    suspend fun replaceLiveOrbit(profile: OrbitProfile): Boolean {
+        var replaced = false
+        updateOrbits { orbits -> orbits.map {
+            if (it.id == profile.id && !it.deleting) profile.also { replaced = true } else it
+        } }
+        return replaced
+    }
+
     suspend fun rememberChatOwner(chatId: String, orbitId: String) {
         var added = false
         dataStore.edit { preferences ->
@@ -352,29 +361,16 @@ class OrbitPreferences private constructor(context: Context) {
 
     /** Removes the Orbit and its Soul.md, and pauses it first when it was running. */
     suspend fun removeOrbit(orbitId: String) {
-        var avatarUri: String? = null
-        dataStore.edit { preferences ->
-            val orbits = decodeOrbits(preferences[ORBITS])
-            val owners = JSONObject(preferences[CHAT_OWNERS] ?: "{}")
-            orbits.forEach { orbit ->
-                (orbit.ownedChatIds + orbit.chatId).forEach { owners.put(it, orbit.id) }
-            }
-            preferences[CHAT_OWNERS] = owners.toString()
-            avatarUri = orbits.firstOrNull { it.id == orbitId }?.avatarUri
-            preferences[ORBITS] = encodeOrbits(orbits.filterNot { it.id == orbitId })
-            preferences.remove(dailyKey(orbitId))
-            if (preferences[ACTIVE_ORBIT_ID] == orbitId) preferences.remove(ACTIVE_ORBIT_ID)
-        }
-        OrbitModelPreferences(appContext).remove(orbitId)
-        withContext(Dispatchers.IO) {
+        val avatarUri = current().orbits.firstOrNull { it.id == orbitId }?.avatarUri
+        // Everything it owns goes before its settings: when a step fails, the Orbit stays marked
+        // deleting and a later try picks it up again.
+        check(withContext(Dispatchers.IO) {
             com.ai.assistance.operit.features.orbit.OrbitSoulRepository.removeDirectory(orbitDir(orbitId))
-            com.ai.assistance.operit.features.orbit.OrbitPackages.forgetNamesInUse()
-            com.ai.assistance.operit.features.orbit.OrbitPackages.pruneCopies(appContext,
-                com.ai.assistance.operit.core.tools.packTool.PackageManager.getInstance(appContext,
-                    com.ai.assistance.operit.core.tools.AIToolHandler.getInstance(appContext)))
-            deleteOwnedAvatar(avatarUri)
-        }
-        // Its tabs close and its own browser logins go with it.
+        }) { "Could not remove the Orbit's folder" }
+        OrbitModelPreferences(appContext).remove(orbitId)
+        withContext(Dispatchers.IO) { deleteOwnedAvatar(avatarUri) }
+        // Its tabs close and its own browser logins go with it. A phone whose browser cannot do this
+        // must not keep the Orbit half deleted for ever, so this one step only logs.
         try {
             val browser = withContext(Dispatchers.IO) {
                 com.ai.assistance.operit.core.tools.defaultTool.standard.StandardBrowserSessionTools(appContext)
@@ -384,6 +380,26 @@ class OrbitPreferences private constructor(context: Context) {
             throw e
         } catch (e: Exception) {
             com.ai.assistance.operit.util.AppLogger.w("OrbitPreferences", "Could not clear the Orbit's browser: ${e.message}")
+        }
+        dataStore.edit { preferences ->
+            val orbits = decodeOrbits(preferences[ORBITS])
+            val owners = JSONObject(preferences[CHAT_OWNERS] ?: "{}")
+            orbits.forEach { orbit ->
+                (orbit.ownedChatIds + orbit.chatId).forEach { owners.put(it, orbit.id) }
+            }
+            preferences[CHAT_OWNERS] = owners.toString()
+            preferences[ORBITS] = encodeOrbits(orbits.filterNot { it.id == orbitId })
+            preferences.remove(dailyKey(orbitId))
+            if (preferences[ACTIVE_ORBIT_ID] == orbitId) preferences.remove(ACTIVE_ORBIT_ID)
+        }
+        withContext(Dispatchers.IO) {
+            // Again: a write that was already under way when the folder went may have made it anew.
+            com.ai.assistance.operit.features.orbit.OrbitSoulRepository.removeDirectory(orbitDir(orbitId))
+            // Shared package copies only this Orbit used, now that it is gone from the list.
+            com.ai.assistance.operit.features.orbit.OrbitPackages.forgetNamesInUse()
+            com.ai.assistance.operit.features.orbit.OrbitPackages.pruneCopies(appContext,
+                com.ai.assistance.operit.core.tools.packTool.PackageManager.getInstance(appContext,
+                    com.ai.assistance.operit.core.tools.AIToolHandler.getInstance(appContext)))
         }
     }
 

@@ -114,6 +114,7 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Summarize
+import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.ui.draw.alpha
 import com.ai.assistance.operit.api.chat.llmprovider.MediaLinkParser
 import com.ai.assistance.operit.plugins.chatmessage.ChatMessageMenuDialogRequest
@@ -901,6 +902,10 @@ private fun MessageItem(
     var showEmojiPicker by remember { mutableStateOf(false) }
     // The bubble the long-press menu is for: a card inside the reply, or null for the message itself.
     var menuPiece by remember { mutableStateOf<OrbitPiece?>(null) }
+    // The words or voice bubble of Orbit's reply the menu was opened on, so a reply quotes just it.
+    var menuWords by remember { mutableStateOf<OrbitPiece?>(null) }
+    // The voice message the long-press menu was opened on (its "to text"), and whether it has words.
+    var menuVoice by remember { mutableStateOf<String?>(null) }
     val reactionKey = menuPiece?.reactionKey(orbitUserReactions?.byMessage) ?: message.timestamp.toString()
     val canReactToOrbit = orbitLook && message.sender == "ai" && orbitUserReactions != null && isActionable &&
         !isMultiSelectMode && !isWriting && message.contentStream == null
@@ -913,9 +918,18 @@ private fun MessageItem(
         }
     }
     val quickLike: (() -> Unit)? = if (canReactToOrbit) { { like(message.timestamp.toString(), null) } } else null
-    /** What a reply to [piece] quotes: a card's summary, or the message's words without its cards. */
+    /**
+     * What a reply to [piece] quotes: a card's summary, a voice message as "[Voice] caption", one
+     * bubble's words; with no bubble, the message's words without its cards.
+     */
     fun replyTarget(piece: OrbitPiece?): ChatMessage = when {
         piece?.summary != null -> message.copy(content = piece.summary, contentStream = null)
+        piece != null && message.sender == "ai" && orbitLook -> {
+            val caption = OrbitSpeech.voiceCaption(piece)
+            val quote = if (caption == null) piece.content
+                else "[" + context.getString(R.string.ai_message_quoted_voice) + "]" + (if (caption.isEmpty()) "" else " $caption")
+            message.copy(content = quote, contentStream = null)
+        }
         message.sender == "ai" && orbitLook -> message.copy(content = OrbitSpeech.splitCards(message.content).first, contentStream = null)
         else -> message
     }
@@ -932,9 +946,12 @@ private fun MessageItem(
             messageIndex = messageIndex,
             message = message
         )
-    val openMessageMenu: () -> Unit = {
+    /** Opens the message menu; [voice] gives the recording it is for (its "to text"), found only when needed. */
+    val openMenuFor: (voice: () -> String?) -> Unit = { voice ->
         if (!isMultiSelectMode && isActionable) {
             menuPiece = null
+            menuWords = null
+            menuVoice = voice()
             pluginMenuItems =
                 if (!isHiddenUserMessage && allowTranscriptMutation) {
                     ChatMessageMenuItemRegistry.createMenuItems(buildPluginMenuItemParams())
@@ -944,18 +961,131 @@ private fun MessageItem(
             showContextMenu = true
         }
     }
+    // Held anywhere on a message with one voice message, the menu is for that voice too.
+    val openMessageMenu: () -> Unit = {
+        openMenuFor { com.ai.assistance.operit.ui.common.markdown.VoiceTranscripts.onlyVoiceIn(message.content) }
+    }
+    val latestOpenMenuFor = androidx.compose.runtime.rememberUpdatedState(openMenuFor)
+    // The voice messages here showing their words ("to text"): which ones is kept with the message
+    // (also while it is scrolled away), and the words themselves only while it is on screen. Both the
+    // bars and the menu read [voiceWords], so they always agree.
+    val shownVoices = androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(ArrayList<String>()) }
+    val voiceWords = remember {
+        androidx.compose.runtime.mutableStateMapOf<String, com.ai.assistance.operit.ui.common.markdown.VoiceTranscripts.Found>()
+    }
+    val voiceNoWords = stringResource(R.string.voice_no_transcript)
+    // Recordings whose words are being recognized (it takes a while, and may cost money).
+    val voiceHearing = remember { androidx.compose.runtime.mutableStateListOf<String>() }
+    // At most one look at each recording at a time; hiding its words stops it.
+    val voiceJobs = remember { java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Job>() }
+    fun showVoiceWords(url: String, words: com.ai.assistance.operit.ui.common.markdown.VoiceTranscripts.Found?) {
+        if (words == null) voiceWords.remove(url) else voiceWords[url] = words
+        shownVoices.value = ArrayList(shownVoices.value - url).apply { if (words != null) add(url) }
+    }
+    fun hideVoiceWords(url: String) {
+        voiceJobs.remove(url)?.cancel()
+        // Stopped at once, even while the recognition under way is being cancelled.
+        voiceHearing.remove(url)
+        showVoiceWords(url, null)
+    }
+    /**
+     * Shows the words of [url]. Asked for by the user ([quiet] false): kept or recognized before, or
+     * else recognized now with their speech recognition, showing "Recognizing…" from the tap on.
+     * Brought back ([quiet]): only words found, never recognized.
+     */
+    fun requestVoiceWords(url: String, quiet: Boolean) {
+        if (voiceJobs[url]?.isActive == true) return
+        val transcripts = com.ai.assistance.operit.ui.common.markdown.VoiceTranscripts
+        if (!quiet) voiceHearing.add(url)
+        val job = coroutineScope.launch {
+            val self = coroutineContext[kotlinx.coroutines.Job]
+            try {
+                val deletions = com.ai.assistance.operit.features.orbit.OrbitVoiceText.forgotten
+                val before = deletions.value
+                var found = if (quiet) transcripts.find(context, url) else {
+                    when (val heard = transcripts.recognize(context, url)) {
+                        is com.ai.assistance.operit.ui.common.markdown.VoiceTranscripts.Recognized.Words -> heard.found
+                        is com.ai.assistance.operit.ui.common.markdown.VoiceTranscripts.Recognized.Problem -> {
+                            Toast.makeText(context, heard.message, Toast.LENGTH_LONG).show()
+                            null
+                        }
+                    }
+                }
+                // A recording deleted (or replaced) while it was being read shows nothing.
+                val checked = found
+                if (checked != null && deletions.value != before &&
+                    withContext(Dispatchers.IO) { transcripts.markOf(context, url, checked) } != checked.mark
+                ) found = null
+                showVoiceWords(url, found)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (!quiet) Toast.makeText(context, voiceNoWords, Toast.LENGTH_SHORT).show()
+                showVoiceWords(url, null)
+            } finally {
+                // Not when hidden meanwhile and asked again: that newer look shows its own state.
+                val now = voiceJobs[url]
+                if (now == null || now === self) voiceHearing.remove(url)
+            }
+        }
+        voiceJobs[url] = job
+        job.invokeOnCompletion { voiceJobs.remove(url, job) }
+    }
+    // Words shown before the message left the screen (or the app) come back only after the
+    // recording is checked again: one deleted or changed meanwhile shows nothing.
+    val voicesToCheck = shownVoices.value.filter { it !in voiceWords }
+    if (voicesToCheck.isNotEmpty()) {
+        LaunchedEffect(voicesToCheck) { voicesToCheck.forEach { requestVoiceWords(it, quiet = true) } }
+    }
+    // A recording deleted while its words show here (from the Library, say) takes them away, and so
+    // does one replaced by another of the same name: the words shown are only for the one checked.
+    if (voiceWords.isNotEmpty()) {
+        LaunchedEffect(Unit) {
+            // Also looks once when its words first show, for a deletion just before.
+            com.ai.assistance.operit.features.orbit.OrbitVoiceText.forgotten.collect {
+                val shown = voiceWords.toMap()
+                val gone = withContext(Dispatchers.IO) {
+                    shown.filter { (url, words) ->
+                        com.ai.assistance.operit.ui.common.markdown.VoiceTranscripts.markOf(context, url, words) != words.mark
+                    }.keys
+                }
+                // Only words still the ones checked go (hidden or shown again meanwhile, they stay as they are).
+                gone.filter { voiceWords[it] === shown[it] }.forEach(::hideVoiceWords)
+            }
+        }
+    }
+    // A long press on a voice bar opens this same menu, for that recording; none while it takes no menu.
+    val canOpenVoiceMenu = !isMultiSelectMode && isActionable
+    val voiceHost = remember(canOpenVoiceMenu) {
+        val open: (String) -> Unit = { url -> latestOpenMenuFor.value { url } }
+        com.ai.assistance.operit.ui.common.markdown.VoiceMenuHost(
+            open = open.takeIf { canOpenVoiceMenu },
+            words = { url -> voiceWords[url] },
+            pending = { url -> url in voiceHearing },
+        )
+    }
     // In an Orbit reply each bubble (words, a card, a Dynamic UI card) takes its own gestures.
     val pieceActions: OrbitPieceActions? =
         if (canReactToOrbit && !message.displayMode.isCollaborationEvent) {
             OrbitPieceActions(
                 like = { piece -> like(piece.reactionKey(orbitUserReactions?.byMessage), piece.summary) },
                 menu = { piece ->
-                    openMessageMenu()
+                    // This bubble's own voice, if it shows one (a card shows none).
+                    openMenuFor {
+                        if (piece.summary != null) null
+                        else com.ai.assistance.operit.ui.common.markdown.VoiceTranscripts.onlyVoiceIn(piece.content)
+                    }
                     menuPiece = piece.takeIf { it.summary != null }
+                    menuWords = piece.takeIf { it.summary == null }
                 },
                 reply = if (allowTranscriptMutation && onReplyToMessage != null) {
-                    { piece -> onReplyToMessage.invoke(replyTarget(piece.takeIf { it.summary != null })) }
+                    { piece -> onReplyToMessage.invoke(replyTarget(piece)) }
                 } else null,
+                // The voice bar pressed, in its own bubble: "to text" for it, "reply" quoting the bubble.
+                voiceMenu = { piece, url ->
+                    openMenuFor { url }
+                    menuWords = piece.takeIf { it.summary == null }
+                },
             )
         } else null
     // The statistics are drawn outside the card, and only by the row that closes it: drawn inside,
@@ -1017,10 +1147,15 @@ private fun MessageItem(
                 onDoubleClick = quickLike,
             ),
     ) {
+        // While picking, a message that did not go out hides its resend mark (no tap reaches it
+        // then): the pick mark has that empty side to itself. The bubble keeps its place on the right.
+        val unsentMessages = LocalOrbitUnsentMessages.current
         androidx.compose.runtime.CompositionLocalProvider(
             LocalOrbitMessageGestures provides
                 if (orbitLook) OrbitMessageGestures(quickLike, openMessageMenu) else null,
             LocalOrbitPieceActions provides pieceActions,
+            com.ai.assistance.operit.ui.common.markdown.LocalVoiceMenu provides voiceHost,
+            LocalOrbitUnsentMessages provides unsentMessages.takeUnless { isMultiSelectMode && orbitMessageHost != null },
         ) {
         OrbitSwipeToReply(
             enabled = orbitLook && isActionable && !isHiddenUserMessage && !isMultiSelectMode &&
@@ -1030,16 +1165,12 @@ private fun MessageItem(
         ) {
         // While picking messages the whole row is one choice; its cards and links do not take
         // screen-reader actions underneath it.
-        // The empty side keeps room for the round mark and "select to here", so they never sit on
-        // the message.
+        // Nothing else changes: the round mark and "select to here" float on the side the bubble
+        // leaves empty (a bubble is at most 80% wide), so picking never narrows, rewraps or
+        // stretches a message and the list stays where it was.
         Column(
             if (orbitMessageHost != null && isMultiSelectMode && isActionable && !isHiddenUserMessage) {
                 Modifier.clearAndSetSemantics {}
-                    .padding(
-                        start = if (message.sender == "user") ORBIT_PICK_SIDE else 0.dp,
-                        end = if (message.sender == "user") 0.dp else ORBIT_PICK_SIDE,
-                    )
-                    .heightIn(min = 56.dp)
             } else Modifier
         ) {
             if (quietOrbitReply) {
@@ -1160,7 +1291,9 @@ private fun MessageItem(
                             ) { onToggleSelection?.invoke() }
                             .then(
                                 if (isSelected) Modifier.background(tint)
-                                else Modifier.border(1.5.dp, MaterialTheme.colorScheme.outline, androidx.compose.foundation.shape.CircleShape)
+                                // Filled, so it still shows where it lies over a wide card.
+                                else Modifier.background(MaterialTheme.colorScheme.surface)
+                                    .border(1.5.dp, MaterialTheme.colorScheme.outline, androidx.compose.foundation.shape.CircleShape)
                             ),
                         contentAlignment = Alignment.Center,
                     ) {
@@ -1194,15 +1327,35 @@ private fun MessageItem(
                         }
                     }
                 }
-                // Same size whether "select to here" shows or not, so the mark never moves under a finger.
-                Column(
-                    Modifier.align(if (message.sender == "user") Alignment.CenterStart else Alignment.CenterEnd)
-                        .requiredWidth(ORBIT_PICK_SIDE),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    mark()
-                    Box(Modifier.height(26.dp), contentAlignment = Alignment.Center) { rangeHere() }
+                // A reply holding a card may use the whole row (cards are not held to 80%, as words
+                // are), so it leaves no empty side: there only the mark shows, in the top corner,
+                // over as little of the card as it can.
+                // The same test the bubble uses to give it the whole row.
+                val holdsCard = message.sender == "ai" && remember(message.content) {
+                    com.ai.assistance.operit.ui.features.chat.components.style.bubble.OrbitCardFence.containsMatchIn(message.content)
+                }
+                androidx.compose.foundation.layout.BoxWithConstraints(Modifier.matchParentSize()) {
+                    // Words and a picture alone take at most 80% of the row: the rest is the empty side.
+                    val side = minOf(maxWidth * 0.2f, ORBIT_PICK_SIDE)
+                    when {
+                        holdsCard -> Box(Modifier.align(Alignment.TopEnd).padding(6.dp)) { mark() }
+                        // "Select to here" goes under the mark only where both fit inside the row, so
+                        // nothing ever lies on the message or on the row next to it.
+                        side >= 64.dp && maxHeight >= 52.dp -> Column(
+                            Modifier.align(if (message.sender == "user") Alignment.CenterStart else Alignment.CenterEnd)
+                                .requiredWidth(side),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            mark()
+                            Box(Modifier.height(26.dp), contentAlignment = Alignment.Center) { rangeHere() }
+                        }
+                        else -> Box(
+                            Modifier.align(if (message.sender == "user") Alignment.CenterStart else Alignment.CenterEnd)
+                                .requiredWidth(side),
+                            contentAlignment = Alignment.Center,
+                        ) { mark() }
+                    }
                 }
             }
         }
@@ -1299,6 +1452,33 @@ private fun MessageItem(
             }
             // A card has no words to copy or read out.
             if (!isHiddenUserMessage && menuPiece == null) {
+                // A voice message's words, kept when it was made ("to text", as in a messenger).
+                val voice = menuVoice
+                // While its words are being recognized, the item stops that.
+                val voiceShown = voice != null && (voiceHost.words(voice) != null || voiceHost.pending(voice))
+                if (voice != null && (voiceShown || com.ai.assistance.operit.ui.common.markdown.VoiceTranscripts.canRecognize(voice))) {
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                stringResource(if (voiceShown) R.string.voice_hide_text else R.string.voice_to_text),
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        },
+                        onClick = {
+                            showContextMenu = false
+                            if (voiceShown) hideVoiceWords(voice) else requestVoiceWords(voice, quiet = false)
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.TextFields,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        },
+                        modifier = Modifier.heightIn(min = 44.dp),
+                    )
+                }
                 DropdownMenuItem(
                     text = {
                         Text(
@@ -1307,7 +1487,10 @@ private fun MessageItem(
                         )
                     },
                     onClick = {
-                        val cleanContent = cleanMessageContentForCopy(message.content)
+                        // In an Orbit reply shown as several bubbles, the one pressed. A voice
+                        // bubble copies the whole reply, as its link alone says nothing.
+                        val pressed = menuWords?.takeIf { orbitLook && OrbitSpeech.voiceCaption(it) == null }
+                        val cleanContent = cleanMessageContentForCopy(pressed?.content ?: message.content)
                         copyPreviewText = cleanContent
                         onCopyMessage?.invoke(message)
                         showContextMenu = false
@@ -1426,7 +1609,7 @@ private fun MessageItem(
                         )
                     },
                     onClick = {
-                        onReplyToMessage?.invoke(replyTarget(menuPiece))
+                        onReplyToMessage?.invoke(replyTarget(menuPiece ?: menuWords))
                         showContextMenu = false
                     },
                     leadingIcon = {
@@ -1807,10 +1990,21 @@ private fun MessageItem(
         }
 
         if (showDeleteMessageConfirmDialog) {
+            // Every bubble of the reply goes with it, so say so when there are several.
+            val parts = if (orbitLook && message.sender == "ai") {
+                val english = !androidx.compose.ui.platform.LocalConfiguration.current.locales[0].language.startsWith("zh")
+                remember(message.content, message.timestamp, english) {
+                    // Counted as the chat draws them, a voice message alone on its line included.
+                    OrbitSpeech.pieceList(message.content, message.timestamp, english, splitVoice = true).count { it.summary == null }
+                }
+            } else 1
             OrbitAwareAlertDialog(
                 onDismissRequest = { showDeleteMessageConfirmDialog = false },
                 title = { Text(text = stringResource(R.string.confirm_delete)) },
-                text = { Text(text = stringResource(R.string.chat_delete_message_confirm_message)) },
+                text = {
+                    Text(text = if (parts > 1) stringResource(R.string.orbit_delete_split_reply_confirm, parts)
+                        else stringResource(R.string.chat_delete_message_confirm_message))
+                },
                 confirmButton = {
                     TextButton(
                         onClick = {

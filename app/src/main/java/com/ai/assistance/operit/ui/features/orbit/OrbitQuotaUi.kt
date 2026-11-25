@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -37,6 +38,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -163,7 +165,7 @@ private fun rememberQuotaUsage(): OrbitQuota.UsageData? {
 @Composable
 private fun rememberUsageView(
     usage: OrbitQuota.UsageData?,
-    range: UsageRange,
+    range: UsageRange?,
     weekStart: Long,
     orbitId: String,
     otherLabel: String,
@@ -172,8 +174,9 @@ private fun rememberUsageView(
     val context = LocalContext.current
     val view by androidx.compose.runtime.produceState<UsageView?>(null, usage, range, weekStart, orbitId, otherLabel, today) {
         val data = usage ?: return@produceState
+        val forRange = range ?: return@produceState
         value = withContext(Dispatchers.Default) {
-            usageView(context, data, range, weekStart, orbitId, otherLabel, today.zone)
+            usageView(context, data, forRange, weekStart, orbitId, otherLabel, today.zone)
         }
     }
     return view
@@ -277,7 +280,7 @@ internal fun OrbitQuotaCard(
                 else stringResource(R.string.orbit_quota_extra_never_expires),
                 trailing = if (!ready) "" else if (state.extraLimit <= 0L) usedLabel(0, 0) else
                     usedLabel(state.extraUsed, state.extraLimit) + stringResource(
-                        R.string.orbit_quota_left, OrbitQuota.amount(context, state.extraLeft)),
+                        R.string.orbit_quota_left, OrbitQuota.amount(context, state, state.extraLeft)),
                 info = stringResource(R.string.orbit_quota_extra_info, orbitName(orbit)),
             )
             Spacer(Modifier.height(12.dp))
@@ -287,7 +290,7 @@ internal fun OrbitQuotaCard(
                 !ready -> ""
                 state.paused -> stringResource(R.string.orbit_quota_status_paused, orbitName(orbit))
                 state.weeklyExhausted -> stringResource(R.string.orbit_quota_status_extra)
-                else -> stringResource(R.string.orbit_quota_status_ok, OrbitQuota.amount(context, state.weeklyLeft))
+                else -> stringResource(R.string.orbit_quota_status_ok, OrbitQuota.amount(context, state, state.weeklyLeft))
             }
             Spacer(Modifier.height(12.dp))
             Text(status, style = MaterialTheme.typography.bodySmall, minLines = 1,
@@ -296,6 +299,18 @@ internal fun OrbitQuotaCard(
                     state.weeklyExhausted -> MaterialTheme.colorScheme.primary
                     else -> MaterialTheme.colorScheme.onSurfaceVariant
                 })
+            if (ready && !state.confirmed) {
+                Spacer(Modifier.height(8.dp))
+                Text(stringResource(R.string.orbit_quota_confirm_prompt,
+                    OrbitQuota.amount(context, state, state.weeklyLimit), OrbitQuota.amount(context, state, state.extraLimit)),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+            }
+            if (ready && state.byMoney && state.unpricedCalls > 0L) {
+                Spacer(Modifier.height(8.dp))
+                Text(stringResource(R.string.orbit_quota_unpriced, state.unpricedCalls.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+                    state.unpricedModel.ifBlank { "?" }),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            }
         }
         Spacer(Modifier.height(14.dp))
         // Three small buttons in one line (wrapping if the words are long), so the card stays short.
@@ -322,7 +337,7 @@ internal fun OrbitQuotaCard(
                 title = stringResource(R.string.orbit_quota_reset_extra),
                 text = {
                     Text(if (state.extraUsed > 0L)
-                        stringResource(R.string.orbit_quota_reset_extra_confirm, OrbitQuota.amount(context, state.extraUsed))
+                        stringResource(R.string.orbit_quota_reset_extra_confirm, OrbitQuota.amount(context, state, state.extraUsed))
                     else stringResource(R.string.orbit_quota_reset_extra_none))
                 },
                 confirmButton = {
@@ -360,8 +375,9 @@ private fun QuotaSmallButton(label: String, icon: String, enabled: Boolean = tru
 }
 
 /**
- * Changes both allowances. Amounts are typed in 万 (or millions in English), the unit people use for
- * numbers this big; the week's allowance cannot go under its floor and the extra one can be 0.
+ * Changes both allowances and what they count. Money is typed in US dollars (two decimals at most);
+ * tokens in millions, the unit people use for numbers this big. The week's allowance cannot go
+ * under its floor and the extra one can be 0.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -369,21 +385,60 @@ private fun OrbitQuotaSheet(state: OrbitQuota.State, orbitName: String, onDismis
     val context = LocalContext.current
     // The same strings that name the unit say its size, so every language types what it reads.
     val unit = remember { OrbitQuota.unitSize(context) }
-    fun inUnits(value: Long) = (value / unit).toString()
-    var weekly by rememberSaveable { mutableStateOf(inUnits(state.weeklyLimit)) }
-    var extra by rememberSaveable { mutableStateOf(inUnits(state.extraLimit)) }
-    // A field the user never touched keeps the exact amount, even one that is not a whole unit.
-    var weeklyEdited by rememberSaveable { mutableStateOf(false) }
-    var extraEdited by rememberSaveable { mutableStateOf(false) }
-    var extraWeekly by rememberSaveable { mutableStateOf(state.extraWeekly) }
-    val maxUnits = OrbitQuota.MAX_LIMIT / unit
-    val weeklyValue = if (!weeklyEdited) state.weeklyLimit
-        else weekly.toLongOrNull()?.takeIf { it in 0..maxUnits }?.times(unit)
-    val extraValue = if (!extraEdited) state.extraLimit
-        else extra.toLongOrNull()?.takeIf { it in 0..maxUnits }?.times(unit)
-    val weeklyOk = weeklyValue != null && weeklyValue >= OrbitQuota.MIN_WEEKLY
+    var byMoney by rememberSaveable { mutableStateOf(state.byMoney) }
+    // Each kind's saved limits, read by kind: a change made elsewhere while this is open never
+    // makes one kind show (and save) the other's numbers.
+    val moneyLimits by androidx.compose.runtime.produceState<OrbitQuota.State?>(state.takeIf { it.byMoney }) {
+        value = withContext(Dispatchers.IO) { OrbitQuota.state(context, money = true) }
+    }
+    val tokenLimits by androidx.compose.runtime.produceState<OrbitQuota.State?>(state.takeUnless { it.byMoney }) {
+        value = withContext(Dispatchers.IO) { OrbitQuota.state(context, money = false) }
+    }
+    fun limitsFor(money: Boolean): OrbitQuota.State? = if (money) moneyLimits else tokenLimits
+    fun typed(money: Boolean, value: Long): String = if (money)
+        java.math.BigDecimal.valueOf(value, 6).stripTrailingZeros().toPlainString() else (value / unit).toString()
+    // What the user typed, kept for each way of counting; null is a field left as saved, which keeps
+    // the exact amount even when it is not a whole unit.
+    var moneyWeekly by rememberSaveable { mutableStateOf<String?>(null) }
+    var moneyExtra by rememberSaveable { mutableStateOf<String?>(null) }
+    var tokenWeekly by rememberSaveable { mutableStateOf<String?>(null) }
+    var tokenExtra by rememberSaveable { mutableStateOf<String?>(null) }
+    // Null until the user picks one: the saved choice shows, and is left as it is when saving.
+    var extraWeeklyDraft by rememberSaveable { mutableStateOf<Boolean?>(null) }
+    val extraWeekly = extraWeeklyDraft ?: state.extraWeekly
+    val weeklyDraft = if (byMoney) moneyWeekly else tokenWeekly
+    val extraDraft = if (byMoney) moneyExtra else tokenExtra
+    // The whole text must be an amount: nothing typed is quietly changed into another number.
+    fun parse(text: String): Long? = if (byMoney) {
+        text.trim().takeIf { it.matches(MONEY_INPUT) }?.toBigDecimalOrNull()
+            ?.movePointRight(6)?.takeIf { it <= java.math.BigDecimal.valueOf(OrbitQuota.MAX_MONEY) }?.longValueExact()
+    } else text.trim().takeIf { it.matches(TOKEN_INPUT) }?.toLongOrNull()
+        ?.takeIf { it <= OrbitQuota.MAX_LIMIT / unit }?.times(unit)
+    val shown = limitsFor(byMoney)
+    // Until the other way's saved limits are read, its fields wait, without an error.
+    val loading = shown == null
+    val weeklyValue = if (weeklyDraft == null) shown?.weeklyLimit else parse(weeklyDraft)
+    val extraValue = if (extraDraft == null) shown?.extraLimit else parse(extraDraft)
+    val minWeekly = if (byMoney) OrbitQuota.MIN_WEEKLY_MONEY else OrbitQuota.MIN_WEEKLY
+    val weeklyOk = weeklyValue != null && weeklyValue >= minWeekly
     val extraOk = extraValue != null
-    OrbitModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+    // Only the unit matters for writing an amount out.
+    val format = OrbitQuota.State(byMoney = byMoney)
+    val unitLabel = stringResource(if (byMoney) R.string.orbit_quota_money_unit else R.string.orbit_quota_unit)
+    val invalid = stringResource(if (byMoney) R.string.orbit_quota_money_invalid else R.string.orbit_quota_tokens_invalid)
+    var saving by remember { mutableStateOf(false) }
+    var saveFailed by remember { mutableStateOf(false) }
+    // A save that ends after this sheet is gone must not close the next one opened.
+    val shownNow = remember { java.util.concurrent.atomic.AtomicBoolean(true) }
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { shownNow.set(false) } }
+    val editable = !loading && !saving
+    // A pasted wall of text is refused as a whole; nothing typed is cut into another number.
+    fun typedInto(text: String, set: (String) -> Unit) { if (text.length <= MAX_TYPED) set(text) }
+    OrbitModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        dismissEnabled = !saving,
+    ) {
         // Scrolls, and rises above the keyboard, so Save stays reachable on a small screen or large text.
         Column(
             Modifier.fillMaxWidth().imePadding().navigationBarsPadding().verticalScroll(rememberScrollState())
@@ -394,41 +449,66 @@ private fun OrbitQuotaSheet(state: OrbitQuota.State, orbitName: String, onDismis
                 fontWeight = FontWeight.SemiBold)
             Text(stringResource(R.string.orbit_quota_adjust_help, orbitName), style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(stringResource(R.string.orbit_quota_mode), style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.padding(top = 4.dp))
+            Column(Modifier.selectableGroup()) {
+                ExtraModeRow(
+                    selected = byMoney,
+                    title = stringResource(R.string.orbit_quota_mode_money),
+                    description = stringResource(R.string.orbit_quota_mode_money_desc),
+                    enabled = !saving,
+                    onClick = { byMoney = true },
+                )
+                ExtraModeRow(
+                    selected = !byMoney,
+                    title = stringResource(R.string.orbit_quota_mode_tokens),
+                    description = stringResource(R.string.orbit_quota_mode_tokens_desc),
+                    enabled = !saving,
+                    onClick = { byMoney = false },
+                )
+            }
             OutlinedTextField(
-                value = weekly,
-                onValueChange = { weekly = it.filter(Char::isDigit).take(9); weeklyEdited = true },
+                value = weeklyDraft ?: shown?.let { typed(byMoney, it.weeklyLimit) }.orEmpty(),
+                onValueChange = { text -> typedInto(text) { if (byMoney) moneyWeekly = it else tokenWeekly = it } },
+                enabled = editable,
                 label = { Text(stringResource(R.string.orbit_quota_weekly_field)) },
-                suffix = { Text(stringResource(R.string.orbit_quota_unit)) },
-                supportingText = {
-                    Text(
-                        if (weeklyOk) "= " + OrbitQuota.amount(context, weeklyValue!!)
-                        else stringResource(R.string.orbit_quota_weekly_min, OrbitQuota.amount(context, OrbitQuota.MIN_WEEKLY)),
-                        color = if (weeklyOk) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
-                    )
-                },
-                isError = !weeklyOk,
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            OutlinedTextField(
-                value = extra,
-                onValueChange = { extra = it.filter(Char::isDigit).take(9); extraEdited = true },
-                label = { Text(stringResource(R.string.orbit_quota_extra_field)) },
-                suffix = { Text(stringResource(R.string.orbit_quota_unit)) },
+                suffix = { Text(unitLabel) },
                 supportingText = {
                     Text(
                         when {
-                            !extraOk -> stringResource(R.string.orbit_quota_extra_invalid)
-                            extraValue == 0L -> stringResource(R.string.orbit_quota_extra_zero)
-                            else -> "= " + OrbitQuota.amount(context, extraValue!!)
+                            loading -> ""
+                            weeklyValue == null -> invalid
+                            !weeklyOk -> stringResource(R.string.orbit_quota_weekly_min, OrbitQuota.amount(context, format, minWeekly))
+                            else -> "= " + OrbitQuota.amount(context, format, weeklyValue)
                         },
-                        color = if (extraOk) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
+                        color = if (weeklyOk || loading) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
                     )
                 },
-                isError = !extraOk,
+                isError = !loading && !weeklyOk,
                 singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                keyboardOptions = KeyboardOptions(keyboardType = if (byMoney) KeyboardType.Decimal else KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = extraDraft ?: shown?.let { typed(byMoney, it.extraLimit) }.orEmpty(),
+                onValueChange = { text -> typedInto(text) { if (byMoney) moneyExtra = it else tokenExtra = it } },
+                enabled = editable,
+                label = { Text(stringResource(R.string.orbit_quota_extra_field)) },
+                suffix = { Text(unitLabel) },
+                supportingText = {
+                    Text(
+                        when {
+                            loading -> ""
+                            extraValue == null -> invalid
+                            extraValue == 0L -> stringResource(R.string.orbit_quota_extra_zero)
+                            else -> "= " + OrbitQuota.amount(context, format, extraValue)
+                        },
+                        color = if (extraOk || loading) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
+                    )
+                },
+                isError = !loading && !extraOk,
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = if (byMoney) KeyboardType.Decimal else KeyboardType.Number),
                 modifier = Modifier.fillMaxWidth(),
             )
             Text(stringResource(R.string.orbit_quota_extra_mode), style = MaterialTheme.typography.titleSmall,
@@ -438,39 +518,70 @@ private fun OrbitQuotaSheet(state: OrbitQuota.State, orbitName: String, onDismis
                     selected = !extraWeekly,
                     title = stringResource(R.string.orbit_quota_extra_mode_keep),
                     description = stringResource(R.string.orbit_quota_extra_mode_keep_desc),
-                    onClick = { extraWeekly = false },
+                    enabled = !saving,
+                    onClick = { extraWeeklyDraft = false },
                 )
                 ExtraModeRow(
                     selected = extraWeekly,
                     title = stringResource(R.string.orbit_quota_extra_mode_weekly),
                     description = stringResource(R.string.orbit_quota_extra_mode_weekly_desc),
-                    onClick = { extraWeekly = true },
+                    enabled = !saving,
+                    onClick = { extraWeeklyDraft = true },
                 )
             }
+            if (saveFailed) {
+                Text(stringResource(R.string.orbit_quota_save_failed), style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error)
+            }
             Button(
-                enabled = weeklyOk && extraOk,
+                enabled = !saving && !loading && weeklyOk && extraOk,
                 onClick = {
-                    val w = weeklyValue ?: return@Button
-                    val e = extraValue ?: return@Button
-                    val weeklyReset = extraWeekly
-                    onDismiss()
-                    // Closing the sheet ends its scope; saving runs past it.
+                    // Only fields the user changed are written; the rest stay as saved at that moment.
+                    val w = if (weeklyDraft != null) weeklyValue else null
+                    val e = if (extraDraft != null) extraValue else null
+                    val weeklyReset = extraWeeklyDraft
+                    val money = byMoney
+                    saving = true
+                    saveFailed = false
+                    // Everything goes in one save; the sheet closes only once it is saved, and keeps
+                    // what was typed when it was not. The save runs on even if the sheet is closed.
                     CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
-                        OrbitQuota.setLimits(context, w, e, weeklyReset)
+                        val saved = try {
+                            OrbitQuota.setLimits(context, w, e, weeklyReset, byMoney = money, confirm = true)
+                            true
+                        } catch (failure: Exception) {
+                            com.ai.assistance.operit.util.AppLogger.w("OrbitQuotaUi", "Could not save the allowance", failure)
+                            false
+                        }
+                        withContext(Dispatchers.Main) {
+                            saving = false
+                            if (!shownNow.get()) return@withContext
+                            if (saved) onDismiss() else saveFailed = true
+                        }
                     }
                 },
                 modifier = Modifier.fillMaxWidth().height(48.dp),
-            ) { Text(stringResource(R.string.save)) }
-            TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.cancel)) }
+            ) { Text(stringResource(if (saving) R.string.orbit_quota_saving else R.string.save)) }
+            TextButton(onClick = onDismiss, enabled = !saving, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.cancel))
+            }
         }
     }
 }
 
+/** An amount of dollars as typed: digits, then at most two decimals after a point. */
+private val MONEY_INPUT = Regex("\\d{1,9}(\\.\\d{0,2})?")
+/** A whole number of the unit tokens are typed in. */
+private val TOKEN_INPUT = Regex("\\d{1,9}")
+/** Longer than any amount: typing past it is refused rather than kept in the sheet's saved state. */
+private const val MAX_TYPED = 24
+
 @Composable
-private fun ExtraModeRow(selected: Boolean, title: String, description: String, onClick: () -> Unit) {
+private fun ExtraModeRow(selected: Boolean, title: String, description: String, enabled: Boolean = true, onClick: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
-            .selectable(selected = selected, role = Role.RadioButton, onClick = onClick).padding(vertical = 6.dp),
+            .selectable(selected = selected, enabled = enabled, role = Role.RadioButton, onClick = onClick)
+            .alpha(if (enabled) 1f else 0.6f).padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         RadioButton(selected = selected, onClick = null, modifier = Modifier.padding(horizontal = 12.dp))
@@ -487,6 +598,43 @@ private enum class UsageRange(@StringRes val label: Int, val days: Int?) {
     MONTH(R.string.orbit_quota_range_30, 30),
     QUARTER(R.string.orbit_quota_range_90, 90),
     ALL(R.string.orbit_quota_range_all, null),
+}
+
+/**
+ * The range last picked on [page] (shown again on the next visit) and how to pick another. A
+ * small preferences file, read off the main thread once per app run and then kept in memory.
+ * Null until it is read, so nothing is worked out for a range that is about to change.
+ */
+@Composable
+private fun rememberUsageRange(page: String, default: UsageRange): Pair<UsageRange?, (UsageRange) -> Unit> {
+    val context = LocalContext.current.applicationContext
+    var range by rememberSaveable { mutableStateOf(UsageRangeMemory.known[page]) }
+    LaunchedEffect(page) {
+        if (range != null) return@LaunchedEffect
+        val saved = withContext(Dispatchers.IO) {
+            UsageRangeMemory.prefs(context).getString(page, null)
+                ?.let { n -> UsageRange.entries.firstOrNull { it.name == n } }
+        }
+        // A pick made while reading wins over the saved one.
+        val shown = range ?: (saved ?: default).also { range = it }
+        UsageRangeMemory.known.putIfAbsent(page, shown)
+    }
+    return range to { picked ->
+        range = picked
+        UsageRangeMemory.known[page] = picked
+        UsageRangeMemory.scope.launch {
+            UsageRangeMemory.prefs(context).edit().putString(page, picked.name).apply()
+        }
+    }
+}
+
+private object UsageRangeMemory {
+    val known = java.util.concurrent.ConcurrentHashMap<String, UsageRange>()
+    // One at a time, in the order picked, so the last pick is the one saved.
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
+    fun prefs(context: android.content.Context) =
+        context.getSharedPreferences("orbit_usage_ui", android.content.Context.MODE_PRIVATE)
 }
 
 @StringRes
@@ -703,7 +851,7 @@ internal fun OrbitUsagePage(
     val context = LocalContext.current
     val loaded = rememberQuotaState()
     val usage = rememberQuotaUsage()
-    var range by rememberSaveable { mutableStateOf(UsageRange.ALL) }
+    val (range, pickRange) = rememberUsageRange("usage", UsageRange.ALL)
     val state = loaded ?: OrbitQuota.State().at(System.currentTimeMillis())
     val otherLabel = stringResource(R.string.orbit_usage_other_orbits)
     val today = rememberToday()
@@ -728,7 +876,7 @@ internal fun OrbitUsagePage(
         orbit.id, otherLabel, today, moneySettings, catalogRevision, returns) {
         val data = usage ?: return@produceState
         val weekStart = state.weekStart
-        val forRange = range
+        val forRange = range ?: return@produceState
         value = withContext(Dispatchers.Default) {
             val first = rangeFirstDay(data, forRange, weekStart, today.date, zone)
             UsageSnapshot(forRange,
@@ -784,15 +932,15 @@ internal fun OrbitUsagePage(
                     // Blank (but keeping its line) until the allowances are read, so no made-up 0 shows.
                     Text(
                         if (loaded == null) " " else stringResource(R.string.orbit_usage_summary_line,
-                            OrbitQuota.amount(context, state.weeklyUsed), OrbitQuota.amount(context, state.weeklyLimit),
-                            OrbitQuota.amount(context, state.extraUsed), OrbitQuota.amount(context, state.extraLimit)),
+                            OrbitQuota.amount(context, state, state.weeklyUsed), OrbitQuota.amount(context, state, state.weeklyLimit),
+                            OrbitQuota.amount(context, state, state.extraUsed), OrbitQuota.amount(context, state, state.extraLimit)),
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center,
                     )
                 }
             }
             // One range for the numbers, the cost and what it all went to.
-            UsageRangeChips(range) { range = it }
+            UsageRangeChips(range, pickRange)
             Box {
                 Box(staleModifier) { UsageInsightsCard(view, ready, cardColor) }
                 if (stale && slow) {
@@ -976,7 +1124,7 @@ private fun CostModelRow(name: String, amount: String, detail: String, share: Fl
 /** The usage ranges as chips, wrapping onto a second line when the screen or the text is too wide. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun UsageRangeChips(range: UsageRange, onRange: (UsageRange) -> Unit) {
+private fun UsageRangeChips(range: UsageRange?, onRange: (UsageRange) -> Unit) {
     FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)) {
         UsageRange.entries.forEach { option ->
@@ -1219,7 +1367,7 @@ internal fun OrbitUsageTrendsPage(orbit: OrbitProfile, onBack: () -> Unit) {
     val context = LocalContext.current
     val loaded = rememberQuotaState()
     val usage = rememberQuotaUsage()
-    var range by rememberSaveable { mutableStateOf(UsageRange.WEEK) }
+    val (range, pickRange) = rememberUsageRange("trends", UsageRange.WEEK)
     val state = loaded ?: OrbitQuota.State().at(System.currentTimeMillis())
     val otherLabel = stringResource(R.string.orbit_usage_other_orbits)
     val today = rememberToday()
@@ -1239,7 +1387,7 @@ internal fun OrbitUsageTrendsPage(orbit: OrbitProfile, onBack: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             OrbitPageHeader(stringResource(R.string.orbit_usage_trends), onBack, Modifier.padding(start = 4.dp))
-            UsageRangeChips(range) { range = it }
+            UsageRangeChips(range, pickRange)
             OrbitTokenStatsColors {
                 val colors = LocalTokenStatsColors.current
                 val inputLabel = stringResource(R.string.orbit_usage_input)

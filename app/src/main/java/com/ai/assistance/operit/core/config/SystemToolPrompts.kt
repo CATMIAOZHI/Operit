@@ -579,7 +579,8 @@ object SystemToolPrompts {
         chatModelHasDirectVideo: Boolean = false,
         safBookmarkNames: List<String> = emptyList(),
         includeSubagentTools: Boolean = true,
-        collaborationLimits: com.ai.assistance.operit.core.agent.collaboration.CollaborationLimits? = null
+        collaborationLimits: com.ai.assistance.operit.core.agent.collaboration.CollaborationLimits? = null,
+        toolResultAudio: Boolean = false,
     ): List<SystemToolPromptCategory> {
         val shouldExposeIntent =
             (hasBackendImageRecognition && !chatModelHasDirectImage) ||
@@ -609,7 +610,9 @@ object SystemToolPrompts {
                     }
 
                 tool.copy(
-                    description = adjustedDescription + buildSafBookmarksSectionEn(safBookmarkNames),
+                    description = adjustedDescription +
+                        (if (toolResultAudio) " Audio files are given to you directly to listen to." else "") +
+                        buildSafBookmarksSectionEn(safBookmarkNames),
                     parametersStructured = filteredParams
                 )
             }
@@ -677,7 +680,8 @@ object SystemToolPrompts {
         chatModelHasDirectVideo: Boolean = false,
         safBookmarkNames: List<String> = emptyList(),
         includeSubagentTools: Boolean = true,
-        collaborationLimits: com.ai.assistance.operit.core.agent.collaboration.CollaborationLimits? = null
+        collaborationLimits: com.ai.assistance.operit.core.agent.collaboration.CollaborationLimits? = null,
+        toolResultAudio: Boolean = false,
     ): List<SystemToolPromptCategory> {
         val shouldExposeIntent =
             (hasBackendImageRecognition && !chatModelHasDirectImage) ||
@@ -707,7 +711,9 @@ object SystemToolPrompts {
                     }
 
                 tool.copy(
-                    description = adjustedDescription + buildSafBookmarksSectionCn(safBookmarkNames),
+                    description = adjustedDescription +
+                        (if (toolResultAudio) "音频文件会直接交给你收听。" else "") +
+                        buildSafBookmarksSectionCn(safBookmarkNames),
                     parametersStructured = filteredParams
                 )
             }

@@ -52,7 +52,7 @@ internal object OrbitUsageTools {
         ),
         details = """
   - The figures are every Orbit's model calls counted by the app (chat, side chats, subagents, background tasks, memory, titles, reviews and so on); tokens = input + output. They match Settings → Usage, where 30d and 90d end today.
-  - allowance is always the current week: weekly_used/limit/left, extra_used/limit/left, resets_at (local time) and paused. Token amounts are raw tokens.
+  - allowance is always the current week: unit (usd or tokens), weekly_used/limit/left, extra_used/limit/left, resets_at (local time) and paused. With usd the amounts are US dollars at the model prices, and unpriced_requests this week had no price and counted nothing; with tokens they are raw tokens.
   - peak_hours are the busiest hours of the day in the range, busiest first (at most 3), with their request counts. peak_day is the day with the most tokens in the range. streak_days counts days in a row with use up to today, whatever the range.
   - by_purpose lists what the tokens went to, most first; "other_orbits" is use by Orbits other than you.
   - cost is what the range cost, in the currency the app's usage page shows: calls carry the price set for their model when they ended (Model pricing in settings). Every call without a cost (no price for the model then, no usage reported, or from before costs were kept) is estimated at today's price when it can be told (estimated_at_today_price, estimated_requests). Calls from before costs were kept recorded no model: they are shared out over the models the app's ledger shows in use that day, mostly by input, or on days it has none use the Orbit's current models. Where cache reads were not recorded, the same model's cache hit rate is used: for older calls the ledger that day first, then the ledger for the range, then Orbit's own calls. unpriced_requests still have no cost and are not in the total, so when there are requests and covered_requests is 0 the cost is unknown, not free. by_model lists the top $MAX_MODEL_ROWS. Only a guide; the provider's bill is what counts.
@@ -123,13 +123,19 @@ internal object OrbitUsageTools {
             val input = view.days.sumOf { it.input }
             val output = view.days.sumOf { it.output }
             val peak = view.days.filter { it.input + it.output > 0 }.maxByOrNull { it.input + it.output }
+            fun amount(value: Long): Number = if (!state.byMoney) value
+                else java.math.BigDecimal.valueOf(value, 6).setScale(4, java.math.RoundingMode.HALF_UP).toDouble()
             val result = JSONObject()
                 .put("range", JSONObject().put("name", span.label).put("from", span.first.toString())
                     .put("to", span.last.toString()).put("days", view.days.size))
                 .put("allowance", JSONObject()
-                    .put("weekly_used", state.weeklyUsed).put("weekly_limit", state.weeklyLimit).put("weekly_left", state.weeklyLeft)
-                    .put("extra_used", state.extraUsed).put("extra_limit", state.extraLimit).put("extra_left", state.extraLeft)
+                    .put("unit", if (state.byMoney) "usd" else "tokens")
+                    .put("weekly_used", amount(state.weeklyUsed)).put("weekly_limit", amount(state.weeklyLimit))
+                    .put("weekly_left", amount(state.weeklyLeft))
+                    .put("extra_used", amount(state.extraUsed)).put("extra_limit", amount(state.extraLimit))
+                    .put("extra_left", amount(state.extraLeft))
                     .put("extra_resets_weekly", state.extraWeekly)
+                    .apply { if (state.byMoney) put("unpriced_requests", state.unpricedCalls) }
                     .put("resets_at", Instant.ofEpochMilli(state.weekEnd).atZone(zone).toLocalDateTime().toString())
                     .put("paused", state.paused))
                 .put("requests", view.calls)

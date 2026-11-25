@@ -25,6 +25,20 @@ data class OrbitWindowMessage(
 /** When a task's next run will really happen: its waiting event, which may have been put off. */
 data class OrbitTaskDue(val taskId: String, val dueAt: Long)
 
+/** A queued task event and the run holding it (all null when none does). */
+data class OrbitQueuedEvent(
+    val taskId: String,
+    val dueAt: Long,
+    val runState: String?,
+    val bootId: String?,
+    val leaseUntilWall: Long?,
+    val leaseUntilElapsed: Long?,
+) {
+    /** Due, and free to claim: no run holds it, or its run's lease here ended or is from before a restart. */
+    fun claimable(now: Long, elapsed: Long, boot: String): Boolean = dueAt <= now && (runState == null ||
+        (runState == "RUNNING" && (bootId != boot || (leaseUntilElapsed ?: 0) <= elapsed || (leaseUntilWall ?: 0) <= now)))
+}
+
 /** One run of an Orbit task, with its task title, for the profile's activity list. */
 data class OrbitActivityRow(
     val id: String,
@@ -72,7 +86,10 @@ private const val MAX_RESUMES = 3
 @Dao
 interface OrbitTaskDao {
     // A run that stopped without an error was skipped quietly (its task goes on); it is not activity.
-    @Query("SELECT r.id AS id, r.taskId AS taskId, t.title AS title, t.kind AS kind, r.state AS state, SUBSTR(r.observation,1,400) AS observation, SUBSTR(r.error,1,400) AS error, r.startedAt AS startedAt, r.finishedAt AS finishedAt, r.generation AS generation FROM orbit_runs r INNER JOIN orbit_tasks t ON t.id = r.taskId WHERE t.orbitId = :orbitId AND r.decision NOT IN ('" + OrbitRunEntity.UNCHANGED + "', '" + OrbitRunEntity.SKIPPED + "', '" + OrbitRunEntity.IN_CHAT + "') AND r.decision NOT LIKE '@in_chat:%' AND NOT (r.state = 'INTERRUPTED' AND r.error = '') ORDER BY r.startedAt DESC LIMIT 200")
+    // Nor is a watch's quiet script check (one every few minutes): told apart by the run's own decision, so changing
+    // a task's source never moves its past runs. A check still running (seconds), one that woke Orbit (a real finding)
+    // and a failed one still show; all stay in that task's own runs.
+    @Query("SELECT r.id AS id, r.taskId AS taskId, t.title AS title, t.kind AS kind, r.state AS state, SUBSTR(r.observation,1,400) AS observation, SUBSTR(r.error,1,400) AS error, r.startedAt AS startedAt, r.finishedAt AS finishedAt, r.generation AS generation FROM orbit_runs r INNER JOIN orbit_tasks t ON t.id = r.taskId WHERE t.orbitId = :orbitId AND r.decision NOT IN ('" + OrbitRunEntity.UNCHANGED + "', '" + OrbitRunEntity.SKIPPED + "', '" + OrbitRunEntity.IN_CHAT + "') AND r.decision NOT LIKE '@in_chat:%' AND NOT (r.state = 'INTERRUPTED' AND r.error = '') AND NOT (t.kind = 'WATCH' AND (r.decision LIKE '" + OrbitRunEntity.HOOK_QUIET_ZH + "%' OR r.decision LIKE '" + OrbitRunEntity.HOOK_QUIET_EN + "%')) ORDER BY r.startedAt DESC LIMIT 200")
     fun observeActivity(orbitId: String): Flow<List<OrbitActivityRow>>
     /** The latest runs of [orbitId]'s tasks, unchanged, skipped and in-chat ones included. */
     @Query("SELECT r.id AS id, r.taskId AS taskId, t.title AS title, r.state AS state, r.decision AS decision, SUBSTR(r.observation,1,400) AS observation, SUBSTR(r.error,1,800) AS error, r.startedAt AS startedAt, r.finishedAt AS finishedAt, r.generation AS generation FROM orbit_runs r INNER JOIN orbit_tasks t ON t.id = r.taskId WHERE t.orbitId = :orbitId ORDER BY r.startedAt DESC LIMIT :limit")
@@ -413,8 +430,11 @@ interface OrbitTaskDao {
     @Update
     suspend fun updateTask(task: OrbitTaskEntity)
 
-    @Query("SELECT * FROM orbit_events WHERE taskId = :taskId AND taskVersion = :version ORDER BY dueAt LIMIT 1")
+    @Query("SELECT * FROM orbit_events WHERE taskId = :taskId AND taskVersion = :version ORDER BY dueAt, id LIMIT 1")
     suspend fun pendingEvent(taskId: String, version: Long): OrbitEventEntity?
+
+    @Query("SELECT * FROM orbit_events WHERE taskId = :taskId AND taskVersion = :version ORDER BY dueAt")
+    suspend fun pendingEvents(taskId: String, version: Long): List<OrbitEventEntity>
 
     @Query("SELECT COUNT(*) FROM orbit_events WHERE taskId = :taskId AND taskVersion = :version AND id LIKE '%:manual:%'")
     suspend fun pendingManualCount(taskId: String, version: Long): Int
@@ -580,6 +600,18 @@ interface OrbitTaskDao {
     @Query("SELECT EXISTS(SELECT 1 FROM orbit_deliveries WHERE taskId=:taskId AND state IN ('PENDING','HANDING'))")
     suspend fun hasPendingResult(taskId: String): Boolean
 
+    /**
+     * The first queued event (as [pendingEvent] orders them) of each of [orbitId]'s active tasks,
+     * with the run holding it, if any.
+     */
+    @Query("SELECT e.taskId AS taskId, e.dueAt AS dueAt, r.state AS runState, r.bootId AS bootId, " +
+        "r.leaseUntilWall AS leaseUntilWall, r.leaseUntilElapsed AS leaseUntilElapsed " +
+        "FROM orbit_events e JOIN orbit_tasks t ON t.id = e.taskId AND t.version = e.taskVersion " +
+        "LEFT JOIN orbit_runs r ON r.eventId = e.id WHERE t.orbitId = :orbitId AND t.state = 'ACTIVE' " +
+        "AND e.id = (SELECT h.id FROM orbit_events h WHERE h.taskId = t.id AND h.taskVersion = t.version " +
+        "ORDER BY h.dueAt, h.id LIMIT 1)")
+    suspend fun queuedEvents(orbitId: String): List<OrbitQueuedEvent>
+
     @Query("SELECT * FROM orbit_deliveries WHERE id = :id")
     suspend fun delivery(id: String): OrbitDeliveryEntity?
 
@@ -682,7 +714,7 @@ interface OrbitTaskDao {
      * it had not decided on, or had chosen to tell, wait to be told again. A call to leave one out stands.
      */
     @Transaction
-    suspend fun retryDeliveries(ids: List<String>, now: Long) {
+    suspend fun retryDeliveries(ids: List<String>, now: Long, interrupted: Boolean = false) {
         ids.forEach { id ->
             val item = delivery(id)?.takeIf { it.state in setOf("PENDING", "HANDING") } ?: return@forEach
             // A deliberate skip or a user's answer already settled this item.
@@ -692,9 +724,12 @@ interface OrbitTaskDao {
             } else {
                 val attempts = (item.attempts + if (item.state == "PENDING") 1 else 0).coerceAtMost(16)
                 val delay = minOf(6 * 60 * 60_000L, 60_000L * (1L shl (attempts - 1).coerceIn(0, 9)))
+                // Once interrupted, it stays marked until Orbit decides on it again.
+                val note = if (interrupted && item.state == "HANDING" ||
+                    item.verdictNote == OrbitDeliveryEntity.INTERRUPTED) OrbitDeliveryEntity.INTERRUPTED else ""
                 updateDelivery(item.copy(state = "PENDING", notificationSent = false, handoffTurnId = "",
                     attempts = attempts, retryAt = now + delay, verdict = "", verdictReason = "",
-                    verdictNote = "", presentation = "", decidedAt = 0))
+                    verdictNote = note, presentation = "", decidedAt = 0))
             }
         }
     }
@@ -798,23 +833,47 @@ interface OrbitTaskDao {
         deleteOrbitTasks(orbitId)
     }
 
-    /** Pausing and edits fence out old workers and discard their unposted notifications. */
+    /**
+     * Pausing and edits fence out old workers and discard their unposted notifications.
+     * [expectedState] is the state the caller read: finishing a run does not raise the version, so an
+     * edit made from an older read must not bring a task that just finished back to life.
+     */
     @Transaction
-    suspend fun replaceDefinition(updated: OrbitTaskEntity, expectedVersion: Long): Boolean {
+    suspend fun replaceDefinition(updated: OrbitTaskEntity, expectedVersion: Long, expectedState: String? = null): Boolean {
         val current = task(updated.id) ?: return false
         if (current.version != expectedVersion) return false
+        if (expectedState != null && current.state != expectedState) return false
         require(updated.orbitId == current.orbitId)
         val pendingUserRequest = current.state == "WAITING_USER" ||
             (current.state == "VERIFY" && latestRun(current.id)?.state == "WAITING_USER")
         if (pendingUserRequest && updated.state != "CANCELLED") return false
         if (updated.state == "ACTIVE" && unresolvedActions(current.id).isNotEmpty()) return false
+        // A predecessor's completion that has not been picked up yet is still owed to a task that keeps
+        // waiting on the same predecessor; a predecessor that runs once would never send it again.
+        val owed = if (updated.state != "CANCELLED" && current.scheduleMode == "EVENT" && updated.scheduleMode == "EVENT" &&
+            updated.triggerTaskId == current.triggerTaskId)
+            pendingEvents(current.id, current.version).filter { it.id.contains(":completed:") && eventRun(it.id) == null }
+        else emptyList()
         markUnreceiptedUnknown(current.id, updated.updatedAt)
         updateTask(updated.copy(version = current.version + 1))
         cancelRuns(current.id, updated.updatedAt)
         cancelDeliveries(current.id)
         deleteTaskEvents(current.id)
+        owed.forEach { event ->
+            insertEvent(event.copy(id = "${current.id}:${current.version + 1}:completed:${event.sourceRunId}",
+                taskVersion = current.version + 1))
+        }
         return true
     }
+
+    /**
+     * Changes only how a task is named and reported, and which model and time limit it gets next:
+     * what it does and when stay, so a run in progress is not fenced out and keeps its result.
+     */
+    @Query("UPDATE orbit_tasks SET title = :title, notifyPolicy = :notifyPolicy, modelRole = :modelRole, " +
+        "timeoutMinutes = :timeoutMinutes, updatedAt = :now WHERE id = :id AND version = :version AND state = :state")
+    suspend fun updateLabels(id: String, version: Long, state: String, title: String, notifyPolicy: String,
+        modelRole: String, timeoutMinutes: Int, now: Long): Int
 
     /** [replaceDefinition], but only while no run of the task is in progress. */
     @Transaction
@@ -879,10 +938,16 @@ interface OrbitTaskDao {
         continuedMessage: String = interruptedMessage,
         /** Whether the task goes on; a repeating place task goes on with no clock time (0). */
         continues: Boolean = continueNextRunAt > 0,
+        /** A task checked before its turn waits while its last result is still to be handed over. */
+        requireNoPendingResult: Boolean = false,
     ): OrbitRunEntity? {
         val task = task(event.taskId)?.takeIf { it.state == "ACTIVE" && it.version == event.taskVersion }
             ?: return null
-        if (pendingEvent(task.id, task.version)?.id != event.id) return null
+        // Read again here: another lane may have put this event back (a busy chat, used-up tokens)
+        // after the caller saw it due.
+        val head = pendingEvent(task.id, task.version)
+        if (head?.id != event.id || head.dueAt > now) return null
+        if (requireNoPendingResult && hasPendingResult(task.id)) return null
         if (task.goalId.isNotEmpty() && goal(task.goalId)?.state != "ACTIVE") return null
         // Short and long tasks run in separate lanes; after an edit moves a task across the
         // boundary, its new version must wait until the old run still holding a live lease ends.

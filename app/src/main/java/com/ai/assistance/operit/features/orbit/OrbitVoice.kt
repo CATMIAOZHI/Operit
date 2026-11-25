@@ -37,7 +37,11 @@ import kotlin.coroutines.resume
  */
 object OrbitVoice {
     data class VoiceInfo(val name: String, val locale: String, val needsNetwork: Boolean)
-    data class Line(val speaker: String, val text: String)
+    /**
+     * One speaker's words. [style] says how to say them in words, and [text] may carry performance
+     * cues like `(温柔)` or `（叹气）`: both are acted by a Xiaomi MiMo voice; any other voice drops them.
+     */
+    data class Line(val speaker: String, val text: String, val style: String = "")
 
     private val lock = Mutex()
     private const val PAUSE_MS = 350
@@ -240,7 +244,8 @@ object OrbitVoice {
     /** What happened when a voice message was made with the read-aloud voice. */
     sealed interface ServiceResult {
         /** Made; [extension] is the audio's file type (mp3, wav, …). [profile] is the service's name. */
-        class Made(val extension: String, val profile: String) : ServiceResult
+        /** [styled]: the voice acts styles and cues (MiMo); with another, they were left out. */
+        class Made(val extension: String, val profile: String, val styled: Boolean = false) : ServiceResult
         /** The read-aloud voice cannot make audio (the phone's own, an on-phone model, …): see [notSetUp]. */
         object NotSetUp : ServiceResult
         /** The service failed; [reason] says why in a sentence for Orbit. */
@@ -257,7 +262,7 @@ object OrbitVoice {
      * Speaks [text] into [out] with [orbitId]'s read-aloud voice (its own, else the app's), in pieces
      * the service accepts, joined into one file. Only MP3 and WAV pieces can be joined.
      */
-    suspend fun synthesizeWithReadAloud(context: Context, text: String, out: File, orbitId: String?): ServiceResult {
+    suspend fun synthesizeWithReadAloud(context: Context, text: String, out: File, orbitId: String?, style: String = ""): ServiceResult {
         require(text.isNotBlank()) { "Nothing to say" }
         require(text.length <= MAX_CHARS) { "The text has ${text.length} characters; one file allows at most $MAX_CHARS. Split it into several parts" }
         val profile = readAloudProfile(context, orbitId)
@@ -268,7 +273,7 @@ object OrbitVoice {
         val service = com.ai.assistance.operit.api.voice.VoiceServiceFactory.createProfileVoiceService(context.applicationContext, profile)
         val temp = File(context.cacheDir, "orbit-voice-${UUID.randomUUID()}").apply { mkdirs() }
         return try {
-            ServiceResult.Made(synthesizePieces(listOf(Piece(service, name, text)), out, temp), name)
+            ServiceResult.Made(synthesizePieces(listOf(Piece(service, name, text, style)), out, temp), name, service.actsStyle)
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: IllegalArgumentException) {
@@ -290,15 +295,26 @@ object OrbitVoice {
     /** At most this many requests to voice services for one file, so a script of tiny lines cannot run up a bill. */
     private const val MAX_REQUESTS = 80
 
-    /** One stretch of text and the voice ([voice] is its name) that says it. */
-    private class Piece(val service: com.ai.assistance.operit.api.voice.VoiceService, val voice: String, val text: String)
+    /** One stretch of text, how to say it ([style]), and the voice ([voice] is its name) that says it. */
+    private class Piece(val service: com.ai.assistance.operit.api.voice.VoiceService, val voice: String, val text: String,
+        val style: String = "")
 
     /**
      * Says each piece with its voice, in pieces each service accepts, and joins them into [out];
      * returns the file type. Everything has to come back as MP3, or as WAV of one sample format.
      */
     private suspend fun synthesizePieces(pieces: List<Piece>, out: File, temp: File): String {
-        val requests = pieces.flatMap { piece -> chunks(piece.text, SERVICE_CHUNK_CHARS).map { piece to it } }
+        val requests = pieces.flatMap { piece ->
+            val mimo = piece.service.actsStyle
+            // Only MiMo acts the cues; any other voice would read them out.
+            val text = if (mimo) piece.text else MimoVoiceProvider.withoutCues(piece.text)
+            // A style cue at the start holds for the whole stretch, so every request of it starts with it.
+            val lead = if (mimo) MimoVoiceProvider.leadingCue(text) else ""
+            // The repeated style counts toward each request's length, and no cue is cut in two.
+            chunks(text, SERVICE_CHUNK_CHARS - lead.length, if (mimo) MimoVoiceProvider.bracketed else null)
+                .mapIndexed { i, chunk -> piece to (if (i > 0 && lead.isNotEmpty()) lead + chunk else chunk) }
+                .filter { it.second.isNotBlank() }
+        }
         require(requests.size <= MAX_REQUESTS) {
             "This needs ${requests.size} requests to the voice service; one file allows at most $MAX_REQUESTS. " +
                 "Use fewer, longer lines, or split it into several parts"
@@ -311,7 +327,10 @@ object OrbitVoice {
         var bytes = 0L
         for ((piece, chunk) in requests) {
             val part = File(temp, "${parts.size}.bin")
-            if (!piece.service.synthesizeToFile(chunk, part)) throw ServiceFailure("the voice \"${piece.voice}\" cannot make audio files")
+            val service = piece.service
+            val made = if (service.actsStyle && piece.style.isNotBlank()) service.synthesizeToFile(chunk, part, piece.style)
+                else service.synthesizeToFile(chunk, part)
+            if (!made) throw ServiceFailure("the voice \"${piece.voice}\" cannot make audio files")
             val ext = audioType(part) ?: throw ServiceFailure("the voice \"${piece.voice}\" sent something that is not audio")
             if (kind != null && kind != ext) {
                 throw ServiceFailure("the voices sent audio in different formats ($kind and $ext), which cannot be joined; pick another voice for a speaker, or make separate files")
@@ -406,7 +425,7 @@ object OrbitVoice {
     }
 
     /** A podcast made with cloud voices: its file type, each speaker's voice, and whether some had to share one. */
-    class Podcast(val extension: String, val voices: Map<String, String>, val shared: Boolean)
+    class Podcast(val extension: String, val voices: Map<String, String>, val shared: Boolean, val styled: Boolean = false)
 
     /**
      * Speaks [lines] into [out] with cloud voices: each speaker gets the voice named in [wanted], or
@@ -424,13 +443,6 @@ object OrbitVoice {
                 "Voice \"$name\" for $speaker is not available. Call action=voices and use a name from it, or leave it out"
             }
         }
-        // A speaker's lines in a row are one request.
-        val turns = lines.fold(mutableListOf<Line>()) { acc, line ->
-            val last = acc.lastOrNull()
-            if (last != null && last.speaker == line.speaker) acc[acc.lastIndex] = Line(last.speaker, last.text + "\n" + line.text)
-            else acc += line
-            acc
-        }
         val language = if (lines.any { line -> line.text.any { Character.UnicodeScript.of(it.code) == Character.UnicodeScript.HAN } })
             "zh" else "en"
         // Within a language, voices alternate between women and men, so two speakers sound apart.
@@ -443,7 +455,7 @@ object OrbitVoice {
                 else -> 3
             }
         }, { rank[it] ?: 0 }))
-        val speakers = turns.map { it.speaker }.distinct()
+        val speakers = lines.map { it.speaker }.distinct()
         val assigned = LinkedHashMap<String, CloudVoice>()
         speakers.forEach { speaker -> wanted[speaker]?.let { name -> assigned[speaker] = available.first { it.name == name } } }
         var shared = false
@@ -456,10 +468,27 @@ object OrbitVoice {
         val services = assigned.values.distinct().associateWith {
             com.ai.assistance.operit.api.voice.VoiceServiceFactory.createProfileVoiceService(context.applicationContext, it.profile)
         }
+        // A speaker's lines in a row are one request. With a voice that acts styles, a new style
+        // (or a style cue opening the line) starts a new one; any other voice drops them, so they
+        // never cost extra requests.
+        fun acts(speaker: String) = services.getValue(assigned.getValue(speaker)).actsStyle
+        // Styled when every line that asked for a style is said by a voice that acts it; read from
+        // the lines as written, before a speaker's lines are put together.
+        val styled = lines.filter { it.style.isNotBlank() || MimoVoiceProvider.hasCues(it.text) }.all { acts(it.speaker) }
+        val turns = lines.fold(mutableListOf<Line>()) { acc, line ->
+            val last = acc.lastOrNull()
+            if (last != null && last.speaker == line.speaker &&
+                (!acts(line.speaker) || (last.style == line.style && MimoVoiceProvider.leadingCue(line.text).isEmpty()))
+            ) {
+                acc[acc.lastIndex] = Line(last.speaker, last.text + "\n" + line.text, last.style)
+            }
+            else acc += line
+            acc
+        }
         val temp = File(context.cacheDir, "orbit-voice-${UUID.randomUUID()}").apply { mkdirs() }
         return try {
-            val pieces = turns.map { turn -> assigned.getValue(turn.speaker).let { Piece(services.getValue(it), it.name, turn.text) } }
-            Podcast(synthesizePieces(pieces, out, temp), assigned.mapValues { it.value.name }, shared)
+            val pieces = turns.map { turn -> assigned.getValue(turn.speaker).let { Piece(services.getValue(it), it.name, turn.text, turn.style) } }
+            Podcast(synthesizePieces(pieces, out, temp), assigned.mapValues { it.value.name }, shared, styled)
         } finally {
             services.values.forEach { it.shutdown() }
             temp.deleteRecursively()
@@ -791,17 +820,25 @@ object OrbitVoice {
         check(ok && file.length() > 44) { "The text-to-speech engine could not make audio; the chosen voice may not be downloaded. Try another voice from action=voices" }
     }
 
-    /** Splits long text at sentence ends so each piece fits the engine's limit. */
-    fun chunks(text: String, max: Int): List<String> {
+    /**
+     * Splits long text at sentence ends so each piece fits the engine's limit. A match of
+     * [keepWhole] (a performance cue) is never cut in two.
+     */
+    fun chunks(text: String, max: Int, keepWhole: Regex? = null): List<String> {
         val limit = max.coerceAtLeast(200)
         val out = mutableListOf<String>()
         var rest = text.trim()
         while (rest.length > limit) {
             val window = rest.substring(0, limit)
-            val cut = listOf('。', '！', '？', '.', '!', '?', '\n', '，', ',', ' ').maxOf { window.lastIndexOf(it) }
+            var cut = listOf('。', '！', '？', '.', '!', '?', '\n', '，', ',', ' ').maxOf { window.lastIndexOf(it) }
                 .let { if (it < limit / 3) limit else it + 1 }
                 // Never split an emoji or other surrogate pair.
                 .let { if (Character.isHighSurrogate(rest[it - 1])) it - 1 else it }
+            // Looked for a little past the window too, so a cue the window ends inside is found.
+            keepWhole?.findAll(rest.substring(0, minOf(rest.length, limit + 64)))
+                ?.firstOrNull { cut in (it.range.first + 1)..it.range.last }?.let { inside ->
+                cut = if (inside.range.first > 0) inside.range.first else inside.range.last + 1
+            }
             out += rest.substring(0, cut).trim()
             rest = rest.substring(cut).trim()
         }

@@ -103,6 +103,13 @@ data class OrbitRunEntity(
 
         /** Handed to Orbit in its chat; that chat turn is the record, so the run stays off the activity list. */
         const val IN_CHAT = "@in_chat"
+
+        /**
+         * How a watch script's quiet check (nothing worth waking Orbit for) begins its decision: the start of
+         * the app string orbit_hook_silent in each language, which must stay the same. Kept out of the activity list.
+         */
+        const val HOOK_QUIET_ZH = "脚本判断这次不用叫醒 Orbit"
+        const val HOOK_QUIET_EN = "The script decided not to wake Orbit"
     }
 }
 
@@ -156,6 +163,11 @@ data class OrbitDeliveryEntity(
         const val UNREGISTERED = "unregistered"
         /** The item ran out before it was handed to Orbit. */
         const val EXPIRED = "expired"
+        /**
+         * Handed to Orbit, but the app stopped before the turn was recorded as finished: Orbit may
+         * already have told it, so the next hand-off asks it to check the chat first.
+         */
+        const val INTERRUPTED = "interrupted"
         const val TEXT = "text"
         const val OPTIONS = "options"
         /** Plain message, reply options, a map card, a list card, or a saved piece of work. */

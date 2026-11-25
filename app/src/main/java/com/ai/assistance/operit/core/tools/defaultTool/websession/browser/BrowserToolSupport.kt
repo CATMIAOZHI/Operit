@@ -425,7 +425,8 @@ internal fun StandardBrowserSessionTools.captureActionMarkers(
         consoleTimestamp = latestConsoleTimestamp(session),
         downloadTimestamp = latestProfileDownloadEventAt(session.profileName),
         snapshotGeneration = session.lastSnapshot?.generation ?: 0L,
-        startedAt = System.currentTimeMillis()
+        startedAt = System.currentTimeMillis(),
+        pageStarts = session.pageStarts,
     )
 
 internal fun StandardBrowserSessionTools.isDocumentReady(session: BrowserToolSession): Boolean {
@@ -679,9 +680,18 @@ private fun StandardBrowserSessionTools.actionSettled(
     val activeSwitched = policy.allowActivePageSwitch && session.id != markers.initialSessionId
     val currentUrl = readCurrentUrl(session.page, session.currentUrl).ifBlank { session.currentUrl }
     val urlChanged = currentUrl != markers.initialUrl
+    // Loading the same address again starts a new page without changing it.
+    val pageStarted = !activeSwitched && session.pageStarts > markers.pageStarts
 
-    if (policy.waitForNavigationChange && !activeSwitched && !urlChanged) {
+    if (policy.waitForNavigationChange && !activeSwitched && !urlChanged && !pageStarted) {
         return false
+    }
+
+    // Only a new page under the same address: ready once it has finished loading, or once it is
+    // shown and its document reports ready (asking before that would read the old page).
+    if (pageStarted && !activeSwitched && !urlChanged) {
+        if (session.pageLoaded && !session.isLoading) return true
+        return session.pageCommits > session.commitsAtStart && isDocumentReady(session)
     }
 
     val ready = isDocumentReady(session)

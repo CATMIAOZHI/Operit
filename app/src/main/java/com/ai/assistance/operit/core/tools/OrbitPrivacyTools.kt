@@ -14,7 +14,6 @@ import com.ai.assistance.operit.data.preferences.OrbitProfile
 import com.ai.assistance.operit.data.preferences.UserProfileDocumentRepository
 import com.ai.assistance.operit.data.repository.ChatHistoryManager
 import com.ai.assistance.operit.features.orbit.OrbitApprovals
-import com.ai.assistance.operit.features.orbit.OrbitForget
 import com.ai.assistance.operit.features.orbit.OrbitMemoryScope
 import com.ai.assistance.operit.features.orbit.OrbitVault
 import com.ai.assistance.operit.util.ChatUtils
@@ -23,28 +22,10 @@ import org.json.JSONObject
 import java.io.File
 import java.security.MessageDigest
 
-/** Forgetting, where a memory came from, and the check before anything is sent for the user. */
+/** Where a memory came from, and the check before anything is sent for the user. */
 internal object OrbitPrivacyTools {
-    const val FORGET = "orbit_forget"
     const val ORIGIN = "orbit_memory_origin"
     const val PRESEND = "orbit_presend_check"
-
-    val forgetPrompt = ToolPrompt(
-        name = FORGET,
-        description = "用户要你忘掉某件事时用：先找出这条信息在你这里的所有副本，给用户看清理范围，用户同意后清掉你自己存的那些；用户自己的文档只列出来。",
-        parametersStructured = listOf(
-            ToolParameterSchema("action", description = "plan/confirm/cancel", required = true),
-            ToolParameterSchema("terms", description = "plan：能找到这条信息的关键词，每行一个，1-10个", required = false),
-            ToolParameterSchema("plan_id", description = "confirm：plan 返回的编号", required = false),
-        ),
-        details = """
-  - 「忘掉」是把你存的这件事都清掉，不是改一条笔记。改错的事实、换个偏好，用记忆工具改就行。
-  - 先 plan（只读）：列出记忆、用户资料、文件、你学到的技能、目标、定时任务、动态和点子里有这件事的地方，以及怎么处理（edit 删掉那几行、delete 整条删掉、stop 停掉）。SOUL.md、IDENTITY.md 和 files/ 里用户自己的文档（documents）只列出来（user_review），由用户自己决定改不改；没能检查的文件标成 unchecked（reason：too_big 太大、changed 读的时候在变、unreadable 读不了），要按原因如实告诉用户这些没查。
-  - 用日常说法告诉用户范围，有能清理的内容时，说清删了不能撤销，问一句是否确认；只有用户文档或没能检查的文件时不用确认。不要复述要忘掉的内容，用「那件事」指代。
-  - 用户明确同意后才 confirm；含糊或只同意一部分不算。完成后说清掉了哪些，remaining 里还剩的如实说。
-  - 聊天原话不会删，用户想删可以在聊天列表里自己删那段聊天。
-""",
-    )
 
     val originPrompt = ToolPrompt(
         name = ORIGIN,
@@ -80,57 +61,13 @@ internal object OrbitPrivacyTools {
     private fun args(tool: AITool) = tool.parameters.associate { it.name to it.value }
     private fun fail(name: String, e: Exception) = ToolResult(name, false, StringResultData(""), error = e.message ?: e.toString())
 
+    private val SPACES = Regex("\\s+")
+    /** Case and spacing do not decide whether two pieces of text say the same thing. */
+    private fun normalize(text: String) = text.lowercase().replace(SPACES, " ").trim()
+
     private suspend fun orbitOf(context: Context): Pair<OrbitProfile, String?> {
         val caller = ToolExecutionManager.currentToolRuntimeContext()?.callerChatId
         return checkNotNull(OrbitMemoryScope.owner(context, caller)) { "This is not an Orbit chat" } to caller
-    }
-
-    fun executeForget(context: Context, tool: AITool): ToolResult = runBlockingIoPreservingToolRuntimeContext {
-        try {
-            val (orbit, caller) = orbitOf(context)
-            val chatId = checkNotNull(caller?.takeIf { OrbitPreferences.getInstance(context).current().orbitForChat(it) != null }) {
-                "Forgetting only works in a chat with the user"
-            }
-            val a = args(tool)
-            val result = when (a["action"]?.trim()) {
-                "plan" -> {
-                    val terms = a["terms"].orEmpty().lines().map { it.trim() }.filter { it.isNotEmpty() }
-                    val planned = OrbitForget.plan(context, orbit, chatId, terms)
-                    val hits = planned.hits
-                    // Places marked user_review are only listed; only the others are cleaned on confirm.
-                    val cleanable = hits.any { it.action != "user_review" }
-                    JSONObject().put("plan_id", planned.id)
-                        .put("summary", JSONObject(hits.groupingBy { it.category }.eachCount()))
-                        .put("places", JSONArray(OrbitForget.shown(hits).map { it.json() }))
-                        .put("places_omitted", (hits.size - OrbitForget.SHOWN).coerceAtLeast(0))
-                        .put("scanned", JSONArray(OrbitForget.SCANNED))
-                        .put("next", when {
-                            hits.isEmpty() -> "Nothing was found. Tell the user, or plan again with other terms."
-                            !cleanable -> "Nothing here is cleaned by the app. Tell the user which of their own files " +
-                                "(by file name) mention it, and which could not be checked and why (reason), so they can decide; do not confirm."
-                            else -> "Tell the user the scope in everyday words, say it cannot be undone, and ask once for " +
-                                "confirmation. Also name the user's own files that mention it and any that could not be checked (with the reason): " +
-                                "these stay as they are, and the user decides."
-                        })
-                }
-                "confirm" -> {
-                    val lastUser = ChatHistoryManager.getInstance(context).loadChatMessagesDesc(chatId, 30)
-                        .firstOrNull { it.sender == "user" }?.timestamp ?: 0L
-                    val outcome = OrbitForget.confirm(context, orbit, chatId, a["plan_id"]?.trim().orEmpty(), lastUser)
-                    JSONObject().put("cleaned", JSONObject(outcome.cleaned as Map<*, *>))
-                        .put("remaining", JSONArray(OrbitForget.shown(outcome.remaining).map { it.json() }))
-                        .put("remaining_omitted", (outcome.remaining.size - OrbitForget.SHOWN).coerceAtLeast(0))
-                        .put("remaining_summary", JSONObject(outcome.remaining.groupingBy { it.category }.eachCount()))
-                        .put("failed", JSONArray(outcome.failed))
-                        .put("note", "Chat messages are not deleted. Places marked user_review (SOUL.md, IDENTITY.md, the user's documents in files/, unchecked files) were not changed; the user decides. " +
-                            "Report what was cleaned by category; for the user's own files and unchecked ones, name the file, never its contents. Never repeat the information. Your system prompt in open chats " +
-                            "may still show the old memory until it refreshes (daily or at the next summary); do not use it.")
-                }
-                "cancel" -> { OrbitForget.cancel(orbit.id); JSONObject().put("cancelled", true) }
-                else -> error("Unknown action \"${a["action"].orEmpty()}\"; use plan, confirm or cancel")
-            }
-            ToolResult(FORGET, true, StringResultData(result.toString()))
-        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { fail(FORGET, e) }
     }
 
     fun executeOrigin(context: Context, tool: AITool): ToolResult = runBlockingIoPreservingToolRuntimeContext {
@@ -146,8 +83,8 @@ internal object OrbitPrivacyTools {
                 m.groupValues[1] to (text.lines().getOrNull(m.groupValues[2].toInt() - 1)?.trim()?.takeIf { it.isNotEmpty() }
                     ?: error("That line is empty or does not exist"))
             } else "" to a["text"]?.trim().orEmpty().also { require(it.length >= 2) { "Give line or text" } }
-            val key = OrbitForget.normalize(needle.trimStart('-', '*', ' '))
-            fun has(text: String) = text.lines().any { OrbitForget.normalize(it).contains(key) }
+            val key = normalize(needle.trimStart('-', '*', ' '))
+            fun has(text: String) = text.lines().any { normalize(it).contains(key) }
             val changes = MemoryReviewRepository(context, spaceId).list()
                 .filter { it.kind in setOf("notes", "user") && it.status == "approved" }
                 .filter { file.isEmpty() || it.title == file }
@@ -157,7 +94,7 @@ internal object OrbitPrivacyTools {
                 .put("note", "No recorded change added it. The user may have edited it directly, it may predate the record, or the record was trimmed.")
             else {
                 val later = changes.filter { it.createdAt > introduced.createdAt && has(it.before) &&
-                    it.before.lines().filter { l -> OrbitForget.normalize(l).contains(key) } != it.body.lines().filter { l -> OrbitForget.normalize(l).contains(key) } }
+                    it.before.lines().filter { l -> normalize(l).contains(key) } != it.body.lines().filter { l -> normalize(l).contains(key) } }
                 val removed = introduced.before.lines().map { it.trim() }.filter { it.isNotEmpty() }
                     .count { it !in introduced.body.lines().map { l -> l.trim() }.toSet() }
                 JSONObject().put("found", true).put("file", introduced.title).put("added_at", introduced.createdAt)
@@ -242,7 +179,7 @@ internal object OrbitPrivacyTools {
             if (talk) {
                 val messages = ChatHistoryManager.getInstance(context).loadChatMessagesDesc(caller!!, 40)
                 // Quote marks, bullets and bold around a draft shown in the chat do not make it a different text.
-                fun plain(value: String) = OrbitForget.normalize(value.lines()
+                fun plain(value: String) = normalize(value.lines()
                     .joinToString(" ") { it.trimStart().trimStart('>').trim() }.replace(Regex("[*_`~]"), ""))
                 val full = plain(text)
                 val probe = full.take(80)
@@ -260,9 +197,9 @@ internal object OrbitPrivacyTools {
                         val covered = plain(card.title + "\n" + card.detail)
                         // A channel or recipient mentioned only inside the body is not the delivery target.
                         val delivery = covered.replace(full, " ")
-                        val rawCovered = OrbitForget.normalize(card.title + "\n" + card.detail)
+                        val rawCovered = normalize(card.title + "\n" + card.detail)
                         val recipientCovered = recipient.isNotBlank() &&
-                            Regex("(?<![a-z0-9._%+@-])${Regex.escape(OrbitForget.normalize(recipient))}(?![a-z0-9._%+@-])")
+                            Regex("(?<![a-z0-9._%+@-])${Regex.escape(normalize(recipient))}(?![a-z0-9._%+@-])")
                                 .containsMatchIn(rawCovered) && delivery.contains(plain(recipient))
                         check("approved text", covered.contains(full),
                             if (covered.contains(full)) "The approval contains this exact draft"
@@ -323,7 +260,7 @@ internal object OrbitPrivacyTools {
                     "approval_id can only be checked in its original chat with the user")
                 warnings.put("Background run: send only if the task instruction from the user clearly asks for this message")
             }
-            val digest = MessageDigest.getInstance("SHA-256").digest("$recipient\n${OrbitForget.normalize(text)}".toByteArray())
+            val digest = MessageDigest.getInstance("SHA-256").digest("$recipient\n${normalize(text)}".toByteArray())
                 .joinToString("") { "%02x".format(it) }
             val log = File(OrbitPreferences.getInstance(context).orbitDir(orbit.id), "presend_log.json")
             val now = System.currentTimeMillis()

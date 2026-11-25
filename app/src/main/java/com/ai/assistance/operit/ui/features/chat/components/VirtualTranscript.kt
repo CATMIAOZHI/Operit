@@ -43,6 +43,9 @@ import androidx.compose.foundation.gestures.stopScroll
 import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.ui.platform.LocalContext
 import com.ai.assistance.operit.ui.common.markdown.LocalTranscriptMarkdownSlice
+import com.ai.assistance.operit.ui.common.markdown.LocalVoiceScope
+import com.ai.assistance.operit.ui.common.markdown.VoiceScope
+import com.ai.assistance.operit.ui.common.markdown.stopVoiceIn
 import com.ai.assistance.operit.ui.common.markdown.prepareTranscriptMarkdown
 import com.ai.assistance.operit.data.preferences.DisplayPreferencesManager
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
@@ -108,6 +111,10 @@ internal fun VirtualTranscript(
         runRepository.observeByParentChatId(chatId)
     }.collectAsState(initial = emptyList())
     val runSnapshot = remember(chatId, runs) { TranscriptRunSnapshot(chatId, runs) }
+    // Voice started in this chat keeps playing while scrolled away and stops when the chat goes
+    // (another chat, another page, the app lock).
+    val voiceScope = remember(chatId) { VoiceScope() }
+    DisposableEffect(voiceScope) { onDispose { stopVoiceIn(voiceScope) } }
     val toolModeValue by remember(displayPreferences) {
         displayPreferences.toolCollapseMode.map { it as ToolCollapseMode? }
     }.collectAsState(initial = TranscriptDisplayCache.toolMode)
@@ -772,6 +779,7 @@ internal fun VirtualTranscript(
                         LocalOrbitPieceSpot provides pieceSpot.takeIf { look },
                         LocalResponseProcessExpanded provides row.group?.let { process.isExpanded(it.key) },
                         LocalTranscriptMarkdownSlice provides row.markdownSlice,
+                        LocalVoiceScope provides voiceScope,
                         LocalTranscriptRuns provides runSnapshot,
                         LocalTranscriptCardEnds provides
                             TranscriptCardEnds(row.cardFirst, row.cardLast,

@@ -920,13 +920,23 @@ void StreamMarkdownInlineLaTeXPlugin::reset() {
 
 bool StreamMarkdownInlineLaTeXPlugin::processChar(char16_t c, bool /*atStartOfLine*/) {
     if (state_ == PluginState::PROCESSING) {
-        if (endState_ == 0) {
-            if (c == u'$') {
-                endState_ = 1;
-                reset();
-                return includeDelimiters_;
-            }
+        // Inline math stays on its line: a lone '$' (a price like "$99.99") never runs on and
+        // swallows the rest of the message. What was taken stays text, since it never closed.
+        if (c == u'\n') {
+            reset();
             return true;
+        }
+        // A closing '$' follows a non-space ("$20 and $30" is not math) and is not escaped
+        // ("\$" is a dollar sign in the formula). endState_: 0 after anything else, 1 after a
+        // space, 2 after an unpaired backslash.
+        if (c == u'$' && endState_ == 0) {
+            reset();
+            return includeDelimiters_;
+        }
+        if (c == u'\\') {
+            endState_ = endState_ == 2 ? 0 : 2;
+        } else {
+            endState_ = (c == u' ' || c == u'\t') ? 1 : 0;
         }
         return true;
     }
@@ -941,10 +951,11 @@ bool StreamMarkdownInlineLaTeXPlugin::processChar(char16_t c, bool /*atStartOfLi
     }
 
     if (startState_ == 1) {
-        if (c != u'$' && c != u'\n') {
+        // An opening '$' is followed right away by the formula, not a space.
+        if (c != u'$' && c != u'\n' && c != u' ' && c != u'\t') {
             state_ = PluginState::PROCESSING;
             startState_ = 0;
-            endState_ = 0;
+            endState_ = c == u'\\' ? 2 : 0;
             return true;
         }
         reset();

@@ -12,9 +12,11 @@ import com.ai.assistance.operit.data.model.ModelParameter
 import com.ai.assistance.operit.data.model.ToolPrompt
 import com.ai.assistance.operit.data.model.ParameterCategory
 import com.ai.assistance.operit.data.stats.ProviderUsageNormalizer
+import com.ai.assistance.operit.data.stats.TokenStatCategory
 import com.ai.assistance.operit.util.ChatUtils
 import com.ai.assistance.operit.util.ChatMarkupRegex
 import com.ai.assistance.operit.util.HttpLogSanitizer
+import com.ai.assistance.operit.util.ImagePoolManager
 import com.ai.assistance.operit.util.StreamingJsonXmlConverter
 import com.ai.assistance.operit.util.TokenCacheManager
 import com.ai.assistance.operit.util.exceptions.UserCancellationException
@@ -288,10 +290,16 @@ open class GeminiProvider(
     private val supportsVideo: Boolean = true,
     private val enableToolCall: Boolean = false, // 是否启用Tool Call接口
     private val antigravity: AntigravityTransport? = null,
+    private val enableInteractions: Boolean = true,
+    private val configurationId: String = "",
 ) : AIService {
     companion object {
         private const val TAG = "GeminiProvider"
         private const val DEBUG = true // 开启调试日志
+        // Exact sidecar format emitted by ConversationMarkupManager.splitImageLinksForModel.
+        private val trailingToolImages = Regex("""(?:\s*<link type="image" id="[^"<>\s]+"(?: src="[^"<>]*")?></link>)+""")
+        // Request-local marker for the sidecar merged into a result; removed before sending.
+        private const val MERGED_IMAGES = "_operitMergedImages"
     }
 
     // HTTP客户端
@@ -333,6 +341,10 @@ open class GeminiProvider(
         get() = tokenCacheManager.outputTokenCount
 
     // 供应商:模型标识符
+    // An Antigravity account can also run Claude, which never receives Gemini audio parts.
+    override val acceptsToolResultAudio: Boolean
+        get() = supportsAudio && (antigravity == null || modelName.contains("gemini", ignoreCase = true))
+
     override val providerModel: String
         get() = "${providerType.name}:$modelName"
 
@@ -511,7 +523,9 @@ open class GeminiProvider(
         return ChatMarkupRegex.extractGeminiContentPayloads(content).mapNotNull { payload ->
             try {
                 val decoded = String(Base64.getMimeDecoder().decode(payload), Charsets.UTF_8)
-                val value = prepareAccountReplay(JSONObject(decoded), antigravity?.currentReplayScope().orEmpty())
+                val metadata = JSONObject(decoded)
+                if (metadata.has("_operitInteraction")) return@mapNotNull null
+                val value = prepareAccountReplay(metadata, antigravity?.currentReplayScope().orEmpty())
                 hydrateGeminiReplayContent(value)
             } catch (e: ReplayMediaException) {
                 throw e
@@ -670,7 +684,7 @@ open class GeminiProvider(
      * 解析XML格式的tool_result，转换为Gemini FunctionResponse格式
      * @return Pair<文本内容, functionResponse对象列表>
      */
-    private fun parseXmlToolResults(content: String): Pair<String, List<JSONObject>?> {
+    private fun parseXmlToolResults(content: String, hasPendingCalls: Boolean): Pair<String, List<JSONObject>?> {
         if (!enableToolCall) return Pair(content, null)
         
         val matches = ChatMarkupRegex.toolResultWithNameAnyPattern.findAll(content)
@@ -680,16 +694,33 @@ open class GeminiProvider(
         }
         
         val functionResponses = mutableListOf<JSONObject>()
-        var textContent = content
+        val textContent = StringBuilder()
+        var cursor = 0
         
         matches.forEach { match ->
+            textContent.append(content, cursor, match.range.first)
+            cursor = match.range.last + 1
             val toolName = match.groupValues[2]
             val fullContent = match.groupValues[3].trim()
             val contentMatch = ChatMarkupRegex.contentTag.find(fullContent)
-            val resultContent = if (contentMatch != null) {
+            var resultContent = if (contentMatch != null) {
                 contentMatch.groupValues[1].trim()
             } else {
                 fullContent
+            }
+            var mergedImages: String? = null
+            // Without vision the sidecar stays in the text, where buildPartsArray strips it as before.
+            if (hasPendingCalls && supportsVision) {
+                trailingToolImages.matchAt(content, cursor)?.let { images ->
+                    // This sidecar is app markup, so its src may restore an image the pool no
+                    // longer holds. Tool text itself never gets this source fallback.
+                    MediaLinkParser.extractImageLinkTags(images.value).forEach {
+                        ImagePoolManager.resolveImage(it.id, it.sourcePath)
+                    }
+                    resultContent += "\n" + images.value.trim()
+                    mergedImages = images.value.trim()
+                    cursor = images.range.last + 1
+                }
             }
             
             // 构建functionResponse对象（Gemini格式）
@@ -698,15 +729,16 @@ open class GeminiProvider(
                 put("response", JSONObject().apply {
                     put("result", resultContent)
                 })
+                mergedImages?.let { put(MERGED_IMAGES, it) }
             }
             
             functionResponses.add(functionResponse)
             AppLogger.d(TAG, "解析Gemini functionResponse: $toolName, content length=${resultContent.length}")
             
-            textContent = textContent.replace(match.value, "").trim()
         }
-        
-        return Pair(textContent, functionResponses)
+
+        textContent.append(content, cursor, content.length)
+        return Pair(textContent.toString().trim(), functionResponses)
     }
     
     /**
@@ -852,21 +884,21 @@ open class GeminiProvider(
     private fun buildContentsAndCountTokens(
             chatHistory: List<PromptTurn>,
             toolsJson: String? = null,
-            preserveThinkInHistory: Boolean = false
+            preserveThinkInHistory: Boolean = false,
+            forInteractions: Boolean = false,
+            parent: InteractionHistory.Parent? = null,
+            fullHistoryForCount: List<PromptTurn>? = null,
     ): Pair<Pair<JSONArray, JSONObject?>, Int> {
         val contentsArray = JSONArray()
         var systemInstruction: JSONObject? = null
 
-        val providerReadyHistory =
-            StructuredToolCallBridge.compileHistoryForProvider(
-                chatHistory,
-                useToolCall = enableToolCall
-            )
+        val providerReadyHistory = if (fullHistoryForCount != null) parent?.suffix ?: fullHistoryForCount
+            else StructuredToolCallBridge.compileHistoryForProvider(chatHistory, useToolCall = enableToolCall)
 
         // 使用TokenCacheManager计算token数量
         val sanitizedHistoryForTokenCount =
             ChatUtils.stripGeminiThoughtSignatureMeta(
-                providerReadyHistory.map { turn ->
+                (fullHistoryForCount ?: providerReadyHistory).map { turn ->
                     val comparableRole =
                         when (turn.kind) {
                             PromptTurnKind.SYSTEM -> "system"
@@ -890,7 +922,10 @@ open class GeminiProvider(
             toolsJson
         )
 
-        val effectiveHistory = providerReadyHistory
+        // Any request that resends the whole history bounds old audio; a continuation sends only new turns.
+        val effectiveHistory = if (parent == null && supportsAudio) {
+            limitGeminiAudioReplay(providerReadyHistory)
+        } else providerReadyHistory
 
         // Find and process system message first
         val systemMessages = effectiveHistory.filter { it.kind == PromptTurnKind.SYSTEM }
@@ -911,12 +946,15 @@ open class GeminiProvider(
         var queuedAssistantThoughtSignature: String? = null
         val queuedFunctionCalls = mutableListOf<JSONObject>()
         val openFunctionCalls = mutableListOf<GeminiPendingFunctionCall>()
+        parent?.pending?.forEach {
+            openFunctionCalls.add(GeminiPendingFunctionCall(it.getString("name"), it.getString("id"), it.getString("matchingName")))
+        }
         // Gemini 3 refuses a step whose first function call has no thought signature, which is the
         // case for calls another model made before a switch (or whose signature was dropped as
         // another account's). Google documents this placeholder for such history. Antigravity also
         // runs Claude, which must not get it.
         val placeholderSignature =
-            if (antigravity == null || modelName.contains("gemini", ignoreCase = true)) SKIP_THOUGHT_SIGNATURE_VALIDATOR else null
+            if (!forInteractions && (antigravity == null || modelName.contains("gemini", ignoreCase = true))) SKIP_THOUGHT_SIGNATURE_VALIDATOR else null
 
         fun appendParts(target: JSONArray, parts: JSONArray) {
             for (index in 0 until parts.length()) {
@@ -1159,13 +1197,15 @@ open class GeminiProvider(
 
                     PromptTurnKind.TOOL_RESULT -> {
                         emitQueuedFunctionCallsIfNeeded()
-                        val (textContent, functionResponses) = parseXmlToolResults(contentWithoutGeminiMeta)
+                        val (textContent, functionResponses) = parseXmlToolResults(contentWithoutGeminiMeta, openFunctionCalls.isNotEmpty())
                         val responsesList = functionResponses ?: emptyList()
 
                         if (responsesList.isNotEmpty() && openFunctionCalls.isNotEmpty()) {
                             val partsArray = JSONArray()
-                            for (sourceResponse in responsesList) {
-                                val response = JSONObject(sourceResponse.toString())
+                            val followingMedia = JSONArray()
+                            val unmatchedImages = StringBuilder()
+                            for (response in responsesList) {
+                                val mergedImages = response.remove(MERGED_IMAGES) as? String
                                 // A result saved before the terminal was built in names its old tool.
                                 val resultName = com.ai.assistance.operit.core.tools.TerminalTools
                                     .canonical(response.optString("name", "").trim())
@@ -1175,6 +1215,8 @@ open class GeminiProvider(
                                 }
                                 if (callIndex < 0) {
                                     logDebug("忽略未匹配的Gemini functionResponse")
+                                    // Images merged into this result were ordinary input before; keep them.
+                                    mergedImages?.let { unmatchedImages.append('\n').append(it) }
                                     continue
                                 }
                                 val pendingCall = openFunctionCalls.removeAt(callIndex)
@@ -1182,6 +1224,9 @@ open class GeminiProvider(
                                     response.put("name", pendingCall.name)
                                 }
                                 pendingCall.id?.let { response.put("id", it) }
+                                attachGeminiToolResultMedia(
+                                    response, followingMedia, modelName, supportsVision, supportsAudio, forInteractions
+                                )
                                 partsArray.put(
                                     JSONObject().apply {
                                         put("functionResponse", response)
@@ -1194,9 +1239,10 @@ open class GeminiProvider(
                                 partsArray,
                                 "missing_tool_result_for_function_call",
                             )
-
-                            if (textContent.isNotEmpty()) {
-                                appendParts(partsArray, buildPartsArray(textContent))
+                            val hasFollowingMedia = followingMedia.length() > 0
+                            val text = (textContent + unmatchedImages).trim()
+                            if (text.isNotEmpty()) {
+                                appendParts(if (hasFollowingMedia) followingMedia else partsArray, buildPartsArray(text))
                             }
 
                             contentsArray.put(
@@ -1205,6 +1251,16 @@ open class GeminiProvider(
                                     put("parts", partsArray)
                                 }
                             )
+                            if (hasFollowingMedia) {
+                                // Like Google's Gemini CLI binary injection, separate the complete
+                                // batch of tool responses from ordinary input with a model turn.
+                                // This is protocol history only and is never displayed or persisted.
+                                if (!forInteractions) {
+                                    val acknowledgement = JSONObject().put("text", "Ready for the tool attachments.")
+                                    contentsArray.put(JSONObject().put("role", "model").put("parts", JSONArray().put(acknowledgement)))
+                                }
+                                contentsArray.put(JSONObject().put("role", "user").put("parts", followingMedia))
+                            }
                         } else {
                             val partsArray = JSONArray()
                             appendCancelledOpenFunctionResponses(partsArray, "tool_result_without_structured_match")
@@ -1451,6 +1507,22 @@ open class GeminiProvider(
         AppLogger.d(TAG, "发送消息到Gemini API, 模型: $modelName")
 
         val maxRetries = LlmRetryPolicy.MAX_RETRY_ATTEMPTS
+        val session = kotlin.coroutines.coroutineContext[OpenCodeSessionContext]
+        val saveInteraction = session?.savesChatHistory == true &&
+            (statsCategory == TokenStatCategory.CHAT || statsCategory == TokenStatCategory.SUBAGENT)
+        // Only a saved chat can continue on the server. A rotating key pool would also miss its
+        // per-key checkpoint on almost every turn and resend everything, so it stays on generateContent.
+        var preferInteractions = enableInteractions && saveInteraction && providerType == ApiProviderType.GOOGLE &&
+            antigravity == null && officialInteractionsEndpoint(apiEndpoint) &&
+            try { apiKeyProvider.getCandidateKeyCount() <= 1 }
+            catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { false }
+        var fallbackKey: String? = null
+        var unavailableModelKey = ""
+        var unavailableSessionKey = ""
+        var checkpointKey = ""
+        var failedParentId: String? = null
+        var billableFallbacks = 0
+        var reportedInteractionUsage = false
         var retryCount = 0
         var lastException: Exception? = null
 
@@ -1501,17 +1573,71 @@ open class GeminiProvider(
                 }
 
                 val perf = com.ai.assistance.operit.core.chat.currentLlmPerf()
+                val key = if (preferInteractions) apiKeyProvider.getApiKey() else fallbackKey
+                fallbackKey = null
+                var history: InteractionHistory? = null
+                var attemptParent: InteractionHistory.Parent? = null
+                var usingInteractions = false
+                failedParentId = null
+                reportedInteractionUsage = false
+                if (preferInteractions) fallbackKey = key
                 val requestBody = perf.timeBody({ it.contentLength() }) {
                     withContext(kotlinx.coroutines.Dispatchers.IO) {
-                        createRequestBody(context, chatHistory, modelParameters, enableThinking, availableTools, preserveThinkInHistory)
+                        val source = createRequestOptions(context, modelParameters, enableThinking, availableTools)
+                        var compiled: List<PromptTurn>? = null
+                        var options: JSONObject? = null
+                        if (preferInteractions && !key.isNullOrBlank()) {
+                            unavailableModelKey = interactionHash("$configurationId|$providerModel|$apiEndpoint|$key")
+                            checkpointKey = interactionHash("$configurationId|${session?.sessionId}")
+                            unavailableSessionKey = "$checkpointKey:$unavailableModelKey"
+                            if (!InteractionAvailability.blocked(unavailableModelKey) &&
+                                (!saveInteraction || !InteractionAvailability.blocked(unavailableSessionKey))) {
+                                // Validate options before compiling history, opening media files or constructing Base64.
+                                options = try {
+                                    interactionOptions(source, modelName, stream, saveInteraction)
+                                } catch (_: InteractionUnavailable) { null } catch (_: org.json.JSONException) { null }
+                            }
+                        }
+                        if (options != null && saveInteraction) {
+                            val entry = InteractionCheckpoints.load(context, checkpointKey)
+                            val toolContinuation = chatHistory.lastOrNull { it.kind != PromptTurnKind.SYSTEM }?.kind == PromptTurnKind.TOOL_RESULT
+                            if (entry == null && toolContinuation) {
+                                options = null // Finish an old protocol's pending tool call on its original transport.
+                            } else {
+                                compiled = StructuredToolCallBridge.compileHistoryForProvider(chatHistory, enableToolCall)
+                                val scope = "$unavailableSessionKey:$enableToolCall:$preserveThinkInHistory:$supportsAudio:$supportsVision:$supportsVideo"
+                                history = InteractionHistory(compiled, scope)
+                                attemptParent = history!!.parent(entry)
+                                failedParentId = attemptParent?.id
+                                if (attemptParent == null && toolContinuation) options = null
+                            }
+                        }
+                        usingInteractions = options != null
+                        val parent = attemptParent
+                        val json = try {
+                            addRequestContents(source, parent?.suffix ?: chatHistory, preserveThinkInHistory,
+                                usingInteractions, parent, compiled)
+                            options?.also { addInteractionInput(it, source, parent?.id) } ?: source
+                        } catch (e: org.json.JSONException) {
+                            if (usingInteractions) throw InteractionUnavailable(InteractionUnavailable.Cache.SESSION)
+                            throw e
+                        }
+                        if (AppLogger.logRequestBodies) RequestBodyLog.write(TAG, context.getString(R.string.gemini_request_body_json), json)
+                        json.toString().toRequestBody(JSON)
                     }
                 }
+                val parent = attemptParent
+                val usageAttempt = retryCount + billableFallbacks + 1
                 onTokensUpdated(
                         tokenCacheManager.totalInputTokenCount,
                         tokenCacheManager.cachedInputTokenCount,
                         tokenCacheManager.outputTokenCount
                 )
-                val request = createRequest(context, requestBody, stream, requestId) // 根据stream参数决定使用流式还是非流式
+                val request = if (usingInteractions) {
+                    Request.Builder().url("https://generativelanguage.googleapis.com/v1beta/interactions")
+                        .apply { customHeaders.forEach { (name, value) -> header(name, value) } }
+                        .header("x-goog-api-key", key!!).post(requestBody).build()
+                } else createRequest(context, requestBody, stream, requestId, key)
                 // What really goes out: an account route (Antigravity) rewrites and wraps the body.
                 perf?.captured(providerModel, request.body ?: requestBody)
 
@@ -1534,6 +1660,10 @@ open class GeminiProvider(
 
                         if (!response.isSuccessful) {
                             val errorBody = response.body?.string() ?: context.getString(R.string.gemini_error_no_error_details)
+                            if (usingInteractions) {
+                                val error = interactionHttpError(errorBody)
+                                if (interactionCanFallback(response.code, error, parent != null)) throw interactionRejection(response.code, error, parent != null)
+                            }
                             logError("API请求失败: ${response.code}, $errorBody")
                             // 保留 4xx 状态，让统一策略在多密钥配置下尝试下一密钥。
                             if (response.code in 400..499) {
@@ -1547,12 +1677,48 @@ open class GeminiProvider(
                         }
 
                         // 根据stream参数处理响应
-                        if (stream) {
+                        if (usingInteractions) {
+                            val replay = GeminiReplayContentAccumulator()
+                            val sampling = kotlin.coroutines.coroutineContext[com.ai.assistance.operit.core.chat.SamplingInterrupt]
+                            sampling?.replayMetadata = { replay.buildInterruptedContentOrNull()?.let {
+                                "\n" + ChatMarkupRegex.geminiContentMetaTag(encodeGeminiContent(it))
+                            } }
+                            suspend fun emitChunk(text: String) {
+                                if (text.isEmpty()) return
+                                receivedContent.append(text)
+                                streamCollector.emit(text)
+                            }
+                            val decoder = GeminiInteractionResponse(parent != null,
+                                context.getString(R.string.provider_error_network_interrupted), context.getString(R.string.gemini_unknown_error)) { frame ->
+                                if (replay.isReasoningBoundaryBefore(frame.optJSONArray("candidates")?.optJSONObject(0)?.optJSONObject("content"))) {
+                                    sampling?.checkpoint()
+                                }
+                                emitChunk(extractContentFromJson(context, frame, requestId, onTokensUpdated,
+                                    { usage, attempt ->
+                                        reportedInteractionUsage = true
+                                        onUsageReported?.invoke(usage, attempt)
+                                    }, usageAttempt, false, replay))
+                            }
+                            decoder.read(response.body?.charStream() ?: throw IOException(context.getString(R.string.gemini_response_empty)), stream)
+                            sampling?.throwIfInterrupted()
+                            if (isManuallyCancelled) throw UserCancellationException(context.getString(R.string.gemini_error_request_cancelled))
+                            if (isInThinkingMode) {
+                                emitChunk("</think>")
+                                isInThinkingMode = false
+                            }
+                            replay.buildContentOrNull()?.let {
+                                val separator = if (receivedContent.endsWith("\n")) "" else "\n"
+                                emitChunk(separator + ChatMarkupRegex.geminiContentMetaTag(encodeGeminiContent(it)))
+                            }
+                            decoder.completedId?.let { id -> history?.let {
+                                InteractionCheckpoints.save(context, checkpointKey, it.checkpoint(receivedContent.toString(), id, decoder.pending))
+                            } }
+                        } else if (stream) {
                             // 处理流式响应
-                            processStreamingResponse(context, response, streamCollector, requestId, onTokensUpdated, receivedContent, onUsageReported, retryCount + 1)
+                            processStreamingResponse(context, response, streamCollector, requestId, onTokensUpdated, receivedContent, onUsageReported, usageAttempt)
                         } else {
                             // 处理非流式响应并转换为Stream
-                            processNonStreamingResponse(context, response, streamCollector, requestId, onTokensUpdated, receivedContent, onUsageReported, retryCount + 1)
+                            processNonStreamingResponse(context, response, streamCollector, requestId, onTokensUpdated, receivedContent, onUsageReported, usageAttempt)
                         }
                     } finally {
                         response.close()
@@ -1569,6 +1735,24 @@ open class GeminiProvider(
                 lastException = e
                 kotlin.coroutines.coroutineContext[com.ai.assistance.operit.core.chat.SamplingInterrupt]?.throwIfInterrupted()
                 kotlin.coroutines.coroutineContext[com.ai.assistance.operit.core.chat.SamplingInterrupt]?.replayMetadata = null
+                if (e is InteractionUnavailable && preferInteractions && !isManuallyCancelled) {
+                    when (e.cache) {
+                        InteractionUnavailable.Cache.MODEL -> InteractionAvailability.block(unavailableModelKey)
+                        InteractionUnavailable.Cache.SESSION -> if (saveInteraction) InteractionAvailability.block(unavailableSessionKey)
+                        else -> Unit
+                    }
+                    if (reportedInteractionUsage) billableFallbacks++
+                    failedParentId?.let { id -> withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        InteractionCheckpoints.forget(context, checkpointKey, id)
+                    } }
+                    preferInteractions = false
+                    activeCall = null
+                    activeResponse = null
+                    isInThinkingMode = false
+                    tokenCacheManager.addOutputTokens(-tokenCacheManager.outputTokenCount)
+                    if (receivedContent.isNotEmpty()) emitRollback(requestSavepointId)
+                    continue
+                }
                 emitRollback(requestSavepointId)
                 retryCount = handleRetryableError(
                     context,
@@ -1627,14 +1811,12 @@ open class GeminiProvider(
     }
 
     /** 创建请求体 */
-    private fun createRequestBody(
+    private fun createRequestOptions(
             context: Context,
-            chatHistory: List<PromptTurn>,
             modelParameters: List<ModelParameter<*>>,
             enableThinking: Boolean,
             availableTools: List<ToolPrompt>? = null,
-            preserveThinkInHistory: Boolean = false
-    ): RequestBody {
+    ): JSONObject {
         val json = JSONObject()
 
         // 添加工具定义
@@ -1662,11 +1844,8 @@ open class GeminiProvider(
         }
         
         // 将 tools 添加到请求中，并保存用于token计算
-        val toolsJson = if (tools.length() > 0) {
+        if (tools.length() > 0) {
             json.put("tools", tools)
-            tools.toString()
-        } else {
-            null
         }
         if (hasFunctionDeclarations && enableGoogleSearch) {
             json.put(
@@ -1676,14 +1855,6 @@ open class GeminiProvider(
                 },
             )
         }
-
-        val (contentsResult, _) = buildContentsAndCountTokens(chatHistory, toolsJson, preserveThinkInHistory)
-        val (contentsArray, systemInstruction) = contentsResult
-
-        if (systemInstruction != null) {
-            json.put("systemInstruction", systemInstruction)
-        }
-        json.put("contents", contentsArray)
 
         // 添加生成配置
         val generationConfig = JSONObject()
@@ -1756,12 +1927,16 @@ open class GeminiProvider(
         }
         json.put("generationConfig", generationConfig)
 
-        val jsonString = json.toString()
-        if (AppLogger.logRequestBodies) {
-            RequestBodyLog.write(TAG, context.getString(R.string.gemini_request_body_json), json)
-        }
+        return json
+    }
 
-        return jsonString.toByteArray(Charsets.UTF_8).toRequestBody(JSON)
+    private fun addRequestContents(json: JSONObject, chatHistory: List<PromptTurn>, preserveThinkInHistory: Boolean,
+        forInteractions: Boolean, parent: InteractionHistory.Parent?, fullHistoryForCount: List<PromptTurn>?) {
+        val (contentsResult, _) = buildContentsAndCountTokens(chatHistory, json.optJSONArray("tools")?.toString(),
+            preserveThinkInHistory, forInteractions, parent, fullHistoryForCount)
+        val (contents, system) = contentsResult
+        if (system != null) json.put("systemInstruction", system)
+        json.put("contents", contents)
     }
 
     /** 创建HTTP请求 */
@@ -1771,10 +1946,11 @@ open class GeminiProvider(
             context: Context,
             requestBody: RequestBody,
             isStreaming: Boolean,
-            requestId: String
+            requestId: String,
+            selectedKey: String? = null,
     ): Request {
         antigravity?.let { return it.request(requestBody, isStreaming) }
-        val currentApiKey = apiKeyProvider.getApiKey()
+        val currentApiKey = selectedKey ?: apiKeyProvider.getApiKey()
         val requestUrl =
             buildGeminiGenerateContentUrl(
                 apiEndpoint = apiEndpoint,

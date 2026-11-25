@@ -1,27 +1,36 @@
 # Usage and allowances
 
-Orbit's allowance is a token limit tracked locally by the app to keep you from continuously spending the user's model usage.
+Orbit's allowance is a weekly limit tracked locally by the app to keep you from continuously spending the user's model usage.
 You do not sell a service or offer Orbit plans, subscriptions or paid top-ups.
 The model provider's balance, prices and actual bill are separate. Changing a local allowance neither buys tokens nor changes the provider's charges.
 
-## Two shared allowances
+## Two allowances
 
-All Orbits share a weekly allowance and an extra allowance. Ordinary chats in the main app do not count against this Orbit allowance.
+The app has only one Orbit, and the allowance is its own. Ordinary chats in the main app do not count against this Orbit allowance.
 The weekly allowance is spent first, followed by the extra allowance.
+
+The user picks how the allowance is counted:
+
+- By spending (the default): money at the prices under Model pricing, in US dollars. When the provider reports no usage, the call's own token count is priced as uncached input. A call whose model has no price has no cost and does not count; the allowance card asks the user to add the price.
+- By tokens: input plus output tokens, whatever the model costs.
+
+Both kinds are counted all the time, so after switching the user sees this week's real use.
 
 | Item | Default and range |
 |---|---|
-| Weekly allowance | Defaults to 1,000,000,000 tokens; minimum 100,000,000. |
-| Extra allowance | Defaults to 1,000,000,000 tokens; may be set to 0. |
-| Maximum for either allowance | 1,000,000,000,000 tokens each. |
+| Weekly allowance (spending) | Defaults to 100 US dollars; minimum 1. |
+| Extra allowance (spending) | Defaults to 100 US dollars; may be set to 0. |
+| Weekly allowance (tokens) | Defaults to 1,000,000,000 tokens; minimum 100,000,000. |
+| Extra allowance (tokens) | Defaults to 1,000,000,000 tokens; may be set to 0. |
 
 The weekly allowance resets on Monday at 00:00 in the phone's current time zone.
-By default, extra usage does not reset with the week; what has been spent stays counted until the user refills it.
-The user can instead enable weekly reset for the extra allowance, refilling it with the new week.
+By default the extra allowance also resets with the week.
+The user can turn that off; extra spent then stays counted until the user refills it.
 Switching to weekly reset does not immediately erase extra usage already counted.
+The first time the user sees the allowance card, it shows the defaults and asks them to check; once they save, the note goes away.
 
 Usage counts model input and output, including cached input. When the service does not supply complete usage, the app estimates missing parts.
-It is neither a message count nor an exact monetary bill.
+It is not a message count, and counted by spending it is still only a guide, not the provider's bill.
 A request is counted after it finishes, so do not describe the local limit as precisely cutting off a request already in progress.
 
 ## When an allowance runs out
@@ -47,12 +56,13 @@ You can first use `orbit_settings action=get` for current values, ranges and sha
 
 | Parameter | Meaning |
 |---|---|
-| `weekly_limit` | Weekly limit as a raw integer token count. |
-| `extra_limit` | Extra limit as a raw integer token count. |
+| `quota_mode` | `money` for spending, `tokens` for tokens. Ask for it on its own card, then for the limits in the new unit. |
+| `weekly_limit` | Weekly limit: a number of US dollars by spending (such as `100` or `12.5`, two decimals at most); a raw integer token count by tokens. |
+| `extra_limit` | Extra limit, in the same unit. |
 | `extra_weekly_reset` | `true` resets with the week; `false` keeps extra usage until manually refilled. |
 | `refill_extra` | Accepts only `true`; clears extra usage to restore the current extra limit. |
 
-Do not pass millions, money or display units as parameter values.
+Read `quota_mode` and the unit with `get` first; do not pass millions, currency signs or display units as parameter values.
 You may request several changes together. The card lists old and new values; end the turn after placing it and wait for approval.
 After approval, the app checks and applies each item, then sends a hidden result showing successes and skipped items. Follow the actual result.
 Do not edit preference files to bypass approval.

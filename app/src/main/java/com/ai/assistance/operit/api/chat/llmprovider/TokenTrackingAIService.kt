@@ -77,6 +77,7 @@ class TokenTrackingAIService(
     override val cachedInputTokenCount: Int get() = delegate.cachedInputTokenCount
     override val outputTokenCount: Int get() = delegate.outputTokenCount
     override val providerModel: String get() = delegate.providerModel
+    override val acceptsToolResultAudio: Boolean get() = delegate.acceptsToolResultAudio
 
     override fun resetTokenCounts() = delegate.resetTokenCounts()
     override fun cancelStreaming() = delegate.cancelStreaming()
@@ -110,6 +111,7 @@ class TokenTrackingAIService(
         }
         val meter = orbitTag?.let { OrbitMeter(chatHistory, availableTools) }
         val request = newRequest(statsCategory)
+        meter?.let { m -> request.meteredInputTokens = { m.input } }
         val delegateStream =
             delegate.sendMessage(
                 context = context,
@@ -255,9 +257,11 @@ class TokenTrackingAIService(
             other += value.length - c
         }
 
-        fun input(): Long =
+        /** Counted once, when first asked: the pricing and the allowance both use it. */
+        val input: Long by lazy {
             sent.sumOf { com.ai.assistance.operit.util.ChatUtils.estimateTokenCount(it.content).toLong() } +
                 (tools?.sumOf { com.ai.assistance.operit.util.ChatUtils.estimateTokenCount(it.toString()).toLong() } ?: 0L)
+        }
 
         fun output(): Long = kotlin.math.ceil(cjk * 1.5 + other * 0.25).toLong()
     }
@@ -356,11 +360,26 @@ class TokenTrackingAIService(
                     it.totalInputTokens
                         ?: listOfNotNull(it.uncachedInputTokens, it.cachedInputTokens, it.cacheWriteTokens)
                             .takeIf { parts -> parts.isNotEmpty() }?.sum()
-                } ?: meter.input()
+                } ?: meter.input
                 val output = usage?.let {
                     it.outputTokens?.plus(if (it.reasoningIncludedInOutput == false) it.reasoningTokens ?: 0L else 0L)
                 } ?: meter.output()
                 val frozen = request.frozenPricing
+                // The ledger keeps only an exact cost. When it has none (no usage reported, or input
+                // without its cache split), the money allowance goes by the tokens counted above at the
+                // price already found for this call, in that price's currency, all as uncached input.
+                // No second price lookup here: a price that could not be found stays unpriced, and the
+                // allowance card asks for it.
+                // A tiered price unknown for want of a reported length has its tier picked by this call's count.
+                val priced = if (frozen?.cost != null) frozen.pricing
+                    else frozen?.pricing?.takeIf { it.known } ?: frozen?.estimatePricing
+                val allowanceCost = frozen?.cost ?: priced?.let {
+                        com.ai.assistance.operit.data.stats.TokenCostCalculator.computeCost(
+                            com.ai.assistance.operit.data.stats.TokenUsageInput(
+                                uncachedInputTokens = input, cachedInputTokens = 0L, cacheWriteTokens = 0L,
+                                outputTokens = output, reasoningIncludedInOutput = true, cacheWriteSeparateBilling = false,
+                            ), it).amount
+                    }
                 val bill = com.ai.assistance.operit.features.orbit.OrbitQuota.Bill(
                     model = request.model,
                     // Cache reads count only when the whole input they are part of is known too.
@@ -368,7 +387,9 @@ class TokenTrackingAIService(
                         usage.totalInputTokens != null || (usage.uncachedInputTokens != null && usage.cacheWriteTokens != null)
                     },
                     cost = frozen?.cost,
-                    currency = frozen?.pricing?.currency ?: com.ai.assistance.operit.data.collects.PricingCurrency.CNY,
+                    // The currency of whichever price the amounts were worked out at.
+                    currency = (priced ?: frozen?.pricing)?.currency ?: com.ai.assistance.operit.data.collects.PricingCurrency.CNY,
+                    allowanceCost = allowanceCost,
                 )
                 com.ai.assistance.operit.features.orbit.OrbitQuota.record(appContext, tag, input, output, bill,
                     at = request.endedAtMs)

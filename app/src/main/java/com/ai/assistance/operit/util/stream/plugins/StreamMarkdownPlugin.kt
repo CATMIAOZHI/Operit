@@ -1114,14 +1114,31 @@ class StreamMarkdownInlineLaTeXPlugin(private val includeDelimiters: Boolean = t
                     .build(
                             kmpPattern {
                                 char('$')
-                                noneOf('$', '\n')
+                                // Followed right away by the formula, not a space.
+                                noneOf('$', '\n', ' ', '\t')
                             }
                     )
     private var endMatcher: StreamKmpGraph =
             StreamKmpGraphBuilder().build(kmpPattern { char('$') })
+    /** Whether the last character inside was a space: a closing '$' follows a non-space. */
+    private var afterSpace = false
+    /** Whether the last character inside was an unpaired backslash: "\$" does not close. */
+    private var afterBackslash = false
 
     override fun processChar(c: Char, atStartOfLine: Boolean): Boolean {
         if (state == PluginState.PROCESSING) {
+            // Inline math stays on its line, so a lone '$' (a price) never swallows the rest.
+            if (c == '\n') {
+                reset()
+                return true
+            }
+            if (c == '$' && (afterSpace || afterBackslash)) {
+                afterSpace = false
+                afterBackslash = false
+                return true
+            }
+            afterSpace = c == ' ' || c == '\t'
+            afterBackslash = c == '\\' && !afterBackslash
             // 处理结束匹配符
             when (endMatcher.processChar(c)) {
                 is StreamKmpMatchResult.Match -> {
@@ -1136,6 +1153,7 @@ class StreamMarkdownInlineLaTeXPlugin(private val includeDelimiters: Boolean = t
             when (startMatcher.processChar(c)) {
                 is StreamKmpMatchResult.Match -> {
                     state = PluginState.PROCESSING
+                    afterBackslash = c == '\\'
                     endMatcher.reset()
                     startMatcher.reset()
                     return true
@@ -1164,6 +1182,8 @@ class StreamMarkdownInlineLaTeXPlugin(private val includeDelimiters: Boolean = t
 
     override fun reset() {
         state = PluginState.IDLE
+        afterSpace = false
+        afterBackslash = false
         startMatcher.reset()
         endMatcher.reset()
     }

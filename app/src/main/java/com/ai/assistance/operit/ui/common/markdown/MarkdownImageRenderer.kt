@@ -113,7 +113,11 @@ fun MarkdownImageRenderer(
         imageMarkdown: String,
         modifier: Modifier = Modifier,
         maxImageHeight: Int = 160, // 更小的默认最大高度
-        enableDialogs: Boolean = true
+        enableDialogs: Boolean = true,
+        // 消息正文颜色；音频语音条用它，任何气泡颜色上都看得清
+        contentColor: Color = Color.Unspecified,
+        // 语音单独成一条消息时，语音条本身就是气泡，用这个颜色
+        bubbleColor: Color = Color.Unspecified
 ) {
     // 只有完整的Markdown图片语法才会被渲染
     if (!isCompleteImageMarkdown(imageMarkdown)) {
@@ -148,7 +152,9 @@ fun MarkdownImageRenderer(
     if (isLikelyAudioUrl(imageUrl)) {
         MarkdownAudioRenderer(
             audioMarkdown = imageMarkdown,
-            modifier = modifier
+            modifier = modifier,
+            contentColor = contentColor,
+            bubbleColor = bubbleColor
         )
         return
     }

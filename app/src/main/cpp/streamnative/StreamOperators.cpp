@@ -456,7 +456,9 @@ MarkdownSession* createMarkdownInlineSession() {
     plugins.push_back({std::make_unique<StreamMarkdownLinkPlugin>(), MD_LINK});
     plugins.push_back({std::make_unique<StreamMarkdownStrikethroughPlugin>(false), MD_STRIKETHROUGH});
     plugins.push_back({std::make_unique<StreamMarkdownUnderlinePlugin>(true), MD_UNDERLINE});
-    plugins.push_back({std::make_unique<StreamMarkdownInlineLaTeXPlugin>(false), MD_INLINE_LATEX});
+    // Keep the '$' delimiters too: the renderer shows a formula only when it closed, and a lone
+    // '$' (a price) as the text it is. extractLatexContent() removes them.
+    plugins.push_back({std::make_unique<StreamMarkdownInlineLaTeXPlugin>(true), MD_INLINE_LATEX});
     // Keep delimiters for \(...\) to avoid swallowing '\' in failed end-matcher branches.
     // Delimiters are removed later by extractLatexContent().
     plugins.push_back({std::make_unique<StreamMarkdownInlineParenLaTeXPlugin>(true), MD_INLINE_LATEX});

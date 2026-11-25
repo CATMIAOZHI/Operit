@@ -26,6 +26,8 @@ import java.util.concurrent.TimeUnit
 internal object OrbitVaultTools {
     const val NAME = "orbit_vault"
     private const val MAX_RESPONSE = 20_000
+    /** How much of a reply is read at most; only its first [MAX_RESPONSE] characters are shown. */
+    private const val MAX_READ_BYTES = 2 * 1024 * 1024
     /** One card per site in a turn: asking again soon after points back to that card. */
     private const val CARD_REPEAT_MS = 5 * 60_000L
     private val sentCards = java.util.concurrent.ConcurrentHashMap<String, Long>()
@@ -205,6 +207,7 @@ internal object OrbitVaultTools {
                         require(placement == "bearer" || placement.matches(Regex("(header|query):[A-Za-z0-9_-]{1,60}"))) {
                             "placement must be bearer, header:<name> or query:<name>"
                         }
+                        require(!placement.equals("header:host", true)) { "The key cannot go in the Host header" }
                         if (envName.isNotEmpty() && packageName.isEmpty()) {
                             require(envName.matches(OrbitVault.ENV_NAME)) {
                                 "env_name must be a shell variable name in capitals, such as ALIYUN_ACCESS_KEY_SECRET"
@@ -274,7 +277,7 @@ internal object OrbitVaultTools {
                     com.ai.assistance.operit.features.orbit.OrbitVaultUsage.record(context, orbit.id, e,
                         com.ai.assistance.operit.features.orbit.OrbitVaultUsage.BROWSER)
                     return@runBlockingIoPreservingToolRuntimeContext ToolGetter.getBrowserSessionTools(context)
-                        .typeVaultValue(NAME, ref, value, e.site, arg("submit") == "true")
+                        .typeVaultValue(NAME, ref, value, e.site, arg("submit") == "true", password = arg("field") == "password")
                 }
                 "http_request" -> {
                     val e = OrbitVault.forHttp(context, orbit.id, arg("credential_id"))
@@ -413,12 +416,16 @@ internal object OrbitVaultTools {
             val obj = runCatching { JSONObject(headers) }.getOrElse { error("headers must be a JSON object such as {\"Accept\":\"application/json\"}") }
             obj.keys().forEach { name ->
                 val value = obj.getString(name)
+                // The key may only go to the url's host; a different Host header could route it elsewhere.
+                require(!name.trim().equals("host", true)) { "The Host header cannot be set; put the host in url" }
                 if (name.equals("content-type", true)) contentType = value else builder.header(name, value)
             }
         }
         when {
             e.placement == "bearer" || e.placement.startsWith("header:") -> {
                 val header = if (e.placement == "bearer") "Authorization" else e.placement.removePrefix("header:")
+                // A key saved before this was refused still never sets where the request goes.
+                require(!header.trim().equals("host", true)) { "The key cannot go in the Host header; ask the user to save it again with request_update" }
                 // OkHttp's message for a bad value quotes the value itself, so it is not passed on.
                 runCatching { builder.header(header, if (e.placement == "bearer") "Bearer ${e.secret}" else e.secret) }
                     .onFailure {
@@ -431,7 +438,14 @@ internal object OrbitVaultTools {
         val requestBody = if (method == "GET" || method == "DELETE" && body.isNullOrEmpty()) null
             else (body ?: "").toRequestBody(contentType.toMediaTypeOrNull())
         client.newCall(builder.url(parsed).method(method, requestBody).build()).execute().use { response ->
-            val text = response.body?.string().orEmpty()
+            // Only the start is ever shown, so a huge reply is not read whole into memory.
+            val (text, cut) = response.body?.let { body ->
+                val source = body.source()
+                source.request(MAX_READ_BYTES + 1L)
+                val bytes = source.buffer.readByteArray(minOf(source.buffer.size, MAX_READ_BYTES + 1L))
+                val charset = body.contentType()?.charset() ?: Charsets.UTF_8
+                String(bytes, 0, minOf(bytes.size, MAX_READ_BYTES), charset) to (bytes.size > MAX_READ_BYTES)
+            } ?: ("" to false)
             val secrets = listOf(e.secret, e.oauth?.refreshToken.orEmpty())
             val code = response.code
             val next = when {
@@ -451,8 +465,8 @@ internal object OrbitVaultTools {
                 .put("content_type", OrbitVault.redact(response.header("Content-Type").orEmpty(), secrets))
                 .apply { response.header("Location")?.let { put("redirect", OrbitVault.redact(it, secrets)) } }
                 .put("body", OrbitVault.redact(text, secrets, MAX_RESPONSE))
-                .put("truncated", text.length > MAX_RESPONSE)
-                .apply { if (text.length > MAX_RESPONSE) put("body_chars", text.length) }
+                .put("truncated", cut || text.length > MAX_RESPONSE)
+                .apply { if (cut) put("body_chars", "more than ${text.length}") else if (text.length > MAX_RESPONSE) put("body_chars", text.length) }
         }
     }
 }

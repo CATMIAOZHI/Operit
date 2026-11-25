@@ -66,7 +66,7 @@ object MediaLinkParser {
     )
 
     private val LINK_PATTERN_ESCAPED = Regex(
-        """<link\s+type=\\\"?(audio|video)\\\"?\s+id=\\\"?([^\"\s>]+)\\\"?\s*>.*?</link>""",
+        """<link\s+type=\\\"?(audio|video)\\\"?\s+id=\\\"?([^\"\\\s>]+)\\\"?\s*>.*?</link>""",
         RegexOption.DOT_MATCHES_ALL
     )
 
@@ -176,67 +176,25 @@ object MediaLinkParser {
     }
 
     fun extractMediaLinks(message: String): List<MediaLink> {
-        val links = mutableListOf<MediaLink>()
-        val seenIds = mutableSetOf<String>()
+        return extractMediaLinkTags(message).mapNotNull(::resolveMediaLink)
+    }
 
-        fun collectFromPattern(pattern: Regex) {
-            pattern.findAll(message).forEach { match ->
-                val type = match.groupValues[1]
-                val id = match.groupValues[2]
+    internal fun audioLinkRanges(message: String): List<IntRange> = audioLinks(message).map { it.first }
 
-                if (id == "error") {
-                    return@forEach
-                }
+    /** Each audio link's range and media ID, in order. */
+    internal fun audioLinks(message: String): List<Pair<IntRange, String>> {
+        if (!message.contains("<link") || !message.contains("audio")) return emptyList()
+        return (LINK_PATTERN_PLAIN.findAll(message) + LINK_PATTERN_ESCAPED.findAll(message))
+            .filter { it.groupValues[1] == "audio" && it.groupValues[2] != "error" }
+            .map { it.range to it.groupValues[2] }.sortedBy { it.first.first }.toList()
+    }
 
-                if (!seenIds.add("$type:$id")) {
-                    return@forEach
-                }
-
-                val mediaData = MediaPoolManager.getMedia(id) ?: return@forEach
-
-                val limited = MediaBase64Limiter.limitBase64ForAi(mediaData.base64, mediaData.mimeType)
-                    ?: return@forEach
-                links.add(
-                    MediaLink(
-                        type = type,
-                        id = id,
-                        base64Data = limited.base64,
-                        mimeType = limited.mimeType
-                    )
-                )
-            }
-        }
-
-        collectFromPattern(LINK_PATTERN_PLAIN)
-        collectFromPattern(LINK_PATTERN_ESCAPED)
-
-        fun collectFileFromPattern(pattern: Regex) {
-            pattern.findAll(message).forEach { match ->
-                val id = match.groupValues[1]
-                val fileName = unescapeXml(match.groupValues[2])
-                if (id == "error" || fileName.isBlank() || !seenIds.add("file:$id")) {
-                    return@forEach
-                }
-
-                val mediaData = MediaPoolManager.getMedia(id) ?: return@forEach
-                val limited = MediaBase64Limiter.limitBase64ForAi(mediaData.base64, mediaData.mimeType)
-                    ?: return@forEach
-                links.add(
-                    MediaLink(
-                        type = "file",
-                        id = id,
-                        base64Data = limited.base64,
-                        mimeType = limited.mimeType,
-                        fileName = fileName,
-                    )
-                )
-            }
-        }
-
-        collectFileFromPattern(FILE_LINK_PATTERN_PLAIN)
-        collectFileFromPattern(FILE_LINK_PATTERN_ESCAPED)
-
-        return links
+    internal fun resolveMediaLink(tag: MediaLinkTag): MediaLink? {
+        val data = MediaPoolManager.getMedia(tag.id) ?: return null
+        // Both pool writers persist normalized NO_WRAP data. A length check suffices on replay.
+        val size = MediaBase64Limiter.estimateDecodedSizeBytes(data.base64, noWrap = true) ?: return null
+        if (size > MediaBase64Limiter.DEFAULT_MAX_DECODED_BYTES) return null
+        return MediaLink(tag.type, tag.id, data.base64, data.mimeType, tag.fileName)
     }
 
     fun extractMediaLinkTags(message: String): List<MediaLinkTag> {

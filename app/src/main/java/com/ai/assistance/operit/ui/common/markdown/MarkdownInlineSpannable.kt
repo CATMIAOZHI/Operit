@@ -351,17 +351,29 @@ internal fun resolveNestedInlineChildren(node: MarkdownNodeStable): List<Markdow
 internal fun List<MarkdownNodeStable>.coalescePlainText(): List<MarkdownNodeStable> {
     if (count { it.type == MarkdownProcessorType.PLAIN_TEXT } < 2) return this
     val out = ArrayList<MarkdownNodeStable>(size)
+    // A run of plain text is joined once, when it ends, so a long run is copied once.
+    var runStart: MarkdownNodeStable? = null
+    var run: StringBuilder? = null
+    fun endRun() {
+        val first = runStart ?: return
+        out += run?.let { first.copy(content = it.toString()) } ?: first
+        runStart = null
+        run = null
+    }
     for (node in this) {
-        val last = out.lastOrNull()
-        if (
-            node.type == MarkdownProcessorType.PLAIN_TEXT && node.children.isEmpty() &&
-                last != null && last.type == MarkdownProcessorType.PLAIN_TEXT && last.children.isEmpty()
-        ) {
-            out[out.lastIndex] = last.copy(content = last.content + node.content)
+        if (node.type == MarkdownProcessorType.PLAIN_TEXT && node.children.isEmpty()) {
+            val first = runStart
+            if (first == null) {
+                runStart = node
+            } else {
+                (run ?: StringBuilder(first.content).also { run = it }).append(node.content)
+            }
         } else {
+            endRun()
             out += node
         }
     }
+    endRun()
     return out
 }
 

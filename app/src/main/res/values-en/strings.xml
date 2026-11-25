@@ -1,4 +1,6 @@
 <resources>
+    <string name="gemini_interactions_title">Faster follow-up messages</string>
+    <string name="gemini_interactions_description">Save conversations at Google and upload only new messages on follow-up turns. Works when only one key is used.</string>
     <string name="web_session_download_storage_unavailable">Protected download records could not be read or saved. Records are preserved; restart the app and try again. Downloaded files have not been deleted.</string>
     <string name="memory_editor_process_records">Process · Reasoning and tools</string>
     <string name="memory_editor_expand_process">Expand process records</string>
@@ -5543,6 +5545,19 @@
     <string name="plan_execution_graph">Execution Plan</string>
     <string name="image_block">Image</string>
     <string name="audio_block">Audio</string>
+    <string name="audio_playback_failed">This audio can\'t be played right now</string>
+    <string name="voice_to_text">Show text</string>
+    <string name="voice_options">Voice options</string>
+    <string name="voice_hide_text">Hide text</string>
+    <string name="voice_no_transcript">This audio cannot be turned into text</string>
+    <string name="voice_recognizing">Recognizing…</string>
+    <string name="voice_recognized_note">Recognized automatically; may have mistakes</string>
+    <string name="voice_stt_live_only">Sherpa-ncnn, the speech recognition in use, cannot recognize recorded audio. Download the SenseVoice or Paraformer local model in Speech services settings to do it offline</string>
+    <string name="voice_stt_not_set_up">Speech recognition is not set up yet. Add its key in Speech services settings, or download the SenseVoice local model</string>
+    <string name="voice_stt_model_missing">The local recognition model is not downloaded yet. Download it in Speech services settings first</string>
+    <string name="voice_stt_too_long">Audio longer than %1$d minutes cannot be recognized</string>
+    <string name="voice_stt_failed">Recognition failed: %1$s</string>
+    <string name="voice_stt_nothing">No speech was heard</string>
     <string name="video_block">Video</string>
     <string name="image_load_failed">Image failed to load</string>
     <string name="save_image">Save Image</string>
@@ -8185,6 +8200,7 @@
     <string name="chat_delete_single_variant_unavailable">No single message candidates available for deletion</string>
     <string name="chat_delete_single_variant_failed">Failed to delete single message: %1$s</string>
     <string name="chat_delete_message_confirm_message">Are you sure you want to delete this message? This action cannot be undone.</string>
+    <string name="orbit_delete_split_reply_confirm">This reply shows as %d parts, and all of them will be deleted. This action cannot be undone.</string>
 
     <string name="quick_plugin_creator_title">Quickly Create Your Plugin</string>
     <string name="quick_plugin_creator_desc">Cannot find the plugin you want in the built-in list or marketplace? Create your own.</string>
@@ -9243,7 +9259,15 @@
     <string name="orbit_quota_status_extra">This week\'s allowance is used up; using the extra allowance</string>
     <string name="orbit_quota_usage">Usage</string>
     <string name="orbit_quota_adjust">Change allowances</string>
-    <string name="orbit_quota_adjust_help">The weekly allowance starts over every Monday at midnight and can\'t go below 100M. The extra allowance is only used once the week\'s is gone; 0 turns it off. With both used up, %1$s pauses.</string>
+    <string name="orbit_quota_adjust_help">The weekly allowance starts over every Monday at midnight. The extra allowance is only used once the week\'s is gone; 0 turns it off. With both used up, %1$s pauses.</string>
+    <string name="orbit_quota_mode">Count by</string>
+    <string name="orbit_quota_mode_money">Spending</string>
+    <string name="orbit_quota_mode_money_desc">What calls cost at the model prices, in US dollars. Expensive models (like Opus) and cheap ones (like DeepSeek) are compared fairly</string>
+    <string name="orbit_quota_mode_tokens">Tokens</string>
+    <string name="orbit_quota_mode_tokens_desc">The number of tokens used, whatever the model costs</string>
+    <string name="orbit_quota_money_unit">USD</string>
+    <string name="orbit_quota_unpriced">This week %1$d call(s) had no cost (%2$s most likely has no price), so they were not counted. You can add the price in Model pricing.</string>
+    <string name="orbit_quota_confirm_prompt">Counted by spending by default: %1$s a week, with %2$s extra. Tap Change allowances to check it; once you save, this note goes away.</string>
     <string name="orbit_quota_weekly_field">Weekly allowance</string>
     <string name="orbit_quota_extra_field">Extra allowance</string>
     <string name="orbit_quota_unit">M tokens</string>
@@ -9257,7 +9281,7 @@
     <string name="orbit_quota_what_is_named">What is %1$s</string>
     <string name="orbit_quota_got_it">Got it</string>
     <string name="orbit_dialog_got_it">Got it</string>
-    <string name="orbit_quota_weekly_info">This is the weekly token cap you set for %1$s, so tokens can\'t quietly run out. It resets every Monday at 00:00 and every Orbit shares it. The default is 1 billion and the lowest is 100 million. When it runs out, %1$s is told first so it can keep an eye on usage, and the extra allowance starts being used.</string>
+    <string name="orbit_quota_weekly_info">This is the weekly cap you set for %1$s, counted by spending (US dollars) or by tokens, so it cannot quietly spend too much. It resets every Monday at 00:00. By default it counts spending, 100 dollars a week. When it runs out, %1$s is told first so it can keep an eye on usage, and the extra allowance starts being used.</string>
     <string name="orbit_quota_extra_info">%1$s only starts using this extra allowance after the weekly allowance runs out. When the extra allowance runs out too, %1$s pauses until next week\'s reset or until you refill it. You can set it to 0 (pause as soon as the weekly allowance is gone), choose Keep (only refilled when you tap Reset extra allowance), or choose Every week. You can refill it any time without waiting for it to run out.</string>
     <string name="orbit_quota_reset_extra">Reset extra allowance</string>
     <string name="orbit_quota_reset_extra_none">Nothing used yet, no need to reset</string>
@@ -9435,7 +9459,7 @@
     <string name="orbit_profile_status_busy">Busy</string>
     <string name="orbit_profile_today">Today</string>
     <string name="orbit_profile_yesterday">Yesterday</string>
-    <string name="orbit_profile_activity_empty">No tasks run yet</string>
+    <string name="orbit_profile_activity_empty">No task activity yet. Watch script checks that found nothing are in that task\'s details</string>
     <string name="orbit_profile_run_interrupted">Interrupted and paused</string>
     <string name="orbit_profile_approvals_empty">No approval records yet</string>
     <string name="orbit_profile_waiting">Waiting for you</string>
@@ -9642,7 +9666,7 @@
     <string name="orbit_files_create">New</string>
     <string name="orbit_files_exists">A file with that name already exists</string>
     <string name="orbit_builds_files_empty">Files %1$s saves show up here.</string>
-    <string name="orbit_builds_made">Builds</string>
+    <string name="orbit_builds_made">Made</string>
     <string name="orbit_builds_uploads">Library</string>
     <string name="orbit_builds_system">System files</string>
     <string name="orbit_system_hint">All of %1$s\'s own files are here. You can look through them; to change something, ask %1$s.</string>
@@ -9686,6 +9710,11 @@
     <string name="orbit_feed_refresh_message">Post a new feed update right now.</string>
     <string name="orbit_feed_card_message">I submitted this in the card on the feed post \"%1$s\": %2$s</string>
     <string name="orbit_feed_card_busy">%1$s is still answering. Submit again when it is done.</string>
+    <string name="orbit_open_blocked_unsaved">You have unsaved changes, so the chat did not open. Save or discard them, then open it from the chat list.</string>
+    <string name="orbit_quota_money_invalid">Enter an amount such as 100 or 12.5, at most two decimals</string>
+    <string name="orbit_quota_tokens_invalid">Enter a whole number</string>
+    <string name="orbit_quota_save_failed">Could not save; please try again</string>
+    <string name="orbit_quota_saving">Saving…</string>
     <string name="orbit_feed_card_failed">This card could not be opened.</string>
     <string name="orbit_feed_intro_title">What is the Feed?</string>
     <string name="orbit_feed_intro_1">This is a feed %1$s writes just for you. It looks on the web for news you may care about and keeps an eye on things on your phone that concern you (such as a parcel pickup code), turning them into short posts, sometimes with a small card you can tap.</string>
@@ -9729,6 +9758,7 @@
     <string name="orbit_decision_chat_quiet">%1$s looked and chose not to bother you</string>
     <string name="orbit_decision_chat_pending">%1$s looked; not sure yet whether it told you</string>
     <string name="orbit_hook_needs_dry_run">This script has not passed a dry run. Ask Orbit to try it, review the output, then enable the task.</string>
+    <!-- Its start is OrbitRunEntity.HOOK_QUIET_EN: these checks stay off the activity list by it. -->
     <string name="orbit_hook_silent">The script decided not to wake Orbit this time: %1$s</string>
     <string name="orbit_task_in_chat">When it\'s due, %1$s handles it in the chat; if you\'re in the middle of a conversation, it waits a moment</string>
     <string name="orbit_run_in_chat">Handed to Orbit in the chat</string>
@@ -10108,7 +10138,11 @@
     <string name="orbit_find_media">Photos &amp; videos</string>
     <string name="orbit_find_files">Files</string>
     <string name="orbit_find_links">Links</string>
-    <string name="orbit_find_music">Music</string>
+    <string name="orbit_find_music">Audio</string>
+    <string name="orbit_find_voice">Voice</string>
+    <string name="orbit_find_read_back_to">Searched back to %1$s, nothing more yet</string>
+    <string name="orbit_find_nothing_yet">Nothing found yet</string>
+    <string name="orbit_find_keep_looking">Look further back</string>
     <string name="orbit_find_cards">Cards</string>
     <string name="orbit_find_approvals">Approvals</string>
     <string name="orbit_find_favorites">Favorites</string>
@@ -10151,6 +10185,7 @@
     <string name="orbit_emoji_load_failed">Couldn\'t load the emoji list</string>
     <string name="orbit_sent_card">Sent a card</string>
     <string name="ai_message_quoted_card">Card</string>
+    <string name="ai_message_quoted_voice">Voice</string>
     <string name="orbit_emoji_group_people">People and body</string>
     <string name="orbit_emoji_group_animals">Animals and nature</string>
     <string name="orbit_emoji_group_food">Food and drink</string>

@@ -23,7 +23,7 @@ The "Unsorted (older notes)" part of `memory.md` holds notes from before the sec
 ## Scope and updates
 
 The same Orbit's main chat and side chats share memory.
-Different Orbits are isolated by default; do not read another Orbit or global memory without an explicit request.
+Do not read the main app's global memory without an explicit request.
 If asked to read elsewhere, read only the specified content rather than importing everything.
 
 Learned memory and skill changes take effect directly, without individual change approvals.
@@ -56,9 +56,8 @@ Import does not restore the original chat, account settings, or another app's pe
 
 ## Forgetting information
 
-Use `orbit_forget action=plan` to inspect copies and the proposed cleanup scope.
-Explain the categories to be cleared and that deletion is irreversible, without repeating the information being forgotten.
-Use `confirm` only after the user explicitly agrees, then say honestly what was cleared and what `remaining` still lists.
-Matches in SOUL.md, IDENTITY.md and the user's own documents in files/ (a downloaded novel, a draft) are only listed, never changed automatically; the user decides. Files that could not be checked are marked unchecked with a reason (too big, changing while read, unreadable); tell the user they were not checked. Ask for confirmation only when something can be cleared.
-Original chat messages are not deleted; the user can delete that chat from the chat list.
+There is no separate forget tool; use the ordinary memory and note tools: delete the entries about it from memory.md, user.md, people and circle notes, logs and the lessons book. Do not repeat the information being forgotten.
+When a memory entry is deleted, finished records in the change history drop those lines too.
+Do not change SOUL.md, IDENTITY.md or the user's own documents in files/ (a downloaded novel, a draft) yourself; if they mention it, tell the user which file and let them decide.
+Afterwards tell the user the original chat messages are still there and they can delete those messages in the chat; change records still awaiting a decision may also keep a copy.
 When background memory learning or the nightly review reads that the user asked to forget something, it does not record it and removes what it recorded before; the proactive check skips it and drafts nothing about it.

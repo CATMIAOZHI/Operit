@@ -459,9 +459,14 @@ internal fun OrbitImportMemorySheet(orbit: OrbitProfile, onDismiss: () -> Unit, 
             Button(
                 enabled = !sending && pasted.isNotBlank() && !tooLong, modifier = Modifier.fillMaxWidth(),
                 onClick = {
-                    sending = true
-                    sendToOrbit(context, orbit, resources.getString(R.string.orbit_import_message, pasted.trim()))
-                    onSent()
+                    // The sheet and the pasted answer stay when Orbit cannot take it yet, to try again.
+                    if (sendToOrbit(context, orbit, resources.getString(R.string.orbit_import_message, pasted.trim()))) {
+                        sending = true
+                        onSent()
+                    } else {
+                        Toast.makeText(context, resources.getString(R.string.orbit_feed_card_busy,
+                            orbit.name.ifBlank { resources.getString(R.string.nav_orbit) }), Toast.LENGTH_SHORT).show()
+                    }
                 },
             ) { Text(stringResource(R.string.orbit_import_send, orbit.name)) }
             Text(stringResource(R.string.orbit_import_note), style = MaterialTheme.typography.bodySmall,

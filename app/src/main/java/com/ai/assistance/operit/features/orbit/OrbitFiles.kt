@@ -258,32 +258,6 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         return Written(p, before, text, existed = existed)
     }
 
-    /**
-     * For forgetting: deletes [path], or rewrites it with [clean], only while it is still Orbit's own,
-     * checked under the lock together with the change: never a user document, and a hook script in
-     * files/ only while its bytes still read as what its task registered ([hooks]: path to hash).
-     * False when it was left alone.
-     */
-    suspend fun cleanOwned(path: String, hooks: Map<String, String>, delete: Boolean, clean: (String) -> String): Boolean = io {
-        val p = normalize(path)
-        val owned = hooks[p]?.let { registered ->
-            runCatching {
-                val f = inside(File(root, p))
-                f.isFile && f.length() <= MAX_TEXT * 4L &&
-                    OrbitTextFiles.readStrictUtf8(f)?.let(OrbitWatchSources::hash) == registered
-            }.getOrDefault(false)
-        } == true
-        if (isUserDocument(p, if (owned) setOf(p) else emptySet())) return@io false
-        // Gone since the scan (or never written, only its template): nothing here to clean.
-        val f = inside(File(root, p))
-        if (!f.isFile) return@io false
-        if (delete) deleteNow(path) else {
-            require(f.length() <= MAX_TEXT * 4L) { "File is too large to read" }
-            writeNow(p, clean(f.readText()))
-        }
-        true
-    }
-
     /** The newest nightly review, dreams/YYYY-MM-DD.md, or null before the first one. */
     suspend fun latestDream(): String? = io {
         File(root, "dreams").listFiles()?.map { "dreams/${it.name}" }
@@ -376,6 +350,8 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         val real = realShortPath(f)
         require((allowed(real) && !isIndex(real)) || isWorkspace(real)) { "This file cannot be deleted: $path" }
         Files.delete(f.toPath())
+        // A voice message's kept words go with it.
+        OrbitVoiceText.forget(f, root)
         afterChange(real)
         return p
     }
@@ -409,7 +385,14 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
             "$p is reached through a link into ${if (isWorkspace(real)) "workspace/" else "files/"}. " +
                 "Nothing was deleted. Delete it by its real path: ${File(root, real).absolutePath}"
         }
-        if (recursive) return deleteTree(dir, alive)
+        if (recursive) {
+            try {
+                return deleteTree(dir, alive)
+            } finally {
+                // Words shown for the voice messages in it go too, even when only some were deleted.
+                OrbitVoiceText.forgetFolder(real)
+            }
+        }
         // The file system refuses a folder that is not empty, even one that just got a file.
         try {
             Files.delete(dir.toPath())
@@ -535,7 +518,16 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
     }
 
     /** Saves a binary file under files/, keeping an existing one by adding a number to the name. */
-    suspend fun saveBytes(path: String, input: InputStream, maxBytes: Long = MAX_FILE_BYTES): Entry = io {
+    /**
+     * Saves [input] as a new file under files/. [voiceText], for a voice message in files/voice/,
+     * is kept as its words (see [OrbitVoiceText]) under the same lock, so they always name this very recording.
+     */
+    suspend fun saveBytes(
+        path: String,
+        input: InputStream,
+        maxBytes: Long = MAX_FILE_BYTES,
+        voiceText: String? = null,
+    ): Entry = io {
         var p = normalize(path)
         require(p.startsWith("files/") && FILES.matches(p)) { "Only files/ takes new files: $path" }
         val folder = p.substringBeforeLast('/')
@@ -548,6 +540,7 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         val target = inside(File(root, p))
         target.parentFile?.mkdirs()
         val temporary = File.createTempFile(".file-", ".tmp", target.parentFile)
+        val digest = voiceText?.let { OrbitVoiceText.digest() }
         try {
             temporary.outputStream().use { out ->
                 val buffer = ByteArray(64 * 1024)
@@ -558,12 +551,14 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
                     total += count
                     require(total <= maxBytes) { "File is larger than ${maxBytes / 1024 / 1024} MB" }
                     out.write(buffer, 0, count)
+                    digest?.update(buffer, 0, count)
                 }
             }
             Files.move(temporary.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE)
         } finally {
             temporary.delete()
         }
+        if (voiceText != null && digest != null && p.startsWith("files/voice/")) OrbitVoiceText.save(target, voiceText, root, digest)
         entry(p, target)
     }
 

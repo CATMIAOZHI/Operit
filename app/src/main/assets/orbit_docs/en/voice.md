@@ -30,8 +30,10 @@ If a cloud voice fails, the tool reports the error and does not fall back to the
 ## Make a voice message
 
 Use `orbit_voice action=speak` when the user wants a voice message, briefing, story, or other replayable audio.
-Put the spoken words in `text`. Optional `title` supplies the filename without an extension.
+Put the spoken words in `text`. Optional `title` supplies the filename without an extension (the chat does not show it); a few words on the topic are enough, such as "Morning briefing".
 `voice` (a phone system voice name) is only accepted when the user chose the phone's own voice.
+
+When your voice is Xiaomi MiMo, you can make it sound more human: `style` says in words how to read it (tone, emotion, pace, or a director's role / scene / direction), and `text` may start with a style tag like `(gentle)` and carry cues like `(sighs)`. Each podcast line can have its own `style`. MiMo does not read short bracketed text aloud, so keep spoken words out of brackets; performance cues do not show under "to text". See [voice-style.md](voice-style.md) for how to write them and the tag lists. Other voices drop the style and cues, and the result says `styled=false`.
 
 Each file allows at most 6000 characters, counting all lines together for multi-speaker audio; requests to the voice service are also capped, so do not cut lines too small.
 Split longer content into several files. If the audio is too large or synthesis fails, follow the returned error to shorten or split it. Do not report failed generation as success.
@@ -50,6 +52,7 @@ Write short, natural exchanges. Do not describe this as real people participatin
 ## Deliver the audio
 
 On success, the tool returns `path`, `engine` (`cloud` or `phone`) and `markdown`; a voice message also has `service` (the profile name), a podcast the `voices` each speaker got.
-Include the returned `markdown` unchanged in your reply so the user gets a player in chat.
+Put the returned `markdown` unchanged on a line of its own; the chat shows it as a voice bar the user taps to play.
+Send it the way people send a voice note: at most one short sentence around it, and do not write out what the audio says; the user can long-press the voice bar and tap "Show text" to see its words. Give a text version when the user asks for one.
 The file is saved under the current Orbit's `files/voice/` (MP3 or WAV for cloud voices, WAV for the phone's voice) and is also available among the files on the Builds page.To resend existing audio, use `orbit_file action=send`.
 A device path alone is not a delivered file. Report completion only from the actual tool result.

@@ -10,9 +10,11 @@ By default, a due task wakes you in its source chat with that chat's context.
 For substantial work that can run independently, explicitly select subagent execution; its result is handed back to Orbit.
 Subagent mode does not mean the main chat stays continuously busy, or that work will continue while the device is offline.
 
-`model` accepts `main`, `assistant`, or `default`.
-By default, tasks that wake the chat use the main model; background tasks and nightly alignment reviews use the assistant model.
-Omitting it on create uses default; omitting it on update preserves the saved choice. Built-in tasks also allow model changes.
+A task that wakes you in a chat uses whatever model that chat uses now and has no model of its own; if the user switches models in the chat, the task follows.
+For background tasks (run by a subagent), `model` accepts `main`, `assistant`, or `default` (the assistant model).
+Omitting it on create uses default; omitting it on update preserves the saved choice. Built-in background tasks also allow model changes.
+A background run gets 60 minutes by default; `timeout_minutes` changes it, up to 1440. Built-in routines (Feed, Ideas, the proactive check and so on) are fixed at 60 minutes, the nightly alignment review at 120. `effective_model` is returned for background tasks only.
+A watch script's check that decides not to wake you is shown only in that task's run history. A failed script check still appears in the profile's task activity.
 The returned `effective_model` contains the actual role, configuration name and model name. If `model_error` is present, ask the user to choose again in your settings → Models.
 The model choice in task details fills a chat draft. Apply the change through the tool after the user sends that request.
 
@@ -86,7 +88,7 @@ Power management or system restrictions can miss brief visits; do not promise su
 ## When something does not run on time
 
 Check whether the task is paused, its next run, recent run records, permissions, connectivity, and background restrictions.
-Subagent work has a runtime limit; a timeout stops and pauses the task. Read the result before explaining or handling it.
+Subagent work has a runtime limit; a timeout stops and pauses the task (the nightly alignment review, when it has progress to resume, reads on next time). Read the result before explaining or handling it.
 The user can use the app's controls to adjust background keep-alive and system permissions.
 Do not promise to bypass Android restrictions or describe keep-alive permission as a guarantee of uninterrupted operation.
 
