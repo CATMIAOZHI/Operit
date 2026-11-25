@@ -251,6 +251,17 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         @Volatile var viewportHeightPx: Int? = null
         @Volatile var hasExplicitViewportSize: Boolean = false
         @Volatile var lastSnapshot: BrowserSnapshot? = null
+        /** How many pages this tab has started loading, so going to the same address again counts. */
+        @Volatile var pageStarts: Long = 0L
+        /** Whether any page has started here; the blank page a new tab opens with does not count. */
+        @Volatile var anyPageStarted: Boolean = false
+        /**
+         * How many pages the WebView has shown here, and how many it had when the latest page
+         * started, so the latest page's own readiness can be asked once it is shown. The built-in
+         * engine reports no such moment; its pages are ready when they finish loading.
+         */
+        @Volatile var pageCommits: Long = 0L
+        @Volatile var commitsAtStart: Long = 0L
         val stateSignal: Object = Object()
         @Volatile var stateVersion: Long = 0L
         val consoleEntries: MutableList<BrowserConsoleEntry> = mutableListOf()
@@ -274,7 +285,8 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         val consoleTimestamp: Long,
         val downloadTimestamp: Long,
         val snapshotGeneration: Long,
-        val startedAt: Long
+        val startedAt: Long,
+        val pageStarts: Long = 0L,
     )
 
     internal data class BrowserActionSettlement(
@@ -1543,13 +1555,14 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         runOnMainSync<Unit> {
             ensureSessionAttachedOnMain(session.id)
         }
-        fields.forEach { field ->
+        fields.forEachIndexed { index, field ->
             val ref = field.optString("ref").trim()
             if (ref.isNotBlank() && requireSnapshotNode(session, ref) == null) {
                 return pageError(
                     tool.name,
                     session,
-                    "Ref $ref was not found in the current snapshot. Capture a new snapshot and retry."
+                    "Ref $ref (field ${index + 1} of ${fields.size}) was not found in the current snapshot. " +
+                        "No field was filled. Capture a new snapshot and retry."
                 )
             }
         }

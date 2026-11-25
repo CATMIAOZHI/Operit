@@ -324,6 +324,8 @@ internal fun StandardBrowserSessionTools.configureWebView(
 
             override fun onPageCommitVisible(view: WebView, url: String) {
                 super.onPageCommitVisible(view, url)
+                // The new page is shown: its own document can now be asked whether it is ready.
+                session.pageCommits++
                 sessionPageCommitted(session, url)
             }
 

@@ -1958,18 +1958,24 @@ internal fun StandardBrowserSessionTools.pageError(
     session: BrowserToolSession?,
     message: String
 ): ToolResult {
+    // The error comes first; the page follows for context, its snapshot kept to one section's
+    // length. If reading the page fails, the original error still goes back.
     val rendered =
-        if (session != null) {
-            buildBrowserResponse(
-                openTabs = renderOpenTabs(),
-                pageState = renderPageState(session),
-                snapshot = captureSnapshotText(session),
-                modalState = renderModalState(session),
-                error = message
-            )
-        } else {
-            buildBrowserResponse(error = message)
-        }
+        session?.let {
+            try {
+                buildBrowserResponse(error = message) + "\n\n" +
+                    buildBrowserResponse(
+                        openTabs = renderOpenTabs(),
+                        pageState = renderPageState(it),
+                        snapshot = inlineOrSaved(captureSnapshotText(it), "snapshot", "yaml"),
+                        modalState = renderModalState(it),
+                    )
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                null
+            }
+        } ?: buildBrowserResponse(error = message)
     return ToolResult(
         toolName = toolName,
         success = false,
@@ -2230,13 +2236,13 @@ internal fun StandardBrowserSessionTools.fillFormFields(
                 const resolved = __operitResolveRef(String(refValue || ''));
                 return resolved ? resolved.element : null;
             };
-            fields.forEach((field, index) => {
+            const fillOne = (field, index) => {
                 const target =
                     field.ref ? findByRef(field.ref) :
                     field.selector ? document.querySelector(String(field.selector)) :
                     null;
                 if (!target) {
-                    throw new Error("field_not_found:" + (field.name || index));
+                    throw new Error("field_not_found:" + (field.name || (index + 1)));
                 }
                 const type = String(field.type || target.type || target.tagName || "").toLowerCase();
                 const value = String(field.value ?? "");
@@ -2254,6 +2260,19 @@ internal fun StandardBrowserSessionTools.fillFormFields(
                     throw new Error(String(result));
                 }
                 results.push(String(field.name || ("field_" + (index + 1))) + " => " + type);
+            };
+            // A field that fails stops the rest; the error says which fields were already filled,
+            // since those stay filled on the page.
+            fields.forEach((field, index) => {
+                try {
+                    fillOne(field, index);
+                } catch (e) {
+                    const done = results.length
+                        ? "Fields completed before it: " + results.join(", ") + ". "
+                        : "No earlier field completed. ";
+                    throw new Error(String((e && e.message) || e) + " (at field " + (index + 1) + " of " + fields.length + "). " +
+                        done + "The failed field may have changed partly; the fields after it did not run.");
+                }
             });
             return results.join("\n");
         })()
