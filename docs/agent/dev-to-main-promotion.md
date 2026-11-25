@@ -218,7 +218,7 @@ gh pr create --repo CATMIAOZHI/orbit --base main --head promote/<release> \
 
 ### 8. 等待 CI 并合并
 
-`main` 的 Ruleset 只把 `Fast checks` 列为必需检查。`Full Android checks` 要在 GitHub 托管 runner 上跑完整测试与 lint，经常因为 `The runner has received a shutdown signal`、Gradle daemon 消失，或与本次改动无关的既有 flaky 用例（如 `TokenTrackingAIServiceTest`、`CleanupReliabilityTest`）失败，不作为晋升门槛。
+`main` 的 Ruleset 只把 `Fast checks` 列为必需检查。`Full Android checks` 要在 GitHub 托管 runner 上跑完整测试与 lint，曾经常因为 runner 内存耗尽（`The runner has received a shutdown signal`、Gradle daemon 消失）或与本次改动无关的既有 flaky 用例（如 `TokenTrackingAIServiceTest`、`CleanupReliabilityTest`）失败；现在这一步已和 Android Build 一样限制 Gradle 堆为 6g、Kotlin 编译在 Gradle 进程内进行。它仍不作为晋升门槛。
 
 晋升的判定标准是两条同时满足：
 

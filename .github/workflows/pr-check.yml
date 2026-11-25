@@ -436,6 +436,15 @@ jobs:
           if [[ "$INSTRUMENTATION_REQUIRED" == "true" ]]; then
             flags+=(--instrumentation)
           fi
+          # Same limits as Android Build: with Gradle and a separate Kotlin daemon each given the
+          # project's 8 GiB heap, the 16 GB runner ran out of memory during lint and GitHub lost
+          # contact with it. Settings in the Gradle user home win over the project's.
+          gradle_home="${GRADLE_USER_HOME:-$HOME/.gradle}"
+          mkdir -p "$gradle_home"
+          {
+            echo "org.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
+            echo "kotlin.compiler.execution.strategy=in-process"
+          } >> "$gradle_home/gradle.properties"
           bash ci/script/run_android_checks.sh --lane full "${flags[@]}"
 
       - name: Upload full Android profile reports
