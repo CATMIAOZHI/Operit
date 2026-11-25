@@ -369,6 +369,23 @@ kotlin {
 // Drawing the README pictures (tools/readme/readme-shots.ps1) loads UI libraries built for Java 21 and
 // the chat's markdown library built for the computer; only that run needs them.
 val readmeShots = providers.gradleProperty("orbitReadmeShots").orNull
+
+// Robolectric downloads the Android framework jar from Maven Central the first time a test needs it,
+// inside the test run and without retrying; on CI that download failed now and then and failed the
+// tests with it. Gradle fetches the jar with the other dependencies (with retries and its cache), and
+// Robolectric reads it from there offline. This is the jar Robolectric fetches for SDK 34; change it
+// together with the Robolectric version, or the tests stop with a missing jar.
+val robolectricAndroidAll: Configuration by configurations.creating { isTransitive = false }
+dependencies { add(robolectricAndroidAll.name, "org.robolectric:android-all-instrumented:14-robolectric-10818077-i7") }
+tasks.withType<Test>().configureEach {
+    val androidAll: FileCollection = robolectricAndroidAll
+    // Lets Gradle see the jar, so a changed pin reruns the tests instead of reusing an old result.
+    inputs.files(androidAll).withPropertyName("robolectricAndroidAll").withPathSensitivity(PathSensitivity.NAME_ONLY)
+    systemProperty("robolectric.offline", "true")
+    // Read where Gradle keeps it, so the 150 MB jar is never copied.
+    doFirst { systemProperty("robolectric.dependency.dir", androidAll.singleFile.parentFile.absolutePath) }
+}
+
 if (readmeShots == null) {
     // Ordinary test runs leave the picture classes out entirely.
     tasks.withType<Test>().configureEach { exclude("com/ai/assistance/operit/readme/**") }

@@ -285,3 +285,4 @@ gh run watch <run-id> --exit-status --interval 60 >/dev/null 2>&1
 | CMake `Unable to resolve ref` | 确认 `operit_git_source.cmake` 的 SHA 检测逻辑未被改动；CMake regex 不支持 `{n}` 量词 |
 | 构建产物体积异常 | 检查是否意外打包了多个 ABI；当前只支持 `arm64-v8a` |
 | ObjectBox 模型文件被修改 | 提交前用 `git status` 检查，恢复无关生成物 |
+| Robolectric 测试报找不到 `android-all-instrumented-*.jar` | 测试离线读 Gradle 缓存里的框架 jar。升级 `gradle/libs.versions.toml` 的 `robolectric` 后，要同步改 `app/build.gradle.kts` 里 `android-all-instrumented` 的版本 |
