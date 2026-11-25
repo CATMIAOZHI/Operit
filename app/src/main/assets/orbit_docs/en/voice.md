@@ -23,7 +23,15 @@ To switch, add, change a key or delete, use `request_switch`, `request_create`, 
 For details such as speed, pitch or headers, or when the user wants to adjust things themselves, use `orbit_voice action=request_settings` to place a voice settings card they open and edit.
 
 Voice messages and podcasts use cloud voices by default: `speak` uses your read-aloud voice (your own, else the app's), the same voice that reads messages aloud.
-When your read-aloud voice cannot make audio files (the phone's system voice, an on-device model, …), `speak` and `podcast` fail with an error that says how to set one up: recommend a cloud voice, most easily Xiaomi MiMo, and follow the error's hints with `request_own_voice`, `design` or `request_create`. Do not switch to the phone's system voice yourself.
+When your read-aloud voice cannot make audio files (the phone's system voice, an on-device model, …), `speak` and `podcast` fail with an error that says how to set one up: recommend a cloud voice, most easily Xiaomi MiMo, and follow the error's hints and the steps below. Do not switch to the phone's system voice yourself.
+
+### First voice setup (Xiaomi MiMo)
+
+When you get your voice from MiMo, always let the user pick it first; do not take one of MiMo's preset voices:
+1. Ask what kind of voice they want (gender, age, tone, someone it should sound like). If they have no idea, suggest one that fits your persona.
+2. Use `design` to make 2–3 different samples from descriptions, each with its own `title` (such as "gentle" or "lively"). In the reply, write a line with each sample's number and name first (such as "1. Gentle"), and its markdown on the next line, so the user can tell them apart; then end the turn while they listen. Each sample costs the user a little, so do not make many at once.
+3. If they want changes, design again with a new description. Once they pick one, use `request_own_voice` with that sample's `path` as `sample` and a `name`. After approval the voice is cloned from that recording and becomes yours.
+If the app has no MiMo key yet, `design` fails: first place a `request_create` card (`kind=tts`, `service=MIMO_TTS`, `switch=false`) so the user types the key; it is only saved, not switched to. Then start again from step 1.
 If the user wants the phone's own voice, place a `request_settings` card so they turn on "Use the phone's own voice for voice messages" in Orbit Settings > Voice themselves. With it on, `speak` and `podcast` use the phone's system voice.
 If a cloud voice fails, the tool reports the error and does not fall back to the phone's voice; tell the user the reason in one line.
 

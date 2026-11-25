@@ -135,7 +135,7 @@ fun BubbleStyleChatMessage(
                     ) {
                         pieces.forEachIndexed { i, piece ->
                             key(i) {
-                                com.ai.assistance.operit.ui.features.chat.components.OrbitPieceFrame(piece) {
+                                com.ai.assistance.operit.ui.features.chat.components.OrbitPieceFrame(piece, i) {
                                     bubble(message.copy(content = piece.content), null)
                                 }
                             }

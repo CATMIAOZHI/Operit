@@ -1058,6 +1058,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                         androidx.compose.runtime.CompositionLocalProvider(
                             com.ai.assistance.operit.ui.features.chat.components.LocalLongScreenshotEnabled provides longScreenshotEnabled,
                             com.ai.assistance.operit.ui.features.chat.components.LocalOrbitTurnFloor provides orbitTurnFloor,
+                            com.ai.assistance.operit.ui.features.chat.components.LocalOrbitWritingTimestamp provides orbitStreaming?.timestamp,
                             com.ai.assistance.operit.ui.features.chat.components.LocalOrbitBottomNoteLift provides
                                 with(density) { orbitNoteHeightPx.toDp() },
                             com.ai.assistance.operit.ui.features.chat.components.LocalSubagentTranscriptRole provides

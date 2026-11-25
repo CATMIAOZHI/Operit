@@ -80,19 +80,16 @@ import com.ai.assistance.operit.api.chat.ChatRuntimeHolder
 import com.ai.assistance.operit.api.chat.ChatRuntimeSlot
 import com.ai.assistance.operit.data.model.OrbitArtifactVersionEntity
 import com.ai.assistance.operit.data.model.OrbitGoalEntity
-import com.ai.assistance.operit.data.model.OrbitNotificationEntity
 import com.ai.assistance.operit.data.preferences.OrbitPreferences
 import com.ai.assistance.operit.data.preferences.OrbitProfile
 import com.ai.assistance.operit.features.orbit.OrbitArtifactRepository
 import com.ai.assistance.operit.features.orbit.OrbitBoardRepository
 import com.ai.assistance.operit.features.orbit.OrbitBoardRepository.Board
-import com.ai.assistance.operit.features.orbit.OrbitExecutionGate
 import com.ai.assistance.operit.features.orbit.OrbitFeedGenerator
 import com.ai.assistance.operit.features.orbit.OrbitFiles
 import com.ai.assistance.operit.features.orbit.OrbitRoutines
 import com.ai.assistance.operit.features.orbit.OrbitGoalRepository
 import com.ai.assistance.operit.features.orbit.OrbitTaskRepository
-import com.ai.assistance.operit.features.orbit.OrbitTaskScheduler
 import com.ai.assistance.operit.features.orbit.OrbitUploads
 import com.ai.assistance.operit.util.AppLogger
 import java.text.DateFormat
@@ -3312,74 +3309,6 @@ internal fun artifactPages(text: String, markdown: Boolean): List<ArtifactPage> 
             pages += ArtifactPage(start, cut, opens, closes)
             carried = open
             start = cut
-        }
-    }
-}
-
-// ---------------------------------------------------------------- Notifications
-
-/** Quiet hours and how often task results are delivered; opened from the Orbit settings. */
-@Composable
-internal fun OrbitNotificationsPage(orbitId: String, onBack: () -> Unit) {
-    val context = LocalContext.current
-    val resources = LocalResources.current
-    val action = rememberAction()
-    val dao = remember(context) { OrbitTaskRepository(context).dao }
-    var policy by remember(orbitId) { mutableStateOf<OrbitNotificationEntity?>(null) }
-    LaunchedEffect(orbitId) {
-        policy = try {
-            dao.notificationPolicy(orbitId)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            null
-        } ?: OrbitNotificationEntity(orbitId)
-    }
-    fun save(change: (OrbitNotificationEntity) -> OrbitNotificationEntity) = action {
-        OrbitExecutionGate.serialized {
-            val current = dao.notificationPolicy(orbitId) ?: OrbitNotificationEntity(orbitId)
-            dao.saveNotificationPolicy(change(current))
-        }
-        policy = dao.notificationPolicy(orbitId)
-        OrbitTaskScheduler.reschedule(context)
-    }
-    OrbitPageBack(onBack = onBack)
-    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        Column(
-            Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()
-                .verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                OrbitCircleButton(orbitIcon("chevron-left"), stringResource(R.string.back), onBack)
-                Spacer(Modifier.width(12.dp))
-                Text(stringResource(R.string.orbit_notifications_row), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-            }
-            val settings = policy
-            if (settings == null) {
-                LinearProgressIndicator(Modifier.fillMaxWidth())
-            } else {
-                SoftCard {
-                    Text(stringResource(R.string.orbit_notifications_help), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text(stringResource(R.string.orbit_quiet_hours), Modifier.weight(1f))
-                        Switch(checked = settings.quietEnabled, onCheckedChange = orbitToggle { enabled -> save { it.copy(quietEnabled = enabled) } })
-                    }
-                    Text(stringResource(R.string.orbit_delivery_interval), style = MaterialTheme.typography.titleSmall)
-                    listOf(0, 15, 60).forEach { minutes ->
-                        Row(
-                            Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { save { it.copy(intervalMinutes = minutes) } },
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            RadioButton(selected = settings.intervalMinutes == minutes, onClick = { save { it.copy(intervalMinutes = minutes) } })
-                            Text(
-                                if (minutes == 0) stringResource(R.string.orbit_delivery_immediate)
-                                else stringResource(R.string.orbit_delivery_minutes, minutes)
-                            )
-                        }
-                    }
-                }
-            }
         }
     }
 }

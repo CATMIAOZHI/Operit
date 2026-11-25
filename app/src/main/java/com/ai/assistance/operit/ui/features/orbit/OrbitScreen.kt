@@ -1009,8 +1009,7 @@ private fun OrbitChatPage(
             OrbitSubPage.PHONE_PERMISSIONS -> OrbitPhonePermissionsPage(onBack = back,
                 onOpenDeviceAccess = { push(OrbitSubPage.DEVICE_ACCESS) })
             OrbitSubPage.DEVICE_ACCESS -> OrbitDeviceAccessPage(orbitName(orbit), onBack = back)
-            OrbitSubPage.NOTIFICATION_SETTINGS -> OrbitNotificationSettingsPage(orbit, onBack = back,
-                onOpenDelivery = { push(OrbitSubPage.NOTIFICATIONS) })
+            OrbitSubPage.NOTIFICATION_SETTINGS -> OrbitNotificationSettingsPage(orbit, onBack = back)
             OrbitSubPage.USAGE -> OrbitUsagePage(orbit, onBack = back,
                 onOpenTrends = { push(OrbitSubPage.USAGE_TRENDS) },
                 onOpenAppCosts = { push(OrbitSubPage.APP_COSTS) },
@@ -1056,7 +1055,6 @@ private fun OrbitChatPage(
                 else LaunchedEffect(Unit) { back() }
             }
             OrbitSubPage.TOOL_ACCESS -> OrbitToolAccessPage(onBack = back)
-            OrbitSubPage.NOTIFICATIONS -> OrbitNotificationsPage(orbit.id, onBack = back)
             OrbitSubPage.FILES -> OrbitFilesPage(orbit.id, onBack = back, onDraft = ::draftToChat)
             // No id opens the grouped list of every task.
             OrbitSubPage.TASK -> OrbitTasksPage(orbit.id, onBack = back, initialTaskId = openTaskId,
@@ -1656,7 +1654,7 @@ private fun OrbitChatPage(
     }
 }
 
-private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, ALIGNMENT, FILES, PACKAGES, TOOL_PERMISSIONS, TOOL_ACCESS, VAULT, VAULT_ENTRY, USAGE, USAGE_TRENDS, APPEARANCE, PET, MODELS, CONTEXT, MODEL_CONFIG, PHONE_PERMISSIONS, DEVICE_ACCESS, NOTIFICATION_SETTINGS, SPEECH_SETTINGS, CHANNELS, WEIXIN, TEXT_SETTINGS, AUTOMATION_SETTINGS, BACKUP, ABOUT, UPDATE_HISTORY, LANGUAGE, STORAGE, COMPONENTS, MCP_CONFIG, TERMINAL_STARTUP, HELP, AGREEMENT, APP_COSTS, APP_PRICING, APP_GROUPS, ROLE_CARDS, LESSONS }
+private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, MEMORY, MEMORY_LIBRARY, IDENTITY, USER, PROMPTS, PROMPT, ALIGNMENT, FILES, PACKAGES, TOOL_PERMISSIONS, TOOL_ACCESS, VAULT, VAULT_ENTRY, USAGE, USAGE_TRENDS, APPEARANCE, PET, MODELS, CONTEXT, MODEL_CONFIG, PHONE_PERMISSIONS, DEVICE_ACCESS, NOTIFICATION_SETTINGS, SPEECH_SETTINGS, CHANNELS, WEIXIN, TEXT_SETTINGS, AUTOMATION_SETTINGS, BACKUP, ABOUT, UPDATE_HISTORY, LANGUAGE, STORAGE, COMPONENTS, MCP_CONFIG, TERMINAL_STARTUP, HELP, AGREEMENT, APP_COSTS, APP_PRICING, APP_GROUPS, ROLE_CARDS, LESSONS }
 
 /** iOS-like timing: a quick start that settles softly (UIKit's default presentation curve). */
 internal object OrbitMotion {
@@ -2765,6 +2763,9 @@ private fun orbitSettingsEntries(
     val data = stringResource(R.string.orbit_section_data)
     val troubleshoot = stringResource(R.string.orbit_section_troubleshoot)
     val developer = stringResource(R.string.orbit_section_developer)
+    val permissionLevel by com.ai.assistance.operit.data.preferences.androidPermissionPreferences.preferredPermissionLevelFlow
+        .collectAsState(initial = null)
+    val rootChosen = permissionLevel == com.ai.assistance.operit.core.tools.system.AndroidPermissionLevel.ROOT
     @Composable
     fun entry(title: Int, subtitle: Int, icon: String, section: String, onClick: () -> Unit) =
         OrbitSettingsEntry(stringResource(title), stringResource(subtitle), lucide(icon), section, onClick)
@@ -2795,6 +2796,20 @@ private fun orbitSettingsEntries(
         add(entry(R.string.orbit_clear_logins_title, R.string.orbit_clear_logins_desc_own, "cookie", privacy) { onShowSwitch(ROW_CLEAR_LOGINS) })
         add(entry(R.string.orbit_web_wait_title, R.string.orbit_web_wait_desc, "timer", device, onOpenAutomation))
         add(entry(R.string.keep_screen_on, R.string.keep_screen_on_description, "monitor-smartphone", device, onOpenAutomation))
+        // Found, these open their page at the very row.
+        val keepAlive = stringResource(R.string.orbit_phone_keep_alive)
+        add(entry(R.string.orbit_phone_keep_alive, R.string.orbit_phone_keep_alive_note, "battery-charging", device) {
+            com.ai.assistance.operit.ui.features.settings.components.SettingsSearchFocus.request(keepAlive)
+            onOpenPhonePermissions()
+        })
+        // The Root row shows only while Root is the chosen permission level.
+        if (rootChosen) {
+            val rootMode = stringResource(R.string.root_execution_mode_title)
+            add(entry(R.string.root_execution_mode_title, R.string.root_execution_mode_description, "terminal", device) {
+                com.ai.assistance.operit.ui.features.settings.components.SettingsSearchFocus.request(rootMode)
+                onOpenAutomation()
+            })
+        }
         // Switches on the page itself: found, they are shown where they are.
         add(entry(R.string.launch_mode_setting_title, R.string.launch_mode_setting_orbit, "rocket", display) { onShowSwitch(SWITCH_LAUNCH_MODE) })
         add(entry(R.string.orbit_log_export_app, R.string.orbit_log_export_app_desc, "scroll-text", troubleshoot) { onShowSwitch(ROW_LOGS) })

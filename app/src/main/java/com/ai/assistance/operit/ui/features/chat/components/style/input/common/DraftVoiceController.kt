@@ -86,7 +86,7 @@ internal constructor(
     val errorText: String? get() = errorState
     val volumeLevelFlow: StateFlow<Float>
         get() = if (manager.isHearingEarly) EarlyCapture.level else manager.volumeLevelFlow
-    val recognitionStateFlow get() = manager.speechService.recognitionStateFlow
+    val recognitionStateFlow get() = manager.recognitionStateFlow
 
     internal fun bindInsert(block: (String) -> Unit) {
         insertText = block
@@ -108,8 +108,7 @@ internal constructor(
         manager.claimFocusWithoutKeyboard(view)
         manager.startListening(
             onStartFailure = { errorState = it },
-            continuousMode = manager.speechService.supportsContinuousDictation ||
-                manager.speechService.supportsContinuousRecognition,
+            dictation = true,
             // People start talking as soon as they tap; keep that while the model loads.
             captureEarly = true,
         )
@@ -273,7 +272,7 @@ fun rememberDraftVoiceController(
             }
         }
         LaunchedEffect(controller) {
-            controller.manager.speechService.recognitionErrorFlow.collect {
+            controller.manager.recognitionErrorFlow.collect {
                 if (it.message.isNotBlank() && (controller.isRecording || controller.isProcessing)) {
                     controller.fail(
                         when (it.message) {

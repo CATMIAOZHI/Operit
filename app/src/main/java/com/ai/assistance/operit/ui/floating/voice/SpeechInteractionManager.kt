@@ -23,9 +23,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -84,14 +87,34 @@ class SpeechInteractionManager(
     private var timing: com.ai.assistance.operit.api.speech.VoiceTiming? = null
 
     // ===== 服务 =====
-    val speechService = SpeechServiceFactory.getInstance(context)
+    // The recognizer in use. It is read again from the settings as each session starts, so a model
+    // or service switched in the settings takes effect on the next press without restarting the app.
+    private val serviceState = kotlinx.coroutines.flow.MutableStateFlow(SpeechServiceFactory.getInstance(context))
+    val speechService: com.ai.assistance.operit.api.speech.SpeechService get() = serviceState.value
     val voiceService
         get() = VoiceServiceFactory.getInstance(context)
     private val inputMethodManager = context.getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
 
-    // 暴露 Flow 给外部使用
-    val volumeLevelFlow get() = speechService.volumeLevelFlow
-    val recognitionResultFlow get() = speechService.recognitionResultFlow
+    // Where the flows below follow the recognizer; ends with [cleanup], so a closed manager keeps
+    // nothing running in its owner's scope.
+    private val followScope = kotlinx.coroutines.CoroutineScope(
+        coroutineScope.coroutineContext + kotlinx.coroutines.SupervisorJob(coroutineScope.coroutineContext[Job]),
+    )
+
+    // 暴露 Flow 给外部使用：始终跟随当前用的识别服务
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private fun <T> follow(
+        of: (com.ai.assistance.operit.api.speech.SpeechService) -> kotlinx.coroutines.flow.StateFlow<T>,
+    ): kotlinx.coroutines.flow.StateFlow<T> =
+        serviceState.flatMapLatest(of)
+            .stateIn(followScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, of(serviceState.value).value)
+
+    val volumeLevelFlow = follow { it.volumeLevelFlow }
+    val recognitionResultFlow = follow { it.recognitionResultFlow }
+    val recognitionErrorFlow = follow { it.recognitionErrorFlow }
+    val recognitionStateFlow = follow { it.recognitionStateFlow }
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val speechActivityFlow: kotlinx.coroutines.flow.Flow<Boolean> = serviceState.flatMapLatest { it.speechActivityFlow }
 
     // ===== 初始化与清理 =====
     suspend fun initialize() {
@@ -115,6 +138,7 @@ class SpeechInteractionManager(
         isPreparing = false
         isRecording = false
         isProcessingSpeech = false
+        followScope.cancel()
         stopJob = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
             lifecycleMutex.withLock {
                 if (captureOwner === this@SpeechInteractionManager) {
@@ -177,7 +201,10 @@ class SpeechInteractionManager(
     // ===== 语音识别流程 =====
 
     fun startListening(
-        continuousMode: Boolean = speechService.supportsContinuousRecognition,
+        // Null: whatever the recognizer chosen for this session supports.
+        continuousMode: Boolean? = null,
+        // Dictation into the message box: also kept open where the recognizer allows only dictation.
+        dictation: Boolean = false,
         onStarted: (() -> Unit)? = null,
         captureEarly: Boolean = false,
         onStartFailure: ((String) -> Unit)? = null,
@@ -220,6 +247,27 @@ class SpeechInteractionManager(
                 previous.speechService.cancelRecognition()
             }
             captureOwner = this@SpeechInteractionManager
+            // The recognizer the settings name now; the last session has fully stopped by here.
+            val current = try {
+                withContext(Dispatchers.IO) { SpeechServiceFactory.getInstance(context) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AppLogger.e(TAG, "Failed to get the recognizer", e)
+                if (session == generation) {
+                    isPreparing = false
+                    onStateChange(context.getString(R.string.floating_hold_microphone))
+                    onStartFailure?.invoke(context.getString(R.string.floating_start_recording_failed))
+                }
+                return@withLock
+            }
+            if (current !== serviceState.value) {
+                try { serviceState.value.cancelRecognition() }
+                catch (e: Exception) { AppLogger.w(TAG, "Old recognizer cleanup failed", e) }
+                serviceState.value = current
+            }
+            val continuous = continuousMode
+                ?: ((dictation && current.supportsContinuousDictation) || current.supportsContinuousRecognition)
             // Wake sessions already hand over the audio around the wake word.
             var earlyToken = 0L
             try {
@@ -269,7 +317,7 @@ class SpeechInteractionManager(
                     }
                     ok = speechService.startRecognition(
                         languageCode = "zh-CN",
-                        continuousMode = continuousMode,
+                        continuousMode = continuous,
                         partialResults = true
                     )
                     attempt++

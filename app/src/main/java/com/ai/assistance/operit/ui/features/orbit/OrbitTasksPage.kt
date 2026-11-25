@@ -154,7 +154,7 @@ internal fun OrbitTasksPage(
         TaskGroup.entries.map { group -> group to marked.filter { (task, routine) -> group.contains(task, routine) }.map { it.first } }
             .filter { it.second.isNotEmpty() }
     }
-    // A run put off (busy chat, quiet hours) waits on its event; that is the real next time.
+    // A run put off (busy chat, the report interval) waits on its event; that is the real next time.
     val dues by produceState(emptyMap<String, Long>(), orbitId, retry) {
         try { repository.dao.observeTaskDues(orbitId).collect { rows -> value = rows.associate { it.taskId to it.dueAt } } }
         catch (e: CancellationException) { throw e }

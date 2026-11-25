@@ -6489,7 +6489,7 @@
     <!-- Global Display Settings Screen -->
     <string name="display_rainbow_border">Fullscreen Rainbow Border</string>
     <string name="display_top_hint">Top Hint Bar</string>
-    <string name="display_png_default">PNG (lossless, default)</string>
+    <string name="display_png_default">PNG (lossless)</string>
     <string name="display_jpg_smaller">JPG (lossy, smaller size)</string>
 
     <!-- Script Execution Dialog -->
@@ -7093,9 +7093,10 @@
     <string name="root_custom_su_command_description">Applies only in KernelSU mode. You can enter commands like su or su --mount-master.</string>
     <string name="global_display_virtual_screen_bitrate">Virtual Screen Bitrate</string>
     <string name="global_display_status_indicator_style">Status Indicator Style</string>
-    <string name="global_display_screenshot_settings">Screenshot Settings</string>
+    <string name="global_display_screenshot_settings">Screenshots</string>
+    <string name="global_display_virtual_screen_section">Virtual screen</string>
     <string name="global_display_image_format">Image Format</string>
-    <string name="global_display_image_quality">Quality (JPG only)</string>
+    <string name="global_display_image_quality">JPG quality</string>
     <string name="global_display_resolution_scale">Resolution Scale (downscale before sending)</string>
     <string name="visit_web_wait_time_title">Visit Web Wait Time</string>
     <string name="visit_web_wait_time_description">Controls how long visit_web waits before returning after page content is extracted. Set to 0 seconds to return immediately.</string>
@@ -9448,8 +9449,6 @@
     <string name="attachment_edit_color_blue">Blue</string>
     <string name="attachment_edit_color_white">White</string>
     <string name="attachment_edit_color_black">Black</string>
-    <string name="orbit_notifications_row">Notifications</string>
-    <string name="orbit_notifications_row_desc">Quiet hours and how often results arrive</string>
     <string name="orbit_profile_open">Open %1$s\'s profile</string>
     <string name="orbit_profile_tab_activity">Tasks</string>
     <string name="orbit_profile_tab_approvals">Approvals</string>
@@ -9551,11 +9550,6 @@
     <string name="orbit_artifact_revise">Revise</string>
     <string name="orbit_previous_page">Previous page</string>
     <string name="orbit_next_page">Next page</string>
-    <string name="orbit_notifications_help">Tasks keep running while updates wait to be delivered together. Daily digests become available at the next 9 AM.</string>
-    <string name="orbit_quiet_hours">Quiet hours · 10 PM–8 AM</string>
-    <string name="orbit_delivery_interval">Minimum time between proactive updates</string>
-    <string name="orbit_delivery_immediate">Deliver immediately</string>
-    <string name="orbit_delivery_minutes">%1$d minutes</string>
     <string name="orbit_goal_title">Goal name</string>
     <string name="orbit_goal_plan">Plan and expectations</string>
     <string name="orbit_revision_request">What would you like to change?</string>
@@ -10077,6 +10071,7 @@
     <string name="orbit_approval_voice_local">On-device model: %1$s</string>
     <string name="orbit_approval_voice_current">In use now: %1$s</string>
     <string name="orbit_approval_voice_create_note">It is used right after it is added</string>
+    <string name="orbit_approval_voice_create_keep_note">Only saved: the voice in use stays the same</string>
     <string name="orbit_approval_voice_delete_note">This cannot be undone</string>
     <string name="orbit_approval_voice_key_needed">To approve, type the API key</string>
     <string name="orbit_approval_voice_key_promise">The key goes straight into the voice settings. It never appears in the chat, and %1$s cannot see it.</string>
@@ -10104,7 +10099,7 @@
     <string name="orbit_text_settings_row">Font, text size, line and paragraph spacing</string>
     <string name="orbit_section_device">Phone and terminal</string>
     <string name="orbit_automation_settings_title">Automation and screenshots</string>
-    <string name="orbit_automation_settings_row">Screenshots, virtual screen, Root mode, keep-alive</string>
+    <string name="orbit_automation_settings_row">Screen on, web wait, virtual screen, screenshots</string>
     <string name="orbit_backup_title">Data backup</string>
     <string name="orbit_backup_row">Back up or restore chats, memory, model configs and the database</string>
     <string name="orbit_about_row">Version, updates, update log and open-source licenses</string>
@@ -10131,7 +10126,7 @@
     <string name="orbit_voice_own_err_sample_changed">The recording changed. Decline and let it ask again.</string>
     <string name="orbit_voice_own_err_key_gone">The MiMo key changed. Decline and let it ask again.</string>
     <string name="orbit_voice_own_err_profile_gone">The voice profile was deleted. Decline and let it ask again.</string>
-    <string name="orbit_voice_shared_note">The read-aloud and voice input settings below are shared with the rest of the app.</string>
+    <string name="orbit_voice_shared_note">The read-aloud settings below are shared with the rest of the app, and so are those on the voice input tab.</string>
     <string name="orbit_chat_search_open">Search chat history</string>
     <string name="orbit_find_title">Search for</string>
     <string name="orbit_find_date">Date</string>
