@@ -307,6 +307,17 @@ object MediaPoolManager {
         }
     }
 
+    /** Base64 length of a clip without loading it, or null when it is gone. */
+    fun base64Length(id: String): Long? {
+        val dir: File
+        synchronized(this) {
+            mediaPool[id]?.let { return it.base64.length.toLong() }
+            dir = cacheDir ?: return null
+        }
+        if (!isSimplePoolCacheId(id)) return null
+        return File(dir, "$id.b64").length().takeIf { it > 0 }
+    }
+
     private fun loadOneFromDisk(dir: File, id: String): MediaData? {
         if (!isSimplePoolCacheId(id)) {
             return null

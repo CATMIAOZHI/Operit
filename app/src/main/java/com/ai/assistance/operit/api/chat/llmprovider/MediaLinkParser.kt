@@ -179,11 +179,14 @@ object MediaLinkParser {
         return extractMediaLinkTags(message).mapNotNull(::resolveMediaLink)
     }
 
-    internal fun audioLinkRanges(message: String): List<IntRange> {
+    internal fun audioLinkRanges(message: String): List<IntRange> = audioLinks(message).map { it.first }
+
+    /** Each audio link's range and media ID, in order. */
+    internal fun audioLinks(message: String): List<Pair<IntRange, String>> {
         if (!message.contains("<link") || !message.contains("audio")) return emptyList()
         return (LINK_PATTERN_PLAIN.findAll(message) + LINK_PATTERN_ESCAPED.findAll(message))
             .filter { it.groupValues[1] == "audio" && it.groupValues[2] != "error" }
-            .map { it.range }.sortedBy { it.first }.toList()
+            .map { it.range to it.groupValues[2] }.sortedBy { it.first.first }.toList()
     }
 
     internal fun resolveMediaLink(tag: MediaLinkTag): MediaLink? {
