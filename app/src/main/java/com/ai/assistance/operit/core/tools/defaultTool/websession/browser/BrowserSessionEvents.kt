@@ -21,6 +21,14 @@ internal fun StandardBrowserSessionTools.sessionPageStarted(session: BrowserTool
     session.currentUrl = url
     session.pageLoaded = false
     session.isLoading = true
+    // Counted after the page is marked loading, so a new count never meets the old page's
+    // "loaded". The blank page a new tab opens with is not a page anyone went to; a later
+    // about:blank is.
+    val opening = !session.anyPageStarted
+    session.anyPageStarted = true
+    // A page shown from here on belongs to this load.
+    session.commitsAtStart = session.pageCommits
+    if (!(opening && url == "about:blank")) session.pageStarts++
     // The error page shown after a refused certificate starts with the same URL; keep its reason.
     if (url != session.sslErrorUrl) {
         session.hasSslError = false
