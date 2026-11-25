@@ -11,7 +11,7 @@ import java.util.UUID
 object MediaPoolManager {
     private const val TAG = "MediaPoolManager"
 
-    private const val MAX_INPUT_BYTES = 20 * 1024 * 1024
+    private const val MAX_INPUT_BYTES = MediaBase64Limiter.DEFAULT_MAX_DECODED_BYTES
 
     private fun q(path: String): String = "\"" + path.replace("\"", "\\\"") + "\""
 
@@ -20,12 +20,12 @@ object MediaPoolManager {
         val mimeType: String
     )
 
-    private fun transcodeToFit(source: File, mimeType: String, targetBytes: Long): TranscodedMedia? {
-        val baseDir = cacheDir ?: return null
+    private fun transcodeToFit(source: File, mimeType: String, baseDir: File?): TranscodedMedia? {
+        if (baseDir == null) return null
         val dir = File(baseDir, "media_pool_transcoded")
         runCatching { if (!dir.exists()) dir.mkdirs() }
 
-        fun ok(out: File): Boolean = out.exists() && out.isFile && out.length() in 1..targetBytes
+        fun ok(out: File): Boolean = out.isFile && out.length() in 1L..MAX_INPUT_BYTES.toLong()
 
         if (mimeType.startsWith("audio/", ignoreCase = true)) {
             val out = File(dir, "${UUID.randomUUID()}.mp3")
@@ -120,7 +120,7 @@ object MediaPoolManager {
         }
     }
 
-    var maxPoolSize = 12
+    @Volatile var maxPoolSize = 12
         set(value) {
             if (value > 0) {
                 field = value
@@ -128,30 +128,27 @@ object MediaPoolManager {
             }
         }
 
-    private var cacheDir: File? = null
+    @Volatile private var cacheDir: File? = null
+    // A disk read started before a removal or directory switch must not repopulate the index.
+    private var indexVersion = 0L
 
     data class MediaData(
         val base64: String,
         val mimeType: String
     )
 
-    @Synchronized
     fun initialize(cacheDirPath: File, preloadNow: Boolean = true) {
         val target = OperitPaths.mediaPoolDir(cacheDirPath)
-        if (cacheDir?.absolutePath != target.absolutePath) mediaPool.clear()
-        cacheDir = target
-        if (!cacheDir!!.exists()) {
-            cacheDir!!.mkdirs()
-            AppLogger.d(TAG, "创建媒体缓存目录: ${cacheDir!!.absolutePath}")
+        synchronized(this) {
+            if (cacheDir != target) {
+                mediaPool.clear()
+                indexVersion++
+                cacheDir = target
+            }
         }
         if (preloadNow) {
-            loadAllFromDisk()
+            preloadFromDisk()
         }
-    }
-
-    @Synchronized
-    fun preloadFromDisk() {
-        loadAllFromDisk()
     }
 
     private val mediaPool = object : LinkedHashMap<String, MediaData>(16, 0.75f, true) {
@@ -164,9 +161,9 @@ object MediaPoolManager {
         }
     }
 
-    @Synchronized
     fun addMedia(filePath: String, mimeType: String): String {
         return try {
+            val dir = cacheDir
             val file = File(filePath)
             if (!file.exists() || !file.isFile) {
                 AppLogger.e(TAG, "文件不存在或不是文件: $filePath")
@@ -177,7 +174,7 @@ object MediaPoolManager {
             var effectiveFile = file
             var effectiveMimeType = mimeType
             if (fileSize > MAX_INPUT_BYTES) {
-                val transcoded = transcodeToFit(file, mimeType, MAX_INPUT_BYTES.toLong())
+                val transcoded = transcodeToFit(file, mimeType, dir)
                 if (transcoded == null) {
                     AppLogger.e(TAG, "媒体文件过大且压缩失败，拒绝加入池子: $filePath, bytes=$fileSize")
                     return "error"
@@ -206,10 +203,8 @@ object MediaPoolManager {
             }
 
             val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
-            val id = UUID.randomUUID().toString()
             val mediaData = MediaData(base64 = base64, mimeType = effectiveMimeType)
-            mediaPool[id] = mediaData
-            saveToDisk(id, mediaData)
+            val id = registerMedia(dir, mediaData)
             AppLogger.d(TAG, "成功添加媒体到池子: $id, mimeType=$mimeType, sizeBytes=${bytes.size}")
             id
         } catch (e: Exception) {
@@ -218,9 +213,9 @@ object MediaPoolManager {
         }
     }
 
-    @Synchronized
     fun addMediaFromBase64(base64: String, mimeType: String): String {
         return try {
+            val baseDir = cacheDir
             val estimated = MediaBase64Limiter.estimateDecodedSizeBytes(base64)
             if (estimated == null) {
                 AppLogger.e(TAG, "媒体base64估算失败，拒绝加入池子: mimeType=$mimeType")
@@ -240,16 +235,13 @@ object MediaPoolManager {
                     return "error"
                 }
 
-                val id = UUID.randomUUID().toString()
                 val normalizedBase64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
                 val mediaData = MediaData(base64 = normalizedBase64, mimeType = mimeType)
-                mediaPool[id] = mediaData
-                saveToDisk(id, mediaData)
+                val id = registerMedia(baseDir, mediaData)
                 AppLogger.d(TAG, "成功从base64添加媒体到池子: $id, mimeType=$mimeType, sizeChars=${base64.length}")
                 return id
             }
 
-            val baseDir = cacheDir
             if (baseDir == null) {
                 AppLogger.e(TAG, "媒体base64过大且缓存目录未初始化，拒绝加入池子: mimeType=$mimeType, estimatedBytes=$estimated")
                 return "error"
@@ -266,7 +258,7 @@ object MediaPoolManager {
                 return "error"
             }
 
-            val transcoded = transcodeToFit(inFile, mimeType, MAX_INPUT_BYTES.toLong())
+            val transcoded = transcodeToFit(inFile, mimeType, baseDir)
             runCatching { inFile.delete() }
             if (transcoded == null) {
                 AppLogger.e(TAG, "媒体base64过大且压缩失败，拒绝加入池子: mimeType=$mimeType, estimatedBytes=$estimated")
@@ -288,11 +280,9 @@ object MediaPoolManager {
                 return "error"
             }
 
-            val id = UUID.randomUUID().toString()
             val normalizedBase64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
             val mediaData = MediaData(base64 = normalizedBase64, mimeType = transcoded.mimeType)
-            mediaPool[id] = mediaData
-            saveToDisk(id, mediaData)
+            val id = registerMedia(baseDir, mediaData)
             AppLogger.d(TAG, "成功从base64添加媒体到池子(已压缩): $id, mimeType=${transcoded.mimeType}, sizeChars=${base64.length}")
             id
         } catch (e: Exception) {
@@ -301,21 +291,26 @@ object MediaPoolManager {
         }
     }
 
-    @Synchronized
     fun getMedia(id: String): MediaData? {
-        val cached = mediaPool[id]
-        if (cached != null) return cached
-
-        val loaded = loadOneFromDisk(id) ?: return null
-        mediaPool[id] = loaded
-        return loaded
+        val dir: File
+        val version: Long
+        synchronized(this) {
+            mediaPool[id]?.let { return it }
+            dir = cacheDir ?: return null
+            version = indexVersion
+        }
+        val loaded = loadOneFromDisk(dir, id) ?: return null
+        synchronized(this) {
+            if (cacheDir != dir) return null
+            if (indexVersion == version) mediaPool[id] = loaded
+            return loaded
+        }
     }
 
-    private fun loadOneFromDisk(id: String): MediaData? {
+    private fun loadOneFromDisk(dir: File, id: String): MediaData? {
         if (!isSimplePoolCacheId(id)) {
             return null
         }
-        val dir = cacheDir ?: return null
         return try {
             val metaFile = File(dir, "$id.meta")
             val b64File = File(dir, "$id.b64")
@@ -334,34 +329,49 @@ object MediaPoolManager {
         }
     }
 
-    @Synchronized
     fun removeMedia(id: String) {
-        mediaPool.remove(id)
-        deleteFromDisk(id)
-    }
-
-    private fun saveToDisk(id: String, data: MediaData) {
-        if (!isSimplePoolCacheId(id)) {
-            AppLogger.w(TAG, "忽略非法媒体 id，不写入磁盘: $id")
-            return
-        }
-        val dir = cacheDir ?: return
-        try {
-            val metaFile = File(dir, "$id.meta")
-            val b64File = File(dir, "$id.b64")
-            metaFile.writeText(data.mimeType)
-            b64File.writeText(data.base64)
-        } catch (e: Exception) {
-            AppLogger.e(TAG, "保存媒体到磁盘失败: $id", e)
+        val dir = cacheDir
+        if (dir != null) deleteFromDisk(dir, id)
+        synchronized(this) {
+            if (dir == cacheDir) {
+                mediaPool.remove(id)
+                indexVersion++
+            }
         }
     }
 
-    private fun deleteFromDisk(id: String) {
+    private fun registerMedia(dir: File?, data: MediaData): String {
+        val id = UUID.randomUUID().toString()
+        if (dir != null) {
+            // Each registration owns its UUID. Preload discovers an entry by its .meta file,
+            // so publish that marker only after its complete base64 payload is on disk.
+            val marker = File(dir, "$id.meta.tmp")
+            try {
+                File(dir, "$id.b64").bufferedWriter(Charsets.US_ASCII).use { it.write(data.base64) }
+                marker.writeText(data.mimeType)
+                check(marker.renameTo(File(dir, "$id.meta"))) { "Could not publish media $id" }
+            } catch (e: Exception) {
+                marker.delete()
+                deleteFromDisk(dir, id)
+                AppLogger.e(TAG, "保存媒体到磁盘失败: $id", e)
+            }
+        }
+        synchronized(this) {
+            if (dir == cacheDir) {
+                mediaPool[id] = data
+                return id
+            }
+        }
+        // This registration belongs to the old directory.
+        if (dir != null) deleteFromDisk(dir, id)
+        return "error"
+    }
+
+    private fun deleteFromDisk(dir: File, id: String) {
         if (!isSimplePoolCacheId(id)) {
             AppLogger.w(TAG, "忽略非法媒体 id，不删除磁盘文件: $id")
             return
         }
-        val dir = cacheDir ?: return
         try {
             File(dir, "$id.meta").delete()
             File(dir, "$id.b64").delete()
@@ -369,17 +379,16 @@ object MediaPoolManager {
         }
     }
 
-    @Synchronized
-    private fun loadAllFromDisk() {
+    fun preloadFromDisk() {
         val dir = cacheDir ?: return
         try {
             val metaFiles = dir.listFiles { file -> file.isFile && file.name.endsWith(".meta") } ?: return
             metaFiles.sortedByDescending { it.lastModified() }.take(maxPoolSize).forEach { metaFile ->
                 val id = metaFile.name.removeSuffix(".meta")
-                val loaded = loadOneFromDisk(id) ?: return@forEach
-                mediaPool[id] = loaded
+                if (dir != cacheDir) return
+                getMedia(id)
             }
-            AppLogger.d(TAG, "从磁盘加载媒体缓存完成: size=${mediaPool.size}")
+            AppLogger.d(TAG, "从磁盘加载媒体缓存完成: size=${synchronized(this) { mediaPool.size }}")
         } catch (e: Exception) {
             AppLogger.e(TAG, "从磁盘加载媒体缓存失败", e)
         }

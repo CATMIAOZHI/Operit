@@ -3,18 +3,15 @@ package com.ai.assistance.operit.util
 import android.util.Base64
 
 object MediaBase64Limiter {
-    private const val DEFAULT_MAX_DECODED_BYTES = 20 * 1024 * 1024
+    internal const val DEFAULT_MAX_DECODED_BYTES = 20 * 1024 * 1024
 
     data class LimitedMedia(
         val base64: String,
         val mimeType: String
     )
 
-    fun estimateDecodedSizeBytes(base64: String): Int? {
-        var count = 0
-        for (c in base64) {
-            if (!c.isWhitespace()) count += 1
-        }
+    fun estimateDecodedSizeBytes(base64: String, noWrap: Boolean = false): Int? {
+        val count = if (noWrap) base64.length else base64.count { !it.isWhitespace() }
         if (count <= 0) return 0
 
         var padding = 0
@@ -34,8 +31,8 @@ object MediaBase64Limiter {
             break
         }
 
-        val decoded = (count * 3) / 4 - padding
-        return decoded.coerceAtLeast(0)
+        val decoded = (count.toLong() * 3) / 4 - padding
+        return decoded.coerceAtLeast(0).toInt()
     }
 
     fun limitBase64ForAi(base64: String, mimeType: String, maxDecodedBytes: Int = DEFAULT_MAX_DECODED_BYTES): LimitedMedia? {

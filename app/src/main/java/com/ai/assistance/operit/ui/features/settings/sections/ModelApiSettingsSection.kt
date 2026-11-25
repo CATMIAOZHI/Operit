@@ -161,6 +161,7 @@ private data class ApiAutoSaveState(
     /** The per-model fields as shown. */
     val autoFields: ModelAutoFields,
     val enableGoogleSearch: Boolean,
+    val enableGeminiInteractions: Boolean,
     val enableClaude1hPromptCache: Boolean,
     val enableToolCall: Boolean,
 ) {
@@ -176,6 +177,7 @@ private data class ApiAutoSaveState(
             enableDirectVideoProcessing = config.enableDirectVideoProcessing,
             autoFields = ModelAutoFields.of(config),
             enableGoogleSearch = config.enableGoogleSearch,
+            enableGeminiInteractions = config.enableGeminiInteractions,
             enableClaude1hPromptCache = config.enableClaude1hPromptCache,
             enableToolCall = config.enableToolCall,
         )
@@ -401,6 +403,7 @@ fun ModelApiSettingsSection(
     
     // Google Search Grounding 配置状态 (仅Gemini)
     var enableGoogleSearchInput by remember(config.id) { mutableStateOf(config.enableGoogleSearch) }
+    var enableGeminiInteractionsInput by remember(config.id) { mutableStateOf(config.enableGeminiInteractions) }
 
     // Claude 1小时提示缓存配置状态 (仅Claude)
     var enableClaude1hPromptCacheInput by remember(config.id) {
@@ -461,6 +464,7 @@ fun ModelApiSettingsSection(
             enableDirectVideoProcessingInput = it
         }
         take(enableGoogleSearchInput, sent.enableGoogleSearch, stored.enableGoogleSearch) { enableGoogleSearchInput = it }
+        take(enableGeminiInteractionsInput, sent.enableGeminiInteractions, stored.enableGeminiInteractions) { enableGeminiInteractionsInput = it }
         take(enableClaude1hPromptCacheInput, sent.enableClaude1hPromptCache, stored.enableClaude1hPromptCache) {
             enableClaude1hPromptCacheInput = it
         }
@@ -558,6 +562,7 @@ fun ModelApiSettingsSection(
                             enableDirectVideoProcessing = pick(state.enableDirectVideoProcessing,
                                 page.enableDirectVideoProcessing, stored.enableDirectVideoProcessing),
                             enableGoogleSearch = pick(state.enableGoogleSearch, page.enableGoogleSearch, stored.enableGoogleSearch),
+                            enableGeminiInteractions = pick(state.enableGeminiInteractions, page.enableGeminiInteractions, stored.enableGeminiInteractions),
                             enableClaude1hPromptCache = pick(state.enableClaude1hPromptCache,
                                 page.enableClaude1hPromptCache, stored.enableClaude1hPromptCache),
                             enableToolCall = pick(state.enableToolCall, page.enableToolCall, stored.enableToolCall),
@@ -604,6 +609,7 @@ fun ModelApiSettingsSection(
             enableDirectVideoProcessing = enableDirectVideoProcessingInput,
             autoFields = currentAutoFields(),
             enableGoogleSearch = enableGoogleSearchInput,
+            enableGeminiInteractions = enableGeminiInteractionsInput,
             enableClaude1hPromptCache = enableClaude1hPromptCacheInput,
             enableToolCall = enableToolCallInput,
         )
@@ -864,6 +870,7 @@ fun ModelApiSettingsSection(
                                 modelMultimodalCapabilities =
                                     modelMultimodalCapabilitiesInput,
                                 enableGoogleSearch = enableGoogleSearchInput,
+                                enableGeminiInteractions = enableGeminiInteractionsInput,
                                 enableClaude1hPromptCache = enableClaude1hPromptCacheInput,
                                 enableToolCall = enableToolCallInput
                             ),
@@ -1560,6 +1567,15 @@ fun ModelApiSettingsSection(
             }
             
             // Google Search Grounding 开关 (仅Gemini支持)
+            if (selectedApiProvider == ApiProviderType.GOOGLE &&
+                com.ai.assistance.operit.api.chat.llmprovider.officialInteractionsEndpoint(apiEndpointInput)) {
+                SettingsSwitchRow(
+                    title = stringResource(R.string.gemini_interactions_title),
+                    subtitle = stringResource(R.string.gemini_interactions_description),
+                    checked = enableGeminiInteractionsInput,
+                    onCheckedChange = { enableGeminiInteractionsInput = it },
+                )
+            }
             if (selectedApiProvider == ApiProviderType.GOOGLE ||
                 selectedApiProvider == ApiProviderType.GEMINI_GENERIC) {
                 SettingsSwitchRow(

@@ -23,6 +23,9 @@ interface AIService {
     /** 获取供应商:模型标识符，格式如"DEEPSEEK:deepseek-chat" */
     val providerModel: String
 
+    /** Whether read_file should return an audio attachment for this model's next turn. */
+    val acceptsToolResultAudio: Boolean get() = false
+
     /** 重置token计数器 */
     fun resetTokenCounts()
 

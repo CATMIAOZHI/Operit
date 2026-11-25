@@ -203,6 +203,7 @@ object ToolExecutionManager {
         val parameterObserver: ToolParameterObservation? = null,
         val resolvedMemorySpaceId: String? = null,
         val dynamicUiRunId: String? = null,
+        val parentModelAcceptsToolAudio: Boolean = false,
     )
 
     internal class BoundedToolResultAccumulator(
@@ -910,6 +911,7 @@ object ToolExecutionManager {
         subagentToolLoopGuard: SubagentToolLoopGuard? = null,
         resolvedMemorySpaceId: String? = null,
         dynamicUiRunId: String? = null,
+        parentModelAcceptsToolAudio: Boolean = false,
     ): List<ToolResult> = coroutineScope {
         // Marks of calls let through by Orbit's lookup default live only as long as their batch.
         val batchTargetIds = invocations.map { it.callId ?: "$timingScopeId:${it.invocationIndex}" }
@@ -983,6 +985,7 @@ object ToolExecutionManager {
                         parentModelConfigId = parentModelConfigId,
                         parentModelIndex = parentModelIndex,
                         parentModelSupportsVision = parentModelSupportsVision,
+                        parentModelAcceptsToolAudio = parentModelAcceptsToolAudio,
                         imageRecognitionModelAvailable = imageRecognitionModelAvailable,
                         liveAssistantContent = liveAssistantContent,
                         isSubagent = true,
@@ -1007,6 +1010,7 @@ object ToolExecutionManager {
                         parentModelConfigId = parentModelConfigId,
                         parentModelIndex = parentModelIndex,
                         parentModelSupportsVision = parentModelSupportsVision,
+                        parentModelAcceptsToolAudio = parentModelAcceptsToolAudio,
                         imageRecognitionModelAvailable = imageRecognitionModelAvailable,
                         liveAssistantContent = liveAssistantContent,
                         isSubagent = true,
@@ -1175,6 +1179,7 @@ object ToolExecutionManager {
                 parentModelConfigId = parentModelConfigId,
                 parentModelIndex = parentModelIndex,
                 parentModelSupportsVision = parentModelSupportsVision,
+                parentModelAcceptsToolAudio = parentModelAcceptsToolAudio,
                 imageRecognitionModelAvailable = imageRecognitionModelAvailable,
                 isSubagent = isSubagent,
                 timingScopeId = timingScopeId,

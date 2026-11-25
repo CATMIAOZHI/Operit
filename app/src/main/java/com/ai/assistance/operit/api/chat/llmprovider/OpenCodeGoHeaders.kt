@@ -17,6 +17,8 @@ import kotlin.coroutines.CoroutineContext
 internal class OpenCodeSessionContext(
     val sessionId: String,
     val workspacePath: String? = null,
+    /** The caller persists assistant turns, including opaque provider replay metadata. */
+    val savesChatHistory: Boolean = false,
 ) : AbstractCoroutineContextElement(Key) {
     companion object Key : CoroutineContext.Key<OpenCodeSessionContext>
 }

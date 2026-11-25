@@ -1746,6 +1746,7 @@ class EnhancedAIService private constructor(
                         isSubTask = isSubTask,
                         toolsEnabled = toolsEnabled,
                         isolatedToolPrompts = isolatedToolPrompts,
+                        toolResultAudio = modelSnapshot.service.acceptsToolResultAudio,
                     )
                     execContext.composerPredictionTools = availableTools
                     execContext.composerPredictionParameters = modelParameters
@@ -2237,6 +2238,7 @@ class EnhancedAIService private constructor(
         val sessionContext = com.ai.assistance.operit.api.chat.llmprovider.OpenCodeSessionContext(
             providerConversationId,
             workspacePath,
+            savesChatHistory = true,
         ) + (orbitUsageTag ?: kotlin.coroutines.EmptyCoroutineContext)
         val sessionStream = object : Stream<String> by wrappedStream {
             override suspend fun collect(collector: StreamCollector<String>) {
@@ -2913,6 +2915,7 @@ class EnhancedAIService private constructor(
                     ?: chatId?.takeIf { it.isNotBlank() }
                     ?: providerSessionId,
                 context.workspacePath,
+                savesChatHistory = true,
             ) + (kotlinx.coroutines.currentCoroutineContext()[com.ai.assistance.operit.features.orbit.OrbitUsageTag]
                 ?: kotlin.coroutines.EmptyCoroutineContext),
             start = CoroutineStart.LAZY,
@@ -2987,6 +2990,7 @@ class EnhancedAIService private constructor(
                 parentModelConfigId = modelSnapshot.config.id,
                 parentModelIndex = modelSnapshot.lease.modelIndex,
                 parentModelSupportsVision = config.enableDirectImageProcessing,
+                parentModelAcceptsToolAudio = modelSnapshot.service.acceptsToolResultAudio,
                 imageRecognitionModelAvailable = imageRecognitionModelAvailable,
                 liveAssistantContent = liveAssistantContent,
                 workspacePath = context.workspacePath,
@@ -3291,6 +3295,7 @@ class EnhancedAIService private constructor(
                 isSubTask = isSubTask,
                 toolsEnabled = context.toolsEnabled,
                 isolatedToolPrompts = context.isolatedToolPrompts,
+                toolResultAudio = serviceForFunction.acceptsToolResultAudio,
             )
             context.composerPredictionTools = availableTools
             context.composerPredictionParameters = modelParameters
@@ -4027,6 +4032,7 @@ class EnhancedAIService private constructor(
         isSubTask: Boolean = false,
         toolsEnabled: Boolean = true,
         isolatedToolPrompts: List<ToolPrompt>? = null,
+        toolResultAudio: Boolean = false,
     ): List<ToolPrompt>? {
         return try {
             if (!toolsEnabled) {
@@ -4105,7 +4111,8 @@ class EnhancedAIService private constructor(
                         chatModelHasDirectVideo = chatModelHasDirectVideo,
                         safBookmarkNames = safBookmarkNames,
                         includeSubagentTools = !isSubTask || com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(context).isAgent(chatId),
-                        collaborationLimits = com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(context).limitsFor(chatId)
+                        collaborationLimits = com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(context).limitsFor(chatId),
+                        toolResultAudio = toolResultAudio,
                     )
                 } else {
                     SystemToolPrompts.getAIAllCategoriesCn(
@@ -4117,7 +4124,8 @@ class EnhancedAIService private constructor(
                         chatModelHasDirectVideo = chatModelHasDirectVideo,
                         safBookmarkNames = safBookmarkNames,
                         includeSubagentTools = !isSubTask || com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(context).isAgent(chatId),
-                        collaborationLimits = com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(context).limitsFor(chatId)
+                        collaborationLimits = com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(context).limitsFor(chatId),
+                        toolResultAudio = toolResultAudio,
                     )
                 }
 
