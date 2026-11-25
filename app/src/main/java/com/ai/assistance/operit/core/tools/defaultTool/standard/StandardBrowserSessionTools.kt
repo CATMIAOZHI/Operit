@@ -117,10 +117,15 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         }
         internal val chromeMajorVersion: String get() = chromeFullVersion.substringBefore('.')
 
-        /** Chrome's reduced user agents, which carry only the major version. */
+        /**
+         * Chrome's reduced user agents, which carry only the major version. The desktop one is
+         * what Chrome on Android sends for "Desktop site": a page still sees a phone (touch,
+         * screen, `navigator.platform`), so claiming Windows would contradict it, which sign-in
+         * pages may distrust.
+         */
         internal val DEFAULT_USER_AGENT: String
             get() =
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 " +
                     "(KHTML, like Gecko) Chrome/$chromeMajorVersion.0.0.0 Safari/537.36"
         internal val MOBILE_USER_AGENT: String
             get() =
