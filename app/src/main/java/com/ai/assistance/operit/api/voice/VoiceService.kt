@@ -97,6 +97,16 @@ interface VoiceService {
         synthesizeToFile(text, out)
 
     /**
+     * Whether this engine acts performance cues in the text (`(温柔)`, `（叹气）`) and a [style] in
+     * words, as Xiaomi MiMo does. Any other engine would read the cues out, so they are taken out first.
+     */
+    val actsStyle: Boolean get() = false
+
+    /** Like [synthesizeToFile], spoken in [style] (how to say it, in words) where [actsStyle]; else without it. */
+    suspend fun synthesizeToFile(text: String, out: java.io.File, style: String): Boolean =
+        synthesizeToFile(text, out)
+
+    /**
      * 表示TTS语音的数据类
      *
      * @property id 语音唯一标识符

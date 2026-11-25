@@ -195,6 +195,76 @@ class MimoVoiceProvider(
         }
 
         /**
+         * Short text in brackets on one line: what MiMo may take as a performance cue, a style at
+         * the start like `(温柔)` or a cue like `（叹气）` or `[笑]`. Never cut in two.
+         */
+        val bracketed = Regex("[(（\\[][^()（）\\[\\]\\n]{1,40}[)）\\]]")
+
+        /**
+         * The Chinese style and audio tags (the tables of the voice style guide), each a whole word,
+         * with at most a softening word before it and 地/的/着 after it: 轻笑, 有点紧张, 温柔地.
+         * Anything else in brackets ("（开心果）", "（四川话课程）") is read.
+         */
+        private const val CUE_WORDS =
+            "吸气|深呼吸|呼吸|叹气|长叹|长叹一口气|叹|喘息|喘气|屏息|沉默|沉默片刻|停顿|停顿片刻|语速加快|语速放慢|加快语速|放慢语速|" +
+                "紧张|害怕|激动|疲惫|委屈|撒娇|心虚|震惊|不耐烦|开心|悲伤|愤怒|生气|难过|惊讶|兴奋|平静|冷漠|怅然|欣慰|无奈|" +
+                "愧疚|释然|忐忑|动情|温柔|高冷|活泼|严肃|慵懒|俏皮|深沉|干练|磁性|醇厚|清亮|空灵|稚嫩|甜美|沙哑|" +
+                "夹子音|御姐音|正太音|大叔音|台湾腔|东北话|四川话|河南话|粤语|唱歌|" +
+                "颤抖|发抖|变调|破音|鼻音|气声|小声|低声|轻声|耳语|大声|提高音量|" +
+                "笑|轻笑|大笑|冷笑|苦笑|偷笑|傻笑|抽泣|哽咽|哭|哭腔|打哈欠|哈欠|咳嗽|清嗓子|嘟囔|碎碎念|哼"
+        private val chineseCue = Regex("^(?:有点|有些|略带|带着|稍微|很|非常)?(?:$CUE_WORDS)[地的着]?$")
+
+        /**
+         * English tags are made of whole tag words: "(sighs)", "(deep breath)", "[laughs softly]",
+         * never "(Singapore time)" or "(cold storage)".
+         */
+        private val englishCue = Regex(
+            "(?i)sigh(s|ing)?|laugh(s|ing|ter)?|giggl(e|es|ing)|chuckl(e|es|ing)|sob(s|bing)?|cr(y|ies|ying)|" +
+                "breath(e|es|ing)?|inhal(e|es|ing)|exhal(e|es|ing)|gasp(s|ing)?|paus(e|es|ing)|whisper(s|ing|ed)?|" +
+                "softly|quietly|loudly|louder|shout(s|ing)?|cough(s|ing)?|yawn(s|ing)?|trembling|nervous(ly)?|" +
+                "excited(ly)?|tired(ly)?|sing(s|ing)?|hum(s|ming)?|sniff(s|les|ling)?|pant(s|ing)?|scoff(s|ing)?|" +
+                "chok(e|es|ing)|crack(s|ing)?|speed(s|ing)?|slow(s|ing|ly)?|" +
+                "happy|sad|angry|surprised|hurt|calm|cold|wistful|relieved|helpless|guilty|anxious|moved|gentle|" +
+                "gently|aloof|lively|serious|lazy|playful|deep|brisk|magnetic|rich|clear|ethereal|childlike|sweet|" +
+                "husky|scared|exhausted|coaxing|shocked|impatient|nasal|breathy|bitter|soft|long|holds|bursts|" +
+                "voice|out|up|down|a|little|slightly|very|at|peace",
+        )
+
+        /**
+         * Whether a bracketed [match] is a tag: up to four short words, each one a tag word, like
+         * `(温柔)`, `(慵懒 俏皮)`, `（轻笑）`, `[sighs]`. Ordinary words in brackets ("（周二）") are read.
+         */
+        private fun isCue(match: MatchResult): Boolean {
+            val words = match.value.substring(1, match.value.length - 1)
+                .split(' ', '\t', '、', '，', ',', '/').filter { it.isNotEmpty() }
+            if (words.isEmpty() || words.size > 4) return false
+            val english = words.filter { w -> w.any { it in 'a'..'z' || it in 'A'..'Z' } }
+            // "(a little)" alone is just words.
+            if (english.isNotEmpty() && english.all { englishFiller.matches(it) }) return false
+            return words.all { w ->
+                if (w.any { it in 'a'..'z' || it in 'A'..'Z' }) englishCue.matches(w)
+                else chineseCue.matches(w)
+            }
+        }
+
+        private val englishFiller = Regex("(?i)a|at|up|down|out|little|slightly|very|voice|holds|bursts|long|soft")
+
+        /**
+         * [text] without its performance cues: for a voice that would read them out, and for the
+         * words shown. Other bracketed words ("明天（周二）开会") stay.
+         */
+        fun withoutCues(text: String): String =
+            bracketed.replace(text) { if (isCue(it)) "" else it.value }
+                .replace(Regex("[ \\t]{2,}"), " ").lines().joinToString("\n") { it.trim() }.trim()
+
+        /** The style cue [text] starts with, such as `(温柔)`, or "" when it has none. */
+        fun leadingCue(text: String): String =
+            bracketed.find(text.trimStart())?.takeIf { it.range.first == 0 && isCue(it) }?.value.orEmpty()
+
+        /** Whether [text] carries any performance cue. */
+        fun hasCues(text: String): Boolean = bracketed.findAll(text).any { isCue(it) }
+
+        /**
          * The request template. It stays the same for every sentence of a profile: what differs per
          * sentence (style with speed, preset voice) are placeholders filled from that sentence's own
          * queued parameters, so a sentence waiting in the queue cannot pick up a later one's.
@@ -251,9 +321,11 @@ class MimoVoiceProvider(
     }
 
     /** The per-sentence values, kept with each queued sentence. */
-    private fun sentenceParams(rate: Float, pitch: Float, voice: String?): Map<String, String> =
+    private fun sentenceParams(rate: Float, pitch: Float, voice: String?, style: String = ""): Map<String, String> =
         mapOf(
-            USER_PARAM to userMessage(mode, config.instruction, rate, pitch),
+            // The profile's own style (for a designed voice, its description) comes first; a style
+            // given for this text adds to it.
+            USER_PARAM to userMessage(mode, listOf(config.instruction.trim(), style.trim()).filter { it.isNotEmpty() }.joinToString("\n"), rate, pitch),
             VOICE_PARAM to presetVoice(voice ?: selectedVoiceId),
             "voice_key" to voiceKey(),
         )
@@ -285,6 +357,14 @@ class MimoVoiceProvider(
         val r = rate ?: speechRate
         val p = pitch ?: this.pitch
         return delegate.synthesizeAudio(text, out, sentenceParams(r, p, null), r, p)
+    }
+
+    override val actsStyle: Boolean get() = true
+
+    /** As [synthesizeToFile], spoken in [style]: how to say it, in words (MiMo's natural-language control). */
+    override suspend fun synthesizeToFile(text: String, out: File, style: String): Boolean {
+        ensureConfigured()
+        return delegate.synthesizeAudio(text, out, sentenceParams(speechRate, pitch, null, style), speechRate, pitch)
     }
 
     override suspend fun pause(): Boolean = delegate.pause()

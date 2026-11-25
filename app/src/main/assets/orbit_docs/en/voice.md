@@ -33,6 +33,8 @@ Use `orbit_voice action=speak` when the user wants a voice message, briefing, st
 Put the spoken words in `text`. Optional `title` supplies the filename without an extension (the chat does not show it); a few words on the topic are enough, such as "Morning briefing".
 `voice` (a phone system voice name) is only accepted when the user chose the phone's own voice.
 
+When your voice is Xiaomi MiMo, you can make it sound more human: `style` says in words how to read it (tone, emotion, pace, or a director's role / scene / direction), and `text` may start with a style tag like `(gentle)` and carry cues like `(sighs)`. Each podcast line can have its own `style`. MiMo does not read short bracketed text aloud, so keep spoken words out of brackets; performance cues do not show under "to text". See [voice-style.md](voice-style.md) for how to write them and the tag lists. Other voices drop the style and cues, and the result says `styled=false`.
+
 Each file allows at most 6000 characters, counting all lines together for multi-speaker audio; requests to the voice service are also capped, so do not cut lines too small.
 Split longer content into several files. If the audio is too large or synthesis fails, follow the returned error to shorten or split it. Do not report failed generation as success.
 

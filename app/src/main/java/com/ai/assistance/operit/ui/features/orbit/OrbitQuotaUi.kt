@@ -165,7 +165,7 @@ private fun rememberQuotaUsage(): OrbitQuota.UsageData? {
 @Composable
 private fun rememberUsageView(
     usage: OrbitQuota.UsageData?,
-    range: UsageRange,
+    range: UsageRange?,
     weekStart: Long,
     orbitId: String,
     otherLabel: String,
@@ -174,8 +174,9 @@ private fun rememberUsageView(
     val context = LocalContext.current
     val view by androidx.compose.runtime.produceState<UsageView?>(null, usage, range, weekStart, orbitId, otherLabel, today) {
         val data = usage ?: return@produceState
+        val forRange = range ?: return@produceState
         value = withContext(Dispatchers.Default) {
-            usageView(context, data, range, weekStart, orbitId, otherLabel, today.zone)
+            usageView(context, data, forRange, weekStart, orbitId, otherLabel, today.zone)
         }
     }
     return view
@@ -599,6 +600,43 @@ private enum class UsageRange(@StringRes val label: Int, val days: Int?) {
     ALL(R.string.orbit_quota_range_all, null),
 }
 
+/**
+ * The range last picked on [page] (shown again on the next visit) and how to pick another. A
+ * small preferences file, read off the main thread once per app run and then kept in memory.
+ * Null until it is read, so nothing is worked out for a range that is about to change.
+ */
+@Composable
+private fun rememberUsageRange(page: String, default: UsageRange): Pair<UsageRange?, (UsageRange) -> Unit> {
+    val context = LocalContext.current.applicationContext
+    var range by rememberSaveable { mutableStateOf(UsageRangeMemory.known[page]) }
+    LaunchedEffect(page) {
+        if (range != null) return@LaunchedEffect
+        val saved = withContext(Dispatchers.IO) {
+            UsageRangeMemory.prefs(context).getString(page, null)
+                ?.let { n -> UsageRange.entries.firstOrNull { it.name == n } }
+        }
+        // A pick made while reading wins over the saved one.
+        val shown = range ?: (saved ?: default).also { range = it }
+        UsageRangeMemory.known.putIfAbsent(page, shown)
+    }
+    return range to { picked ->
+        range = picked
+        UsageRangeMemory.known[page] = picked
+        UsageRangeMemory.scope.launch {
+            UsageRangeMemory.prefs(context).edit().putString(page, picked.name).apply()
+        }
+    }
+}
+
+private object UsageRangeMemory {
+    val known = java.util.concurrent.ConcurrentHashMap<String, UsageRange>()
+    // One at a time, in the order picked, so the last pick is the one saved.
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
+    fun prefs(context: android.content.Context) =
+        context.getSharedPreferences("orbit_usage_ui", android.content.Context.MODE_PRIVATE)
+}
+
 @StringRes
 internal fun purposeLabel(purpose: OrbitQuota.Purpose): Int = when (purpose) {
     OrbitQuota.Purpose.CHAT -> R.string.orbit_usage_chat
@@ -813,7 +851,7 @@ internal fun OrbitUsagePage(
     val context = LocalContext.current
     val loaded = rememberQuotaState()
     val usage = rememberQuotaUsage()
-    var range by rememberSaveable { mutableStateOf(UsageRange.ALL) }
+    val (range, pickRange) = rememberUsageRange("usage", UsageRange.ALL)
     val state = loaded ?: OrbitQuota.State().at(System.currentTimeMillis())
     val otherLabel = stringResource(R.string.orbit_usage_other_orbits)
     val today = rememberToday()
@@ -838,7 +876,7 @@ internal fun OrbitUsagePage(
         orbit.id, otherLabel, today, moneySettings, catalogRevision, returns) {
         val data = usage ?: return@produceState
         val weekStart = state.weekStart
-        val forRange = range
+        val forRange = range ?: return@produceState
         value = withContext(Dispatchers.Default) {
             val first = rangeFirstDay(data, forRange, weekStart, today.date, zone)
             UsageSnapshot(forRange,
@@ -902,7 +940,7 @@ internal fun OrbitUsagePage(
                 }
             }
             // One range for the numbers, the cost and what it all went to.
-            UsageRangeChips(range) { range = it }
+            UsageRangeChips(range, pickRange)
             Box {
                 Box(staleModifier) { UsageInsightsCard(view, ready, cardColor) }
                 if (stale && slow) {
@@ -1086,7 +1124,7 @@ private fun CostModelRow(name: String, amount: String, detail: String, share: Fl
 /** The usage ranges as chips, wrapping onto a second line when the screen or the text is too wide. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun UsageRangeChips(range: UsageRange, onRange: (UsageRange) -> Unit) {
+private fun UsageRangeChips(range: UsageRange?, onRange: (UsageRange) -> Unit) {
     FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)) {
         UsageRange.entries.forEach { option ->
@@ -1329,7 +1367,7 @@ internal fun OrbitUsageTrendsPage(orbit: OrbitProfile, onBack: () -> Unit) {
     val context = LocalContext.current
     val loaded = rememberQuotaState()
     val usage = rememberQuotaUsage()
-    var range by rememberSaveable { mutableStateOf(UsageRange.WEEK) }
+    val (range, pickRange) = rememberUsageRange("trends", UsageRange.WEEK)
     val state = loaded ?: OrbitQuota.State().at(System.currentTimeMillis())
     val otherLabel = stringResource(R.string.orbit_usage_other_orbits)
     val today = rememberToday()
@@ -1349,7 +1387,7 @@ internal fun OrbitUsageTrendsPage(orbit: OrbitProfile, onBack: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             OrbitPageHeader(stringResource(R.string.orbit_usage_trends), onBack, Modifier.padding(start = 4.dp))
-            UsageRangeChips(range) { range = it }
+            UsageRangeChips(range, pickRange)
             OrbitTokenStatsColors {
                 val colors = LocalTokenStatsColors.current
                 val inputLabel = stringResource(R.string.orbit_usage_input)
