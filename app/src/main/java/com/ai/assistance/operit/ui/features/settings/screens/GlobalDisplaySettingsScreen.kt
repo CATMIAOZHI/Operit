@@ -196,8 +196,6 @@ fun GlobalDisplaySettingsScreen(
             if (!automationOnly) {
             SettingsCard(backgroundColor = componentBackgroundColor) {
                 LaunchModeSettingsRow()
-                SettingsRowDivider(inset = false)
-                com.ai.assistance.operit.ui.features.settings.components.AppIconSettingsRow()
             }
             Spacer(Modifier.height(16.dp))
 
