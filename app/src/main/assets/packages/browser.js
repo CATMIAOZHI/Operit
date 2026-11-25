@@ -323,33 +323,39 @@ function browserResponsePreview(result, link) {
     };
     while (lineStart <= result.length) {
         let lineEnd = result.indexOf("\n", lineStart);
-        if (lineEnd === -1) lineEnd = result.length;
+        if (lineEnd === -1)
+            lineEnd = result.length;
         let next = fence;
         if (browserMayBeFence(result, lineStart, lineEnd)) {
             next = browserFenceAfter(fence, result.slice(lineStart, lineEnd));
         }
         if (next !== fence) {
             fence = next;
-        } else if (!fence && previousBlank && lineStart > start && result.startsWith("### ", lineStart)) {
-            if (!close(lineStart - 2)) return null;
+        }
+        else if (!fence && previousBlank && lineStart > start && result.startsWith("### ", lineStart)) {
+            if (!close(lineStart - 2))
+                return null;
             start = lineStart;
         }
         // A blank line, also when lines end in "\r\n".
         previousBlank = lineEnd === lineStart || (lineEnd === lineStart + 1 && result.charCodeAt(lineStart) === 13);
         lineStart = lineEnd + 1;
     }
-    if (!close(result.length)) return null;
+    if (!close(result.length))
+        return null;
     // Every section ends outside a code block, also one the original closed only by its end.
     const closeBlock = (text) => {
         let open = null;
-        for (const line of text.split("\n")) open = browserFenceAfter(open, line);
+        for (const line of text.split("\n"))
+            open = browserFenceAfter(open, line);
         return open ? text + "\n" + open : text;
     };
     const render = (cap) => starts.map((from, i) => {
         const length = lengths[i];
         if (length <= cap + overhead) {
             const whole = closeBlock(result.slice(from, from + length));
-            if (whole.length <= cap + overhead) return whole;
+            if (whole.length <= cap + overhead)
+                return whole;
         }
         return closeBlock(result.slice(from, from + cap)) + note;
     }).join("\n\n") + tail;
@@ -361,22 +367,28 @@ function browserResponsePreview(result, link) {
     let high = Math.max(least, Math.min(MAX_INLINE_BROWSER_SECTION_CHARS - overhead, Math.max(...lengths)));
     while (low < high) {
         const middle = Math.ceil((low + high) / 2);
-        if (fits(middle)) low = middle; else high = middle - 1;
+        if (fits(middle))
+            low = middle;
+        else
+            high = middle - 1;
     }
     let cap = low;
     for (let tries = 0; tries < 8; tries++) {
         const text = render(cap);
-        if (text.length <= MAX_INLINE_BROWSER_TEXT_CHARS) return text;
+        if (text.length <= MAX_INLINE_BROWSER_TEXT_CHARS)
+            return text;
         const cut = lengths.filter(length => length > cap + overhead).length || 1;
         cap -= Math.ceil((text.length - MAX_INLINE_BROWSER_TEXT_CHARS) / cut) + 1;
-        if (cap < least) return null;
+        if (cap < least)
+            return null;
     }
     return null;
 }
 /** Whether the line from [start] to [end] begins, after up to three spaces, with a backtick or tilde. */
 function browserMayBeFence(text, start, end) {
     let i = start;
-    while (i < end && i - start < 3 && text.charCodeAt(i) === 32) i++;
+    while (i < end && i - start < 3 && text.charCodeAt(i) === 32)
+        i++;
     const c = text.charCodeAt(i);
     return i < end && (c === 96 || c === 126);
 }
@@ -387,18 +399,22 @@ function browserMayBeFence(text, start, end) {
  */
 function browserFenceAfter(open, line) {
     let i = 0;
-    while (i < 3 && line.charCodeAt(i) === 32) i++;
+    while (i < 3 && line.charCodeAt(i) === 32)
+        i++;
     const mark = line.charCodeAt(i);
-    if (mark !== 96 && mark !== 126) return open;
+    if (mark !== 96 && mark !== 126)
+        return open;
     let end = i;
-    while (line.charCodeAt(end) === mark) end++;
-    if (end - i < 3) return open;
+    while (line.charCodeAt(end) === mark)
+        end++;
+    if (end - i < 3)
+        return open;
     const run = line.slice(i, end);
-    if (!open) return run;
+    if (!open)
+        return run;
     const closes = run[0] === open[0] && run.length >= open.length && line.slice(end).trim() === "";
     return closes ? null : open;
 }
-
 async function click(params) {
     const result = await Tools.Net.browserClick(params);
     return maybePersistLargeBrowserResponse(result, "click");
