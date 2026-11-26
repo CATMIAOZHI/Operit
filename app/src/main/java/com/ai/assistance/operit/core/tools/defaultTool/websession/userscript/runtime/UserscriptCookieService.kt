@@ -1,7 +1,5 @@
 package com.ai.assistance.operit.core.tools.defaultTool.websession.userscript.runtime
 
-import android.webkit.CookieManager
-import java.net.HttpCookie
 import java.net.URI
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -36,9 +34,27 @@ internal data class UserscriptCookieRecord(
             }
 }
 
+/** The cookies of the browser and profile a tab runs on. Off the main thread: the engine's would block it. */
+internal interface UserscriptCookieStore {
+    /** The Cookie header for [url], or null. */
+    fun get(url: String): String?
+
+    /** Stores Set-Cookie lines for [url]; true when the browser took them. */
+    fun set(url: String, setCookies: List<String>): Boolean
+}
+
 internal class UserscriptCookieService(
-    private val cookieManager: CookieManager
+    private val cookieStore: UserscriptCookieStore
 ) {
+    private companion object {
+        const val MAX_MIRRORED = 256
+    }
+
+    /**
+     * What scripts set, to tell domain, path and flags of cookies the browser lists by name and
+     * value only. Never a source of cookies itself, and it keeps no values: the browser's own list
+     * decides what a page may see (its expiry, Secure, a cleared login).
+     */
     private val mirror = ConcurrentHashMap<String, UserscriptCookieRecord>()
 
     fun list(
@@ -52,7 +68,7 @@ internal class UserscriptCookieService(
         val requestedName = details.optString("name").ifBlank { null }
 
         val visibleCookies =
-            cookieManager.getCookie(targetUrl)
+            cookieStore.get(targetUrl)
                 .orEmpty()
                 .split(';')
                 .mapNotNull { raw ->
@@ -84,15 +100,7 @@ internal class UserscriptCookieService(
                     )
                 }
 
-        val merged =
-            (visibleCookies + mirror.values.filter { record ->
-                domainMatches(targetHost, record.domain) &&
-                    pathMatches(targetPath, record.path)
-            }).distinctBy { cookie ->
-                listOf(cookie.name, cookie.domain.orEmpty(), cookie.path.orEmpty()).joinToString("::")
-            }
-
-        return merged.filter { cookie ->
+        return visibleCookies.filter { cookie ->
             requestedName == null || cookie.name == requestedName
         }
     }
@@ -112,6 +120,10 @@ internal class UserscriptCookieService(
         val httpOnly = details.optBoolean("httpOnly", false)
         val expirationDate = details.optDouble("expirationDate").takeIf { !it.isNaN() }
         val session = details.optBoolean("session", expirationDate == null)
+        // Each part stays one part: no smuggled attributes.
+        require(listOf(name, value, path, domain.orEmpty()).none { part -> part.any { it == ';' || it == '\r' || it == '\n' } }) {
+            "GM_cookie.set: name, value, path and domain cannot contain ';' or line breaks"
+        }
 
         val cookieString =
             buildString {
@@ -135,13 +147,12 @@ internal class UserscriptCookieService(
                     append(httpDate(expirationDate))
                 }
             }
-        cookieManager.setCookie(targetUrl, cookieString)
-        flush()
+        check(cookieStore.set(targetUrl, listOf(cookieString))) { "GM_cookie.set: the browser did not take the cookie" }
 
         val record =
             UserscriptCookieRecord(
                 name = name,
-                value = value,
+                value = "",
                 domain = domain,
                 path = path,
                 secure = secure,
@@ -151,7 +162,12 @@ internal class UserscriptCookieService(
                 url = targetUrl
             )
         mirror[scopeKey(record)] = record
-        return record
+        // Kept small: only as a hint for flags.
+        while (mirror.size > MAX_MIRRORED) {
+            val oldest = mirror.keys.firstOrNull() ?: break
+            mirror.remove(oldest)
+        }
+        return record.copy(value = value)
     }
 
     fun delete(
@@ -164,6 +180,9 @@ internal class UserscriptCookieService(
         require(name.isNotBlank()) { "GM_cookie.delete requires name" }
         val domain = details.optString("domain").ifBlank { targetUri?.host }
         val path = details.optString("path").ifBlank { "/" }
+        require(listOf(name, path, domain.orEmpty()).none { part -> part.any { it == ';' || it == '\r' || it == '\n' } }) {
+            "GM_cookie.delete: name, path and domain cannot contain ';' or line breaks"
+        }
         val cookieString =
             buildString {
                 append(name)
@@ -175,18 +194,13 @@ internal class UserscriptCookieService(
                     append(it)
                 }
             }
-        cookieManager.setCookie(targetUrl, cookieString)
-        flush()
+        check(cookieStore.set(targetUrl, listOf(cookieString))) { "GM_cookie.delete: the browser did not take the change" }
         mirror.entries.removeIf { (_, value) ->
             value.name == name &&
                 value.path.orEmpty() == path &&
                 value.domain.orEmpty().equals(domain.orEmpty(), ignoreCase = true)
         }
         return true
-    }
-
-    private fun flush() {
-        runCatching { cookieManager.flush() }
     }
 
     private fun scopeKey(record: UserscriptCookieRecord): String =

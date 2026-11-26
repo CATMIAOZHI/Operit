@@ -52,9 +52,15 @@ internal interface BrowserPage {
 
     /**
      * Gives the page's scripts `window.<name>.postMessage(text)`; each message reaches [onMessage]
-     * with whether it came from the main frame and a way to answer it. False when unsupported.
+     * with whether it came from the main frame, where the frame that sent it is as the engine saw
+     * it (its origin, or the address of its document, whose origin is then not opaque; null when
+     * unknown), and a way to answer that document only. Any page can post: decide what it may do
+     * from that origin, never from what the message says. False when unsupported.
      */
-    fun addMessageListener(name: String, onMessage: (message: String, isMainFrame: Boolean, reply: BrowserMessageReply) -> Unit): Boolean
+    fun addMessageListener(
+        name: String,
+        onMessage: (message: String, isMainFrame: Boolean, sourceOrigin: String?, reply: BrowserMessageReply) -> Unit,
+    ): Boolean
 
     /** Whether the tab's sound is muted; null when the engine cannot mute. */
     fun isAudioMuted(): Boolean?
@@ -138,11 +144,11 @@ internal class WebViewBrowserPage(val webView: WebView) : BrowserPage {
 
     override fun addMessageListener(
         name: String,
-        onMessage: (message: String, isMainFrame: Boolean, reply: BrowserMessageReply) -> Unit,
+        onMessage: (message: String, isMainFrame: Boolean, sourceOrigin: String?, reply: BrowserMessageReply) -> Unit,
     ): Boolean {
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) return false
-        WebViewCompat.addWebMessageListener(webView, name, setOf("*")) { _, message, _, isMainFrame, replyProxy ->
-            onMessage(message.data.orEmpty(), isMainFrame, BrowserMessageReply { replyProxy.postMessage(it) })
+        WebViewCompat.addWebMessageListener(webView, name, setOf("*")) { _, message, sourceOrigin, isMainFrame, replyProxy ->
+            onMessage(message.data.orEmpty(), isMainFrame, sourceOrigin.toString(), BrowserMessageReply { replyProxy.postMessage(it) })
         }
         return true
     }

@@ -23,6 +23,12 @@ internal interface BrowserEngine {
     /** The Cookie header for [url] in [profileName]; null on the main thread, which it would block. Any thread. */
     fun cookieFor(profileName: String, url: String): String?
 
+    /**
+     * Stores Set-Cookie lines for [url] in [profileName]; true when the engine took every one.
+     * Waits for it, so not on the main thread (false there). Any other thread.
+     */
+    fun setCookies(profileName: String, url: String, setCookies: List<String>): Boolean
+
     /** Signs [profileName] out of every site: its cookies and site storage. [onDone] gets whether it worked. */
     fun clearLogins(profileName: String, onDone: (Boolean) -> Unit)
 

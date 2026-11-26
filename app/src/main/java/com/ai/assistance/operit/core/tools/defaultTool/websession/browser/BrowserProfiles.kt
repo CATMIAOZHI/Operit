@@ -108,7 +108,45 @@ internal object BrowserProfiles {
     fun cookieFor(profile: String, url: String, onEngine: Boolean = BrowserEngines.current != null): String? {
         if (onEngine) BrowserEngines.current?.let { return it.cookieFor(profile, url) }
         if (profile == MAIN || !webViewSupportsProfiles()) return CookieManager.getInstance().getCookie(url)
-        return onMain { cookieManager(profile).getCookie(url) }
+        // Only the profile's cookie store is looked up on the main thread; it is read where called.
+        return onMain { cookieManager(profile) }?.getCookie(url)
+    }
+
+    /**
+     * Stores Set-Cookie lines for [url] in [profile], in the browser the tab runs on (see
+     * [cookieFor]), and writes them to disk once; true when the browser took every line. Off the
+     * main thread only: the WebView answers on the main thread, which this waits for.
+     */
+    fun setCookies(profile: String, url: String, setCookies: List<String>, onEngine: Boolean = BrowserEngines.current != null): Boolean {
+        if (setCookies.isEmpty()) return true
+        if (onEngine) BrowserEngines.current?.let { return it.setCookies(profile, url, setCookies) }
+        if (Looper.myLooper() == Looper.getMainLooper()) return false
+        val latch = java.util.concurrent.CountDownLatch(setCookies.size)
+        val accepted = java.util.concurrent.atomic.AtomicInteger(0)
+        val store = java.util.concurrent.atomic.AtomicReference<CookieManager?>()
+        Handler(Looper.getMainLooper()).post {
+            val cookies =
+                runCatching {
+                    if (profile == MAIN || !webViewSupportsProfiles()) CookieManager.getInstance() else cookieManager(profile)
+                }.getOrNull()
+            store.set(cookies)
+            setCookies.forEach { line ->
+                if (cookies == null) {
+                    latch.countDown()
+                } else {
+                    runCatching {
+                        cookies.setCookie(url, line) { ok ->
+                            if (ok == true) accepted.incrementAndGet()
+                            latch.countDown()
+                        }
+                    }.onFailure { latch.countDown() }
+                }
+            }
+        }
+        latch.await(3, java.util.concurrent.TimeUnit.SECONDS)
+        // Written to disk here: flush may wait on the disk, never on the main thread.
+        runCatching { store.get()?.flush() }
+        return accepted.get() == setCookies.size
     }
 
     private const val PENDING_PREFS = "browser_profiles"

@@ -210,7 +210,8 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
                     refreshSessionUiOnMain(sessionId)
                 }
             },
-            onToast = { message -> showToast(message) }
+            onToast = { message -> showToast(message) },
+            profileOf = { sessionId -> sessions[sessionId]?.profileName }
         )
     }
 

@@ -30,14 +30,32 @@ internal data class UserscriptWebRequestRegistration(
     val sessionId: String,
     val rules: List<UserscriptWebRequestRule>,
     val source: String,
-    val order: Long
+    val order: Long,
+    /**
+     * The addresses the registering document may see: rules the page itself added act on these
+     * only, and only these are told to it. Rules the script declared act on the whole tab.
+     */
+    val reaches: (String) -> Boolean = { true },
+    /** The main-frame document told of matches; null when none is (a frame's rules). */
+    val document: String? = null,
+    /** The document that added the rules; they go with it. */
+    val owner: String = "",
+    /** Whether [owner] still holds the script as it was when the rules were added. */
+    val alive: () -> Boolean = { true }
 )
 
 internal data class UserscriptWebRequestMatch(
     val registrationId: String,
     val scriptId: Long,
     val action: UserscriptWebRequestAction,
-    val source: String
+    val source: String,
+    /** Where the match is told; null when it is not. */
+    val document: String?,
+    /**
+     * Whether a request this match changes may go to an address, hop by hop: for a page's own
+     * rules, while their document still holds the script and only where it could send it itself.
+     */
+    val permits: (String) -> Boolean = { true }
 )
 
 internal data class UserscriptWebRequestResolution(
@@ -52,16 +70,29 @@ internal class UserscriptWebRequestEngine {
     /** Gets the session whose rules were added or removed. Any thread. */
     @Volatile var onRulesChanged: ((sessionId: String) -> Unit)? = null
 
-    fun hasRules(sessionId: String): Boolean = registrations.values.any { it.sessionId == sessionId }
+    /** Whether the tab's own page requests are rewritten: only rules scripts declared do that. */
+    fun hasRules(sessionId: String): Boolean =
+        registrations.values.any { it.sessionId == sessionId && it.source == "metadata" }
 
     fun register(
         scriptId: Long,
         sessionId: String,
         rulesJson: String,
-        source: String
+        source: String,
+        reaches: (String) -> Boolean = { true },
+        document: String? = null,
+        owner: String = "",
+        alive: () -> Boolean = { true }
     ): String {
         val rules = parseRules(rulesJson)
         val registrationId = "wr_" + UUID.randomUUID().toString().replace("-", "")
+        // A script's declared rules are registered once per document: a new registration replaces the last.
+        if (source == "metadata") {
+            registrations.entries.removeIf {
+                it.value.sessionId == sessionId && it.value.scriptId == scriptId && it.value.source == "metadata" &&
+                    it.value.owner == owner
+            }
+        }
         registrations[registrationId] =
             UserscriptWebRequestRegistration(
                 registrationId = registrationId,
@@ -69,7 +100,11 @@ internal class UserscriptWebRequestEngine {
                 sessionId = sessionId,
                 rules = rules,
                 source = source,
-                order = registrationOrder.incrementAndGet()
+                order = registrationOrder.incrementAndGet(),
+                reaches = reaches,
+                document = document,
+                owner = owner,
+                alive = alive
             )
         onRulesChanged?.invoke(sessionId)
         return registrationId
@@ -81,29 +116,61 @@ internal class UserscriptWebRequestEngine {
         return true
     }
 
+    fun registration(registrationId: String): UserscriptWebRequestRegistration? = registrations[registrationId]
+
+    /** Drops the rules of scripts no longer installed and enabled. */
+    fun retainScripts(scriptIds: Set<Long>) {
+        val changed = registrations.values.filter { it.scriptId !in scriptIds }.map { it.sessionId }.toSet()
+        if (changed.isEmpty()) return
+        registrations.entries.removeIf { it.value.scriptId !in scriptIds }
+        changed.forEach { onRulesChanged?.invoke(it) }
+    }
+
     fun clearSession(sessionId: String) {
         if (registrations.entries.removeIf { it.value.sessionId == sessionId }) onRulesChanged?.invoke(sessionId)
     }
 
+    /** Drops the rules [owner] added in [sessionId], once it is gone. */
+    fun clearDocument(sessionId: String, owner: String) {
+        if (registrations.entries.removeIf { it.value.sessionId == sessionId && it.value.owner == owner }) {
+            onRulesChanged?.invoke(sessionId)
+        }
+    }
+
+    /**
+     * The rules for a request of [sessionId]. Rules a script declared act on every request of the
+     * tab. Rules a page added act only on requests of that very document, [requester], made
+     * through the script (the browser does not say which frame a page request comes from).
+     */
     fun resolve(
         sessionId: String,
         url: String,
-        requestType: String
+        requestType: String,
+        requester: String? = null
     ): UserscriptWebRequestResolution {
         val normalizedType = requestType.trim().lowercase(Locale.ROOT).ifBlank { "other" }
         val matches =
             registrations.values
+                .filter { it.sessionId == sessionId && (it.source == "metadata" || (requester != null && it.owner == requester)) }
                 .sortedBy { it.order }
-                .filter { it.sessionId == sessionId }
                 .flatMap { registration ->
-                    registration.rules.filter { rule ->
+                    val matched = registration.rules.filter { rule ->
                         matchesType(rule, normalizedType) && matchesUrl(rule, url)
-                    }.map { rule ->
+                    }
+                    // Checked only for rules that match: most requests match none.
+                    if (matched.isEmpty() || !registration.alive()) return@flatMap emptyList()
+                    val visible = registration.reaches(url)
+                    if (registration.source != "metadata" && !visible) return@flatMap emptyList()
+                    val permits: (String) -> Boolean =
+                        if (registration.source == "metadata") { _ -> true } else { hop -> registration.alive() && registration.reaches(hop) }
+                    matched.map { rule ->
                         UserscriptWebRequestMatch(
                             registrationId = registration.registrationId,
                             scriptId = registration.scriptId,
                             action = rule.action,
-                            source = registration.source
+                            source = registration.source,
+                            document = registration.document?.takeIf { visible },
+                            permits = permits
                         )
                     }
                 }
