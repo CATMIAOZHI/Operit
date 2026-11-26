@@ -806,6 +806,21 @@ class FloatingChatService : Service(), FloatingWindowCallback {
                     return@launch
                 }
                 val orbitSettings = com.ai.assistance.operit.services.floating.FloatingOrbit.settings(applicationContext)
+                // The WeChat channel is answered in WeChat: the words go back into the box, and it says so.
+                fun keepForWeixin(channelChatId: String) {
+                    val restored = !com.ai.assistance.operit.ui.floating.FloatContext.hasDraft(channelChatId)
+                    if (restored) com.ai.assistance.operit.ui.floating.FloatContext.restoreDraft(channelChatId, message)
+                    android.widget.Toast.makeText(
+                        applicationContext,
+                        if (restored) getString(R.string.orbit_weixin_continue_there) else getString(R.string.orbit_send_lost, message),
+                        android.widget.Toast.LENGTH_LONG,
+                    ).show()
+                }
+                if (chatId != null && com.ai.assistance.operit.services.floating.FloatingOrbit.isWeixinChannel(
+                        applicationContext, orbitSettings, chatId)) {
+                    keepForWeixin(chatId)
+                    return@launch
+                }
                 if (com.ai.assistance.operit.features.orbit.OrbitAppLock.isLocked(applicationContext, orbitSettings, chatId)) {
                     if (chatId != null) {
                         if (!com.ai.assistance.operit.ui.floating.FloatContext.hasDraft(chatId)) {
@@ -849,6 +864,12 @@ class FloatingChatService : Service(), FloatingWindowCallback {
                             android.widget.Toast.LENGTH_LONG,
                         ).show()
                     }
+                    return@launch
+                }
+                // The chat may have changed while the checks above waited; the channel still sends nothing.
+                val sendingTo = targetCore.currentChatId.value
+                if (sendingTo != null && com.ai.assistance.operit.services.floating.FloatingOrbit.isWeixinChannelNow(sendingTo)) {
+                    keepForWeixin(sendingTo)
                     return@launch
                 }
                 // Capture the selected runtime before suspending.
@@ -987,6 +1008,7 @@ class FloatingChatService : Service(), FloatingWindowCallback {
     fun sendOrbitOption(chatId: String, text: String, waiting: () -> Boolean, onLost: () -> Unit): Boolean {
         val core = boundCore
         if (core.currentChatId.value != chatId || text.isBlank()) return false
+        if (com.ai.assistance.operit.services.floating.FloatingOrbit.isWeixinChannelNow(chatId)) return false
         if (com.ai.assistance.operit.features.orbit.OrbitAppLock.isLocked(
                 applicationContext, com.ai.assistance.operit.data.preferences.OrbitPreferences
                     .getInstance(applicationContext).loadedSnapshot(), chatId,

@@ -111,6 +111,15 @@ val LocalOrbitReactions = compositionLocalOf<Map<String, String>> { emptyMap() }
 val LocalShowHiddenChatRows = compositionLocalOf { false }
 
 /**
+ * Set in Orbit's WeChat channel: the chat is read here and answered in WeChat, so it takes no
+ * input and nothing in it sends. [ready] is false while the link is still being read and a side
+ * chat might be the channel; it then shows neither the input box nor the WeChat footer.
+ */
+class OrbitReadOnlyChannel(val ready: Boolean, val loginExpired: Boolean, val onReconnect: () -> Unit)
+
+val LocalOrbitReadOnlyChannel = compositionLocalOf<OrbitReadOnlyChannel?> { null }
+
+/**
  * Set while opening Orbit's developer view: told whether the transcript's replies are still being
  * prepared, so the view is recorded for its slide-in only once they show.
  */

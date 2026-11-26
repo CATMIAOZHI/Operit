@@ -327,6 +327,10 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                     currentChatView.hiddenReason == "MEMORY_LEARNING")
         ) || com.ai.assistance.operit.core.chat.AuditChatNavigation.hasPendingReturnFor(currentChatId)
     val isReadOnlyTranscript = isSubagentChat || isHiddenReadingAuditChat
+    // Orbit's WeChat channel: read here, answered in WeChat, so it has no input box of its own.
+    val orbitChannel = com.ai.assistance.operit.ui.features.chat.components.LocalOrbitReadOnlyChannel.current
+        ?.takeIf { orbitLook }
+    val isOrbitWeixinChannel = orbitChannel != null
     val subagentRunRepository = remember(context) { SubagentRunRepository.getInstance(context) }
     val currentSubagentRunFlow =
         remember(isSubagentChat, currentChatView?.id) {
@@ -1082,7 +1086,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                                  actualViewModel = actualViewModel,
                                  enableMessageDialogs = !isFloatingMode,
                                  readOnlyTranscript = isReadOnlyTranscript,
-                                 lockTranscript = orbitDevView,
+                                 lockTranscript = orbitDevView || isOrbitWeixinChannel,
                                  showChatHistorySelector = showChatHistorySelector,
                                 // Leaving the Orbit page, the normal chat page can appear a moment
                                 // before Orbit hands the chat back; never show Orbit's messages here.
@@ -1147,7 +1151,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                         }
 
                         if (
-                            !isReadOnlyTranscript && !orbitDevView &&
+                            !isReadOnlyTranscript && !orbitDevView && !isOrbitWeixinChannel &&
                                 inputStyle == UserPreferencesManager.INPUT_STYLE_CLASSIC
                         ) {
                             ClassicChatSettingsBar(
@@ -1236,7 +1240,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                         }
                     }
 
-                    if (!isReadOnlyTranscript && !orbitDevView) {
+                    if (!isReadOnlyTranscript && !orbitDevView && !isOrbitWeixinChannel) {
                         Box(
                             modifier =
                                 Modifier
@@ -1294,7 +1298,6 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                             )
                         }
                     } else {
-                        val todos by actualViewModel.currentTodos.collectAsState()
                         Box(
                             modifier =
                                 Modifier
@@ -1304,7 +1307,14 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                                     }
                         ) {
                             if (isSubagentChat) {
+                                val todos by actualViewModel.currentTodos.collectAsState()
                                 ChatTodoDock(chatId = currentChatId, todos = todos)
+                            }
+                            if (orbitChannel != null && orbitChannel.ready && !orbitDevView) {
+                                com.ai.assistance.operit.ui.features.orbit.OrbitWeixinChannelFooter(
+                                    loginExpired = orbitChannel.loginExpired,
+                                    onReconnect = orbitChannel.onReconnect,
+                                )
                             }
                         }
                     }

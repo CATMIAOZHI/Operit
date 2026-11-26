@@ -165,6 +165,18 @@ internal object FloatingOrbit {
     fun owner(settings: OrbitSettings?, chatId: String?): OrbitProfile? =
         settings?.active?.takeIf { !it.deleting && chatId != null && chatId in it.talkChatIds }
 
+    /** [chatId] is the WeChat channel, as last read: read in Orbit, answered in WeChat, so the window sends nothing there. */
+    fun isWeixinChannelNow(chatId: String?): Boolean =
+        chatId != null && com.ai.assistance.operit.features.orbit.OrbitWeixin.channels.value.values.any { it.chatId == chatId }
+
+    /** [isWeixinChannelNow], reading the owning Orbit's link first when it was not read yet (a cold start). */
+    suspend fun isWeixinChannel(context: Context, settings: OrbitSettings?, chatId: String?): Boolean {
+        val orbit = settings?.orbitForChat(chatId) ?: return false
+        val weixin = com.ai.assistance.operit.features.orbit.OrbitWeixin
+        weixin.readChannel(context, orbit.id)
+        return isWeixinChannelNow(chatId)
+    }
+
     /**
      * Where a window opened without a chosen chat shows. Opened from the app, Orbit's chat on screen
      * is shared live (MAIN) and a normal chat stays a normal window (null). Opened from outside in
@@ -307,6 +319,11 @@ internal object FloatingOrbit {
         waiting: () -> Boolean, onLost: () -> Unit,
     ) {
         pending.launch {
+            // The WeChat channel is answered in WeChat; read its link first if the window came up cold.
+            if (isWeixinChannel(context, settings(context), chatId)) {
+                onLost()
+                return@launch
+            }
             if (busyRuntime(context, chatId) != null) {
                 val id = ids.incrementAndGet()
                 show(id, chatId, text)

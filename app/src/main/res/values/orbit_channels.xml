@@ -7,6 +7,11 @@
     <string name="orbit_channels_connected">已连接</string>
 
     <string name="orbit_weixin">微信</string>
+    <string name="orbit_channels_section">频道</string>
+    <string name="orbit_weixin_continue_there">在微信中继续此对话。</string>
+    <string name="orbit_weixin_open_app">在微信中打开</string>
+    <string name="orbit_weixin_not_installed">没有找到微信</string>
+    <string name="orbit_weixin_open_failed">没能打开微信</string>
     <string name="orbit_weixin_intro">连接后，即可用微信发消息给%1$s。</string>
     <string name="orbit_weixin_detail">如果继续，你与%1$s的对话将连接到微信里一个专属的聊天。%1$s无法读取你的任何其他微信聊天，你可以随时断开。</string>
     <string name="orbit_weixin_footer">连接时要用手机微信扫码，绑定一个专属的微信机器人。太久没在微信里说话时，微信可能暂时不让%1$s主动发消息，等你下次发消息后会自动补发。</string>
@@ -15,7 +20,7 @@
     <string name="orbit_weixin_open_chat">打开微信聊天</string>
     <string name="orbit_weixin_disconnect">断开连接</string>
     <string name="orbit_weixin_disconnect_title">断开微信？</string>
-    <string name="orbit_weixin_disconnect_note">断开后，微信里的消息不会再发给%1$s。这里的「微信」聊天和记录会保留。</string>
+    <string name="orbit_weixin_disconnect_note">断开后，微信里的消息不会再发给%1$s。这里的「微信」聊天会回到侧聊（之前归档过的就在归档里），记录都会保留。</string>
     <string name="orbit_weixin_disconnect_failed">没能断开，请重试</string>
     <string name="orbit_weixin_status">状态</string>
     <string name="orbit_weixin_online">在线</string>

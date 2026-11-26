@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -147,6 +148,16 @@ internal object OrbitWeixin {
     private val _status = MutableStateFlow<Status?>(null)
     /** The running Orbit's WeChat link; null until read. */
     val status: StateFlow<Status?> = _status
+
+    /**
+     * [orbitId]'s WeChat channel: the chat WeChat writes to ([chatId], null when not linked), read in
+     * Orbit and answered in WeChat. Only what the screens need of [status], so its queues and times
+     * do not redraw them.
+     */
+    data class ChatChannel(val orbitId: String, val chatId: String?, val loginExpired: Boolean)
+    private val _channels = MutableStateFlow<Map<String, ChatChannel>>(emptyMap())
+    /** Each Orbit's channel once read, by Orbit id; kept apart so one Orbit's late write never covers another's. */
+    val channels: StateFlow<Map<String, ChatChannel>> = _channels
     private var watching: Job? = null
 
     private fun store(context: Context, orbitId: String) = OrbitSecretFile.forOrbit(context, orbitId, STORE)
@@ -238,6 +249,8 @@ internal object OrbitWeixin {
             connectedAt = s.connectedAt,
         )
         chatIdFlow.value = s?.chatId
+        val channel = ChatChannel(orbitId, s?.chatId, s != null && s.staleSince > 0L)
+        _channels.update { if (it[orbitId] == channel) it else it + (orbitId to channel) }
     }
 
     // ---- starting and stopping ----
@@ -259,6 +272,8 @@ internal object OrbitWeixin {
         val app = context.applicationContext
         val active = activeOrbitId ?: OrbitPreferences.getInstance(app).current().active?.takeUnless { it.deleting }?.id
         runnerLock.withLock {
+            // Another Orbit's poll stops first, so nothing it still writes lands after the new status.
+            if (runnerOrbit != null && runnerOrbit != active) stopLocked(app)
             val state = active?.let { load(app, it) }
             if (active != null) publish(active, state)
             if (active == null || state == null) {
@@ -486,11 +501,23 @@ internal object OrbitWeixin {
         runnerLock.withLock { if (runnerOrbit == orbitId) stopLocked(app) }
         withContext(Dispatchers.IO) { lock.withLock { if (cache?.first == orbitId) cache = null } }
         if (_status.value?.orbitId == orbitId) _status.value = null
+        _channels.update { it - orbitId }
     }
 
     /** Reads [orbitId]'s link into [status], for its settings page. */
     suspend fun refreshStatus(context: Context, orbitId: String) {
         publish(orbitId, load(context.applicationContext, orbitId))
+    }
+
+    /**
+     * Reads [orbitId]'s link into [channels] when it is not there yet, leaving [status] (the running
+     * Orbit's) as it is; a newer entry published meanwhile wins.
+     */
+    suspend fun readChannel(context: Context, orbitId: String) {
+        if (orbitId in _channels.value) return
+        val s = load(context.applicationContext, orbitId)
+        val channel = ChatChannel(orbitId, s?.chatId, s != null && s.staleSince > 0L)
+        _channels.update { if (orbitId in it) it else it + (orbitId to channel) }
     }
 
     // ---- receiving ----
