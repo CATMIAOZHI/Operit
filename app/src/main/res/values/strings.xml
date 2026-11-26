@@ -8404,6 +8404,7 @@
     <string name="web_session_userscript_update_preview">更新确认</string>
     <string name="web_session_userscript_library">已安装脚本</string>
     <string name="web_session_userscript_none">还没有安装任何脚本</string>
+    <string name="web_session_userscript_load_failed">无法读取已安装的脚本</string>
     <string name="web_session_userscript_logs">最近日志</string>
     <string name="web_session_userscript_logs_empty">最近还没有脚本日志</string>
     <string name="web_session_userscript_page_menu">当前页面脚本菜单</string>

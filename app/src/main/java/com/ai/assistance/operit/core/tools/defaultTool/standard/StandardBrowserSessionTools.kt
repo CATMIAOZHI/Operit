@@ -149,6 +149,32 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         internal val lastActiveByTask = ConcurrentHashMap<String, String>()
         /** The user's own tab last in front, per login set; opening their window again goes back to it. */
         internal val lastOwnByProfile = ConcurrentHashMap<String, String>()
+        /** Virtual tab id projected while the user's blank own start page has not initialized the engine yet. */
+        internal const val PENDING_OWN_TAB_ID = "__pending_own_blank_tab__"
+        /** User's own window opened on a blank start page before initializing the browser engine. Main thread. */
+        @Volatile internal var pendingOwnProfile: String? = null
+        @Volatile internal var pendingOwnLaunching: Boolean = false
+        @Volatile internal var pendingOwnTargetUrl: String? = null
+        internal var pendingOwnLaunchId: Long = 0L
+        internal var pendingOwnLaunchRunnable: Runnable? = null
+        internal var pendingOwnLaunchFallbackRunnable: Runnable? = null
+        internal var pendingOwnLaunchScheduled: Boolean = false
+
+        internal fun clearPendingOwnLaunchOnMain() {
+            pendingOwnLaunchRunnable?.let(mainHandler::removeCallbacks)
+            pendingOwnLaunchRunnable = null
+            pendingOwnLaunchFallbackRunnable?.let(mainHandler::removeCallbacks)
+            pendingOwnLaunchFallbackRunnable = null
+            pendingOwnLaunchScheduled = false
+            pendingOwnLaunching = false
+            pendingOwnTargetUrl = null
+        }
+
+        internal fun clearPendingOwnOnMain() {
+            clearPendingOwnLaunchOnMain()
+            pendingOwnProfile = null
+        }
+
         @Volatile internal var activeSessionId: String? = null
             set(value) {
                 field = value
@@ -219,7 +245,6 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
 
     init {
         ensureDesktopModeInitialized()
-        initializeBrowserDownloadSupport()
     }
 
     internal data class WebSession(

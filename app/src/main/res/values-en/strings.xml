@@ -7883,6 +7883,7 @@
     <string name="web_session_userscript_update_preview">Update Preview</string>
     <string name="web_session_userscript_library">Installed Scripts</string>
     <string name="web_session_userscript_none">No userscripts installed yet</string>
+    <string name="web_session_userscript_load_failed">Could not read installed userscripts</string>
     <string name="web_session_userscript_logs">Recent Logs</string>
     <string name="web_session_userscript_logs_empty">No recent userscript logs</string>
     <string name="web_session_userscript_page_menu">Page Script Menu</string>

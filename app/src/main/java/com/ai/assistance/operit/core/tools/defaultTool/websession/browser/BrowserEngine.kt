@@ -14,6 +14,16 @@ internal interface BrowserEngine {
     /** Chrome's full version of the engine, for the user agent and its client hints. */
     val chromeFullVersion: String
 
+    /** Whether the engine has already been initialized in this process. Any thread. */
+    val isStarted: Boolean get() = true
+
+    /**
+     * Warms the engine's native library into the OS page cache on a background thread at most
+     * once per process, without initializing the engine or allocating its memory. Safe to call
+     * from any thread.
+     */
+    fun warmLibrary(context: Context) {}
+
     /**
      * A new tab with [profileName]'s logins that has not loaded anything yet. Throws when the
      * engine cannot start; the caller then opens the tab on the WebView.

@@ -3,16 +3,34 @@ package com.ai.assistance.operit.core.tools.defaultTool.websession.userscript.st
 import android.content.Context
 import com.ai.assistance.operit.util.OperitPaths
 import java.io.File
+import java.io.IOException
 import java.util.Locale
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+
+internal class UserscriptStorageLoadException(cause: Throwable) :
+    IOException("userscript_storage_load_failed", cause)
+
+internal class UserscriptValueReadException(cause: Throwable) :
+    IOException("userscript_value_read_failed", cause)
+
+internal sealed interface UserscriptStoreLoadState<out T> {
+    data object Loading : UserscriptStoreLoadState<Nothing>
+    data object Error : UserscriptStoreLoadState<Nothing>
+    data class Ready<T>(val data: T) : UserscriptStoreLoadState<T>
+}
 
 internal class UserscriptJsonStore private constructor(context: Context) {
     @Serializable
@@ -46,55 +64,125 @@ internal class UserscriptJsonStore private constructor(context: Context) {
     }
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; prettyPrint = true }
-    private val rootDir = OperitPaths.webSessionUserscriptsDir()
-    private val stateDir = File(rootDir, "state").apply { mkdirs() }
-    private val valuesDir = File(stateDir, "values").apply { mkdirs() }
-    private val storeFile = File(stateDir, "registry.json")
-    private val logFile = File(stateDir, "logs.json")
+    private val rootDir by lazy { OperitPaths.webSessionUserscriptsDir() }
+    private val stateDir by lazy { File(rootDir, "state") }
+    private val valuesDir by lazy { File(stateDir, "values") }
+    private val storeFile by lazy { File(stateDir, "registry.json") }
+    private val logFile by lazy { File(stateDir, "logs.json") }
     private val mutex = Mutex()
-    private val stateFlow = MutableStateFlow(readStoreState())
-    private val logFlow = MutableStateFlow(readLogState())
+    @Volatile private var loaded = false
+    private val stateFlow = MutableStateFlow(StoreState())
+    private val logFlow = MutableStateFlow(LogState())
+    private val storeLoadFlow =
+        MutableStateFlow<UserscriptStoreLoadState<StoreState>>(UserscriptStoreLoadState.Loading)
+    private val loadedLogFlow = MutableStateFlow<LogState?>(null)
 
-    fun observeUserscripts(): Flow<List<UserscriptEntity>> =
-        stateFlow.map { state ->
-            state.scripts.sortedWith(compareBy<UserscriptEntity> { it.name.lowercase(Locale.ROOT) }.thenBy { it.id })
+    /** Loads persisted registry/logs once on IO instead of blocking the main thread at construction. */
+    private suspend fun ensureLoaded() {
+        if (loaded) return
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                ensureLoadedLocked()
+            }
         }
+    }
+
+    private suspend fun ensureLoadedLocked() {
+        if (loaded) return
+        withContext(Dispatchers.IO) {
+            try {
+                stateDir.mkdirs()
+                valuesDir.mkdirs()
+                val nextStore = readStoreState()
+                val nextLog = readLogState()
+                stateFlow.value = nextStore
+                logFlow.value = nextLog
+                storeLoadFlow.value = UserscriptStoreLoadState.Ready(nextStore)
+                loadedLogFlow.value = nextLog
+                loaded = true
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                storeLoadFlow.value = UserscriptStoreLoadState.Error
+                throw UserscriptStorageLoadException(e)
+            }
+        }
+    }
+
+    private suspend inline fun <T> withLoadedLock(crossinline block: () -> T): T =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                ensureLoadedLocked()
+                block()
+            }
+        }
+
+    fun observeUserscriptsState(): Flow<UserscriptStoreLoadState<List<UserscriptEntity>>> =
+        storeLoadFlow
+            .onStart {
+                try {
+                    ensureLoaded()
+                } catch (_: UserscriptStorageLoadException) {
+                    // Error state is published on storeLoadFlow; keep collecting so a later load recovers UI.
+                }
+            }
+            .map { state ->
+                when (state) {
+                    UserscriptStoreLoadState.Loading -> UserscriptStoreLoadState.Loading
+                    UserscriptStoreLoadState.Error -> UserscriptStoreLoadState.Error
+                    is UserscriptStoreLoadState.Ready ->
+                        UserscriptStoreLoadState.Ready(
+                            state.data.scripts.sortedWith(
+                                compareBy<UserscriptEntity> { it.name.lowercase(Locale.ROOT) }.thenBy { it.id }
+                            )
+                        )
+                }
+            }
 
     fun observeRecentLogs(limit: Int): Flow<List<UserscriptLogEntity>> =
-        logFlow.map { state ->
-            state.logs.take(limit.coerceAtLeast(0))
-        }
+        loadedLogFlow
+            .onStart {
+                try {
+                    ensureLoaded()
+                } catch (_: UserscriptStorageLoadException) {
+                    // Error is reported via storageLoadErrorFlow; keep collecting so a later load recovers UI.
+                }
+            }
+            .filterNotNull()
+            .map { state ->
+                state.logs.take(limit.coerceAtLeast(0))
+            }
 
     suspend fun getUserscriptById(scriptId: Long): UserscriptEntity? =
-        mutex.withLock { stateFlow.value.scripts.firstOrNull { it.id == scriptId } }
+        withLoadedLock { stateFlow.value.scripts.firstOrNull { it.id == scriptId } }
 
     suspend fun getUserscriptByScope(name: String, namespace: String?): UserscriptEntity? =
-        mutex.withLock {
+        withLoadedLock {
             stateFlow.value.scripts.firstOrNull { script ->
                 script.name == name && ((namespace == null && script.namespace == null) || script.namespace == namespace)
             }
         }
 
     suspend fun getAllUserscripts(): List<UserscriptEntity> =
-        mutex.withLock { stateFlow.value.scripts }
+        withLoadedLock { stateFlow.value.scripts }
 
     suspend fun getResourcesForScript(scriptId: Long): List<UserscriptResourceEntity> =
-        mutex.withLock { stateFlow.value.resources.filter { it.userscriptId == scriptId } }
+        withLoadedLock { stateFlow.value.resources.filter { it.userscriptId == scriptId } }
 
     suspend fun getResourcesForScripts(scriptIds: List<Long>): List<UserscriptResourceEntity> =
-        mutex.withLock { stateFlow.value.resources.filter { it.userscriptId in scriptIds } }
+        withLoadedLock { stateFlow.value.resources.filter { it.userscriptId in scriptIds } }
 
     suspend fun getValuesForScript(scriptId: Long): List<UserscriptValueEntity> =
-        mutex.withLock { readValueState(scriptId).values }
+        withLoadedLock { readValueState(scriptId).values }
 
     suspend fun getValue(
         scriptId: Long,
         key: String
     ): UserscriptValueEntity? =
-        mutex.withLock { readValueState(scriptId).values.firstOrNull { it.storageKey == key } }
+        withLoadedLock { readValueState(scriptId).values.firstOrNull { it.storageKey == key } }
 
     suspend fun insertValue(value: UserscriptValueEntity) {
-        mutex.withLock {
+        withLoadedLock {
             val state = readValueState(value.userscriptId)
             val nextValues = state.values.filterNot { it.storageKey == value.storageKey } + value
             writeValueState(value.userscriptId, state.copy(values = nextValues))
@@ -105,7 +193,7 @@ internal class UserscriptJsonStore private constructor(context: Context) {
         scriptId: Long,
         key: String
     ) {
-        mutex.withLock {
+        withLoadedLock {
             val state = readValueState(scriptId)
             val nextValues = state.values.filterNot { it.storageKey == key }
             if (nextValues.isEmpty()) {
@@ -117,7 +205,7 @@ internal class UserscriptJsonStore private constructor(context: Context) {
     }
 
     suspend fun insertUserscript(entity: UserscriptEntity): Long =
-        mutex.withLock {
+        withLoadedLock {
             val state = stateFlow.value
             val nextId = state.nextScriptId
             val inserted = entity.copy(id = nextId)
@@ -131,7 +219,7 @@ internal class UserscriptJsonStore private constructor(context: Context) {
         }
 
     suspend fun updateUserscript(entity: UserscriptEntity) {
-        mutex.withLock {
+        withLoadedLock {
             val state = stateFlow.value
             writeStoreState(
                 state.copy(
@@ -145,7 +233,7 @@ internal class UserscriptJsonStore private constructor(context: Context) {
         if (resources.isEmpty()) {
             return
         }
-        mutex.withLock {
+        withLoadedLock {
             var nextResourceId = stateFlow.value.nextResourceId
             val inserted =
                 resources.map { resource ->
@@ -163,7 +251,7 @@ internal class UserscriptJsonStore private constructor(context: Context) {
     }
 
     suspend fun deleteResourcesForScript(scriptId: Long) {
-        mutex.withLock {
+        withLoadedLock {
             val state = stateFlow.value
             writeStoreState(
                 state.copy(
@@ -174,7 +262,7 @@ internal class UserscriptJsonStore private constructor(context: Context) {
     }
 
     suspend fun insertLog(log: UserscriptLogEntity): Long =
-        mutex.withLock {
+        withLoadedLock {
             val state = logFlow.value
             val nextId = state.nextLogId
             val inserted = log.copy(id = nextId)
@@ -188,21 +276,21 @@ internal class UserscriptJsonStore private constructor(context: Context) {
         }
 
     suspend fun deleteLogsForScript(scriptId: Long) {
-        mutex.withLock {
+        withLoadedLock {
             val state = logFlow.value
             writeLogState(state.copy(logs = state.logs.filterNot { it.userscriptId == scriptId }))
         }
     }
 
     suspend fun trimLogs(keepCount: Int) {
-        mutex.withLock {
+        withLoadedLock {
             val state = logFlow.value
             writeLogState(state.copy(logs = state.logs.take(keepCount.coerceAtLeast(0))))
         }
     }
 
     suspend fun deleteUserscriptById(scriptId: Long) {
-        mutex.withLock {
+        withLoadedLock {
             val state = stateFlow.value
             writeStoreState(
                 state.copy(
@@ -220,7 +308,7 @@ internal class UserscriptJsonStore private constructor(context: Context) {
         scriptId: Long,
         resources: List<UserscriptResourceEntity>
     ) {
-        mutex.withLock {
+        withLoadedLock {
             var nextResourceId = stateFlow.value.nextResourceId
             val inserted =
                 resources.map { resource ->
@@ -252,6 +340,7 @@ internal class UserscriptJsonStore private constructor(context: Context) {
     private fun writeStoreState(state: StoreState) {
         writeRaw(storeFile, json.encodeToString(state))
         stateFlow.value = state
+        storeLoadFlow.value = UserscriptStoreLoadState.Ready(state)
     }
 
     private fun readLogState(): LogState {
@@ -266,6 +355,7 @@ internal class UserscriptJsonStore private constructor(context: Context) {
     private fun writeLogState(state: LogState) {
         writeRaw(logFile, json.encodeToString(state))
         logFlow.value = state
+        loadedLogFlow.value = state
     }
 
     private fun readValueState(scriptId: Long): ValueState {
@@ -273,7 +363,11 @@ internal class UserscriptJsonStore private constructor(context: Context) {
         if (!file.exists()) {
             return ValueState()
         }
-        return json.decodeFromString(file.readText())
+        return try {
+            json.decodeFromString(file.readText())
+        } catch (e: Exception) {
+            throw UserscriptValueReadException(e)
+        }
     }
 
     private fun writeValueState(

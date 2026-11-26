@@ -153,7 +153,9 @@ internal class WebSessionBrowserHost(
         /** The floating button: opens the main app's own tabs, on the one last in front. */
         fun onOpenMainTabs()
         /** Back from the recent apps to the user's own window: it opens again on a tab of [profile]. */
-        fun onReopenOwn(profile: String)
+        fun onReopenOwn(profile: String, startEditing: Boolean = true)
+        /** Called once the loading UI frame for a pending blank own launch is about to draw. */
+        fun onPendingLaunchFrameDrawn(launchId: Long)
     }
 
     private val windowManager = appContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
@@ -364,7 +366,8 @@ internal class WebSessionBrowserHost(
                                     hostState.browserState.copy(tabs = hostState.browserState.tabs.filter { tab ->
                                         val session = com.ai.assistance.operit.core.tools.defaultTool.standard.StandardBrowserSessionTools.sessions[tab.sessionId]
                                         if (watchWork != null) session?.browserTaskId == watchWork.executorChatId
-                                        else session?.isOwnTabOf(own!!) == true
+                                        else tab.sessionId == com.ai.assistance.operit.core.tools.defaultTool.standard.StandardBrowserSessionTools.PENDING_OWN_TAB_ID ||
+                                            session?.isOwnTabOf(own!!) == true
                                     }))
                             },
                             watch = watch,
@@ -411,7 +414,8 @@ internal class WebSessionBrowserHost(
                             onOpenDownloadLocation = callbacks::onOpenDownloadLocation,
                             onConfirmExternalOpen = callbacks::onConfirmExternalOpen,
                             onCancelExternalOpen = callbacks::onCancelExternalOpen,
-                            onHandlePendingDialog = callbacks::onHandlePendingDialog
+                            onHandlePendingDialog = callbacks::onHandlePendingDialog,
+                            onPendingLaunchFrameDrawn = callbacks::onPendingLaunchFrameDrawn
                         )
                         }
                     }
@@ -677,10 +681,13 @@ internal class WebSessionBrowserHost(
             hideTextSelectionActionsOverlay()
             // Put away, the browser is no longer Orbit's watch screen; the card opens it again.
             com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.unwatch()
-        } else if (com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.watching.value == null) {
+        } else if (com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.watching.value == null &&
+            ownWindowProfile() == null
+        ) {
             com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.watchSession(hostState.browserState.activeSessionId)
         }
 
+        val wasExpanded = isExpanded
         isExpanded = expanded
         hostState =
             if (expanded) {
@@ -704,7 +711,7 @@ internal class WebSessionBrowserHost(
             overlayFallback = false
             // Put away by the browser itself: its window goes too. Left for another app, the
             // window stays in the recent apps to come back to.
-            if (!leavingActivity) {
+            if (!leavingActivity && (wasExpanded || stoppedOwnProfile == null)) {
                 createdActivity?.get()?.takeIf { !it.isFinishing }?.let { closing ->
                     closingActivity = closing
                     closing.closeLikeAPage()
@@ -738,6 +745,11 @@ internal class WebSessionBrowserHost(
     private val mainHandler = Handler(Looper.getMainLooper())
     /** The login set of the user's own window when it was left for another app; null otherwise. */
     private var stoppedOwnProfile: String? = null
+    /** Whether the URL bar was actively being edited when the user's own window left for another app. */
+    private var stoppedOwnEditingUrl: Boolean = false
+
+    /** True when the user's own browser window is parked in Recents waiting to reopen. */
+    internal fun hasPendingRecentsOwnWindow(): Boolean = stoppedOwnProfile != null
 
     /** A deleted Orbit's logins: its window waiting in the recent apps comes back on the main ones. */
     internal fun forgetOwnWindow(profile: String) {
@@ -795,7 +807,9 @@ internal class WebSessionBrowserHost(
     internal fun onActivityStarted(activity: WebSessionBrowserActivity, firstStart: Boolean) {
         if (activity.isFinishing) return
         val own = stoppedOwnProfile
+        val wasEditing = stoppedOwnEditingUrl
         stoppedOwnProfile = null
+        stoppedOwnEditingUrl = false
         if (createdActivity?.get() !== activity) onActivityCreated(activity)
         if (!isExpanded && firstStart) {
             activity.close()
@@ -810,7 +824,7 @@ internal class WebSessionBrowserHost(
             placeBrowserScreen()
         } else {
             // Back from the recent apps: the browser opens again, on the user's own logins if it showed them.
-            if (own != null) callbacks.onReopenOwn(own) else callbacks.onSetExpanded(true)
+            if (own != null) callbacks.onReopenOwn(own, startEditing = wasEditing) else callbacks.onSetExpanded(true)
         }
     }
 
@@ -832,6 +846,7 @@ internal class WebSessionBrowserHost(
         // where it keeps running for the AI; a user holding control keeps it.
         // Tabs of other logins may come to the front meanwhile; the window remembers its own.
         stoppedOwnProfile = ownWindowProfile()
+        stoppedOwnEditingUrl = hostState.isEditingUrl
         leavingActivity = true
         try {
             callbacks.onSetExpanded(false)
@@ -858,7 +873,11 @@ internal class WebSessionBrowserHost(
             browserActivity = null
             placeBrowserScreen()
         }
-        if (createdActivity?.get() === activity) createdActivity = null
+        if (createdActivity?.get() === activity) {
+            createdActivity = null
+            stoppedOwnProfile = null
+            stoppedOwnEditingUrl = false
+        }
     }
 
     /**
@@ -1097,6 +1116,7 @@ internal class WebSessionBrowserHost(
         // Opened from Orbit's card, the browser stays the watch screen on whatever tab shows,
         // even before the first page is ready or after the last tab closed.
         watchingTalk?.let(works::get)?.let { return it }
+        if (ownWindowProfile() != null) return null
         val active = browserState.activeSessionId
         // The user's own tab in front is their own window, never a watch screen.
         if (active != null && com.ai.assistance.operit.core.tools.defaultTool.standard.StandardBrowserSessionTools

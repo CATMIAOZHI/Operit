@@ -10,13 +10,15 @@ import com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
 import com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator
 import com.ai.assistance.operit.core.application.OperitApplication
 import com.ai.assistance.operit.core.tools.defaultTool.standard.StandardBrowserSessionTools
+import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserEngines
 import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserProfiles
 import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserTaskScope
 import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.closeSession
-import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.createSessionTabOnMain
 import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.ensureOverlayOnMain
 import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.ensureSessionAttachedOnMain
+import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.openPendingBlankOwnOnMain
 import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.setExpandedOnMain
+import com.ai.assistance.operit.ui.features.websession.browser.warmFloatingThemeBriefly
 import com.ai.assistance.operit.data.preferences.OrbitPreferences
 import com.ai.assistance.operit.api.chat.ChatRuntimeHolder
 import com.ai.assistance.operit.api.chat.ChatRuntimeSlot
@@ -26,6 +28,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -562,18 +566,34 @@ internal object OrbitBrowserWatch {
             return
         }
         overlayWait?.cancel()
-        // Looking at another task keeps the browser the user holds: only its button hands it back.
-        _watching.value = talkChatId
-        withContext(Dispatchers.Main) {
-            val browser = StandardBrowserSessionTools(context.applicationContext)
-            BrowserProfiles.withScope(BrowserProfiles.forOrbit(context, work.orbitId)) { BrowserTaskScope.withScope(work.executorChatId) {
-                browser.ensureOverlayOnMain(context.applicationContext, initialExpanded = true)
-                browser.ensureSessionAttachedOnMain(sessionId)
+        val app = context.applicationContext
+        val (browser, profile) =
+            withContext(Dispatchers.IO) {
+                coroutineScope {
+                    val themeWarm = async { warmFloatingThemeBriefly(app) }
+                    val tools = StandardBrowserSessionTools(app)
+                    val resolvedProfile = BrowserProfiles.forOrbit(app, work.orbitId)
+                    themeWarm.await()
+                    tools to resolvedProfile
+                }
+            }
+        withContext(Dispatchers.Main.immediate) {
+            val latest = _works.value[talkChatId] ?: return@withContext
+            if (latest.stopping) return@withContext
+            val liveSessionId = latest.sessionId?.takeIf {
+                StandardBrowserSessionTools.sessions[it]?.browserTaskId == latest.executorChatId
+            } ?: return@withContext
+            // Looking at another task keeps the browser the user holds: only its button hands it back.
+            _watching.value = talkChatId
+            StandardBrowserSessionTools.clearPendingOwnOnMain()
+            BrowserProfiles.withScope(profile) { BrowserTaskScope.withScope(latest.executorChatId) {
+                browser.ensureOverlayOnMain(app, initialExpanded = true, syncUi = false)
+                browser.ensureSessionAttachedOnMain(liveSessionId)
                 browser.setExpandedOnMain(true)
             } }
+            // Again after opening, in case putting the old view away on the way cleared it.
+            _watching.value = talkChatId
         }
-        // Again after opening, in case putting the old view away on the way cleared it.
-        _watching.value = talkChatId
     }
 
     /**
@@ -590,9 +610,18 @@ internal object OrbitBrowserWatch {
         }
         overlayWait?.cancel()
         val app = context.applicationContext
+        BrowserEngines.current?.warmLibrary(app)
         // Built off the main thread: its first start reads saved settings from disk.
-        val browser = withContext(Dispatchers.IO) { StandardBrowserSessionTools(app) }
-        val profile = withContext(Dispatchers.IO) { BrowserProfiles.forOrbit(app, orbitId) }
+        val (browser, profile) =
+            withContext(Dispatchers.IO) {
+                coroutineScope {
+                    val themeWarm = async { warmFloatingThemeBriefly(app) }
+                    val tools = StandardBrowserSessionTools(app)
+                    val resolvedProfile = BrowserProfiles.forOrbit(app, orbitId)
+                    themeWarm.await()
+                    tools to resolvedProfile
+                }
+            }
         withContext(Dispatchers.Main) {
             // Here, with the tab change: a task page opened while this was loading gives way to it.
             unwatch()
@@ -601,7 +630,11 @@ internal object OrbitBrowserWatch {
                     ?.takeIf { it.browserTaskId == null && it.profileName == profile } }
                 val session = own(StandardBrowserSessionTools.lastOwnByProfile[profile])
                     ?: StandardBrowserSessionTools.sessions.values.firstOrNull { it.browserTaskId == null && it.profileName == profile }
-                    ?: browser.createSessionTabOnMain(app, initialUrl = "about:blank")
+                if (session == null) {
+                    browser.openPendingBlankOwnOnMain(app, profile)
+                    return@withScope
+                }
+                StandardBrowserSessionTools.clearPendingOwnOnMain()
                 // The tab goes in front before the window opens, so it is the window's own set.
                 browser.ensureSessionAttachedOnMain(session.id, explicit = true)
                 browser.ensureOverlayOnMain(app, initialExpanded = true)
@@ -787,6 +820,8 @@ internal object OrbitBrowserWatch {
      */
     private fun showsOnly(task: String): Boolean {
         if (_watching.value != null) return false
+        if (StandardBrowserSessionTools.pendingOwnProfile != null) return false
+        if (StandardBrowserSessionTools.browserHost?.hasPendingRecentsOwnWindow() == true) return false
         val front = StandardBrowserSessionTools.activeSessionId?.let(StandardBrowserSessionTools.sessions::get)
         return front == null || front.browserTaskId == task
     }

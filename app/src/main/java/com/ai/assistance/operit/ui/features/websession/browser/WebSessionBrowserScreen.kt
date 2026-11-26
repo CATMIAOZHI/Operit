@@ -31,6 +31,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -44,6 +45,7 @@ import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -106,6 +108,7 @@ internal fun WebSessionBrowserScreen(
     onConfirmExternalOpen: (String) -> Unit,
     onCancelExternalOpen: (String) -> Unit,
     onHandlePendingDialog: (Boolean, String?, Long?) -> Unit,
+    onPendingLaunchFrameDrawn: (Long) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val browserState = hostState.browserState
@@ -289,11 +292,14 @@ internal fun WebSessionBrowserScreen(
             openTyped(normalizeNavigationUrl(hostState.urlDraft))
         }
     }
+    val canCreateTab = browserState.activeSessionId != null
     // A new tab opens ready to type, as in other browsers.
     val newTabReady = {
-        onNewTab()
-        onHostStateChange { current ->
-            current.copy(isEditingUrl = true, urlDraft = "", sheetRoute = WebSessionBrowserSheetRoute.NONE)
+        if (canCreateTab) {
+            onNewTab()
+            onHostStateChange { current ->
+                current.copy(isEditingUrl = true, urlDraft = "", sheetRoute = WebSessionBrowserSheetRoute.NONE)
+            }
         }
     }
 
@@ -415,7 +421,44 @@ internal fun WebSessionBrowserScreen(
                         }
                         .background(MaterialTheme.colorScheme.background)
             ) {
-                if (browserState.activeSessionId == null) {
+                if (browserState.activeSessionId == null && browserState.isLoading) {
+                    val view = LocalView.current
+                    val launchId = browserState.pendingLaunchId
+                    DisposableEffect(view, launchId) {
+                        var notified = false
+                        lateinit var listener: android.view.ViewTreeObserver.OnPreDrawListener
+                        listener =
+                            android.view.ViewTreeObserver.OnPreDrawListener {
+                                if (!notified) {
+                                    notified = true
+                                    val currentObserver = view.viewTreeObserver
+                                    if (currentObserver.isAlive) {
+                                        currentObserver.removeOnPreDrawListener(listener)
+                                    }
+                                    onPendingLaunchFrameDrawn(launchId)
+                                }
+                                true
+                            }
+                        val observer = view.viewTreeObserver
+                        if (observer.isAlive) {
+                            observer.addOnPreDrawListener(listener)
+                        } else {
+                            onPendingLaunchFrameDrawn(launchId)
+                        }
+                        onDispose {
+                            val currentObserver = view.viewTreeObserver
+                            if (currentObserver.isAlive) {
+                                currentObserver.removeOnPreDrawListener(listener)
+                            }
+                        }
+                    }
+                    Box(
+                        modifier =
+                            Modifier
+                                .fillMaxSize()
+                                .background(MaterialTheme.colorScheme.background)
+                    )
+                } else if (browserState.activeSessionId == null) {
                     Surface(
                         modifier = Modifier.fillMaxSize(),
                         color = MaterialTheme.colorScheme.background
@@ -503,6 +546,7 @@ internal fun WebSessionBrowserScreen(
                 canGoBack = browserState.canGoBack,
                 canGoForward = browserState.canGoForward,
                 tabCount = browserState.tabs.size,
+                canCreateTab = canCreateTab,
                 onBack = onBack,
                 onForward = onForward,
                 onNewTab = newTabReady,
@@ -558,6 +602,7 @@ internal fun WebSessionBrowserScreen(
                 WebSessionOverlaySheetContent(
                     sheetRoute = activeSheetRoute,
                     browserState = browserState,
+                    canCreateTab = canCreateTab,
                     bookmarks = bookmarks,
                     globalHistory = globalHistory,
                     userscriptUiState = userscriptUiState,
@@ -749,6 +794,7 @@ private fun PendingDialogOverlay(
 private fun WebSessionOverlaySheetContent(
     sheetRoute: WebSessionBrowserSheetRoute,
     browserState: com.ai.assistance.operit.core.tools.defaultTool.websession.browser.WebSessionBrowserState,
+    canCreateTab: Boolean,
     bookmarks: List<WebSessionBookmark>,
     globalHistory: List<WebSessionHistoryEntry>,
     userscriptUiState: WebSessionUserscriptUiState,
@@ -787,14 +833,17 @@ private fun WebSessionOverlaySheetContent(
         WebSessionBrowserSheetRoute.TABS ->
             WebSessionTabSheet(
                 tabs = browserState.tabs,
+                canCreateTab = canCreateTab,
                 onSelectTab = { sessionId ->
                     onSelectTab(sessionId)
                     onDismiss()
                 },
                 onCloseTab = onCloseTab,
                 onNewTab = {
-                    onNewTab()
-                    onDismiss()
+                    if (canCreateTab) {
+                        onNewTab()
+                        onDismiss()
+                    }
                 }
             )
 

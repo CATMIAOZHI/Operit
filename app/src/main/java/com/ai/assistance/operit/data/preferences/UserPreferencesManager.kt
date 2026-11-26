@@ -18,12 +18,15 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import com.ai.assistance.operit.data.db.ObjectBoxManager
 import com.ai.assistance.operit.util.LocaleUtils.LanguageCodes
 import java.io.File
+import java.util.concurrent.atomic.AtomicReference
 
 private val Context.userPreferencesDataStore: DataStore<Preferences> by
         preferencesDataStore(name = "user_preferences")
@@ -470,6 +473,9 @@ class UserPreferencesManager private constructor(private val context: Context) {
         const val SYSTEM_FONT_CURSIVE = "cursive"
     }
 
+    private val cachedAppLanguage = AtomicReference<String?>(null)
+    private val appLanguageSaveMutex = Mutex()
+
     // 获取应用语言设置
     val appLanguage: Flow<String> = 
             context.userPreferencesDataStore.data.map { preferences ->
@@ -478,18 +484,26 @@ class UserPreferencesManager private constructor(private val context: Context) {
     
     // 保存应用语言设置
     suspend fun saveAppLanguage(languageCode: String) {
-        val changed = appLanguage.first() != languageCode
-        context.userPreferencesDataStore.edit { preferences ->
-            preferences[APP_LANGUAGE] = languageCode
-        }
+        val changed =
+            appLanguageSaveMutex.withLock {
+                val previous = cachedAppLanguage.get() ?: appLanguage.first()
+                context.userPreferencesDataStore.edit { preferences ->
+                    preferences[APP_LANGUAGE] = languageCode
+                }
+                cachedAppLanguage.set(languageCode)
+                previous != languageCode
+            }
         if (changed) LearningPromptSnapshotRepository.markChanged(context, "settings")
     }
     
     // 同步获取当前语言设置
     fun getCurrentLanguage(): String {
-        return runBlocking {
+        cachedAppLanguage.get()?.let { return it }
+        val loaded = runBlocking {
             appLanguage.first()
         }
+        cachedAppLanguage.compareAndSet(null, loaded)
+        return cachedAppLanguage.get() ?: loaded
     }
 
     suspend fun saveUiAccessibilityMode(enabled: Boolean) {
