@@ -18,10 +18,6 @@
 
 <p align="center">
   <a href="https://github.com/CATMIAOZHI/orbit/releases/latest">下载</a> ·
-  <a href="#为什么是-orbit">为什么是 Orbit</a> ·
-  <a href="#核心能力">核心能力</a> ·
-  <a href="#在微信里直接聊">微信直连</a> ·
-  <a href="#开始使用">开始使用</a> ·
   <a href="README.md">English</a>
 </p>
 
