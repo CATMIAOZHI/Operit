@@ -39,6 +39,8 @@ class WebSessionBrowserActivity : ComponentActivity() {
     private var shrinkFromLeft = true
     /** This swipe closes something of the browser's own, so the page stays as it is. */
     private var swipeClosesOwn = false
+    /** True between handleOnBackStarted and cancel/press, distinguishing gestures from button taps. */
+    private var swipeStarted = false
     /** Where this swipe found the page: a page still growing back goes on from there, without a jump. */
     private var swipeStartShrink = 0f
     private var swipeStartShift = 0f
@@ -50,10 +52,12 @@ class WebSessionBrowserActivity : ComponentActivity() {
     private val backCallback =
         object : OnBackPressedCallback(true) {
             override fun handleOnBackStarted(backEvent: BackEventCompat) {
+                swipeStarted = true
                 swipeClosesOwn = browserTakesBack
                 // A page still shrunk from a swipe let go a moment ago keeps growing back into place.
                 if (swipeClosesOwn) {
                     if (shrink > 0f && settle?.isRunning != true) settleBack()
+                    host()?.onBackGestureStarted()
                     return
                 }
                 settle?.cancel()
@@ -67,7 +71,10 @@ class WebSessionBrowserActivity : ComponentActivity() {
             }
 
             override fun handleOnBackProgressed(backEvent: BackEventCompat) {
-                if (swipeClosesOwn) return
+                if (swipeClosesOwn) {
+                    host()?.onBackGestureProgressed(backEvent.progress)
+                    return
+                }
                 val progress = backEvent.progress.coerceIn(0f, 1f)
                 // Size and side both go on from where the page is, also when this swipe comes from the other edge.
                 val endShift = (if (shrinkFromLeft) 1f else -1f) * container.width * 0.03f
@@ -78,24 +85,30 @@ class WebSessionBrowserActivity : ComponentActivity() {
             }
 
             override fun handleOnBackCancelled() {
-                if (!swipeClosesOwn) settleBack()
+                if (swipeClosesOwn) host()?.onBackGestureCancelled() else settleBack()
                 swipeClosesOwn = false
+                swipeStarted = false
             }
 
             override fun handleOnBackPressed() {
                 // What back closes is decided now: a menu may have opened or gone since the swipe began.
                 val own = browserTakesBack
                 val startedOwn = swipeClosesOwn
+                val fromGesture = swipeStarted
                 swipeClosesOwn = false
+                swipeStarted = false
                 if (startedOwn && !own) {
                     // The swipe began to close a menu that has gone meanwhile; it closes nothing else.
+                    host()?.onBackGestureCancelled()
                     if (shrink > 0f && settle?.isRunning != true) settleBack()
                     return
                 }
                 if (own) {
-                    // A menu that opened mid-swipe closes; the page grows back into place.
+                    // A whole-page swipe interrupted by a newly-opened popup restores the page and
+                    // leaves that popup intact; only a swipe that began on it (or a button tap) closes it.
                     if (shrink > 0f && settle?.isRunning != true) settleBack()
-                    host()?.handleBack() ?: close()
+                    if (fromGesture && !startedOwn) return
+                    host()?.handleBack(fromGesture = fromGesture) ?: close()
                     return
                 }
                 // The window leaves from where the finger left it, as the close button sends it.
@@ -220,6 +233,8 @@ class WebSessionBrowserActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        settle?.cancel()
+        settle = null
         host()?.onActivityDestroyed(this)
         super.onDestroy()
     }

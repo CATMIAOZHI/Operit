@@ -759,9 +759,12 @@ private fun OrbitChatPage(
         com.ai.assistance.operit.features.orbit.OrbitReactions.of(context, orbit.id).observe(currentChatId)
     }.collectAsState(initial = emptyMap())
     // The user's own tapbacks on Orbit's messages, set from the long-press menu.
-    val userReactionStore = remember(orbit.id) { com.ai.assistance.operit.features.orbit.OrbitReactions.ofUser(context, orbit.id) }
+    // In the WeChat channel reactions are disabled, so skip loading/observing the user reaction store.
+    val userReactionStore = remember(orbit.id, inChannel) {
+        if (inChannel) null else com.ai.assistance.operit.features.orbit.OrbitReactions.ofUser(context, orbit.id)
+    }
     val userReactionMap by remember(userReactionStore, currentChatId) {
-        userReactionStore.observe(currentChatId)
+        userReactionStore?.observe(currentChatId) ?: kotlinx.coroutines.flow.flowOf(emptyMap())
     }.collectAsState(initial = emptyMap())
     val reactionScope = rememberCoroutineScope()
     var forkingMessage by remember(orbit.id) { mutableStateOf(false) }
@@ -786,18 +789,19 @@ private fun OrbitChatPage(
         }
     }
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
-    val userReactions = remember(userReactionMap, currentChatId, haptic, inChannel) {
+    val userReactions = remember(userReactionStore, userReactionMap, currentChatId, haptic) {
+        // The WeChat channel is read-only here: emoji reactions are disabled along with replies.
+        val store = userReactionStore ?: return@remember null
         com.ai.assistance.operit.ui.features.chat.components.OrbitUserReactions(userReactionMap) { key, emoji, said ->
             // Taking a tapback off says nothing to Orbit; putting one on lets it decide what to do.
-            // In the WeChat channel it stays a mark here: what Orbit is told goes through WeChat.
             val adding = userReactionMap[key] != emoji
             // Every tapback the user gives passes here (menu, picker, double tap, cards), so it is felt the same.
             if (adding) OrbitHaptics.reaction(haptic) else OrbitHaptics.reactionRemoved(haptic)
             val chatId = currentChatId
             reactionScope.launch {
                 try {
-                    userReactionStore.toggle(chatId, key, emoji)
-                    if (adding && !inChannel) OrbitReactionSender.onReacted(context, orbit.id, chatId, key, emoji, said)
+                    store.toggle(chatId, key, emoji)
+                    if (adding) OrbitReactionSender.onReacted(context, orbit.id, chatId, key, emoji, said)
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
                 } catch (e: Exception) {

@@ -393,6 +393,8 @@ class OrbitPieceActions(
     val reply: ((OrbitPiece) -> Unit)?,
     /** A long press on a voice bar inside the bubble: the menu for that bubble and that recording. */
     val voiceMenu: ((OrbitPiece, String) -> Unit)? = null,
+    /** False when a card bubble has no menu actions (e.g. read-only channel with reactions disabled). */
+    val cardHasMenu: Boolean = true,
 )
 
 val LocalOrbitPieceActions = compositionLocalOf<OrbitPieceActions?> { null }
@@ -605,7 +607,7 @@ private fun OrbitPieceGestures(piece: OrbitPiece, content: @Composable () -> Uni
     // One fixed layout whether or not gestures are on (multi-select, still being written): only the
     // handlers change, so a card inside is never rebuilt and a tapback never blinks off.
     val like = actions?.like?.let { { it(piece) } }
-    val menu = actions?.menu?.let { { it(piece) } }
+    val menu = actions?.menu?.takeIf { piece.summary == null || actions.cardHasMenu }?.let { { it(piece) } }
     val gestures = if (actions != null) OrbitMessageGestures(like, menu) else LocalOrbitMessageGestures.current
     // A voice bar here opens the menu for this very bubble, so "reply" quotes it.
     val voiceHost = com.ai.assistance.operit.ui.common.markdown.LocalVoiceMenu.current
@@ -1467,21 +1469,25 @@ fun OrbitPieceMenu(
     expanded: Boolean,
     onDismiss: () -> Unit,
     selected: String?,
-    onPick: (String) -> Unit,
-    onMore: () -> Unit,
+    onPick: ((String) -> Unit)?,
+    onMore: (() -> Unit)?,
     onReply: (() -> Unit)?,
 ) {
+    val hasTapback = onPick != null && onMore != null
+    if (!hasTapback && onReply == null) return
     com.ai.assistance.operit.ui.features.orbit.OrbitDropdownMenu(
         expanded = expanded,
         onDismissRequest = onDismiss,
         modifier = Modifier.widthIn(min = 200.dp),
     ) {
-        OrbitTapbackRow(selected, onPick, onMore)
+        if (hasTapback) OrbitTapbackRow(selected, onPick!!, onMore!!)
         if (onReply != null) {
-            androidx.compose.material3.HorizontalDivider(
-                modifier = Modifier.padding(vertical = 4.dp),
-                color = androidx.compose.material3.MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-            )
+            if (hasTapback) {
+                androidx.compose.material3.HorizontalDivider(
+                    modifier = Modifier.padding(vertical = 4.dp),
+                    color = androidx.compose.material3.MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                )
+            }
             androidx.compose.material3.DropdownMenuItem(
                 text = { androidx.compose.material3.Text(stringResource(R.string.reply_message), style = androidx.compose.material3.MaterialTheme.typography.bodyMedium) },
                 onClick = onReply,

@@ -12,6 +12,9 @@ import androidx.a2ui.model.processor.A2uiActionInterceptor
 import androidx.a2ui.model.protocol.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -468,11 +471,11 @@ private fun DynamicUiCardContent(source: String, closed: Boolean, streaming: Boo
         if (waiting) {
             // Save only geometry across LazyColumn disposal, never processors or WebViews.
             // Replaying defaults and loading disk state must not collapse this slot or paint stale UI.
-            Spacer(Modifier.fillMaxWidth().height(
+            Spacer(Modifier.fillMaxWidth().blockReadOnlyRowLongPress().height(
                 if (compatibleHeight && measuredHeight > 0) with(density) { measuredHeight.toDp() } else 48.dp
             ))
         } else {
-        Column(Modifier.fillMaxWidth().onSizeChanged {
+        Column(Modifier.fillMaxWidth().blockReadOnlyRowLongPress().onSizeChanged {
             if (closed && restored && error == null && surfaceErrors.isEmpty() && it.height > 0) {
                 measuredHeight = it.height
                 measuredWidth = constraints.maxWidth
@@ -628,4 +631,18 @@ private fun DynamicUiCardContent(source: String, closed: Boolean, streaming: Boo
     }
     }
     }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun Modifier.blockReadOnlyRowLongPress(): Modifier {
+    val gestures = com.ai.assistance.operit.ui.features.chat.components.LocalOrbitMessageGestures.current
+    if (gestures == null || gestures.onDoubleTap != null || gestures.onLongPress != null) return this
+    return combinedClickable(
+        interactionSource = remember { MutableInteractionSource() },
+        indication = null,
+        onClick = {},
+        onLongClick = null,
+        onDoubleClick = null,
+    )
 }

@@ -192,31 +192,41 @@ internal fun OrbitCardPiece(summary: String, key: String, time: Long, content: @
     val piece = OrbitPiece(summary, key, summary, true)
     val reactions = LocalOrbitUserReactions.current
     val reply = LocalOrbitLiveCardReply.current
+    val canReact = reactions != null
+    val hasMenu = canReact || reply != null
     var menu by remember { mutableStateOf(false) }
     var picker by remember { mutableStateOf(false) }
+    LaunchedEffect(hasMenu, canReact) {
+        if (!hasMenu) menu = false
+        if (!canReact) picker = false
+    }
     fun react(emoji: String) {
-        if (reactions?.byMessage?.get(piece.key) != emoji) OrbitEmojiUsage.record(context, emoji)
-        reactions?.toggle?.invoke(piece.key, emoji, summary)
+        val r = reactions ?: return
+        if (r.byMessage[piece.key] != emoji) OrbitEmojiUsage.record(context, emoji)
+        r.toggle(piece.key, emoji, summary)
         menu = false
     }
     androidx.compose.runtime.CompositionLocalProvider(LocalOrbitPieceActions provides OrbitPieceActions(
-        like = { if (reactions?.byMessage?.get(piece.key) != OrbitQuickLike) react(OrbitQuickLike) },
-        menu = { menu = true },
+        like = if (canReact) { { if (reactions.byMessage[piece.key] != OrbitQuickLike) react(OrbitQuickLike) } } else null,
+        menu = if (hasMenu) { { menu = true } } else null,
         reply = reply?.let { action -> { action(summary, time) } },
+        cardHasMenu = hasMenu,
     )) {
         OrbitPieceFrame(piece) {
             Box {
                 content()
-                com.ai.assistance.operit.ui.features.chat.components.OrbitPieceMenu(
+                if (hasMenu) com.ai.assistance.operit.ui.features.chat.components.OrbitPieceMenu(
         expanded = menu, onDismiss = { menu = false },
-        selected = reactions?.byMessage?.get(piece.key), onPick = ::react, onMore = { menu = false; picker = true },
+        selected = reactions?.byMessage?.get(piece.key),
+        onPick = if (canReact) ::react else null,
+        onMore = if (canReact) { { menu = false; picker = true } } else null,
         onReply = reply?.let { r -> { menu = false; r(summary, time) } },
     )
             }
         }
     }
-    if (picker) OrbitEmojiPickerSheet(
-        selected = reactions?.byMessage?.get(piece.key),
+    if (picker && canReact) OrbitEmojiPickerSheet(
+        selected = reactions.byMessage[piece.key],
         onPick = { react(it); picker = false },
         onDismiss = { picker = false },
     )
@@ -234,18 +244,26 @@ private fun ExpiredBrowserCard(card: OrbitBrowserWatch.Card, bubbleColor: Color)
     val piece = OrbitPiece(summary, "browser:${card.createdAt}:${card.executorChatId}", summary, true)
     val reactions = LocalOrbitUserReactions.current
     val reply = LocalOrbitLiveCardReply.current
+    val canReact = reactions != null
+    val hasMenu = canReact || reply != null
     var menu by remember { mutableStateOf(false) }
     var picker by remember { mutableStateOf(false) }
+    LaunchedEffect(hasMenu, canReact) {
+        if (!hasMenu) menu = false
+        if (!canReact) picker = false
+    }
     fun react(emoji: String) {
-        if (reactions?.byMessage?.get(piece.key) != emoji) OrbitEmojiUsage.record(context, emoji)
-        reactions?.toggle?.invoke(piece.key, emoji, summary)
+        val r = reactions ?: return
+        if (r.byMessage[piece.key] != emoji) OrbitEmojiUsage.record(context, emoji)
+        r.toggle(piece.key, emoji, summary)
         menu = false
     }
     val status = stringResource(R.string.orbit_browser_card_expired)
     androidx.compose.runtime.CompositionLocalProvider(LocalOrbitPieceActions provides OrbitPieceActions(
-        like = { if (reactions?.byMessage?.get(piece.key) != OrbitQuickLike) react(OrbitQuickLike) },
-        menu = { menu = true },
+        like = if (canReact) { { if (reactions.byMessage[piece.key] != OrbitQuickLike) react(OrbitQuickLike) } } else null,
+        menu = if (hasMenu) { { menu = true } } else null,
         reply = reply?.let { action -> { action(summary, card.createdAt) } },
+        cardHasMenu = hasMenu,
     )) {
     OrbitPieceFrame(piece) {
     Box {
@@ -275,16 +293,18 @@ private fun ExpiredBrowserCard(card: OrbitBrowserWatch.Card, bubbleColor: Color)
             }
         }
     }
-    com.ai.assistance.operit.ui.features.chat.components.OrbitPieceMenu(
+    if (hasMenu) com.ai.assistance.operit.ui.features.chat.components.OrbitPieceMenu(
         expanded = menu, onDismiss = { menu = false },
-        selected = reactions?.byMessage?.get(piece.key), onPick = ::react, onMore = { menu = false; picker = true },
+        selected = reactions?.byMessage?.get(piece.key),
+        onPick = if (canReact) ::react else null,
+        onMore = if (canReact) { { menu = false; picker = true } } else null,
         onReply = reply?.let { r -> { menu = false; r(summary, card.createdAt) } },
     )
     }
     }
     }
-    if (picker) OrbitEmojiPickerSheet(
-        selected = reactions?.byMessage?.get(piece.key),
+    if (picker && canReact) OrbitEmojiPickerSheet(
+        selected = reactions.byMessage[piece.key],
         onPick = { react(it); picker = false },
         onDismiss = { picker = false },
     )
@@ -326,17 +346,25 @@ private fun BrowserTaskCard(work: OrbitBrowserWatch.Work, bubbleColor: Color, vi
     val piece = OrbitPiece(summary, "browser:${work.createdAt}:${work.executorChatId}", summary, true)
     val reactions = LocalOrbitUserReactions.current
     val reply = LocalOrbitLiveCardReply.current
+    val canReact = reactions != null
+    val hasMenu = canReact || reply != null
     var menu by remember { mutableStateOf(false) }
     var picker by remember { mutableStateOf(false) }
+    LaunchedEffect(hasMenu, canReact) {
+        if (!hasMenu) menu = false
+        if (!canReact) picker = false
+    }
     fun react(emoji: String) {
-        if (reactions?.byMessage?.get(piece.key) != emoji) OrbitEmojiUsage.record(context, emoji)
-        reactions?.toggle?.invoke(piece.key, emoji, summary)
+        val r = reactions ?: return
+        if (r.byMessage[piece.key] != emoji) OrbitEmojiUsage.record(context, emoji)
+        r.toggle(piece.key, emoji, summary)
         menu = false
     }
     androidx.compose.runtime.CompositionLocalProvider(LocalOrbitPieceActions provides OrbitPieceActions(
-        like = { if (reactions?.byMessage?.get(piece.key) != OrbitQuickLike) react(OrbitQuickLike) },
-        menu = { menu = true },
+        like = if (canReact) { { if (reactions.byMessage[piece.key] != OrbitQuickLike) react(OrbitQuickLike) } } else null,
+        menu = if (hasMenu) { { menu = true } } else null,
         reply = reply?.let { action -> { action(summary, work.createdAt) } },
+        cardHasMenu = hasMenu,
     )) {
     OrbitPieceFrame(piece) {
     Box {
@@ -390,16 +418,18 @@ private fun BrowserTaskCard(work: OrbitBrowserWatch.Work, bubbleColor: Color, vi
             }
         }
     }
-    com.ai.assistance.operit.ui.features.chat.components.OrbitPieceMenu(
+    if (hasMenu) com.ai.assistance.operit.ui.features.chat.components.OrbitPieceMenu(
         expanded = menu, onDismiss = { menu = false },
-        selected = reactions?.byMessage?.get(piece.key), onPick = ::react, onMore = { menu = false; picker = true },
+        selected = reactions?.byMessage?.get(piece.key),
+        onPick = if (canReact) ::react else null,
+        onMore = if (canReact) { { menu = false; picker = true } } else null,
         onReply = reply?.let { r -> { menu = false; r(summary, work.createdAt) } },
     )
     }
     }
     }
-    if (picker) OrbitEmojiPickerSheet(
-        selected = reactions?.byMessage?.get(piece.key),
+    if (picker && canReact) OrbitEmojiPickerSheet(
+        selected = reactions.byMessage[piece.key],
         onPick = { react(it); picker = false },
         onDismiss = { picker = false },
     )
