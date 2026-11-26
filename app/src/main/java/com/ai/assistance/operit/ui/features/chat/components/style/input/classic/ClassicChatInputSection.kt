@@ -97,6 +97,7 @@ import com.ai.assistance.operit.ui.features.chat.components.style.input.common.r
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.HoldToTalkArea
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.SuppressFieldLongPress
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.AcceptPastedAttachments
+import com.ai.assistance.operit.ui.features.chat.components.style.input.common.rememberLongPasteAsAttachment
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.holdToTalk
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.rememberKeyboardDown
 import com.ai.assistance.operit.ui.features.chat.components.style.input.agent.collapseWidth
@@ -834,9 +835,12 @@ fun ClassicChatInputSection(
                     chatId = { actualViewModel.currentChatId.value },
                     onAttach = onAttachmentRequest,
                 ) { pasteModifier ->
+                val longPaste = rememberLongPasteAsAttachment(
+                    userMessage, classicInputEnabled, actualViewModel::handleLongPaste, onUserMessageChange,
+                )
                 BasicTextField(
                     value = userMessage,
-                    onValueChange = onUserMessageChange,
+                    onValueChange = longPaste,
                     modifier = Modifier
                         .weight(1f)
                         .then(pasteModifier)

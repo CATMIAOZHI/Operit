@@ -66,6 +66,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -2495,12 +2496,70 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     // 附件相关方法
+    /** Attachments still being added, per chat: sending or queueing holds off meanwhile (see [attachmentsPending]). */
+    private val attachmentsInFlight = MutableStateFlow<Map<String, Int>>(emptyMap())
+
+    private fun countInFlight(chatId: String, delta: Int) =
+        attachmentsInFlight.update { all ->
+            val next = (all[chatId] ?: 0) + delta
+            if (next > 0) all + (chatId to next) else all - chatId
+        }
+
+    /**
+     * True while an attachment added to [chatId] (a long paste turned into a file, say) is not in
+     * its list yet: sending now would leave it for the next message.
+     */
+    fun attachmentsPending(chatId: String?): Boolean = chatId != null && chatId in attachmentsInFlight.value
+
+    /**
+     * A long paste left the input box ([shown] is what it shows now) to become a .txt attachment.
+     * Counted as in flight from this call. When it cannot be attached, the paste goes back into
+     * that chat's draft: as it was if the draft did not change meanwhile, else at its end.
+     */
+    fun handleLongPaste(next: TextFieldValue, pasted: IntRange, shown: TextFieldValue) {
+        val chatId = chatHistoryDelegate.currentChatId.value
+        if (chatId == null) {
+            updateUserMessage(next)
+            return
+        }
+        countInFlight(chatId, 1)
+        // A toast of its own, so the text leaving the box is not a mystery. The chat's processing
+        // state stays the reply's: it would offer a cancel meant for the model.
+        showToast(context.getString(R.string.chat_processing_attachment))
+        viewModelScope.launch {
+            var staged: java.io.File? = null
+            try {
+                staged = com.ai.assistance.operit.ui.features.chat.components.style.input.common
+                    .stageLongPaste(context, next.text, pasted)
+                if (staged == null) showToast(context.getString(R.string.paste_attachment_failed))
+                val added = staged != null && attachmentDelegate.handleAttachment(staged.absolutePath, chatId)
+                if (!added) {
+                    val draft = messageProcessingDelegate.draftForChat(chatId)
+                    val restored = if (draft == shown.text) next else {
+                        val text = draft + (if (draft.isEmpty() || draft.endsWith("\n")) "" else "\n") +
+                            next.text.substring(pasted.first, pasted.last + 1)
+                        TextFieldValue(text, TextRange(text.length))
+                    }
+                    messageProcessingDelegate.setDraftForChat(chatId, restored)
+                }
+            } finally {
+                countInFlight(chatId, -1)
+                staged?.let {
+                    com.ai.assistance.operit.ui.features.chat.components.style.input.common
+                        .releaseStagedPasteLater(context, it.absolutePath)
+                }
+            }
+        }
+    }
+
     /** Handles a file or image attachment selected by the user */
     fun handleAttachment(filePath: String) {
+        // Counted right away, before anything can be sent.
+        val inFlight = chatHistoryDelegate.currentChatId.value?.also { countInFlight(it, 1) }
         viewModelScope.launch {
             try {
                 // 获取当前会话ID并绑定
-                val currentChatId = chatHistoryDelegate.currentChatId.value
+                val currentChatId = inFlight
                 if (currentChatId == null) return@launch
                 
                 // 显示附件处理进度
@@ -2509,7 +2568,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     InputProcessingState.Processing(context.getString(R.string.chat_processing_attachment))
                 )
 
-                attachmentDelegate.handleAttachment(filePath)
+                // To the chat it was added in, even if the user switches while it copies.
+                attachmentDelegate.handleAttachment(filePath, currentChatId)
 
                 // 清除附件处理进度显示
                 messageProcessingDelegate.setInputProcessingStateForChat(currentChatId, InputProcessingState.Idle)
@@ -2524,6 +2584,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 }
             }
         }.invokeOnCompletion {
+            inFlight?.let { countInFlight(it, -1) }
             // A picture pasted from the keyboard waits in a cache copy; it goes however this ended.
             com.ai.assistance.operit.ui.features.chat.components.style.input.common
                 .releaseStagedPasteLater(context, filePath)
