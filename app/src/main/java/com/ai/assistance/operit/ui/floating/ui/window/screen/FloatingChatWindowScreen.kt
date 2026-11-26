@@ -242,7 +242,20 @@ internal fun RecentChatSelectorOverlay(
     val orbitChatIds by com.ai.assistance.operit.features.orbit.rememberOrbitChatIds()
     // Showing Orbit, the list is its own chats (its main chat and side chats); otherwise Orbit's stay out.
     val orbit = rememberFloatingOrbit(currentChatId)
-    val orbitTalk = orbit?.talkChatIds
+    // The WeChat channel is answered in WeChat, so the window, made for sending, leaves it out.
+    // Until the link is read (a cold start), only the main chat is listed, so it cannot slip in.
+    val weixinLinks by com.ai.assistance.operit.features.orbit.OrbitWeixin.channels.collectAsState()
+    LaunchedEffect(orbit?.id) {
+        orbit?.id?.let { com.ai.assistance.operit.features.orbit.OrbitWeixin.readChannel(context, it) }
+    }
+    val orbitTalk = orbit?.let { o ->
+        val link = weixinLinks[o.id]
+        when {
+            link == null -> setOf(o.chatId)
+            link.chatId != null -> o.talkChatIds.toSet() - link.chatId
+            else -> o.talkChatIds.toSet()
+        }
+    }
     val items = remember(chatHistories, orbitChatIds, orbitTalk) {
         chatHistories
             .filterNot { it.chatKind == ChatKind.SUBAGENT.name || it.isHidden }

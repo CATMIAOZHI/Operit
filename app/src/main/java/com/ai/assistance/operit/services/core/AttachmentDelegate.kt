@@ -236,9 +236,9 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
      * Quotes an Orbit's own files in the input box. The files themselves are attached, not copies:
      * the message only tells Orbit where they are, and it reads them when it needs to.
      */
-    suspend fun attachOrbitFiles(files: List<java.io.File>) =
+    suspend fun attachOrbitFiles(files: List<java.io.File>, targetChatId: String? = null) =
             withContext(Dispatchers.IO) {
-                val target = targetChat()
+                val target = targetChatId ?: targetChat()
                 val found = files.filter { it.isFile }
                 found.forEach {
                     com.ai.assistance.operit.features.orbit.OrbitUploads.retainReference(context, it.absolutePath)

@@ -416,8 +416,8 @@ fun ChatArea(
     // The loaded page's edges; a card placed beyond them waits for its page.
     val orbitLoadedFrom = if (hasOlderDisplayHistory) chatHistory.firstOrNull()?.timestamp ?: Long.MIN_VALUE else Long.MIN_VALUE
     val orbitLoadedUntil = if (hasNewerDisplayHistory) chatHistory.lastOrNull()?.timestamp ?: Long.MAX_VALUE else Long.MAX_VALUE
-    val orbitCardReply = remember(onReplyToMessage) {
-        onReplyToMessage?.let { reply ->
+    val orbitCardReply = remember(onReplyToMessage, allowTranscriptMutation) {
+        onReplyToMessage?.takeIf { allowTranscriptMutation }?.let { reply ->
             { summary: String, time: Long -> reply(ChatMessage(sender = "ai", content = summary, timestamp = time)) }
         }
     }

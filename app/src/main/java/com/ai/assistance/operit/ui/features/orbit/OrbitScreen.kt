@@ -554,6 +554,23 @@ private fun OrbitChatPage(
         com.ai.assistance.operit.features.orbit.OrbitLastChat.set(context, orbit.id, currentChatId)
     }
     val currentSide = orbit.sideChats.firstOrNull { it.chatId == currentChatId }
+    // The side chat WeChat writes to is a channel: read here, answered in WeChat, so nothing in it
+    // sends. Until the link is read, an open side chat might be it and waits the same way.
+    LaunchedEffect(orbit.id) { com.ai.assistance.operit.features.orbit.OrbitWeixin.refreshStatus(context, orbit.id) }
+    val weixinLinks by com.ai.assistance.operit.features.orbit.OrbitWeixin.channels.collectAsState()
+    val weixinLink = weixinLinks[orbit.id]
+    val weixinRead = weixinLink != null
+    val channelChatId = orbitChannelChatId(orbit, weixinLink)
+    val inChannel = currentChatId == channelChatId || (!weixinRead && currentSide != null)
+    val openWeixinSettings = rememberUpdatedState { push(OrbitSubPage.WEIXIN) }
+    val readOnlyChannel = if (!inChannel) null else {
+        val expired = weixinRead && weixinLink?.loginExpired == true
+        remember(weixinRead, expired) {
+            com.ai.assistance.operit.ui.features.chat.components.OrbitReadOnlyChannel(
+                ready = weixinRead, loginExpired = expired, onReconnect = { openWeixinSettings.value() },
+            )
+        }
+    }
     // Entering the chat, its messages stay hidden until they are loaded, prepared and at the newest
     // one, then show together instead of one by one. On launch the mark opens on them instead.
     val entryPreparing = remember(orbit.id) { mutableStateOf(true) }
@@ -769,9 +786,10 @@ private fun OrbitChatPage(
         }
     }
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
-    val userReactions = remember(userReactionMap, currentChatId, haptic) {
+    val userReactions = remember(userReactionMap, currentChatId, haptic, inChannel) {
         com.ai.assistance.operit.ui.features.chat.components.OrbitUserReactions(userReactionMap) { key, emoji, said ->
             // Taking a tapback off says nothing to Orbit; putting one on lets it decide what to do.
+            // In the WeChat channel it stays a mark here: what Orbit is told goes through WeChat.
             val adding = userReactionMap[key] != emoji
             // Every tapback the user gives passes here (menu, picker, double tap, cards), so it is felt the same.
             if (adding) OrbitHaptics.reaction(haptic) else OrbitHaptics.reactionRemoved(haptic)
@@ -779,7 +797,7 @@ private fun OrbitChatPage(
             reactionScope.launch {
                 try {
                     userReactionStore.toggle(chatId, key, emoji)
-                    if (adding) OrbitReactionSender.onReacted(context, orbit.id, chatId, key, emoji, said)
+                    if (adding && !inChannel) OrbitReactionSender.onReacted(context, orbit.id, chatId, key, emoji, said)
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
                 } catch (e: Exception) {
@@ -794,12 +812,18 @@ private fun OrbitChatPage(
     // here, as if the user had picked it; they finish the message and decide whether to send.
     val sharedFiles by com.ai.assistance.operit.ui.main.SharedFileHandler.sharedFiles.collectAsState()
     val sharedText by com.ai.assistance.operit.ui.main.SharedFileHandler.sharedText.collectAsState()
-    LaunchedEffect(sharedFiles, sharedText) {
+    // A side chat open before the WeChat link is read might be the channel: the share waits for it.
+    val shareTargetKnown = weixinRead || currentSide == null
+    LaunchedEffect(sharedFiles, sharedText, shareTargetKnown) {
+        if (!shareTargetKnown) return@LaunchedEffect
         val handler = com.ai.assistance.operit.ui.main.SharedFileHandler
+        // The WeChat channel takes no input: a share there goes to the main chat instead. The page
+        // switches to it; the view model only keeps the share for that chat.
+        val target = if (currentChatId == channelChatId) orbit.chatId else currentChatId
         // The chat comes to the front, closing any page over it, so the filled box is in view.
         fun showChat() {
             tab = OrbitTab.CHAT
-            com.ai.assistance.operit.features.orbit.OrbitNavigation.openChat(currentChatId)
+            com.ai.assistance.operit.features.orbit.OrbitNavigation.openChat(target)
         }
         val files = sharedFiles
         if (!files.isNullOrEmpty()) {
@@ -807,14 +831,14 @@ private fun OrbitChatPage(
             handler.clearSharedFiles()
             handler.clearSharedText()
             showChat()
-            chatViewModel.handleSharedFiles(files, currentChatId, note)
+            chatViewModel.handleSharedFiles(files, target, note, switchedByCaller = true)
             return@LaunchedEffect
         }
         val text = sharedText?.trim()
         if (!text.isNullOrBlank()) {
             handler.clearSharedText()
             showChat()
-            chatViewModel.handleSharedText(text, currentChatId)
+            chatViewModel.handleSharedText(text, target, switchedByCaller = true)
         }
     }
     // A button that asks Orbit for something: its prompt waits in the main chat's input box, and
@@ -1222,6 +1246,7 @@ private fun OrbitChatPage(
                         if (!devView && currentChatId == orbit.chatId && !forkingMessage && orbit.canAddSideChat)
                             ::forkMessage else null,
                     com.ai.assistance.operit.ui.features.chat.components.LocalShowHiddenChatRows provides devView,
+                    com.ai.assistance.operit.ui.features.chat.components.LocalOrbitReadOnlyChannel provides readOnlyChannel,
                     com.ai.assistance.operit.ui.features.chat.components.LocalTranscriptPreparing provides
                         (devPreparing.takeIf { devEntering } ?: entryPreparing.takeIf { entering }),
                     com.ai.assistance.operit.ui.features.chat.components.LocalTranscriptAlpha provides entryAlpha.asState(),
@@ -1335,9 +1360,25 @@ private fun OrbitChatPage(
                             },
                             onQuoteFiles = { files ->
                                 // In the input box of the chat the user was last in (main or side), as
-                                // files the user picked; only their places are sent.
-                                tab = OrbitTab.CHAT
-                                chatViewModel.attachOrbitFiles(files)
+                                // files the user picked; only their places are sent. The WeChat channel
+                                // has no input box, so they go to the main chat's then.
+                                val shown = currentChatId
+                                val tabAtQuote = tab
+                                fun quote(toMain: Boolean, show: Boolean) {
+                                    if (show) {
+                                        tab = OrbitTab.CHAT
+                                        if (toMain) talkChatId = orbit.chatId
+                                    }
+                                    chatViewModel.attachOrbitFiles(files, if (toMain) orbit.chatId else shown)
+                                }
+                                if (weixinRead || currentSide == null) {
+                                    quote(toMain = shown == channelChatId, show = true)
+                                } else reactionScope.launch {
+                                    // A side chat open before the link was read: the saved link decides. If the
+                                    // user picked another chat meanwhile, the files still go, the page stays.
+                                    val toMain = shown == com.ai.assistance.operit.features.orbit.OrbitWeixin.boundChatId(context, orbit.id)
+                                    quote(toMain, show = talkChatId == shown && tab == tabAtQuote)
+                                }
                             },
                             filesVersion = filesVersion, onOpenFile = { editingFile = it })
                     }
@@ -1360,6 +1401,7 @@ private fun OrbitChatPage(
         OrbitSideMenu(
             visible = showChats,
             orbit = orbit, currentChatId = currentChatId, unread = unreadChats,
+            channelChatId = channelChatId, channelRead = weixinRead,
             onSelect = {
                 if (it !in orbit.talkChatIds) justCreatedChatId = it
                 talkChatId = it
@@ -1530,6 +1572,7 @@ private fun OrbitChatPage(
         OrbitSideMenu(
             visible = docked,
             orbit = orbit, currentChatId = currentChatId, unread = unreadChats,
+            channelChatId = channelChatId, channelRead = weixinRead,
             onSelect = {
                 if (showInPage()) {
                     if (it !in orbit.talkChatIds) justCreatedChatId = it

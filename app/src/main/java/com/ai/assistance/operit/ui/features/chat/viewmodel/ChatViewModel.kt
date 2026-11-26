@@ -2616,11 +2616,15 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     /** Quotes an Orbit's own files in the input box, in place (no copies). */
-    fun attachOrbitFiles(files: List<java.io.File>) {
+    /**
+     * Quotes [files] in the input box of [targetChatId], or of the chat open now. The files go to
+     * that chat even if another is opened meanwhile; the caller shows it.
+     */
+    fun attachOrbitFiles(files: List<java.io.File>, targetChatId: String? = null) {
         if (files.isEmpty()) return
         viewModelScope.launch {
             try {
-                attachmentDelegate.attachOrbitFiles(files)
+                attachmentDelegate.attachOrbitFiles(files, targetChatId)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -2863,8 +2867,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         return currentChatId.value == chatId
     }
 
-    private suspend fun resolveTargetChatIdForSharedContent(targetChatId: String?): String? {
+    private suspend fun resolveTargetChatIdForSharedContent(targetChatId: String?, switchedByCaller: Boolean = false): String? {
         if (!targetChatId.isNullOrBlank()) {
+            // The page opens the chat itself; the share is kept for that chat whether or not it is open yet.
+            if (switchedByCaller) return targetChatId
             if (currentChatId.value != targetChatId) {
                 switchChat(targetChatId)
                 if (!awaitCurrentChat(targetChatId)) {
@@ -2918,13 +2924,14 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         return TextFieldValue(merged, androidx.compose.ui.text.TextRange(merged.length))
     }
 
-    fun handleSharedText(text: String, targetChatId: String? = null) {
+    /** [switchedByCaller]: the page itself opens [targetChatId]; the text goes to that chat's box without switching here. */
+    fun handleSharedText(text: String, targetChatId: String? = null, switchedByCaller: Boolean = false) {
         val sharedText = text.trim()
         if (sharedText.isBlank()) return
 
         viewModelScope.launch {
             try {
-                val chatId = resolveTargetChatIdForSharedContent(targetChatId)
+                val chatId = resolveTargetChatIdForSharedContent(targetChatId, switchedByCaller)
                 if (chatId == null) {
                     AppLogger.e(TAG, "Failed to prepare target chat for shared text")
                     uiStateDelegate.showErrorMessage(
@@ -2944,7 +2951,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
     }
 
-    fun handleSharedFiles(uris: List<Uri>, targetChatId: String? = null, sharedText: String? = null) {
+    fun handleSharedFiles(
+        uris: List<Uri>, targetChatId: String? = null, sharedText: String? = null, switchedByCaller: Boolean = false,
+    ) {
         AppLogger.d(TAG, "handleSharedFiles called with ${uris.size} file(s)")
         uris.forEachIndexed { index, uri ->
             AppLogger.d(TAG, "  [$index] URI: $uri")
@@ -2952,7 +2961,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         
         viewModelScope.launch {
             try {
-                val chatId = resolveTargetChatIdForSharedContent(targetChatId)
+                val chatId = resolveTargetChatIdForSharedContent(targetChatId, switchedByCaller)
                 if (chatId == null) {
                     AppLogger.e(TAG, "Failed to prepare target chat for shared files")
                     uiStateDelegate.showErrorMessage(

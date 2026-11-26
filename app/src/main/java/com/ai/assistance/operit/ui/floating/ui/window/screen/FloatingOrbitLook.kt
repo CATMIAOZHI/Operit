@@ -100,12 +100,19 @@ internal fun rememberFloatingOrbit(chatId: String?): OrbitProfile? {
 @Composable
 internal fun FloatingOrbitScope(floatContext: FloatContext, orbit: OrbitProfile, chatId: String, content: @Composable () -> Unit) {
     val service = floatContext.chatService
+    // The WeChat channel is answered in WeChat: its reply options are shown but not tappable, as in the
+    // app; until the link is read (a window come up cold) none are.
+    val weixinLinks by com.ai.assistance.operit.features.orbit.OrbitWeixin.channels.collectAsState()
+    androidx.compose.runtime.LaunchedEffect(orbit.id) {
+        service?.let { com.ai.assistance.operit.features.orbit.OrbitWeixin.readChannel(it, orbit.id) }
+    }
+    val inWeixinChannel = weixinLinks[orbit.id]?.let { it.chatId == chatId } ?: true
     OrbitAppearanceTheme(orbit, updateAppAppearance = false) {
         CompositionLocalProvider(
             LocalOrbitChatLook provides true,
             LocalOrbitName provides orbitName(orbit),
             LocalOrbitActivity provides rememberOrbitActivity(orbit, chatId),
-            LocalOrbitOptionSend provides remember(service) {
+            LocalOrbitOptionSend provides if (inWeixinChannel) null else remember(service) {
                 { optionChatId: String, text: String, waiting: () -> Boolean, onLost: () -> Unit ->
                     service?.sendOrbitOption(optionChatId, text, waiting, onLost) == true
                 }
