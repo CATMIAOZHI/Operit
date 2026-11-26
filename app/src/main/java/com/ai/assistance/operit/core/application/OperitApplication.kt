@@ -803,6 +803,7 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
             super.attachBaseContext(base)
             return
         }
+        com.ai.assistance.operit.core.tools.defaultTool.websession.browser.configureBrowserEngineStartup()
         configureOpenMpEnvironment()
         // 在基础上下文附加前应用语言设置
         try {

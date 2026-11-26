@@ -19,7 +19,7 @@
 
 ### 当前工具链
 
-使用 JDK 21、Gradle 9.7.1、AGP 9.4.0、Kotlin 2.2.20 和 Android SDK
+使用 JDK 25、Gradle 9.7.1、AGP 9.4.0、Kotlin 2.2.20 和 Android SDK
 37.1（`platforms;android-37.1`）。根构建通过 `finalizeDsl` 为所有 Android
 模块统一编译 SDK，并固定 NDK 27.0.12077973；CMake 仍为 3.31.6。
 `minSdk` 与 `targetSdk` 不因编译 SDK 升级而改变。
@@ -29,28 +29,30 @@ AGP 9 迁移期间保留外置 Kotlin 插件与旧 DSL：
 KAPT、ObjectBox 和 terminal 子模块，并非永久方案；升级到 AGP 10 前需要完成迁移。
 本地与 CI 均须安装 Build Tools 37.0.0。
 
-### 带浏览器版（`-PoperitBrowser=true`）
+### 内置浏览器引擎
 
-命令行加 `-PoperitBrowser=true` 会打出内置 Cefrium 浏览器引擎的版本（见
-`docs/TODO/browser_engine_roadmap/index.md`）：最低 Android 10（`minSdk 29`），APK
-约大 100 MB，`BuildConfig.BROWSER_ENGINE_BUILT_IN = true`。Cefrium 要求 Gradle 运行在
-JDK 25 上，用其它 JDK 会直接报错提示。不加开关就是普通版，和以前一样。
+App 默认内置 Cefrium 浏览器引擎（见 `docs/TODO/browser_engine_roadmap/index.md`）：最低
+Android 10（`minSdk 29`），APK 约大 100 MB，`BuildConfig.BROWSER_ENGINE_BUILT_IN = true`。
+Cefrium 要求 Gradle 运行在 JDK 25 或更高版本上，低于 25 会直接报错提示。只发这一种 APK。
 
 ```powershell
-$env:JAVA_HOME = "<JDK 25 目录>"
-.\gradlew.bat :app:assembleDebug -PoperitBrowser=true
+$env:JAVA_HOME = "C:\Program Files\Eclipse Adoptium\jdk-25.0.5.10002-hotspot"
+.\gradlew.bat :app:assembleDebug --console=plain
 ```
 
-开关只认命令行的 `-P`，写进 `gradle.properties` 不生效。带浏览器版的浏览器标签页都跑在
-Cefrium 上，引擎建页失败时该标签页回退 WebView；启动时 Cefrium 会通过它自带的
-`CefriumInitProvider` 初始化。
+本地只想快速验证与浏览器无关的改动时，可加 `-PoperitBrowser=false` 打出系统 WebView
+版（最低 Android 8，JDK 21 也能编）；这种包不发布。开关只认命令行的 `-P`，写进
+`gradle.properties` 不生效。浏览器标签页都跑在 Cefrium 上，引擎建页失败时该标签页回退
+WebView；但手机 WebView 不支持多 Profile（`MULTI_PROFILE`）时，Orbit 的标签页为了不混用
+主应用的登录会直接报错打不开。启动时 Cefrium 会通过它自带的 `CefriumInitProvider` 初始化；
+App 关掉了它冷启动时预读内核库（约 145 MB），第一次打开网页会稍慢一点。
 
 在 x86_64 安卓模拟器上测试时再加 `-PoperitAbi=x86_64`，打出只含 x86_64 原生库的包
 （arm64 的 Cefrium 在模拟器的 ARM 翻译层里会崩）。这个开关只用于模拟器，正式包仍是 arm64。
 终端子模块不认这个开关，这种包里终端用不了。
 
 ```powershell
-.\gradlew.bat :app:assembleDebug -PoperitBrowser=true -PoperitAbi=x86_64
+.\gradlew.bat :app:assembleDebug -PoperitAbi=x86_64
 ```
 
 ### 1. 初始化子模块
@@ -250,7 +252,7 @@ Android Build workflow（`android-build.yml`）仍可手动触发用于 release�
 
 - **NDK 版本**：`27.0.12077973`
 - **CMake 版本**：`3.31.6`
-- **JDK**：21
+- **JDK**：25（`tools/shower` 自带的 Gradle 8.13 跑不了 JDK 25，CodeQL 用运行器自带的 JDK 21 编它）
 - **ccache**：`CCACHE_COMPILERCHECK=content`、2G 滚动缓存，加速原生编译
 - **签名**：使用 Actions Secrets 中配置的 Operit Ry 发布签名，构建前和构建后双重校验证书 SHA-256
 

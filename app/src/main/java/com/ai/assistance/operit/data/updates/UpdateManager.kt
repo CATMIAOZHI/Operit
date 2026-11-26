@@ -419,7 +419,9 @@ class UpdateManager private constructor(private val context: Context) {
                     updateUrl = r.html_url,
                     releaseNotes = r.body ?: "",
                     patchUrl = patchAsset.browser_download_url,
-                    metaUrl = metaAsset.browser_download_url
+                    metaUrl = metaAsset.browser_download_url,
+                    // The same release's whole APK, for when the patch cannot be used after all.
+                    fullApkUrl = apkAsset?.takeIf { apkMatchesPackage }?.browser_download_url.orEmpty()
                 )
             }
         }

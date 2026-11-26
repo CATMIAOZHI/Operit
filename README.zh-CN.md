@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://github.com/CATMIAOZHI/orbit/releases/latest"><img src="https://img.shields.io/github/v/release/CATMIAOZHI/orbit?label=release&color=3D6FD1" alt="最新版本"></a>
-  <img src="https://img.shields.io/badge/Android-8.0%2B-3D6FD1" alt="Android 8.0+">
+  <img src="https://img.shields.io/badge/Android-10%2B-3D6FD1" alt="Android 10+">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-LGPL--3.0-D9531F" alt="LGPL-3.0"></a>
   <a href="https://github.com/CATMIAOZHI/orbit/stargazers"><img src="https://img.shields.io/github/stars/CATMIAOZHI/orbit?color=D9531F" alt="Stars"></a>
 </p>
@@ -127,7 +127,7 @@ Orbit 支持 OpenAI、Claude、Gemini、DeepSeek、OpenRouter 和 Ollama Cloud�
 
 ## 开始使用
 
-1. 从 [Releases](https://github.com/CATMIAOZHI/orbit/releases/latest) 下载最新 APK。需要 Android 8.0 及以上的 arm64 手机，建议 6 GB 及以上内存。
+1. 从 [Releases](https://github.com/CATMIAOZHI/orbit/releases/latest) 下载最新 APK。需要 Android 10 及以上的 arm64 手机，建议 6 GB 及以上内存。
 2. 安装后打开 App，同意条款。
 3. 添加一个模型，填上它的 API Key。
 4. 打开 Orbit，跟它打个招呼。

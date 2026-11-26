@@ -6,8 +6,8 @@ buildscript {
     }
     dependencies {
         classpath("io.objectbox:objectbox-gradle-plugin:$objectboxVersion")
-        // Only the browser build (-PoperitBrowser=true) needs the Cefrium plugin, and its repository.
-        if (gradle.startParameter.projectProperties["operitBrowser"] == "true") {
+        // The Cefrium plugin, left out only for a build without the engine (-PoperitBrowser=false).
+        if (gradle.startParameter.projectProperties["operitBrowser"] != "false") {
             classpath("com.cefrium:cefrium-gradle-plugin:0.21.0")
         }
     }

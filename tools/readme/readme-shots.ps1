@@ -46,6 +46,7 @@ Invoke-Logged "native" "cmd.exe" "/c `"`"$vs\VC\Auxiliary\Build\vcvars64.bat`" >
 if (-not (Test-Path "$native\streamnative.dll")) { throw "Building the markdown library failed. Log: $logs\native.log" }
 
 $shots = Join-Path $root "docs/assets/readme/screens"
+# The pictures need no browser engine; without it the build also runs on a JDK 21.
 Invoke-Logged "gradle" (Join-Path $root "gradlew.bat") `
-    ":app:testDebugUnitTest --tests `"com.ai.assistance.operit.readme.*`" `"-PorbitReadmeShots=$shots`" --no-daemon --console=plain" 30
+    ":app:testDebugUnitTest --tests `"com.ai.assistance.operit.readme.*`" `"-PorbitReadmeShots=$shots`" -PoperitBrowser=false --no-daemon --console=plain" 30
 Get-ChildItem -Recurse $shots -Filter *.png | ForEach-Object { $_.FullName }

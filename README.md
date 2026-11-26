@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://github.com/CATMIAOZHI/orbit/releases/latest"><img src="https://img.shields.io/github/v/release/CATMIAOZHI/orbit?label=release&color=3D6FD1" alt="Latest release"></a>
-  <img src="https://img.shields.io/badge/Android-8.0%2B-3D6FD1" alt="Android 8.0+">
+  <img src="https://img.shields.io/badge/Android-10%2B-3D6FD1" alt="Android 10+">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-LGPL--3.0-D9531F" alt="LGPL-3.0"></a>
   <a href="https://github.com/CATMIAOZHI/orbit/stargazers"><img src="https://img.shields.io/github/stars/CATMIAOZHI/orbit?color=D9531F" alt="Stars"></a>
 </p>
@@ -127,7 +127,7 @@ Weekly token allowances and usage statistics keep background work within a budge
 
 ## Getting started
 
-1. Download the latest APK from [Releases](https://github.com/CATMIAOZHI/orbit/releases/latest). It needs Android 8.0 or later on an arm64 phone; 6 GB of RAM or more is recommended.
+1. Download the latest APK from [Releases](https://github.com/CATMIAOZHI/orbit/releases/latest). It needs Android 10 or later on an arm64 phone; 6 GB of RAM or more is recommended.
 2. Install it, open the app and agree to the terms.
 3. Add a model and its API key.
 4. Open Orbit and say hello.
