@@ -99,7 +99,11 @@ internal class CefriumPageView(context: Context, private val page: CefriumBrowse
     }
 
     fun onPopupBounds(x: Int, y: Int, width: Int, height: Int) {
-        popupBounds.set(x, y, x + width, y + height)
+        // All four are CSS pixels; the frame is drawn in the tab's own pixels.
+        val s = page.deviceScale
+        val left = (x * s).toInt()
+        val top = (y * s).toInt()
+        popupBounds.set(left, top, left + (width * s).toInt(), top + (height * s).toInt())
     }
 
     fun onPopupFrame(x: Int, y: Int, width: Int, height: Int, pixels: ByteBuffer) {
@@ -112,7 +116,10 @@ internal class CefriumPageView(context: Context, private val page: CefriumBrowse
                 }
         pixels.rewind()
         target.copyPixelsFromBuffer(pixels)
-        popupBounds.set(x, y, x + width, y + height)
+        // The engine gives the corner in CSS pixels but the picture in the tab's own pixels.
+        val left = (x * page.deviceScale).toInt()
+        val top = (y * page.deviceScale).toInt()
+        popupBounds.set(left, top, left + width, top + height)
         invalidate()
     }
 
@@ -421,8 +428,10 @@ internal class CefriumPageView(context: Context, private val page: CefriumBrowse
         row.measure(MeasureSpec.UNSPECIFIED, MeasureSpec.UNSPECIFIED)
         val location = IntArray(2)
         getLocationOnScreen(location)
-        val sx = scaleX
-        val sy = scaleY
+        // Native RunQuickMenu gives the selection in CSS pixels (DIP), whatever the Java docs say:
+        // times the tab's scale, then the view's.
+        val sx = scaleX * page.deviceScale
+        val sy = scaleY * page.deviceScale
         val left = location[0] + (x * sx).toInt() - row.measuredWidth / 2
         val above = location[1] + (y * sy).toInt() - row.measuredHeight - (8 * resources.displayMetrics.density).toInt()
         val top = if (above > 0) above else location[1] + ((y + height) * sy).toInt()

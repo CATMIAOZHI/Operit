@@ -490,7 +490,7 @@ internal class WebSessionBrowserHost(
             (webView.parent as? ViewGroup)?.removeView(webView)
             target.addView(webView)
         }
-        val density = appContext.resources.displayMetrics.density
+        val density = layoutScaleOf(page, appContext.resources.displayMetrics.density)
         val w = width?.let { (it * density).roundToInt() } ?: appContext.resources.displayMetrics.widthPixels
         val h = height?.let { (it * density).roundToInt() } ?: appContext.resources.displayMetrics.heightPixels
         val scale = minOf(appContext.resources.displayMetrics.widthPixels.toFloat() / w,
@@ -806,8 +806,8 @@ internal class WebSessionBrowserHost(
     private var watchPutAway: (() -> Unit)? = null
 
     /**
-     * Whether back is the browser's own right now (see [WebSessionBrowserActivity]); otherwise the
-     * system takes it, shrinks the window with the finger and closes it.
+     * Whether back is the browser's own right now (see [WebSessionBrowserActivity]); otherwise it
+     * shrinks the page with the finger and closes the window.
      */
     private fun syncBrowserBack() {
         if (Looper.myLooper() != Looper.getMainLooper()) {

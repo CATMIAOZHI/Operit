@@ -209,10 +209,9 @@ internal class WebSessionWebViewHost {
      * the view transform only fits that logical viewport on the phone.
      */
     private fun layoutSize(webView: View, cssWidth: Int, cssHeight: Int): Pair<Int, Int> {
-        val density =
-            webView.resources.displayMetrics.density
-                .takeIf { it.isFinite() && it > 0f }
-                ?: 1f
+        // An engine tab has its own scale (a desktop one is drawn at 1080p); a WebView the screen's.
+        val screen = webView.resources.displayMetrics.density.takeIf { it.isFinite() && it > 0f } ?: 1f
+        val density = layoutScaleOf(activePage?.takeIf { it.view === webView }, screen)
         return (cssWidth * density).roundToInt().coerceAtLeast(1) to
             (cssHeight * density).roundToInt().coerceAtLeast(1)
     }

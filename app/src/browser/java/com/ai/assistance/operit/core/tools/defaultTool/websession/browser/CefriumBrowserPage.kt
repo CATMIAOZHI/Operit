@@ -139,12 +139,14 @@ internal class CefriumBrowserPage private constructor(
         /** Tabs by engine browser, to find the one a page's window belongs to. Main thread. */
         private val pages = WeakHashMap<CefriumBrowser, CefriumBrowserPage>()
 
-        fun create(context: Context, profile: CefriumProfile): CefriumBrowserPage {
+        fun create(context: Context, profile: CefriumProfile, desktop: Boolean): CefriumBrowserPage {
             val metrics = context.resources.displayMetrics
+            // The engine's scale is fixed for the tab's life; a desktop tab is drawn at 1080p.
+            val scale = if (desktop) minOf(metrics.density, DESKTOP_RASTER_SCALE) else metrics.density
             val browser =
-                CefriumBrowser(metrics.widthPixels.coerceAtLeast(1), metrics.heightPixels.coerceAtLeast(1), metrics.density, profile)
+                CefriumBrowser(metrics.widthPixels.coerceAtLeast(1), metrics.heightPixels.coerceAtLeast(1), scale, profile)
             return try {
-                CefriumBrowserPage(context, browser, metrics.density)
+                CefriumBrowserPage(context, browser, scale)
             } catch (e: Throwable) {
                 runCatching { browser.close() }
                 throw e
