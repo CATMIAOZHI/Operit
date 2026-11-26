@@ -33,7 +33,7 @@ class WebSessionBrowserActivity : ComponentActivity() {
     private val backCallback =
         object : OnBackPressedCallback(false) {
             override fun handleOnBackPressed() {
-                host()?.handleBack() ?: finishAndRemoveTask()
+                host()?.handleBack() ?: close()
             }
         }
 
@@ -65,10 +65,32 @@ class WebSessionBrowserActivity : ComponentActivity() {
         backCallback.isEnabled = takes
     }
 
+    /**
+     * Closes the window. In the app's task only the window goes, back to the page under it; a
+     * task of its own (opened over another app) goes with it, back to that app.
+     */
+    internal fun close() {
+        if (isTaskRoot) finishAndRemoveTask() else finish()
+    }
+
+    /**
+     * Closes the window the way it opened, back into the page under it. Only for the browser's
+     * own close button: the system's back keeps its animation that follows the finger. Over
+     * another app the system's own task animation plays.
+     */
+    internal fun closeLikeAPage() {
+        val enter = com.ai.assistance.operit.R.anim.browser_window_hold
+        val exit = com.ai.assistance.operit.R.anim.browser_window_exit
+        if (android.os.Build.VERSION.SDK_INT >= 34) overrideActivityTransition(OVERRIDE_TRANSITION_CLOSE, enter, exit)
+        close()
+        @Suppress("DEPRECATION")
+        if (android.os.Build.VERSION.SDK_INT < 34) overridePendingTransition(enter, exit)
+    }
+
     override fun onStart() {
         super.onStart()
         // Reopened from the recent apps after the app process was gone: nothing left to show.
-        val host = host() ?: return finishAndRemoveTask()
+        val host = host() ?: return close()
         host.onActivityStarted(this, firstStart)
         firstStart = false
     }

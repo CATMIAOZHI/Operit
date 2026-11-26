@@ -27,7 +27,7 @@ import androidx.compose.ui.unit.dp
 
 @Composable
 internal fun WebSessionSheetScaffold(
-    title: String,
+    title: String?,
     subtitle: String? = null,
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit
@@ -52,7 +52,7 @@ internal fun WebSessionSheetScaffold(
                     )
         )
 
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (title != null) Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleLarge,

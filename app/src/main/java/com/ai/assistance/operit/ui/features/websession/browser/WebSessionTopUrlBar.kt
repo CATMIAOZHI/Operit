@@ -1,50 +1,63 @@
 package com.ai.assistance.operit.ui.features.websession.browser
 
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowForward
+import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.R
 
+/**
+ * The address bar. At rest it shows the site's name; tapped, it becomes a focused field with the
+ * address selected, so typing replaces it, and the page area shows suggestions until it is done.
+ */
 @Composable
 internal fun WebSessionTopUrlBar(
     url: String,
@@ -60,256 +73,151 @@ internal fun WebSessionTopUrlBar(
     onToggleBookmark: () -> Unit,
     onRefreshOrStop: () -> Unit,
     onMinimize: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /** The tab the bar is for: a new tab starts typing again, with the keyboard. */
+    focusKey: Any? = null,
 ) {
-    val addressBarLabel = stringResource(R.string.web_session_address_bar)
-    val addressInputLabel = stringResource(R.string.web_session_address_input)
+    val colors = MaterialTheme.colorScheme
+    val blank = isBlankPage(url)
+    val focusRequester = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    var field by remember { mutableStateOf(TextFieldValue()) }
+    LaunchedEffect(isEditing, focusKey) {
+        // The old address is selected: typing replaces it, a tap places the cursor.
+        if (isEditing) field = TextFieldValue(urlDraft, TextRange(0, urlDraft.length))
+    }
+    // Asked again once the window can take focus: the browser may still be opening its window.
+    val windowFocused = LocalWindowInfo.current.isWindowFocused
+    LaunchedEffect(isEditing, focusKey, windowFocused) {
+        if (isEditing && windowFocused) {
+            runCatching { focusRequester.requestFocus() }
+            keyboard?.show()
+        }
+    }
+    LaunchedEffect(urlDraft) {
+        if (isEditing && field.text != urlDraft) field = TextFieldValue(urlDraft, TextRange(urlDraft.length))
+    }
 
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 1.dp,
-        shadowElevation = 4.dp
-    ) {
-        Column(
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
+    Surface(modifier = modifier.fillMaxWidth(), color = colors.surface) {
+        Column(Modifier.fillMaxWidth()) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(if (isEditing) 0.dp else 8.dp),
+                modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 6.dp, top = 8.dp, bottom = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                val addressBar = stringResource(R.string.web_session_address_bar)
                 Surface(
-                    modifier = if (isEditing) Modifier.fillMaxWidth() else Modifier.weight(1f),
-                    shape = RoundedCornerShape(if (isEditing) 18.dp else 20.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerHighest,
-                    border =
-                        BorderStroke(
-                            width = 1.dp,
-                            color =
-                                if (isEditing) {
-                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.32f)
-                                } else {
-                                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f)
-                                }
-                        )
+                    onClick = { if (!isEditing) onStartEditing() },
+                    enabled = !isEditing,
+                    shape = RoundedCornerShape(22.dp),
+                    color = colors.surfaceContainerHigh,
+                    modifier = Modifier.weight(1f).height(44.dp).semantics { contentDescription = addressBar },
                 ) {
-                    if (isEditing) {
-                        Row(
-                            modifier =
-                                Modifier
-                                    .fillMaxWidth()
-                                    .height(42.dp)
-                                    .padding(start = 10.dp, end = 4.dp),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector =
-                                    if (urlDraft.startsWith("https://") || url.startsWith("https://")) {
-                                        Icons.Filled.Lock
-                                    } else {
-                                        Icons.Filled.Language
-                                    },
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-
-                            Box(
-                                modifier =
-                                    Modifier
-                                        .weight(1f)
-                                        .padding(vertical = 8.dp),
-                                contentAlignment = Alignment.CenterStart
-                            ) {
-                                if (urlDraft.isBlank()) {
+                    Row(
+                        modifier = Modifier.fillMaxHeight().padding(start = 14.dp, end = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = when {
+                                isEditing || blank -> Icons.Filled.Search
+                                url.startsWith("https://") -> Icons.Filled.Lock
+                                else -> Icons.Filled.Language
+                            },
+                            contentDescription = null,
+                            tint = colors.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        if (isEditing) {
+                            val inputLabel = stringResource(R.string.web_session_address_input)
+                            Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                                if (field.text.isEmpty()) {
                                     Text(
-                                        text = url,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        text = stringResource(R.string.web_session_search_or_url),
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = colors.onSurfaceVariant,
+                                        maxLines = 1
                                     )
                                 }
                                 BasicTextField(
-                                    value = urlDraft,
-                                    onValueChange = onUrlDraftChange,
-                                    modifier =
-                                        Modifier
-                                            .fillMaxWidth()
-                                            .semantics {
-                                                contentDescription = addressInputLabel
-                                            },
-                                    singleLine = true,
-                                    textStyle =
-                                        MaterialTheme.typography.bodyMedium.copy(
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        ),
-                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
-                                    keyboardActions =
-                                        KeyboardActions(
-                                            onGo = {
-                                                onSubmitUrl()
-                                            }
-                                        )
-                                )
-                            }
-
-                            IconButton(
-                                modifier = Modifier.size(28.dp),
-                                onClick = onSubmitUrl
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.ArrowForward,
-                                    contentDescription = stringResource(R.string.web_session_open_address)
-                                )
-                            }
-                        }
-                    } else {
-                        Row(
-                            modifier =
-                                Modifier
-                                    .fillMaxWidth()
-                                    .semantics {
-                                        contentDescription = addressBarLabel
-                                        role = Role.Button
-                                    }
-                                    .clickable(onClick = onStartEditing)
-                                    .padding(horizontal = 12.dp, vertical = 9.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector =
-                                    if (url.startsWith("https://")) {
-                                        Icons.Filled.Lock
-                                    } else {
-                                        Icons.Filled.Language
+                                    value = field,
+                                    onValueChange = {
+                                        field = it
+                                        if (it.text != urlDraft) onUrlDraftChange(it.text)
                                     },
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-
+                                    singleLine = true,
+                                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = colors.onSurface),
+                                    cursorBrush = SolidColor(colors.primary),
+                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
+                                    keyboardActions = KeyboardActions(onGo = { onSubmitUrl() }),
+                                    modifier = Modifier.fillMaxWidth().focusRequester(focusRequester)
+                                        .semantics { contentDescription = inputLabel }
+                                )
+                            }
+                            if (field.text.isNotEmpty()) {
+                                IconButton(onClick = { onUrlDraftChange("") }, modifier = Modifier.size(36.dp)) {
+                                    Icon(
+                                        Icons.Filled.Cancel,
+                                        contentDescription = stringResource(R.string.web_session_clear_input),
+                                        tint = colors.onSurfaceVariant,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        } else {
                             Text(
-                                text = url.ifBlank { pageTitle.ifBlank { "about:blank" } },
+                                text = if (blank) stringResource(R.string.web_session_search_or_url) else siteHost(url),
                                 modifier = Modifier.weight(1f),
                                 style = MaterialTheme.typography.bodyLarge,
-                                fontWeight = FontWeight.Medium,
+                                color = if (blank) colors.onSurfaceVariant else colors.onSurface,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
-
-                            IconButton(
-                                modifier = Modifier.size(26.dp),
-                                onClick = {
-                                    onStopEditing()
-                                    onToggleBookmark()
-                                }
-                            ) {
-                                Icon(
-                                    imageVector =
-                                        if (isBookmarked) {
-                                            Icons.Filled.Star
-                                        } else {
-                                            Icons.Outlined.StarOutline
-                                        },
-                                    contentDescription =
-                                        stringResource(
-                                            if (isBookmarked) {
-                                                R.string.web_session_remove_bookmark
-                                            } else {
-                                                R.string.web_session_add_bookmark
-                                            }
+                            if (!blank) {
+                                IconButton(onClick = onToggleBookmark, modifier = Modifier.size(36.dp)) {
+                                    Icon(
+                                        imageVector = if (isBookmarked) Icons.Filled.Star else Icons.Outlined.StarOutline,
+                                        contentDescription = stringResource(
+                                            if (isBookmarked) R.string.web_session_remove_bookmark else R.string.web_session_add_bookmark
                                         ),
-                                    tint =
-                                        if (isBookmarked) {
-                                            MaterialTheme.colorScheme.primary
-                                        } else {
-                                            MaterialTheme.colorScheme.onSurfaceVariant
-                                        }
-                                )
+                                        tint = if (isBookmarked) colors.primary else colors.onSurfaceVariant,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
                             }
                         }
                     }
                 }
-
-                if (!isEditing) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Surface(
-                            modifier = Modifier.size(36.dp),
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.surface,
-                            border =
-                                BorderStroke(
-                                    width = 1.dp,
-                                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f)
-                                )
-                        ) {
-                            IconButton(onClick = onRefreshOrStop) {
-                                Icon(
-                                    imageVector =
-                                        if (isLoading) {
-                                            Icons.Filled.Close
-                                        } else {
-                                            Icons.Filled.Refresh
-                                        },
-                                    contentDescription =
-                                        stringResource(
-                                            if (isLoading) {
-                                                R.string.web_session_stop
-                                            } else {
-                                                R.string.web_session_refresh
-                                            }
-                                        )
-                                )
-                            }
-                        }
-                        Surface(
-                            modifier = Modifier.size(36.dp),
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.surface,
-                            border =
-                                BorderStroke(
-                                    width = 1.dp,
-                                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f)
-                                )
-                        ) {
-                            IconButton(onClick = onMinimize) {
-                                Icon(
-                                    imageVector = Icons.Filled.Remove,
-                                    contentDescription = stringResource(R.string.web_session_minimize)
-                                )
-                            }
-                        }
+                if (isEditing) {
+                    TextButton(onClick = {
+                        keyboard?.hide()
+                        onStopEditing()
+                    }) {
+                        Text(stringResource(android.R.string.cancel))
+                    }
+                } else {
+                    IconButton(onClick = onRefreshOrStop) {
+                        Icon(
+                            imageVector = if (isLoading) Icons.Filled.Close else Icons.Filled.Refresh,
+                            contentDescription = stringResource(
+                                if (isLoading) R.string.web_session_stop else R.string.web_session_refresh
+                            )
+                        )
+                    }
+                    IconButton(onClick = onMinimize) {
+                        Icon(Icons.Filled.Remove, contentDescription = stringResource(R.string.web_session_minimize))
                     }
                 }
             }
-
+            // A thin line under the bar while the page loads; the same height stays when it does not.
             if (isLoading) {
-                Box(
-                    modifier =
-                        if (isEditing) {
-                            Modifier
-                                .fillMaxWidth()
-                                .height(2.dp)
-                                .background(
-                                    color = MaterialTheme.colorScheme.primary,
-                                    shape = RoundedCornerShape(999.dp)
-                                )
-                        } else {
-                            Modifier
-                                .width(72.dp)
-                                .height(2.dp)
-                                .background(
-                                    color = MaterialTheme.colorScheme.primary,
-                                    shape = RoundedCornerShape(999.dp)
-                                )
-                        }
+                LinearProgressIndicator(
+                    modifier = Modifier.fillMaxWidth().height(2.dp),
+                    color = colors.primary,
+                    trackColor = colors.surface
                 )
+            } else {
+                Spacer(Modifier.height(2.dp))
             }
         }
     }

@@ -147,6 +147,8 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         /** The last tab each login profile had in front, so an Orbit returns to its own tab. */
         internal val lastActiveByProfile = ConcurrentHashMap<String, String>()
         internal val lastActiveByTask = ConcurrentHashMap<String, String>()
+        /** The user's own tab last in front, per login set; opening their window again goes back to it. */
+        internal val lastOwnByProfile = ConcurrentHashMap<String, String>()
         @Volatile internal var activeSessionId: String? = null
             set(value) {
                 field = value
@@ -1766,7 +1768,8 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
             session.viewportWidthPx = width
             session.viewportHeightPx = height
             session.hasExplicitViewportSize = true
-            if (BrowserTaskScope.current() == null || activeSessionId == session.id) browserHost?.setViewportSize(width, height)
+            // Only the tab on screen resizes the window; one kept behind keeps its own size.
+            if (activeSessionId == session.id) browserHost?.setViewportSize(width, height)
             applyViewportOverride(session)
             ensureSessionAttachedOnMain(session.id)
             refreshSessionUiOnMain(session.id)
