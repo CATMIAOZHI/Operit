@@ -14,6 +14,15 @@ internal object UserscriptBootstrapScript {
             if (!bridge || typeof bridge.postMessage !== 'function') {
                 return;
             }
+            // This document's id: the host gives scripts to one document, and only its calls use them.
+            let documentId = "";
+            try {
+                const bytes = new Uint8Array(16);
+                crypto.getRandomValues(bytes);
+                documentId = Array.prototype.map.call(bytes, (b) => ("0" + b.toString(16)).slice(-2)).join("");
+            } catch (_) {
+                documentId = Date.now().toString(36) + Math.random().toString(36).slice(2);
+            }
 
             const runtime = {
                 pending: new Map(),
@@ -27,12 +36,12 @@ internal object UserscriptBootstrapScript {
                 urlChangeInstalled: false,
                 lastHref: String(location.href || ""),
                 post(type, payload) {
-                    const message = JSON.stringify({ type, payload: payload || {} });
+                    const message = JSON.stringify({ type, doc: documentId, payload: payload || {} });
                     bridge.postMessage(message);
                 },
                 request(type, payload) {
                     const requestId = "req_" + (++runtime.sequence) + "_" + Date.now();
-                    const message = JSON.stringify({ type, requestId, payload: payload || {} });
+                    const message = JSON.stringify({ type, doc: documentId, requestId, payload: payload || {} });
                     return new Promise((resolve, reject) => {
                         const timeout = setTimeout(() => {
                             runtime.pending.delete(requestId);
@@ -430,9 +439,11 @@ internal object UserscriptBootstrapScript {
                                 ? { accessKey: optionsOrAccessKey }
                                 : (optionsOrAccessKey || {});
                         const commandId = String(options.id || ("menu_" + script.scriptId + "_" + (++runtime.sequence)));
-                        runtime.menuCallbacks.set(commandId, callback);
+                        // Each script names its own commands: two scripts may pick the same id.
+                        const key = script.scriptId + ":" + commandId;
+                        runtime.menuCallbacks.set(key, { id: commandId, callback: callback });
                         runtime.post("register_menu_command", {
-                            commandId: commandId,
+                            commandId: key,
                             title: String(caption || ""),
                             scriptId: script.scriptId,
                             accessKey: String(options.accessKey || ""),
@@ -441,9 +452,10 @@ internal object UserscriptBootstrapScript {
                         return commandId;
                     };
                     const unregisterMenuCommand = function(commandId) {
-                        runtime.menuCallbacks.delete(commandId);
+                        const key = script.scriptId + ":" + String(commandId || "");
+                        runtime.menuCallbacks.delete(key);
                         runtime.post("unregister_menu_command", {
-                            commandId: String(commandId || ""),
+                            commandId: key,
                             scriptId: script.scriptId
                         });
                     };
@@ -1157,16 +1169,18 @@ internal object UserscriptBootstrapScript {
                     }
                 },
                 invokeMenuCommand(commandId) {
-                    const callback = runtime.menuCallbacks.get(String(commandId || ""));
-                    if (typeof callback === "function") {
-                        callback({
+                    const entry = runtime.menuCallbacks.get(String(commandId || ""));
+                    if (entry && typeof entry.callback === "function") {
+                        entry.callback({
                             type: "menucommand",
-                            commandId: String(commandId || ""),
+                            commandId: entry.id,
                             trusted: true
                         });
                     }
                 }
             };
+            Object.defineProperty(runtime, "documentId", { value: documentId });
+            let hasScripts = false;
 
             bridge.onmessage = function(event) {
                 try {
@@ -1185,7 +1199,7 @@ internal object UserscriptBootstrapScript {
                 }
             };
 
-            window.__operitUserscriptRuntime = runtime;
+            Object.defineProperty(window, "__operitUserscriptRuntime", { value: runtime });
             runtime.installUrlChangeHooks();
             runtime.post("menu_reset", {});
             runtime.request("bootstrap_request", {
@@ -1193,9 +1207,17 @@ internal object UserscriptBootstrapScript {
                 isTopFrame: window.top === window
             }).then(function(payload) {
                 const parsed = JSON.parse(String((payload && payload.payloadJson) || "{\"scripts\":[]}"));
+                hasScripts = (parsed.scripts || []).length > 0;
                 runtime.scheduleScripts(parsed.scripts || []);
             }).catch(function(error) {
                 runtime.log("error", String(error && (error.stack || error.message || error) || "userscript bootstrap failed"), 0, location.href);
+            });
+            // Back from the back/forward cache: the host let go of this page's grants, menus and
+            // rules when it left, so a page that runs scripts loads again and starts them afresh.
+            window.addEventListener("pageshow", function(event) {
+                if (event && event.persisted && hasScripts) {
+                    location.reload();
+                }
             });
         })();
         """.trimIndent()

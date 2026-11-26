@@ -50,9 +50,10 @@ internal object UserscriptMatcher {
         if (metadata.connects.isEmpty()) {
             return false
         }
-        val targetHost = targetUri.host?.lowercase(Locale.ROOT).orEmpty()
+        // Hosts compared as the network writes them, so a Unicode name matches its punycode form.
+        val targetHost = asciiHost(targetUri.host.orEmpty())
         return metadata.connects.any { rule ->
-            when (val normalized = rule.trim().lowercase(Locale.ROOT)) {
+            when (val normalized = connectRule(rule)) {
                 "*" -> true
                 "self" -> pageOrigin != null && pageOrigin == targetOrigin
                 targetHost -> true
@@ -147,7 +148,7 @@ internal object UserscriptMatcher {
 
     private fun originOf(uri: Uri): String? {
         val scheme = uri.scheme?.lowercase(Locale.ROOT) ?: return null
-        val host = uri.host?.lowercase(Locale.ROOT) ?: return null
+        val host = uri.host?.let(::asciiHost) ?: return null
         val portPart =
             when {
                 uri.port < 0 -> ""
@@ -157,4 +158,18 @@ internal object UserscriptMatcher {
             }
         return "$scheme://$host$portPart"
     }
+
+    /** An @connect entry with its host in the form [asciiHost] gives; "*" and "self" as they are. */
+    private fun connectRule(rule: String): String {
+        val trimmed = rule.trim().lowercase(Locale.ROOT)
+        return when {
+            trimmed == "*" || trimmed == "self" -> trimmed
+            trimmed.startsWith("*.") -> "*." + asciiHost(trimmed.removePrefix("*."))
+            else -> asciiHost(trimmed)
+        }
+    }
+
+    /** [host] in lower-case ASCII (punycode); as given, lower-cased, when it is no valid name. */
+    private fun asciiHost(host: String): String =
+        runCatching { java.net.IDN.toASCII(host, java.net.IDN.ALLOW_UNASSIGNED) }.getOrDefault(host).lowercase(Locale.ROOT)
 }

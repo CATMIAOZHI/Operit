@@ -48,6 +48,27 @@ internal object CefriumEngine : BrowserEngine {
         return result.get()?.takeIf { it.isNotBlank() }
     }
 
+    override fun setCookies(profileName: String, url: String, setCookies: List<String>): Boolean {
+        if (setCookies.isEmpty()) return true
+        if (Looper.myLooper() == Looper.getMainLooper()) return false
+        val latch = CountDownLatch(setCookies.size)
+        val stored = AtomicInteger(0)
+        main.post {
+            setCookies.forEach { line ->
+                runCatching {
+                    profile(profileName).cookieManager.setCookie(url, line) { ok ->
+                        if (ok == true) stored.incrementAndGet()
+                        latch.countDown()
+                    }
+                }.onFailure {
+                    AppLogger.w(CEFRIUM_TAG, "A cookie could not be stored: ${it.message}")
+                    latch.countDown()
+                }
+            }
+        }
+        return latch.await(3, TimeUnit.SECONDS) && stored.get() == setCookies.size
+    }
+
     override fun clearLogins(profileName: String, onDone: (Boolean) -> Unit) {
         val profile = profile(profileName)
         profile.listSiteData { sites ->

@@ -222,6 +222,10 @@ internal object UserscriptCapabilityRegistry {
     fun knownGrants(grants: List<String>): List<String> =
         grants.mapNotNull(::canonicalGrant).distinct()
 
+    /** The host messages a script with [grants] may send, by what it declared with @grant. */
+    fun hostMessagesFor(grants: List<String>): Set<String> =
+        knownGrants(grants).flatMapTo(HashSet()) { capabilityByCanonical[it]?.hostMessages.orEmpty() }
+
     fun unknownGrants(grants: List<String>): List<String> =
         grants.map { it.trim() }.filter { it.isNotBlank() && !isGrantKnown(it) }.distinct()
 
