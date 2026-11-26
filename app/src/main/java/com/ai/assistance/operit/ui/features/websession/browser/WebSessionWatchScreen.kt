@@ -115,7 +115,8 @@ internal fun WebSessionWatchScreen(
 
 /**
  * The page picture. Margins around it take the screen's own background. Two fingers zoom and move
- * the picture; until the user takes control, every other touch stops at a layer over the page.
+ * the picture; until the user takes control, one finger moves a zoomed picture too, and every
+ * other touch stops at a layer over the page.
  */
 @Composable
 private fun WatchBrowserArea(
@@ -131,17 +132,20 @@ private fun WatchBrowserArea(
             // A zoomed picture is bigger than its area; it must not draw over the bars above and below.
             .clipToBounds()
             .onSizeChanged { onBrowserArea(it.width, it.height) }
-            .pointerInput(webViewHost) {
+            .pointerInput(webViewHost, watch.controlling) {
                 // Seen before the page: once a second finger lands the gesture is the picture's,
                 // and the page gets a cancel for the first finger, until every finger lifts.
+                val controlling = watch.controlling
                 awaitEachGesture {
                     awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                     var zooming = false
                     do {
                         val event = awaitPointerEvent(PointerEventPass.Initial)
                         if (!zooming && event.changes.count { it.pressed } >= 2) zooming = true
-                        if (zooming) {
-                            val zoom = event.calculateZoom()
+                        // Only watching, the page takes no touch: one finger moves the zoomed picture.
+                        val panning = !zooming && !controlling && webViewHost.isUserZoomed
+                        if (zooming || panning) {
+                            val zoom = if (zooming) event.calculateZoom() else 1f
                             val pan = event.calculatePan()
                             val centroid = event.calculateCentroid(useCurrent = false)
                             if (centroid.isSpecified() && (zoom != 1f || pan.x != 0f || pan.y != 0f)) {

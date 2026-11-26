@@ -468,19 +468,6 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
         )
     }
 
-    SharedIncomingContentHandler(
-        sharedFiles = sharedFiles,
-        sharedFileText = sharedFileText,
-        sharedText = sharedText,
-        chatHistories = chatHistories,
-        currentChatId = currentChatId,
-        onHandleSharedFiles = actualViewModel::handleSharedFiles,
-        onHandleSharedText = actualViewModel::handleSharedText,
-        onClearSharedFiles = SharedFileHandler::clearSharedFiles,
-        onClearSharedText = SharedFileHandler::clearSharedText,
-        onOpenOrbit = onNavigateToOrbit,
-    )
-
     val pendingChatDraft by PendingChatDraftHandler.pendingDraft.collectAsState()
     LaunchedEffect(pendingChatDraft, isCurrentScreen) {
         if (!isCurrentScreen) return@LaunchedEffect
@@ -556,6 +543,22 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
         chatHistories.filter {
             it.chatKind != ChatKind.SUBAGENT.name && !it.isHidden && it.id !in orbitChatIds
         }
+    }
+    // Orbit's chat is this screen too; Orbit takes shares into its own input box, so only the
+    // normal chat page in front asks where a share goes, offering the chats its list shows.
+    if (chatIdOverride == null && !embedded && isCurrentScreen) {
+        SharedIncomingContentHandler(
+            sharedFiles = sharedFiles,
+            sharedFileText = sharedFileText,
+            sharedText = sharedText,
+            chatHistories = visibleAllChatHistories,
+            currentChatId = currentChatId,
+            onHandleSharedFiles = actualViewModel::handleSharedFiles,
+            onHandleSharedText = actualViewModel::handleSharedText,
+            onClearSharedFiles = SharedFileHandler::clearSharedFiles,
+            onClearSharedText = SharedFileHandler::clearSharedText,
+            onOpenOrbit = onNavigateToOrbit,
+        )
     }
     // The normal chat page never stays on an Orbit chat: it can be left there when Orbit closes
     // with no earlier chat to return to, or when the app restarts on it. The short wait lets
