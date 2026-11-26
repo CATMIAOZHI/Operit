@@ -75,6 +75,9 @@ internal class WebSessionWebViewHost {
 
     fun currentPage(): BrowserPage? = activePage
 
+    /** Whether the user zoomed the page picture in past fitting the screen. */
+    val isUserZoomed: Boolean get() = userZoom > 1f
+
     /**
      * Zooms the page picture by [zoomChange] around ([centroidX], [centroidY]) and moves it by
      * ([panX], [panY]), all in container pixels. It never shrinks below fitting the screen.

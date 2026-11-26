@@ -297,13 +297,29 @@ internal class CefriumBrowserPage private constructor(
 
     /**
      * The user agent and, once known, client hints that name Chrome (the engine itself adds
-     * "Cefrium" and leaves out the Google Chrome brand). One DevTools call sets both, so neither
-     * undoes the other.
+     * "Cefrium" and leaves out the Google Chrome brand), with the phone's languages: the engine
+     * otherwise tells every page the user reads English. One DevTools call sets them all, so none
+     * undoes another.
      */
     private fun applyUserAgent() {
         if (closed || agent.isBlank()) return
         browser.setUserAgentOverride(agent)
-        val desktop = hintsDesktop ?: return
+        val languages = phoneLanguages()
+        if (!localeSet) {
+            localeSet = true
+            // Dates and numbers in the page's scripts follow the phone too.
+            callDevTools("Emulation.setLocaleOverride", JSONObject().put("locale", languages.first()).toString()) { ok, json ->
+                if (!ok) AppLogger.w(PAGE_TAG, "Page locale was not set: $json")
+            }
+        }
+        val params = JSONObject().put("userAgent", agent).put("acceptLanguage", languages.joinToString(","))
+        val desktop = hintsDesktop
+        if (desktop == null) {
+            callDevTools("Emulation.setUserAgentOverride", params.toString()) { ok, json ->
+                if (!ok) AppLogger.w(PAGE_TAG, "Page languages were not set: $json")
+            }
+            return
+        }
         val full = CefriumEngine.chromeFullVersion
         val major = full.substringBefore('.')
         val brands = JSONArray()
@@ -327,8 +343,40 @@ internal class CefriumBrowserPage private constructor(
                 .put("wow64", false)
         callDevTools(
             "Emulation.setUserAgentOverride",
-            JSONObject().put("userAgent", agent).put("userAgentMetadata", metadata).toString()
+            params.put("userAgentMetadata", metadata).toString()
         ) { ok, json -> if (!ok) AppLogger.w(PAGE_TAG, "Client hints were not set: $json") }
+    }
+
+    /** Whether the page's locale was set; it lasts for the tab, so it is set once. */
+    private var localeSet = false
+
+    /**
+     * The phone's languages as Chrome on Android lists them, most preferred first, each regional
+     * one followed by its language ("zh-CN", "zh", "en-US", "en"). The system's list: the app's own
+     * language setting may name a language without its region. A script the user chose stays
+     * ("sr-Latn-RS"), except Chinese, which Chrome names by region ("zh-CN", "zh-TW").
+     */
+    private fun phoneLanguages(): List<String> {
+        val tags = LinkedHashSet<String>()
+        val list = android.content.res.Resources.getSystem().configuration.locales
+        for (i in 0 until list.size()) {
+            val locale = list[i]
+            if (locale.language.isNullOrBlank()) continue
+            val language = java.util.Locale(locale.language).toLanguageTag()
+            if (language == "und") continue
+            val chinese = language == "zh"
+            val region = locale.country.takeUnless { it.isNullOrBlank() }
+                ?: if (chinese) when (locale.script) { "Hans" -> "CN"; "Hant" -> "TW"; else -> null } else null
+            val script = locale.script.takeUnless { chinese || it.isNullOrBlank() }
+            if (region != null || script != null) {
+                val regional = runCatching {
+                    java.util.Locale.Builder().setLanguage(language).setScript(script).setRegion(region).build().toLanguageTag()
+                }.getOrNull()
+                if (regional != null && regional != "und") tags += regional
+            }
+            tags += language
+        }
+        return tags.toList().ifEmpty { listOf("en-US", "en") }
     }
 
     /**
