@@ -32,15 +32,15 @@ plugins {
     alias(libs.plugins.kotlin.parcelize)
 }
 
-// -PoperitBrowser=true builds the version with the Cefrium browser engine built in (Android 10+,
-// about 100 MB larger, compiled with JDK 25). Without it the app uses the system WebView.
+// The app is built with the Cefrium browser engine (Android 10+, about 100 MB larger, compiled
+// with JDK 25). -PoperitBrowser=false builds it on the system WebView instead, for quick local runs.
 // Read from the command line like the root build script, which puts the plugin on the classpath.
-val browserBuild = gradle.startParameter.projectProperties["operitBrowser"] == "true"
+val browserBuild = gradle.startParameter.projectProperties["operitBrowser"] != "false"
 if (browserBuild && !JavaVersion.current().isCompatibleWith(JavaVersion.toVersion(25))) {
     throw GradleException(
-        "-PoperitBrowser=true builds with the Cefrium engine, which needs Gradle to run on JDK 25 " +
+        "The app builds with the Cefrium engine, which needs Gradle to run on JDK 25 " +
             "(this run uses JDK ${JavaVersion.current()}). Point JAVA_HOME at a JDK 25 and build again; " +
-            "leave out -PoperitBrowser=true for the usual version.",
+            "-PoperitBrowser=false builds without the engine.",
     )
 }
 if (browserBuild) apply(plugin = "com.cefrium")
@@ -197,7 +197,7 @@ android {
 
     defaultConfig {
         applicationId = "com.rainy.operitry"
-        // The engine needs Android 10; older phones install the version without it.
+        // The engine needs Android 10.
         minSdk = if (browserBuild) 29 else 26
         targetSdk = 34
         // Bound to the baseline version, not to the ry release counter: bump by one only when the
@@ -317,7 +317,11 @@ android {
     }
 
     packaging {
-        
+        // From minSdk 28 AGP stores dex uncompressed by default; with this unminified app the
+        // debug APK grew from 311 to 541 MB. Compressed, as before the engine raised minSdk to 29.
+        dex {
+            useLegacyPackaging = true
+        }
         jniLibs {
             useLegacyPackaging = true
             // This app packages arm64 only. Sherpa's static ORT AAR still contains a

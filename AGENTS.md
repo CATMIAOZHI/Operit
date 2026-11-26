@@ -15,7 +15,7 @@
 
 ## 构建与验证
 
-- Android 构建使用仓库自带的 `gradlew` / `gradlew.bat`，JDK 21 和 Android SDK 37.1。构建手册见 `docs/agent/build-guide.md`。
+- Android 构建使用仓库自带的 `gradlew` / `gradlew.bat`，JDK 25（内置 Cefrium 浏览器引擎需要）和 Android SDK 37.1。构建手册见 `docs/agent/build-guide.md`。
 - Windows 上固定使用 `.\gradlew.bat <任务> --console=plain` 执行 Gradle，保留 Gradle 后台进程以复用热缓存（不要加 `--no-daemon`）。禁止通过 `| Select-Object -Last`、`Tee-Object` 等 PowerShell 实时管道运行 Gradle；需要保留或截取输出时，先将完整输出重定向到日志文件，命令结束后再读取日志末尾。
 - 所有可能长期运行的命令必须设置硬超时。达到超时后立即终止本次命令的整个进程树并输出已保存的日志，禁止无限等待。
 - 首次构建先执行 `git submodule update --init --recursive terminal`。

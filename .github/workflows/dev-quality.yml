@@ -48,7 +48,8 @@ permissions:
   contents: read
 
 env:
-  JAVA_VERSION: '21'
+  # The Cefrium browser engine the app is built with needs Gradle on JDK 25.
+  JAVA_VERSION: '25'
   ANDROID_BUILD_TOOLS_VERSION: '37.0.0'
   ANDROID_CMAKE_VERSION: '3.31.6'
   MANUAL_DEPS_DIR: manual-deps

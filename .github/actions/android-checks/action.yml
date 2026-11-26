@@ -7,7 +7,7 @@ inputs:
   java-version:
     description: 'JDK version'
     required: false
-    default: '21'
+    default: '25'
   android-build-tools-version:
     description: 'Android build-tools version'
     required: false

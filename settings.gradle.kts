@@ -8,7 +8,7 @@ pluginManagement {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
-        // Only asked for com.cefrium artifacts, which only the browser build (-PoperitBrowser=true) uses.
+        // Only asked for com.cefrium artifacts: the browser engine the app is built with.
         maven { url = uri("https://maven.cefrium.com"); content { includeGroup("com.cefrium") } }
         google()
         mavenCentral()
