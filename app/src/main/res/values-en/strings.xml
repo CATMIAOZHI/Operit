@@ -6856,6 +6856,7 @@
     <string name="paste_as_attachment">Paste as attachment</string>
     <string name="attachment_paste">Paste</string>
     <string name="paste_attachment_failed">Couldn\'t read what was pasted</string>
+    <string name="pasted_text_file_name">Pasted text</string>
     <string name="attachment_file_not_exist">File does not exist</string>
     <string name="attachment_add_failed">Failed to add attachment: %1$s</string>
     <string name="attachment_screen_content_failed">Failed to get screen content: %1$s</string>
@@ -9017,6 +9018,8 @@
     <string name="memory_notes_tool_description">memory.md: %1$s</string>
     <string name="memory_notes_tool_result">memory.md (%1$d / %2$d characters). Latest content follows; existing conversation system prompts are not automatically rewritten.</string>
     <string name="memory_notes_full">memory.md has insufficient capacity. Read the latest content, consolidate or remove unneeded notes, then retry. This write changed nothing.</string>
+    <string name="memory_notes_full_free">memory.md is full (%1$d / %2$d characters); this write changed nothing. Do not remove a little and add a little: first free at least %3$d characters in one cleanup by merging similar entries and removing outdated or less important ones, then retry this write.</string>
+    <string name="memory_notes_change_too_big">This write adds %1$d characters, more than memory.md has room for; it changed nothing. Shorten it by at least %2$d characters or split it, then retry.</string>
     <string name="memory_notes_conflict">Notes changed while you were editing. Your draft is still above; compare it with the latest content and merge before saving.</string>
     <string name="memory_notes_not_unique">old_text did not match exactly one location. Read first, then copy the complete text to replace or remove.</string>
     <string name="memory_notes_invalid">Invalid action or parameters. Supported: read/add/replace/remove. Add and replace require content; replace and remove require old_text.</string>

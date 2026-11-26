@@ -7323,6 +7323,7 @@
     <string name="paste_as_attachment">粘贴为附件</string>
     <string name="attachment_paste">粘贴</string>
     <string name="paste_attachment_failed">读不到粘贴的内容</string>
+    <string name="pasted_text_file_name">粘贴的文本</string>
     <string name="attachment_file_not_exist">文件不存在</string>
     <string name="attachment_add_failed">添加附件失败: %1$s</string>
     <string name="attachment_screen_content_failed">获取屏幕内容失败: %1$s</string>
@@ -8990,6 +8991,8 @@
     <string name="memory_notes_tool_description">memory.md：%1$s</string>
     <string name="memory_notes_tool_result">memory.md（%1$d / %2$d 字符）。以下是最新内容；已有对话的系统提示词不会因此自动重写。</string>
     <string name="memory_notes_full">memory.md 容量不足。请先读取最新内容，合并或删除不再需要的笔记，再重试。本次没有修改文件。</string>
+    <string name="memory_notes_full_free">memory.md 已满（%1$d / %2$d 字符），本次没有修改文件。不要只删一点再加一点：请先一次腾出至少 %3$d 字符，合并相似的条目，删除过时或不重要的内容，再重试这次写入。</string>
+    <string name="memory_notes_change_too_big">这次写入新增了 %1$d 字符，memory.md 放不下，本次没有修改文件。请把这次写入至少缩短 %2$d 字符或拆小，再重试。</string>
     <string name="memory_notes_conflict">笔记在编辑期间已被更新。你的草稿仍保留在上方，请对照最新内容合并后再保存。</string>
     <string name="memory_notes_not_unique">old_text 未匹配到唯一位置。请先 read，再复制需要修改或删除的完整原文。</string>
     <string name="memory_notes_invalid">操作或参数无效。支持 read/add/replace/remove；新增和替换需要 content，替换和删除需要 old_text。</string>

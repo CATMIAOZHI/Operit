@@ -870,6 +870,12 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
                         com.ai.assistance.operit.data.preferences.stripInvisibleCharacters(
                             tool.parameters.find { it.name == "old_text" }?.value.orEmpty()),
                         sectioned = true)
+                else if (e.reason == MemoryNotesRepository.Failure.FULL && e.before >= 0)
+                    if (MemoryNotesRepository.editTooLong(e.before, e.after, MemoryNotesRepository.MAX_CHARS))
+                        context.getString(R.string.memory_notes_change_too_big, e.after - e.before,
+                            e.after - MemoryNotesRepository.MAX_CHARS)
+                    else context.getString(R.string.memory_notes_full_free, e.before, MemoryNotesRepository.MAX_CHARS,
+                        MemoryNotesRepository.charsToFree(e.before, e.after, MemoryNotesRepository.MAX_CHARS))
                 else context.getString(when (e.reason) {
                     MemoryNotesRepository.Failure.FULL -> R.string.memory_notes_full
                     MemoryNotesRepository.Failure.CONFLICT -> R.string.memory_notes_conflict

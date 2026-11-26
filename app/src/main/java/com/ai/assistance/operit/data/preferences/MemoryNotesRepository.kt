@@ -44,9 +44,32 @@ class MemoryNotesRepository internal constructor(
 
     companion object {
         const val MAX_CHARS = 16_000
+        /**
+         * How much room a full document must get back before anything is added: one large cleanup
+         * instead of removing a little and adding a little on every edit.
+         */
+        const val ROOM_TO_FREE = 4_000
+
+        /**
+         * Characters to remove from a document of [before] characters, in one cleanup, before an edit
+         * that would take it to [after]: at least [ROOM_TO_FREE], or more when the edit needs it. Only
+         * meant when [editTooLong] is false.
+         */
+        fun charsToFree(before: Int, after: Int, limit: Int): Int =
+            maxOf(ROOM_TO_FREE, after - limit)
+
+        /**
+         * The edit itself must get shorter, by at least `after - limit`: the document holds less than
+         * [ROOM_TO_FREE] to clean up, or less than the edit is over by. Its notes stay.
+         */
+        fun editTooLong(before: Int, after: Int, limit: Int): Boolean =
+            // Cleaning up all of it is no answer either: a whole memory.md is never emptied.
+            charsToFree(before, after, limit) >= before
+
         /** Guidance the extraction model needs when an edit would push memory.md over the limit. */
         internal const val OVERFLOW_MESSAGE =
-            "memory.md would exceed its character limit; remove or replace existing text in this batch before adding"
+            "memory.md would exceed its character limit. Before adding anything, free at least $ROOM_TO_FREE " +
+                "characters in one cleanup: merge similar entries and remove outdated or less important ones, then add"
         private val locks = ConcurrentHashMap<String, Mutex>()
         private fun digest(text: String): String =
             MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
@@ -128,7 +151,8 @@ class MemoryNotesRepository internal constructor(
     data class Snapshot(val markdown: String, val version: String)
     data class Proposal(val before: Snapshot, val after: String)
     enum class Failure { FULL, CONFLICT, EMPTY, NOT_UNIQUE, INVALID, SECTION }
-    class NotesException(val reason: Failure) : IllegalArgumentException(reason.name)
+    /** [before] and [after] are the document's sizes around an edit that did not fit, when known. */
+    class NotesException(val reason: Failure, val before: Int = -1, val after: Int = -1) : IllegalArgumentException(reason.name)
 
     private val legacyFile = File(File(root, digest(profileId)), "memory.md")
     private val file = folder?.let { File(it, "memory.md") } ?: legacyFile
@@ -165,7 +189,9 @@ class MemoryNotesRepository internal constructor(
         withContext(Dispatchers.IO) {
             mutex.withLock {
                 val current = read()
-                write(edit(current, action, content, oldText, section))
+                val next = stripInvisibleCharacters(edit(current, action, content, oldText, section))
+                if (next.length > MAX_CHARS) throw NotesException(Failure.FULL, current.markdown.length, next.length)
+                write(next)
             }
         }
 
@@ -174,7 +200,7 @@ class MemoryNotesRepository internal constructor(
             mutex.withLock {
                 val current = read()
                 val next = edit(current, action, content, oldText, section)
-                if (next.length > MAX_CHARS) throw NotesException(Failure.FULL)
+                if (next.length > MAX_CHARS) throw NotesException(Failure.FULL, current.markdown.length, next.length)
                 Proposal(current, next)
             }
         }
