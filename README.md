@@ -82,24 +82,24 @@ Reach your Orbit from WeChat like chatting with a friend — without opening the
 </tr>
 </table>
 
-## A few things people use it for
+## How the author uses it every day
 
-- *"Keep an eye on my messages and tell me about the important ones — skip ads and noise."*
-- *"A parcel code just came in. Is it a new one?"*
-- *"Remind me to work out every morning, and ask me again if I skip a week."*
-- *"Remind me to take my keys when I leave home."*
-- *"Tell me when this page changes; ask me to take over if it needs a sign-in."*
-- *"Watch my GitHub issues, and when a bug comes in, send a subagent in the terminal to fix it and open a PR."*
-- *"Design a warm voice that fits your persona and send me morning check-ins as voice messages."*
-- *"I'll drop a link in WeChat — read it and save the takeaways for me."*
-- *"Let's read this novel together."*
+- *"Keep an eye on the latest PC release news for GTA 6 and tell me when there is real progress."*
+- *"Review my Binance trades every week and summarize the lessons learned."*
+- *"Inspect this cool website and break down how it was built."*
+- *"Let's read this latest web novel together — do you think this character is going to die later?"*
+- *"Watch my phone notifications and only alert me for the important ones."*
+- *"Manage my Google Cloud and Cloudflare projects and make sure everything stays on the free tier."*
+- *"Deploy this web page to Cloudflare for me."*
+- *"Remember my friend's birthday and what she likes; a month before her next birthday, help me pick a gift."*
+- *"Just chat — bouncing from the Riemann hypothesis to video games to the future of AI."*
 
 ## Bring your own model, set your limits
 
 - **Flexible providers**: works with OpenAI, Claude, Gemini, DeepSeek, OpenRouter, Ollama Cloud, and custom endpoints (including local LAN servers) via **OpenAI (Generic)** (Chat Completions) or **OpenAI Responses (Generic)** (Responses API).
-- **Multi-account pools**: supports account login and multiple accounts for ChatGPT, Claude, Grok, Antigravity, and Command Code — automatically switching on quota exhaustion, rate limits, or expired sessions, or letting you pick one manually.
+- **Multi-account pools**: supports account login and multiple accounts for ChatGPT, Grok, and more — automatically switching on quota exhaustion, rate limits, or expired sessions, or letting you pick one manually.
 - **Direct from your phone**: account login tokens and vault secrets are encrypted on your device, while standard model configs (including API keys) are stored in the app's local DataStore. Requests go straight from your phone to the provider you configure — we do not run a model service or relay your chats.
-- **Local allowance controls**: set weekly and extra allowances by **cost (USD)** or **tokens** alongside usage statistics; once the local allowance is exhausted, subsequent model requests are paused (cost-based accounting counts models with configured pricing).
+- **Local allowance controls**: set weekly and extra allowances by **cost (USD)** or **tokens** alongside usage statistics; once the local allowance is exhausted, subsequent model requests are paused.
 
 ## Your data
 
