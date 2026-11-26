@@ -36,6 +36,7 @@ internal fun WebSessionBottomToolbar(
     canGoBack: Boolean,
     canGoForward: Boolean,
     tabCount: Int,
+    canCreateTab: Boolean = true,
     onBack: () -> Unit,
     onForward: () -> Unit,
     onNewTab: () -> Unit,
@@ -54,9 +55,16 @@ internal fun WebSessionBottomToolbar(
             Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
                 Surface(
                     onClick = onNewTab,
+                    enabled = canCreateTab,
                     shape = RoundedCornerShape(18.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    color =
+                        MaterialTheme.colorScheme.primaryContainer.copy(
+                            alpha = if (canCreateTab) 1f else 0.38f
+                        ),
+                    contentColor =
+                        MaterialTheme.colorScheme.onPrimaryContainer.copy(
+                            alpha = if (canCreateTab) 1f else 0.38f
+                        ),
                     modifier = Modifier.size(width = 56.dp, height = 40.dp).semantics { contentDescription = newTab },
                 ) {
                     Box(contentAlignment = Alignment.Center) { Icon(Icons.Filled.Add, contentDescription = null) }

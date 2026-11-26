@@ -266,6 +266,7 @@ internal data class WebSessionPendingDialogState(
 @Immutable
 internal data class WebSessionBrowserState(
     val activeSessionId: String? = null,
+    val pendingLaunchId: Long = 0L,
     val pageTitle: String = "",
     val currentUrl: String = "about:blank",
     val canGoBack: Boolean = false,

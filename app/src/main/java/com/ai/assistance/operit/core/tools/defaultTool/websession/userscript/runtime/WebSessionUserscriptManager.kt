@@ -37,6 +37,8 @@ import com.ai.assistance.operit.core.tools.defaultTool.websession.userscript.Use
 import com.ai.assistance.operit.core.tools.defaultTool.websession.userscript.UserscriptPageRuntimeStatus
 import com.ai.assistance.operit.core.tools.defaultTool.websession.userscript.UserscriptSupportState
 import com.ai.assistance.operit.core.tools.defaultTool.websession.userscript.install.UserscriptImportCoordinator
+import com.ai.assistance.operit.core.tools.defaultTool.websession.userscript.storage.UserscriptStoreLoadState
+import com.ai.assistance.operit.core.tools.defaultTool.websession.userscript.storage.UserscriptStorageLoadException
 import com.ai.assistance.operit.core.tools.defaultTool.websession.userscript.storage.UserscriptRepository
 import com.ai.assistance.operit.core.tools.defaultTool.websession.userscript.ui.WebSessionUserscriptUiStateStore
 import com.ai.assistance.operit.util.AppLogger
@@ -47,8 +49,10 @@ import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.serialization.decodeFromString
@@ -178,12 +182,13 @@ internal class WebSessionUserscriptManager(
      * Requests the host sends for pages (GM_xmlhttpRequest, webRequest rewrites). Redirects are
      * followed here, one hop at a time, so each is checked before anything is sent to it.
      */
-    private val requestClient =
+    private val requestClient by lazy {
         OkHttpClient.Builder()
             .followRedirects(false)
             .followSslRedirects(false)
             .addInterceptor { chain -> followHops(chain) }
             .build()
+    }
 
     private fun followHops(chain: Interceptor.Chain): Response {
         var request = chain.request()
@@ -246,52 +251,109 @@ internal class WebSessionUserscriptManager(
     @Volatile
     private var visibleSessionId: String? = null
     /** Whether the phone's WebView can run userscripts; the built-in engine always can. */
-    private val webViewSupportsUserscripts =
+    private val webViewSupportsUserscripts: Boolean by lazy {
         WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT) &&
             WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)
-    private val supportState =
-        UserscriptSupportState(
-            isSupported = BrowserEngines.current != null || webViewSupportsUserscripts,
-            reason =
-                when {
-                    BrowserEngines.current != null -> null
-                    !WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT) ->
-                        "Current WebView does not support document-start script injection"
-                    !WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER) ->
-                        "Current WebView does not support native userscript messaging"
-                    else -> null
-                }
-        )
+    }
+    @Volatile
+    private var currentSupportState = UserscriptSupportState(isSupported = true, reason = null)
+    private val supportState: UserscriptSupportState
+        get() = currentSupportState
 
-    val uiStore = WebSessionUserscriptUiStateStore(initialSupportState = supportState)
+    val uiStore = WebSessionUserscriptUiStateStore(initialSupportState = currentSupportState)
 
     init {
-        webRequestEngine.onRulesChanged = { sessionId -> syncRequestInterception(sessionId) }
-        scope.launch {
-            repository.installedScriptsFlow.collectLatest { scripts ->
-                uiStore.updateScripts(scripts)
-                // A script turned off, deleted or updated stops being able to act in pages already
-                // open: an update may have dropped an @grant or a rule.
-                val live = scripts.filter { it.enabled }.associate { it.id to it.updatedAt }
-                synchronized(scriptsLock) {
-                    // Taken back under the same lock grants are given under: a page asking right
-                    // after the change gets the new version, which is not taken back here.
-                    val previous = liveScripts
-                    val kept = live.filter { (id, updatedAt) -> previous?.get(id).let { it == null || it == updatedAt } }.keys
-                    liveScripts = live
-                    scriptsGeneration++
-                    sessionBindings.values.forEach { binding -> revokeExcept(binding, kept) }
-                    webRequestEngine.retainScripts(kept)
-                }
-                rebuildAllSessionBaselines()
+        if (BrowserEngines.current == null) {
+            // WebView-only build: probe system WebView capabilities off the main thread.
+            scope.launch(Dispatchers.Default) {
+                val resolved =
+                    UserscriptSupportState(
+                        isSupported = webViewSupportsUserscripts,
+                        reason =
+                            when {
+                                !WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT) ->
+                                    "Current WebView does not support document-start script injection"
+                                !WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER) ->
+                                    "Current WebView does not support native userscript messaging"
+                                else -> null
+                            }
+                    )
+                currentSupportState = resolved
+                uiStore.updateSupportState(resolved)
             }
         }
+        webRequestEngine.onRulesChanged = { sessionId -> syncRequestInterception(sessionId) }
         scope.launch {
-            repository.observeRecentLogs().collectLatest { logs ->
+            repository.installedScriptsStateFlow
+                .catch { error ->
+                    AppLogger.e(TAG, "Failed to load installed userscripts (${error.javaClass.simpleName})")
+                    uiStore.markScriptsLoadError()
+                }
+                .collectLatest { state ->
+                    when (state) {
+                        UserscriptStoreLoadState.Loading -> Unit
+                        UserscriptStoreLoadState.Error -> {
+                            AppLogger.e(TAG, "Failed to load installed userscripts (storage error)")
+                            uiStore.markScriptsLoadError()
+                        }
+                        is UserscriptStoreLoadState.Ready -> {
+                            val scripts = state.data
+                            uiStore.updateScripts(scripts)
+                            // A script turned off, deleted or updated stops being able to act in pages already
+                            // open: an update may have dropped an @grant or a rule.
+                            val live = scripts.filter { it.enabled }.associate { it.id to it.updatedAt }
+                            synchronized(scriptsLock) {
+                                // Taken back under the same lock grants are given under: a page asking right
+                                // after the change gets the new version, which is not taken back here.
+                                val previous = liveScripts
+                                val kept = live.filter { (id, updatedAt) -> previous?.get(id).let { it == null || it == updatedAt } }.keys
+                                liveScripts = live
+                                scriptsGeneration++
+                                sessionBindings.values.forEach { binding -> revokeExcept(binding, kept) }
+                                webRequestEngine.retainScripts(kept)
+                            }
+                            rebuildAllSessionBaselines()
+                        }
+                    }
+                }
+        }
+        scope.launch {
+            repository.observeRecentLogs()
+                .catch { error ->
+                    AppLogger.e(TAG, "Failed to load userscript logs (${error.javaClass.simpleName})")
+                }
+                .collectLatest { logs ->
                 uiStore.updateLogs(logs)
             }
         }
     }
+
+    private suspend fun safeLogError(
+        scriptId: Long?,
+        sourceUrl: String?,
+        error: Throwable,
+        fallbackMessage: String
+    ) {
+        if (error is UserscriptStorageLoadException) {
+            val causeName = error.cause?.javaClass?.simpleName ?: error.javaClass.simpleName
+            AppLogger.e(TAG, "Userscript storage unavailable during operation ($causeName)")
+            return
+        }
+        try {
+            repository.log(scriptId, "error", sourceUrl, error.message ?: fallbackMessage)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (logError: Exception) {
+            AppLogger.e(TAG, "Failed to record userscript error (${logError.javaClass.simpleName})")
+        }
+    }
+
+    private fun userFacingErrorMessage(error: Throwable, fallbackResId: Int): String =
+        if (error is UserscriptStorageLoadException) {
+            context.getString(R.string.web_session_userscript_load_failed)
+        } else {
+            error.message?.takeIf { it.isNotBlank() } ?: context.getString(fallbackResId)
+        }
 
     fun supportState(): UserscriptSupportState = supportState
 
@@ -496,9 +558,10 @@ internal class WebSessionUserscriptManager(
                 uiStore.setPendingInstall(preview)
                 mainHandler.post(onOpenUserscriptUi)
             }.onFailure { error ->
-                repository.log(null, "error", normalizedUrl, error.message ?: "userscript install preview failed")
+                if (error is CancellationException) throw error
+                safeLogError(null, normalizedUrl, error, "userscript install preview failed")
                 mainHandler.post {
-                    onToast(error.message ?: context.getString(R.string.web_session_userscript_install_failed))
+                    onToast(userFacingErrorMessage(error, R.string.web_session_userscript_install_failed))
                 }
             }
         }
@@ -525,9 +588,10 @@ internal class WebSessionUserscriptManager(
                 uiStore.setPendingInstall(preview)
                 mainHandler.post(onOpenUserscriptUi)
             }.onFailure { error ->
-                repository.log(null, "error", result.sourceUri, error.message ?: "userscript local import failed")
+                if (error is CancellationException) throw error
+                safeLogError(null, result.sourceUri, error, "userscript local import failed")
                 mainHandler.post {
-                    onToast(error.message ?: context.getString(R.string.web_session_userscript_install_failed))
+                    onToast(userFacingErrorMessage(error, R.string.web_session_userscript_install_failed))
                 }
             }
         }
@@ -554,9 +618,15 @@ internal class WebSessionUserscriptManager(
                     onOpenUserscriptUi()
                 }
             }.onFailure { error ->
-                repository.log(preview.existingScriptId, "error", preview.sourceUrl, error.message ?: "userscript install failed")
+                if (error is CancellationException) throw error
+                safeLogError(
+                    preview.existingScriptId,
+                    preview.sourceUrl,
+                    error,
+                    "userscript install failed"
+                )
                 mainHandler.post {
-                    onToast(error.message ?: context.getString(R.string.web_session_userscript_install_failed))
+                    onToast(userFacingErrorMessage(error, R.string.web_session_userscript_install_failed))
                 }
             }
         }
@@ -571,28 +641,55 @@ internal class WebSessionUserscriptManager(
         enabled: Boolean
     ) {
         scope.launch {
-            repository.setEnabled(scriptId, enabled)
+            try {
+                repository.setEnabled(scriptId, enabled)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (error: Exception) {
+                AppLogger.e(TAG, "Failed to toggle userscript $scriptId (${error.javaClass.simpleName})")
+                mainHandler.post {
+                    onToast(userFacingErrorMessage(error, R.string.web_session_userscript_install_failed))
+                }
+            }
         }
     }
 
     fun deleteScript(scriptId: Long) {
         scope.launch {
-            repository.deleteUserscript(scriptId)
-            mainHandler.post {
-                onToast(context.getString(R.string.web_session_userscript_deleted))
+            try {
+                repository.deleteUserscript(scriptId)
+                mainHandler.post {
+                    onToast(context.getString(R.string.web_session_userscript_deleted))
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (error: Exception) {
+                AppLogger.e(TAG, "Failed to delete userscript $scriptId (${error.javaClass.simpleName})")
+                mainHandler.post {
+                    onToast(userFacingErrorMessage(error, R.string.web_session_userscript_install_failed))
+                }
             }
         }
     }
 
     fun checkForUpdate(scriptId: Long) {
         scope.launch {
-            val preview = repository.checkForUpdate(scriptId)
-            if (preview != null) {
-                uiStore.setPendingInstall(preview)
-                mainHandler.post(onOpenUserscriptUi)
-            } else {
+            try {
+                val preview = repository.checkForUpdate(scriptId)
+                if (preview != null) {
+                    uiStore.setPendingInstall(preview)
+                    mainHandler.post(onOpenUserscriptUi)
+                } else {
+                    mainHandler.post {
+                        onToast(context.getString(R.string.web_session_userscript_no_update))
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (error: Exception) {
+                AppLogger.e(TAG, "Failed to check update for userscript $scriptId (${error.javaClass.simpleName})")
                 mainHandler.post {
-                    onToast(context.getString(R.string.web_session_userscript_no_update))
+                    onToast(userFacingErrorMessage(error, R.string.web_session_userscript_install_failed))
                 }
             }
         }
@@ -600,7 +697,15 @@ internal class WebSessionUserscriptManager(
 
     fun currentInstalledScript(scriptId: Long, callback: (UserscriptListItem?) -> Unit) {
         scope.launch {
-            val item = repository.getInstalledScript(scriptId)
+            val item =
+                try {
+                    repository.getInstalledScript(scriptId)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (error: Exception) {
+                    AppLogger.e(TAG, "Failed to read userscript $scriptId (${error.javaClass.simpleName})")
+                    null
+                }
             mainHandler.post { callback(item) }
         }
     }
@@ -1289,19 +1394,25 @@ internal class WebSessionUserscriptManager(
         key: String,
         valueJson: String
     ) {
-        val oldValueJson = repository.readValueJson(scriptId, key)
-        repository.persistValue(scriptId, key, valueJson)
-        broadcastStorageChange(
-            sourceSessionId = sourceSessionId,
-            change =
-                UserscriptStorageChange(
-                    scriptId = scriptId,
-                    key = key,
-                    oldValueJson = oldValueJson,
-                    newValueJson = valueJson,
-                    remote = true
-                )
-        )
+        try {
+            val oldValueJson = repository.readValueJson(scriptId, key)
+            repository.persistValue(scriptId, key, valueJson)
+            broadcastStorageChange(
+                sourceSessionId = sourceSessionId,
+                change =
+                    UserscriptStorageChange(
+                        scriptId = scriptId,
+                        key = key,
+                        oldValueJson = oldValueJson,
+                        newValueJson = valueJson,
+                        remote = true
+                    )
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (error: Exception) {
+            AppLogger.w(TAG, "Userscript value write failed (${error.javaClass.simpleName})")
+        }
     }
 
     private suspend fun deleteValueAndBroadcast(
@@ -1309,19 +1420,25 @@ internal class WebSessionUserscriptManager(
         scriptId: Long,
         key: String
     ) {
-        val oldValueJson = repository.readValueJson(scriptId, key)
-        repository.deleteValue(scriptId, key)
-        broadcastStorageChange(
-            sourceSessionId = sourceSessionId,
-            change =
-                UserscriptStorageChange(
-                    scriptId = scriptId,
-                    key = key,
-                    oldValueJson = oldValueJson,
-                    newValueJson = null,
-                    remote = true
-                )
-        )
+        try {
+            val oldValueJson = repository.readValueJson(scriptId, key)
+            repository.deleteValue(scriptId, key)
+            broadcastStorageChange(
+                sourceSessionId = sourceSessionId,
+                change =
+                    UserscriptStorageChange(
+                        scriptId = scriptId,
+                        key = key,
+                        oldValueJson = oldValueJson,
+                        newValueJson = null,
+                        remote = true
+                    )
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (error: Exception) {
+            AppLogger.w(TAG, "Userscript value delete failed (${error.javaClass.simpleName})")
+        }
     }
 
     private fun broadcastStorageChange(

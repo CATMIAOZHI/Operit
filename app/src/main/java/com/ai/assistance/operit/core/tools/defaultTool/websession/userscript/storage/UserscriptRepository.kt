@@ -55,18 +55,24 @@ internal class UserscriptRepository private constructor(
 
     private val store = UserscriptJsonStore.getInstance(context)
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
-    private val rootDir = OperitPaths.webSessionUserscriptsDir()
-    private val scriptsDir = File(rootDir, "scripts").apply { mkdirs() }
-    private val cacheDir = File(rootDir, "cache").apply { mkdirs() }
-    private val httpClient =
+    private val rootDir by lazy { OperitPaths.webSessionUserscriptsDir() }
+    private val scriptsDir by lazy { File(rootDir, "scripts").apply { mkdirs() } }
+    private val cacheDir by lazy { File(rootDir, "cache").apply { mkdirs() } }
+    private val httpClient by lazy {
         OkHttpClient.Builder()
             .followRedirects(true)
             .followSslRedirects(true)
             .build()
+    }
 
-    val installedScriptsFlow: Flow<List<UserscriptListItem>> =
-        store.observeUserscripts().map { entities ->
-            entities.map(::entityToListItem)
+    val installedScriptsStateFlow: Flow<UserscriptStoreLoadState<List<UserscriptListItem>>> =
+        store.observeUserscriptsState().map { state ->
+            when (state) {
+                UserscriptStoreLoadState.Loading -> UserscriptStoreLoadState.Loading
+                UserscriptStoreLoadState.Error -> UserscriptStoreLoadState.Error
+                is UserscriptStoreLoadState.Ready ->
+                    UserscriptStoreLoadState.Ready(state.data.map(::entityToListItem))
+            }
         }
 
     fun observeRecentLogs(limit: Int = 50): Flow<List<UserscriptLogItem>> =

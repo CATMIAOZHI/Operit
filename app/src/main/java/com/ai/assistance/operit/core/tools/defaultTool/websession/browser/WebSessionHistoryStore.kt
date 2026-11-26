@@ -9,8 +9,10 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import java.util.Locale
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -47,13 +49,13 @@ internal class WebSessionHistoryStore private constructor(private val context: C
         context.webSessionHistoryDataStore.data.map { preferences ->
             decodeBookmarks(preferences[KEY_BOOKMARKS])
                 .sortedByDescending { it.updatedAt }
-        }
+        }.flowOn(Dispatchers.Default)
 
     val historyFlow: Flow<List<WebSessionHistoryEntry>> =
         context.webSessionHistoryDataStore.data.map { preferences ->
             decodeHistory(preferences[KEY_HISTORY])
                 .sortedByDescending { it.visitedAt }
-        }
+        }.flowOn(Dispatchers.Default)
 
     val desktopModeFlow: Flow<Boolean> =
         context.webSessionHistoryDataStore.data.map { preferences ->
