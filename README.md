@@ -18,10 +18,6 @@
 
 <p align="center">
   <a href="https://github.com/CATMIAOZHI/orbit/releases/latest">Download</a> ·
-  <a href="#why-orbit">Why Orbit</a> ·
-  <a href="#what-orbit-can-do">Capabilities</a> ·
-  <a href="#chat-with-orbit-on-wechat">Chat on WeChat</a> ·
-  <a href="#getting-started">Getting started</a> ·
   <a href="README.zh-CN.md">中文</a>
 </p>
 
