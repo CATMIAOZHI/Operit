@@ -20,7 +20,7 @@
   <a href="https://github.com/CATMIAOZHI/orbit/releases/latest">Download</a> ·
   <a href="#why-orbit">Why Orbit</a> ·
   <a href="#what-orbit-can-do">Capabilities</a> ·
-  <a href="#dedicated-wechat-channel">WeChat Channel</a> ·
+  <a href="#chat-with-orbit-on-wechat">Chat on WeChat</a> ·
   <a href="#getting-started">Getting started</a> ·
   <a href="README.zh-CN.md">中文</a>
 </p>
@@ -29,7 +29,7 @@
 
 In a vast universe, you are the sun at the center, and Orbit is the planet that circles you. The logo says exactly that: the core is you; the ring and its two moons are Orbit.
 
-Orbit is a **local-first** personal AI companion and assistant living directly on your Android phone. It keeps its memory, personality, and files on your device with no relay server in between, and grows through daily conversations, nightly reviews, and your corrections into a companion that is uniquely yours. It also comes with a **Linux terminal, built-in browser engine, background Android app control**, and a **dedicated WeChat channel**, so it can both talk with you and get real tasks done.
+Orbit is a **local-first** personal AI companion and assistant living directly on your Android phone. It keeps its memory, personality, and files on your device with no relay server in between, and grows through daily conversations, nightly reviews, and your corrections into a companion that is uniquely yours. It also comes with a **Linux terminal, built-in browser engine, background Android app control**, and **direct WeChat messaging**, so it can both talk with you and get real tasks done.
 
 <p align="center">
   <img src="docs/assets/readme/screens/en/chat.png" width="30%" alt="Chatting with Orbit">
@@ -46,7 +46,7 @@ Orbit is a **local-first** personal AI companion and assistant living directly o
 | **Local-first** | Memory, personality (`SOUL.md`), chats, files, vault secrets, and browser logins stay on your phone with no relay server |
 | **Switch models, keep the same companion** | Switch freely across major cloud providers, OpenAI-compatible endpoints (including LAN), and multi-account pools while memory and personality stay on device |
 | **Uniquely yours over time** | Reviews conversations overnight, learns from your corrections, and distills working methods into reusable Skills |
-| **Gets hands-on work done** | Built-in Linux terminal, built-in browser engine, background Android app control, and a dedicated WeChat channel |
+| **Gets hands-on work done** | Built-in Linux terminal, built-in browser engine, background Android app control, plus chatting with Orbit right from WeChat |
 
 ## What Orbit can do
 
@@ -59,13 +59,13 @@ Orbit is a **local-first** personal AI companion and assistant living directly o
 - **Its own voice & reading companion**: with Xiaomi MiMo, design a voice from a text description or clone a voice sample for expressive voice messages (long-press to transcribe); paired with a compatible [Legado](https://github.com/CATMIAOZHI/legado) build and reading companion enabled, Orbit writes paragraph notes ahead of you.
 - **Transparent, safe & under your control**: configure tool permissions so actions that need confirmation ask for your approval first; task runs and approval records are viewable day by day; vault secrets saved through secure cards are encrypted locally and kept out of chat context when used by tools; payments always stay with you.
 
-## Dedicated WeChat channel
+## Chat with Orbit on WeChat
 
 Reach your Orbit from WeChat like chatting with a friend — without opening the app:
 
 - **Scan to pair your own bot**: connect in **Settings → Message channels → WeChat** to send text, voice messages (transcribed by WeChat), images, and files straight from WeChat.
 - **Two-way sync, cleanly separated**: Orbit's replies, images, and files go back to WeChat and are archived inside a dedicated **WeChat** channel in Orbit without cluttering your main chat.
-- **Clear channel boundary**: the WeChat channel receives only messages sent to your paired bot — it does not read your contacts, group chats, or other WeChat conversations, and cannot message anyone else.
+- **Clear privacy boundary**: this WeChat link receives only messages sent to your paired bot — it does not read your contacts, group chats, or other WeChat conversations, and cannot message anyone else.
 
 ## A closer look
 
