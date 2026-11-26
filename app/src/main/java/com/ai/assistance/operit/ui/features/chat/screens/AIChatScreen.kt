@@ -2069,9 +2069,10 @@ private fun ChatInputBottomBar(
     }
 
     val queueAddedMessage = stringResource(R.string.chat_queue_added)
+    val attachmentStillAdding = stringResource(R.string.chat_processing_attachment)
     fun enqueueDraftToPendingQueue() {
         val draftText = userMessage.text.trim()
-        if (draftText.isBlank() && attachments.isEmpty()) return
+        if (draftText.isBlank() && actualViewModel.attachments.value.isEmpty()) return
         val chatId = currentChatId ?: return
 
         actualViewModel.enqueuePendingQueueMessage(
@@ -2088,7 +2089,7 @@ private fun ChatInputBottomBar(
     val steerWhileBusy = orbitChat || currentChatId in orbitOwnedChatIds
     fun steerDraftIntoCurrentTurn() {
         val draftText = userMessage.text.trim()
-        if (draftText.isBlank() && attachments.isEmpty()) return
+        if (draftText.isBlank() && actualViewModel.attachments.value.isEmpty()) return
         val chatId = currentChatId ?: return
         val id = actualViewModel.enqueuePendingQueueMessage(
             chatId = chatId,
@@ -2107,7 +2108,10 @@ private fun ChatInputBottomBar(
         // As for sending: the draft belongs to the chat the view model holds, so it waits until
         // that is the chat on screen.
         if (currentChatId == actualViewModel.currentChatId.value) {
-            if (steerWhileBusy) steerDraftIntoCurrentTurn() else enqueueDraftToPendingQueue()
+            // An attachment still being added (a long paste) would miss this message: wait a moment.
+            if (actualViewModel.attachmentsPending(currentChatId)) {
+                actualViewModel.showToast(attachmentStillAdding)
+            } else if (steerWhileBusy) steerDraftIntoCurrentTurn() else enqueueDraftToPendingQueue()
         }
     }
 
@@ -2127,6 +2131,11 @@ private fun ChatInputBottomBar(
                 return@launch
             }
             val expectedChatId = currentChatId
+            // An attachment still being added (a long paste) would miss this message: wait a moment.
+            if (actualViewModel.attachmentsPending(expectedChatId)) {
+                actualViewModel.showToast(attachmentStillAdding)
+                return@launch
+            }
 
             val submitDecision =
                 ChatInputHookRegistry.dispatchSubmitRequested(
@@ -2137,6 +2146,11 @@ private fun ChatInputBottomBar(
                 )
             // The hook may take a while: the chat may have changed meanwhile, and its draft is not ours.
             if (expectedChatId != actualViewModel.currentChatId.value) return@launch
+            // ...or a long paste may have started becoming an attachment.
+            if (actualViewModel.attachmentsPending(expectedChatId)) {
+                actualViewModel.showToast(attachmentStillAdding)
+                return@launch
+            }
             when (submitDecision.action) {
                 ChatInputSubmitActions.BLOCK -> {
                     showChatInputHookMessage(submitDecision.message)
@@ -2165,7 +2179,7 @@ private fun ChatInputBottomBar(
             val shouldUseWaifuMergeSend =
                 isWaifuModeEnabled &&
                     isWaifuMergeSendEnabled &&
-                    attachments.isEmpty() &&
+                    actualViewModel.attachments.value.isEmpty() &&
                     replyToMessage == null &&
                     finalText.isNotBlank()
             if (shouldUseWaifuMergeSend) {

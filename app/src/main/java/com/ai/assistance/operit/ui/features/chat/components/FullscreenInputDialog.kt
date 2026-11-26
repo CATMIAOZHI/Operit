@@ -114,6 +114,8 @@ fun FullscreenInputDialog(
                         if (adopted != null) editorValue = adopted
                         adopted != null
                     },
+                    // A long paste stays text here: this editor is for long text, and covers the
+                    // chat where an attachment would show.
                     onValueChange = {
                         editorValue = it
                         // Keep the shared draft current for prediction validation and speech input.
