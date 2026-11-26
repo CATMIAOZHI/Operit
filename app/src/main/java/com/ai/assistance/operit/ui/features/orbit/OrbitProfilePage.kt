@@ -269,7 +269,9 @@ internal fun OrbitProfilePage(
             }
             OrbitProfileTab.APPROVALS -> approvalsSection(tasks, approvals, vaultUsage, allKeyUse, { allKeyUse = true }, recordsShown,
                 { recordsShown += APPROVAL_PAGE }, onOpenTask) { openApproval = it }
-            OrbitProfileTab.BROWSER -> browserSection(who, pages, apps, onOpenApp = { screen ->
+            OrbitProfileTab.BROWSER -> browserSection(orbit, who, pages, apps, onOpenOwn = {
+                scope.launch { OrbitBrowserWatch.openOwn(context, orbit.id) }
+            }, onOpenApp = { screen ->
                 com.ai.assistance.operit.core.tools.phone.PhoneBackgroundControl.watch(screen.id)
             }) { work ->
                 if (OrbitBrowserWatch.pageAlive(work)) {
@@ -1241,12 +1243,15 @@ private data class AppRow(
  * tapping one shows it, and the user can take over there.
  */
 private fun LazyListScope.browserSection(
+    orbit: OrbitProfile,
     who: String,
     pages: List<OrbitBrowserWatch.Work>,
     apps: List<AppRow>,
+    onOpenOwn: () -> Unit,
     onOpenApp: (AppRow) -> Unit,
     onOpen: (OrbitBrowserWatch.Work) -> Unit,
 ) {
+    item(key = "browser-own") { OpenBrowserCard(orbit, onOpenOwn) }
     if (pages.isEmpty() && apps.isEmpty()) {
         item(key = "browser-empty") {
             EmptyHint(
@@ -1290,6 +1295,66 @@ private fun LazyListScope.browserSection(
             showChevron = true,
             onClick = { onOpen(work) },
         )
+    }
+}
+
+/**
+ * Opens a browser window of the user's own: Orbit keeps using its pages meanwhile, and a site the
+ * user signs in to here is signed in for Orbit too.
+ */
+@Composable
+private fun OpenBrowserCard(orbit: OrbitProfile, onOpen: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        onClick = onOpen,
+        shape = RoundedCornerShape(24.dp),
+        color = colors.primaryContainer.copy(alpha = 0.55f),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+    ) {
+        Box(Modifier.fillMaxWidth().height(200.dp)) {
+            // A small browser window with the Orbit in it.
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = colors.surface,
+                shadowElevation = 2.dp,
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = 24.dp).width(200.dp).height(112.dp),
+            ) {
+                Column {
+                    Row(
+                        Modifier.fillMaxWidth().background(colors.surfaceVariant).padding(horizontal = 8.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        listOf(Color(0xFFFF5F57), Color(0xFFFEBC2E), Color(0xFF28C840)).forEach {
+                            Box(Modifier.size(6.dp).clip(CircleShape).background(it))
+                        }
+                    }
+                    Column(
+                        Modifier.fillMaxWidth().padding(top = 10.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        OrbitAvatar(orbit = orbit, size = 28)
+                        Box(
+                            Modifier.padding(top = 10.dp).width(150.dp).height(12.dp)
+                                .clip(CircleShape).background(colors.surfaceVariant),
+                        )
+                    }
+                }
+            }
+            Surface(
+                shape = CircleShape,
+                color = colors.surface,
+                modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp),
+            ) {
+                Row(
+                    Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(stringResource(R.string.orbit_profile_browser_open), style = MaterialTheme.typography.bodyLarge)
+                    Icon(orbitIcon("maximize-2"), contentDescription = null, modifier = Modifier.size(18.dp))
+                }
+            }
+        }
     }
 }
 

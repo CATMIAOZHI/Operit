@@ -13,6 +13,7 @@ import com.ai.assistance.operit.core.tools.defaultTool.standard.StandardBrowserS
 import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserProfiles
 import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserTaskScope
 import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.closeSession
+import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.createSessionTabOnMain
 import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.ensureOverlayOnMain
 import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.ensureSessionAttachedOnMain
 import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.setExpandedOnMain
@@ -576,6 +577,44 @@ internal object OrbitBrowserWatch {
     }
 
     /**
+     * The user's own browser window, opened from the Orbit's browser page. Its tabs belong to no
+     * task, so the Orbit's tool calls never see or wait for them; they use the Orbit's logins, so a
+     * site signed in here is signed in for the Orbit too. Opening again goes back to the last tab.
+     */
+    suspend fun openOwn(context: Context, orbitId: String) {
+        if (!Settings.canDrawOverlays(context)) {
+            val opened = OrbitPermissionCards.openSettings(context, OrbitPermissionCards.OVERLAY)
+            Toast.makeText(context, if (opened) R.string.orbit_browser_own_overlay_then_tap else R.string.orbit_browser_overlay_required,
+                Toast.LENGTH_LONG).show()
+            return
+        }
+        overlayWait?.cancel()
+        val app = context.applicationContext
+        // Built off the main thread: its first start reads saved settings from disk.
+        val browser = withContext(Dispatchers.IO) { StandardBrowserSessionTools(app) }
+        val profile = withContext(Dispatchers.IO) { BrowserProfiles.forOrbit(app, orbitId) }
+        withContext(Dispatchers.Main) {
+            // Here, with the tab change: a task page opened while this was loading gives way to it.
+            unwatch()
+            BrowserProfiles.withScope(profile) { BrowserTaskScope.withScope(null) {
+                val own = { id: String? -> id?.let(StandardBrowserSessionTools.sessions::get)
+                    ?.takeIf { it.browserTaskId == null && it.profileName == profile } }
+                val session = own(StandardBrowserSessionTools.lastOwnByProfile[profile])
+                    ?: StandardBrowserSessionTools.sessions.values.firstOrNull { it.browserTaskId == null && it.profileName == profile }
+                    ?: browser.createSessionTabOnMain(app, initialUrl = "about:blank")
+                // The tab goes in front before the window opens, so it is the window's own set.
+                browser.ensureSessionAttachedOnMain(session.id, explicit = true)
+                browser.ensureOverlayOnMain(app, initialExpanded = true)
+                browser.setExpandedOnMain(true)
+                // A blank tab opens ready to type an address or a search.
+                if (session.currentUrl.isNullOrBlank() || session.currentUrl == "about:blank") {
+                    StandardBrowserSessionTools.browserHost?.startUrlEditing()
+                }
+            } }
+        }
+    }
+
+    /**
      * Closes the watch screen, with the X or the phone's back. A user holding the page keeps it
      * until they press the hand-back button; the chat card shows it and opens the page again.
      */
@@ -689,7 +728,7 @@ internal object OrbitBrowserWatch {
         if (_watching.value == talkChatId) unwatch()
         scope.launch {
             runCatching { withContext(Dispatchers.Main) {
-                if (_watching.value == null) StandardBrowserSessionTools(app).setExpandedOnMain(false)
+                if (showsOnly(work.executorChatId)) StandardBrowserSessionTools(app).setExpandedOnMain(false)
             } }
             val coordinator = CollaborationCoordinator.getInstance(app)
             if (coordinator.isAgent(work.executorChatId)) {
@@ -735,11 +774,21 @@ internal object OrbitBrowserWatch {
             // Same end as stop(): wait out any call in flight, then close on the UI thread.
             while (!OrbitBrowserControl.idle(work.executorChatId)) delay(150)
             withContext(Dispatchers.Main) {
-                if (_watching.value == null) runCatching { StandardBrowserSessionTools(app).setExpandedOnMain(false) }
+                if (showsOnly(work.executorChatId)) runCatching { StandardBrowserSessionTools(app).setExpandedOnMain(false) }
                 closePages(work.executorChatId)
                 change(work.executorChatId) { null }
             }
         }
+    }
+
+    /**
+     * Whether the open browser shows [task]'s page and nothing else claims it: no other task is
+     * watched, and it is not the user's own window opened meanwhile, which a task ending leaves open.
+     */
+    private fun showsOnly(task: String): Boolean {
+        if (_watching.value != null) return false
+        val front = StandardBrowserSessionTools.activeSessionId?.let(StandardBrowserSessionTools.sessions::get)
+        return front == null || front.browserTaskId == task
     }
 
     private fun wake(work: Work, notice: String) {

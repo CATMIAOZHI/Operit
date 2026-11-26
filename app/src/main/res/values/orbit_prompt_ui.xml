@@ -147,6 +147,7 @@
     <string name="orbit_profile_browser_empty">现在没有浏览器和后台 App 任务</string>
     <string name="orbit_profile_browser_gone">这个网页已经关了</string>
     <string name="orbit_profile_browser_empty_desc">%1$s 用浏览器或在后台操作 App 时，会出现在这里，点开就能看，也能接手。</string>
+    <string name="orbit_profile_browser_open">打开浏览器</string>
     <string name="orbit_profile_phone_count">%1$d 项后台 App 任务</string>
     <string name="orbit_options_send_failed">没发出去，再点一次试试</string>
     <string name="orbit_floating_card_title">这张卡片要在 App 里用</string>
@@ -214,6 +215,7 @@
     <string name="orbit_accessibility_update">更新</string>
     <string name="orbit_accessibility_enable">开启无障碍服务</string>
     <string name="orbit_browser_overlay_then_back">请允许 Orbit「显示在其他应用上层」，回来后页面会自动打开</string>
+    <string name="orbit_browser_own_overlay_then_tap">请允许 Orbit「显示在其他应用上层」，回来后再点一次「打开浏览器」</string>
     <string name="orbit_page_card_mcp_title">MCP 设置</string>
     <string name="orbit_page_card_mcp_sub">添加、修改或开关 MCP 服务</string>
     <string name="orbit_page_card_mcp_open">打开 MCP 设置</string>

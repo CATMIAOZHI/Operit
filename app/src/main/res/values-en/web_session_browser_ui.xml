@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="web_session_search_or_url">Search or type a URL</string>
+    <string name="web_session_search_for">Search for “%1$s”</string>
+    <string name="web_session_open_site">Open %1$s</string>
+    <string name="web_session_start_empty">Sites you visit or bookmark show up here</string>
+    <string name="web_session_clear_input">Clear</string>
+    <string name="web_session_history_search">Search history</string>
+    <string name="web_session_history_today">Today</string>
+    <string name="web_session_history_yesterday">Yesterday</string>
+    <string name="web_session_history_this_tab">This tab</string>
+    <string name="web_session_history_clear_all">Clear</string>
+    <string name="web_session_history_clear_confirm">Clear all?</string>
+    <string name="web_session_history_remove">Remove from history</string>
+    <string name="web_session_history_no_match">No matching history</string>
+    <string name="web_session_desktop_site">Desktop site</string>
+    <string name="web_session_desktop_site_desc">Show pages as they look on a computer</string>
+    <string name="web_session_scripts_short">Scripts</string>
+</resources>

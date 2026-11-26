@@ -111,7 +111,8 @@ internal class WebSessionHistoryStore private constructor(private val context: C
 
             val bookmarks =
                 decodeBookmarks(preferences[KEY_BOOKMARKS]).map { bookmark ->
-                    if (bookmark.url == normalizedUrl && normalizedTitle.isNotBlank()) {
+                    // Only a real change touches a bookmark, so an unchanged title writes nothing.
+                    if (bookmark.url == normalizedUrl && normalizedTitle.isNotBlank() && bookmark.title != normalizedTitle) {
                         bookmark.copy(title = normalizedTitle, updatedAt = System.currentTimeMillis())
                     } else {
                         bookmark
@@ -177,6 +178,14 @@ internal class WebSessionHistoryStore private constructor(private val context: C
     suspend fun clearHistory() {
         context.webSessionHistoryDataStore.edit { preferences ->
             preferences[KEY_HISTORY] = json.encodeToString(emptyList<WebSessionHistoryEntry>())
+        }
+    }
+
+    /** Removes one visit from the history list. */
+    suspend fun removeHistoryEntry(url: String, visitedAt: Long) {
+        context.webSessionHistoryDataStore.edit { preferences ->
+            val updated = decodeHistory(preferences[KEY_HISTORY]).filterNot { it.url == url && it.visitedAt == visitedAt }
+            preferences[KEY_HISTORY] = json.encodeToString(updated)
         }
     }
 

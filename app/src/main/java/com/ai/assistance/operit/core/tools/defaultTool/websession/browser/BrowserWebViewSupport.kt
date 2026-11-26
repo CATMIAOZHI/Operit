@@ -41,6 +41,14 @@ import kotlinx.coroutines.runBlocking
 
 private const val WEBVIEW_SUPPORT_TAG = "BrowserSessionTools"
 
+/**
+ * Desktop or phone mode of a tab. The user's own tabs follow the switch in the browser menu; an
+ * Orbit task's tabs keep desktop mode whatever the user picks, so switching never changes the
+ * pages Orbit works on.
+ */
+internal fun desktopModeOf(browserTaskId: String?): Boolean =
+    browserTaskId != null || StandardBrowserSessionTools.desktopModeEnabled
+
 internal fun StandardBrowserSessionTools.createSessionOnMain(
     appContext: Context,
     sessionId: String,
@@ -75,11 +83,11 @@ internal fun StandardBrowserSessionTools.createSessionOnMain(
             profileName = profileName,
             browserTaskId = browserTaskId,
         )
-    if (StandardBrowserSessionTools.desktopModeEnabled) {
+    if (desktopModeOf(browserTaskId)) {
         session.viewportWidthPx = StandardBrowserSessionTools.DEFAULT_DESKTOP_VIEWPORT_WIDTH
         session.viewportHeightPx = StandardBrowserSessionTools.DEFAULT_DESKTOP_VIEWPORT_HEIGHT
     }
-    configureWebView(session, webView, resolveUserAgent(customUserAgent))
+    configureWebView(session, webView, resolveUserAgent(customUserAgent, desktopModeOf(browserTaskId)))
     userscriptManager.attachSession(session.id, session.page)
     return session
 }
@@ -456,6 +464,7 @@ internal fun StandardBrowserSessionTools.createBrowserHostCallbacks(
             runOnMainSync<Unit> {
                 val watched = com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.watching.value
                 if (watched != null && StandardBrowserSessionTools.sessions[sessionId]?.browserTaskId != watched) return@runOnMainSync
+                if (!ownWindowAllows(sessionId)) return@runOnMainSync
                 ensureSessionAttachedOnMain(sessionId)
             }
         }
@@ -463,6 +472,7 @@ internal fun StandardBrowserSessionTools.createBrowserHostCallbacks(
         override fun onCloseTab(sessionId: String) {
             val watched = com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.watching.value
             if (watched != null && StandardBrowserSessionTools.sessions[sessionId]?.browserTaskId != watched) return
+            if (!ownWindowAllows(sessionId)) return
             closeSession(sessionId)
         }
 
@@ -490,13 +500,46 @@ internal fun StandardBrowserSessionTools.createBrowserHostCallbacks(
             }
         }
 
+        override fun onOpenMainTabs() {
+            runOnMainSync<Unit> {
+                val main = BrowserProfiles.MAIN
+                val own = { id: String? -> id?.let(::sessionById)?.takeIf { it.isOwnTabOf(main) } }
+                val tab = own(StandardBrowserSessionTools.lastOwnByProfile[main])
+                    ?: BrowserProfiles.withScope(null) { BrowserTaskScope.withScope(null) { orderedSessionIds() } }
+                        .firstNotNullOfOrNull { own(it) }
+                com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.unwatch()
+                tab?.let { ensureSessionAttachedOnMain(it.id, explicit = true) }
+                setExpandedOnMain(true)
+            }
+        }
+
+        override fun onReopenOwn(profile: String) {
+            runOnMainSync<Unit> {
+                val own = { id: String? -> id?.let(::sessionById)?.takeIf { it.isOwnTabOf(profile) } }
+                // The tab last shown first; a page of the same logins put in front meanwhile was never seen.
+                val tab = own(StandardBrowserSessionTools.lastOwnByProfile[profile])
+                    ?: own(StandardBrowserSessionTools.activeSessionId)
+                    ?: BrowserProfiles.withScope(null) { BrowserTaskScope.withScope(null) { orderedSessionIds() } }
+                        .firstNotNullOfOrNull { own(it) }
+                    // Its tabs all closed meanwhile: the window comes back blank on the same logins.
+                    ?: BrowserProfiles.withScope(profile) { BrowserTaskScope.withScope(null) {
+                        createSessionTabOnMain(appContext, initialUrl = "about:blank")
+                    } }
+                if (StandardBrowserSessionTools.activeSessionId != tab.id) ensureSessionAttachedOnMain(tab.id, explicit = true)
+                setExpandedOnMain(true)
+            }
+        }
+
         override fun onCloseCurrentTab() {
             resolvePreferredSessionId()?.let { closeSession(it) }
         }
 
         override fun onCloseAllTabs() {
             val watched = com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.watching.value
-            val ids = BrowserTaskScope.withScope(watched) { orderedSessionIds() }
+            val own = ownWindowProfile()
+            val ids = BrowserTaskScope.withScope(watched) { orderedSessionIds() }.filter { id ->
+                own == null || StandardBrowserSessionTools.sessions[id]?.isOwnTabOf(own) == true
+            }
             ids.forEach { closeSession(it) }
         }
 
@@ -534,6 +577,12 @@ internal fun StandardBrowserSessionTools.createBrowserHostCallbacks(
         override fun onClearHistory() {
             ioScope.launch {
                 historyStore.clearHistory()
+            }
+        }
+
+        override fun onRemoveHistoryEntry(url: String, visitedAt: Long) {
+            ioScope.launch {
+                historyStore.removeHistoryEntry(url, visitedAt)
             }
         }
 
@@ -759,14 +808,17 @@ internal fun StandardBrowserSessionTools.activateSessionOnMain(sessionId: String
     val session = sessionById(sessionId) ?: return
     ensureOverlayOnMain(context.applicationContext)
     selectSessionForCallerOnMain(session)
+    // Shown now: a page paused while it waited behind the window wakes up.
+    if (StandardBrowserSessionTools.activeSessionId == session.id) runCatching { session.page.onResume() }
     updateNavigationState(session)
     syncProjectedBrowserStateOnMain()
 }
 
-internal fun StandardBrowserSessionTools.ensureSessionAttachedOnMain(sessionId: String) {
+/** [explicit]: the user asked for this tab (opening a window, say), so it comes to the front over any other. */
+internal fun StandardBrowserSessionTools.ensureSessionAttachedOnMain(sessionId: String, explicit: Boolean = false) {
     val session = sessionById(sessionId) ?: return
     ensureOverlayOnMain(context.applicationContext)
-    selectSessionForCallerOnMain(session)
+    selectSessionForCallerOnMain(session, explicit)
     runCatching {
         session.page.onResume()
         session.webView?.resumeTimers()
@@ -777,19 +829,26 @@ internal fun StandardBrowserSessionTools.ensureSessionAttachedOnMain(sessionId: 
     syncProjectedBrowserStateOnMain()
 }
 
-private fun StandardBrowserSessionTools.selectSessionForCallerOnMain(session: BrowserToolSession) {
+private fun StandardBrowserSessionTools.selectSessionForCallerOnMain(session: BrowserToolSession, explicit: Boolean = false) {
     session.browserTaskId?.let { task ->
         StandardBrowserSessionTools.lastActiveByTask[task] = session.id
         com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.follow(task, session.id)
     }
     val watched = com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.watching.value
     val visibleTask = StandardBrowserSessionTools.activeSessionId?.let(StandardBrowserSessionTools.sessions::get)?.browserTaskId
-    if (BrowserTaskScope.current() == null || watched == session.browserTaskId ||
+    if (explicit || (BrowserTaskScope.current() == null && mayTakeOwnWindow(session)) ||
+        (watched != null && watched == session.browserTaskId) ||
         (watched == null && session.browserTaskId != null && visibleTask == session.browserTaskId)) {
         StandardBrowserSessionTools.activeSessionId = session.id
+    } else if (session.browserTaskId == null) {
+        // Kept behind the user's window, it is still its own logins' current tab for the next call.
+        StandardBrowserSessionTools.lastActiveByProfile[session.profileName] = session.id
     }
-    if (session.browserTaskId != null) StandardBrowserSessionTools.browserHost?.attachBackgroundWebView(
-        session.page, session.viewportWidthPx, session.viewportHeightPx)
+    // A task's page, or one kept behind the user's own window, works off screen with its own size.
+    if (session.browserTaskId != null || StandardBrowserSessionTools.activeSessionId != session.id) {
+        StandardBrowserSessionTools.browserHost?.attachBackgroundWebView(
+            session.page, session.viewportWidthPx, session.viewportHeightPx)
+    }
 }
 
 internal fun StandardBrowserSessionTools.refreshSessionUiOnMain(sessionId: String? = null) {
@@ -797,6 +856,36 @@ internal fun StandardBrowserSessionTools.refreshSessionUiOnMain(sessionId: Strin
         sessionById(id)?.let(::updateNavigationState)
     }
     syncProjectedBrowserStateOnMain()
+}
+
+/**
+ * The login set of the user's own browser window while it shows: the tab in front belongs to no
+ * task and no Orbit task is being watched. The window's tab list, closing and the tab after a close
+ * stay within the user's own tabs of that set; Orbit's pages open only on its watch screen, where
+ * the user takes them over. Null otherwise.
+ */
+internal fun ownWindowProfile(): String? {
+    if (com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.watching.value != null) return null
+    val active = StandardBrowserSessionTools.activeSessionId?.let(StandardBrowserSessionTools.sessions::get) ?: return null
+    return active.profileName.takeIf { active.browserTaskId == null }
+}
+
+internal fun BrowserToolSession.isOwnTabOf(profile: String): Boolean = browserTaskId == null && profileName == profile
+
+/**
+ * The user's own window on screen keeps its logins: a tab of another set with no task (a page
+ * script's new tab, a normal chat's browser call) stays behind instead of taking the window over.
+ */
+internal fun mayTakeOwnWindow(session: BrowserToolSession): Boolean {
+    val ownShown = ownWindowProfile()?.takeIf { StandardBrowserSessionTools.browserHost?.isExpanded() == true }
+        ?: return true
+    return session.browserTaskId != null || session.profileName == ownShown
+}
+
+/** False for a tab the user's own window must not reach (see [ownWindowProfile]). */
+private fun ownWindowAllows(sessionId: String): Boolean {
+    val profile = ownWindowProfile() ?: return true
+    return StandardBrowserSessionTools.sessions[sessionId]?.isOwnTabOf(profile) == true
 }
 
 internal fun StandardBrowserSessionTools.syncProjectedBrowserStateOnMain() {
@@ -809,6 +898,10 @@ private fun StandardBrowserSessionTools.syncProjectedBrowserStateUnscoped() {
     val resolvedActiveId = registry.activeSessionId
     val activeSession = resolvedActiveId?.let(::sessionById)
     StandardBrowserSessionTools.activeSessionId = resolvedActiveId
+    // Only a tab the user's own window really shows counts as their last one.
+    if (StandardBrowserSessionTools.browserHost?.isExpanded() == true && ownWindowProfile() != null) {
+        activeSession?.let { StandardBrowserSessionTools.lastOwnByProfile[it.profileName] = it.id }
+    }
     StandardBrowserSessionTools.browserHost?.attachActiveWebView(
         activeSession?.page,
         activeSession?.viewportWidthPx,
@@ -845,7 +938,7 @@ internal fun StandardBrowserSessionTools.buildBrowserState(
         canGoForward = activeSession?.canGoForward == true,
         isLoading = activeSession?.isLoading == true,
         hasSslError = activeSession?.hasSslError == true,
-        isDesktopMode = StandardBrowserSessionTools.desktopModeEnabled,
+        isDesktopMode = desktopModeOf(activeSession?.browserTaskId),
         activeDownloadCount = downloadSummary.activeCount,
         hasFailedDownloads = downloadSummary.failedCount > 0,
         failedDownloadCount = downloadSummary.failedCount,
@@ -958,9 +1051,9 @@ internal fun StandardBrowserSessionTools.ensureDesktopModeInitialized() {
     }
 }
 
-internal fun StandardBrowserSessionTools.resolveUserAgent(customUserAgent: String?): String =
+internal fun StandardBrowserSessionTools.resolveUserAgent(customUserAgent: String?, desktop: Boolean): String =
     customUserAgent
-        ?: if (StandardBrowserSessionTools.desktopModeEnabled) {
+        ?: if (desktop) {
             StandardBrowserSessionTools.DEFAULT_USER_AGENT
         } else {
             StandardBrowserSessionTools.MOBILE_USER_AGENT
@@ -970,7 +1063,7 @@ internal fun StandardBrowserSessionTools.applySessionUserAgent(
     session: BrowserToolSession,
     userAgent: String
 ) {
-    val isDesktopMode = StandardBrowserSessionTools.desktopModeEnabled
+    val isDesktopMode = desktopModeOf(session.browserTaskId)
     val webView = session.webView ?: run {
         session.page.userAgent = userAgent
         if (session.customUserAgent == null) session.page.applyChromeClientHints(isDesktopMode)
@@ -1056,8 +1149,8 @@ internal fun StandardBrowserSessionTools.applyViewportOverride(session: BrowserT
     with(settings) {
         // Page zoom does not change Chromium's layout viewport. With an explicit viewport,
         // size the WebView itself and let its control width define the CSS layout width.
-        useWideViewPort = StandardBrowserSessionTools.desktopModeEnabled && !hasViewportOverride
-        loadWithOverviewMode = StandardBrowserSessionTools.desktopModeEnabled && !hasViewportOverride
+        useWideViewPort = desktopModeOf(session.browserTaskId) && !hasViewportOverride
+        loadWithOverviewMode = desktopModeOf(session.browserTaskId) && !hasViewportOverride
     }
 }
 
@@ -1355,7 +1448,8 @@ internal fun StandardBrowserSessionTools.setDesktopModeEnabled(enabled: Boolean)
     }
 
     runOnMainSync<Unit> {
-        StandardBrowserSessionTools.sessions.values.forEach { session ->
+        // Only the user's own tabs: Orbit's pages stay as they are.
+        StandardBrowserSessionTools.sessions.values.filter { it.browserTaskId == null }.forEach { session ->
             if (!session.hasExplicitViewportSize) {
                 session.viewportWidthPx =
                     StandardBrowserSessionTools.DEFAULT_DESKTOP_VIEWPORT_WIDTH.takeIf { enabled }
@@ -1363,14 +1457,14 @@ internal fun StandardBrowserSessionTools.setDesktopModeEnabled(enabled: Boolean)
                     StandardBrowserSessionTools.DEFAULT_DESKTOP_VIEWPORT_HEIGHT.takeIf { enabled }
             }
             if (session.customUserAgent == null) {
-                applySessionUserAgent(session, resolveUserAgent(null))
+                applySessionUserAgent(session, resolveUserAgent(null, enabled))
             }
             applyViewportOverride(session)
         }
         syncProjectedBrowserStateOnMain()
 
         val activeSession = getActiveSessionOnMain()
-        if (activeSession != null && activeSession.customUserAgent == null) {
+        if (activeSession != null && activeSession.customUserAgent == null && activeSession.browserTaskId == null) {
             activeSession.pageLoaded = false
             activeSession.isLoading = true
             activeSession.page.reload()
@@ -1411,6 +1505,9 @@ internal fun StandardBrowserSessionTools.resolvePendingDialogOnMain(
 /** Closes a deleted Orbit's tabs, then removes its own saved logins. */
 internal fun StandardBrowserSessionTools.forgetOrbitBrowser(orbitId: String) {
     val profile = BrowserProfiles.orbitProfileName(orbitId)
+    // First, in this same step: a window of its logins left in the recent apps comes back on the main ones.
+    StandardBrowserSessionTools.lastOwnByProfile.remove(profile)
+    StandardBrowserSessionTools.browserHost?.forgetOwnWindow(profile)
     StandardBrowserSessionTools.sessions.values
         .filter { it.profileName == profile }
         .forEach { closeSession(it.id) }
@@ -1423,11 +1520,20 @@ internal fun StandardBrowserSessionTools.closeSession(sessionId: String): Boolea
     // a cancelled callback must not leave a live view outside the registry and its task limit.
     // Tabs of other logins stay open, so the overlay and the next tab follow every tab.
     if (sessionById(sessionId) == null) return@runOnMainSync false
+    // Read before the close changes the tab in front.
+    val ownProfile = ownWindowProfile()
     val orderedBeforeClose = BrowserProfiles.withScope(null) { BrowserTaskScope.withScope(null) { orderedSessionIds() } }
-    val closedIndex = orderedBeforeClose.indexOf(sessionId)
+    val closing = sessionById(sessionId)
+    // In the user's own window the neighbour is counted among their own tabs only.
+    val closedIndex = ownProfile?.takeIf { closing?.isOwnTabOf(it) == true }?.let { own ->
+        orderedBeforeClose.filter { sessionById(it)?.isOwnTabOf(own) == true }.indexOf(sessionId)
+    } ?: orderedBeforeClose.indexOf(sessionId)
     val wasActive = StandardBrowserSessionTools.activeSessionId == sessionId
     val previouslyActiveId = StandardBrowserSessionTools.activeSessionId
     val session = StandardBrowserSessionTools.sessions.remove(sessionId) ?: return@runOnMainSync false
+    StandardBrowserSessionTools.lastOwnByProfile.remove(session.profileName, sessionId)
+    // Closing in the user's own window, the next tab is another of theirs, never an Orbit task's page.
+    val ownOnly = ownProfile?.takeIf { session.isOwnTabOf(it) }
     val wasTaskActive = session.browserTaskId?.let {
         StandardBrowserSessionTools.lastActiveByTask.remove(it, sessionId)
     } == true
@@ -1469,7 +1575,11 @@ internal fun StandardBrowserSessionTools.closeSession(sessionId: String): Boolea
                 com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.follow(session.browserTaskId, nextTaskSession)
             }
         }
-        val remainingIds = if (session.browserTaskId != null && sameTask.isNotEmpty()) sameTask else allRemaining
+        val remainingIds = when {
+            ownOnly != null -> allRemaining.filter { StandardBrowserSessionTools.sessions[it]?.isOwnTabOf(ownOnly) == true }
+            session.browserTaskId != null && sameTask.isNotEmpty() -> sameTask
+            else -> allRemaining
+        }
         val nextSessionId =
             if (wasActive) {
                 when {
@@ -1487,8 +1597,11 @@ internal fun StandardBrowserSessionTools.closeSession(sessionId: String): Boolea
             } else {
                 refreshSessionUiOnMain(nextSessionId)
             }
-        } else {
+        } else if (allRemaining.isEmpty()) {
             destroyOverlayOnMain()
+        } else {
+            // The user's last own tab closed while Orbit's pages go on: the window closes, they stay.
+            setExpandedOnMain(false)
         }
         refreshSessionUiOnMain()
     } }

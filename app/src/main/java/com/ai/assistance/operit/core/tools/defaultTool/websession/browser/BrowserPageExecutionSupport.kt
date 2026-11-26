@@ -1146,7 +1146,11 @@ internal fun StandardBrowserSessionTools.sessionById(sessionId: String): Browser
 
 internal fun StandardBrowserSessionTools.resolvePreferredSessionId(): String? {
     val registry = buildPageRegistry()
-    if (BrowserTaskScope.current() == null) StandardBrowserSessionTools.activeSessionId = registry.activeSessionId
+    // Finding the tab to act on brings it in front only where it may: never over the user's own window of other logins.
+    if (BrowserTaskScope.current() == null) {
+        registry.activeSessionId?.let(StandardBrowserSessionTools.sessions::get)?.takeIf(::mayTakeOwnWindow)
+            ?.let { StandardBrowserSessionTools.activeSessionId = it.id }
+    }
     return registry.activeSessionId
 }
 

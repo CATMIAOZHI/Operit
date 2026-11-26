@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="web_session_search_or_url">搜索或输入网址</string>
+    <string name="web_session_search_for">搜索「%1$s」</string>
+    <string name="web_session_open_site">打开 %1$s</string>
+    <string name="web_session_start_empty">你访问过和收藏的网站会显示在这里</string>
+    <string name="web_session_clear_input">清除</string>
+    <string name="web_session_history_search">搜索历史记录</string>
+    <string name="web_session_history_today">今天</string>
+    <string name="web_session_history_yesterday">昨天</string>
+    <string name="web_session_history_this_tab">这个标签页</string>
+    <string name="web_session_history_clear_all">清空</string>
+    <string name="web_session_history_clear_confirm">确定清空？</string>
+    <string name="web_session_history_remove">删除这条记录</string>
+    <string name="web_session_history_no_match">没有找到相关记录</string>
+    <string name="web_session_desktop_site">电脑版网页</string>
+    <string name="web_session_desktop_site_desc">按电脑上的样子显示网页</string>
+    <string name="web_session_scripts_short">脚本</string>
+</resources>
