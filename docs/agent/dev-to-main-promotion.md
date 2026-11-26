@@ -10,18 +10,19 @@
 
 ## 版本号规则
 
-稳定版本号形如 `<基线版本>-ry.<序号>`，例如 `1.12.2-ry.6`。两段各自独立演进：
+稳定版本名形如 `<基线版本>-ry.<序号>`，例如 `1.12.2-ry.6`。稳定版版本规则如下：
 
 | 字段 | 何时变化 | 例子 |
 |---|---|---|
 | `versionName` 的 `ry.<序号>` | 每次稳定版发布加一 | `1.12.2-ry.6` → `1.12.2-ry.7` |
 | `versionName` 的基线版本 | 跟随上游正式版本 | `1.12.1` → `1.12.2` |
-| `versionCode` | 只随基线版本更新加一，`ry` 发布不动 | 基线变到 `1.12.3` 时才从 `100205` 变为 `100206` |
+| `versionCode` | 每次稳定版发布加一，包括更新上游基线的版本 | `100205` → `100206` |
 
 约束：
 
-- `dev` 与 `main` 的 `versionCode` 必须一致；它按基线版本推进，dev 不得落后或领先稳定分支。
-- 晋升分支只更新 `versionName` 的 `ry` 序号，不调整 `versionCode`；混入 `versionCode` 改动视为晋升失败。
+- 以 `CATMIAOZHI/orbit` 上一已发布的 Ry 稳定版标签为准，从标签指向提交的 `app/build.gradle.kts` 读取 `versionCode`。在晋升分支设置为该值加一，并更新 `versionName` 的 `ry` 序号。挑选功能提交时带入的版本号不作为计算基准。
+- 同时只进行一轮稳定版晋升。上一轮发布完成或在合并前取消后，才开始下一轮。已合并但尚未发布时，按原版本号和合并提交完成发布。重试晋升或重跑构建时，沿用本轮已经确定的版本号。
+- 晋升完成后按第 10 节回合并 `main` 到 `dev`，同步 `versionCode` 并保留开发版专属配置。
 - dev 的 `-dev.<build>` 后缀由 debug 变体的 `versionNameSuffix` 自动追加，不要在源码里手写。
 
 ## 晋升检查点
@@ -169,7 +170,9 @@ git restore --source=HEAD^ --staged --worktree -- <dev-only-file>
 git commit --amend --no-edit
 ```
 
-### 6. 验证
+### 6. 更新版本号并验证
+
+按上方规则在晋升分支更新 `app/build.gradle.kts`。编译前核对 `versionCode` 恰好是上一正式版加一，`versionName` 对应本轮计划发布的标签。
 
 ```bash
 # === 拒绝所有 dev 身份配置（无论是否在 debug 块中）===
@@ -203,6 +206,8 @@ test -f app/src/debug/res/drawable/ic_launcher_dev_badge.xml \
 # release APK 的构建与发布见第 9 节；PR Check 按变更范围运行检查。
 ```
 
+验证通过后，把 `app/build.gradle.kts` 的版本改动单独提交到晋升分支。推送前从该分支的 `HEAD` 核对这两个字段，确认版本改动已进入提交。
+
 ### 7. 推送并创建 PR
 
 在晋升分支把本轮的更新内容加到 `docs/CHANGELOG.md` 最上面，单独提交：标题写 `## <version> · <晋升日期>`，正文和第 9 节的 release notes 相同，但去掉首行标题和末尾固定那行，小节标题用 `###`。这样 main 上的更新日志和 Release 一致；Release 晚一两天发出时不用回头改日期。
@@ -233,7 +238,7 @@ gh pr merge <pr> --repo CATMIAOZHI/orbit --auto --merge
 
 `Full Android checks` 可以继续在后台跑完。只有它失败且失败原因指向本轮改动时，才需要修复后重跑。
 
-合并后 `sync-operit-mirror.yml` 会将同一 commit 自动快进到 `CATMIAOZHI/Operit` 的 `personal/main` 和 `main` 只读镜像；也可将 `main` 合并回 `dev` 保持开发线同步。
+合并后 `sync-operit-mirror.yml` 会将同一 commit 自动快进到 `CATMIAOZHI/Operit` 的 `personal/main` 和 `main` 只读镜像。按第 10 节将 `main` 回合并到 `dev`。
 
 ### 9. 发布稳定版
 
@@ -242,17 +247,36 @@ gh pr merge <pr> --repo CATMIAOZHI/orbit --auto --merge
 - `Android Build` 不随 `main` 的 push 自动运行，避免合并后的调试包构建与正式发布重复；
 - `workflow_dispatch` 按输入的 `gradle_task` 构建，选 `:app:assembleRelease` 才产出 `app-release.apk`。
 
+从本轮晋升 PR 读取合并 SHA，先按 SHA 查找已有的正式构建。复用时，在 `Run Gradle build and checks` 的日志中核对 `DISPATCH_GRADLE_TASK: :app:assembleRelease`。已确认任务的失败运行可用原运行 ID 重跑。
+
 ```bash
+MERGE_SHA=$(gh pr view <晋升PR编号> --repo CATMIAOZHI/orbit --json mergeCommit -q .mergeCommit.oid)
+test -n "$MERGE_SHA" || { echo "晋升 PR 尚未合并" >&2; exit 1; }
+gh run list --repo CATMIAOZHI/orbit --workflow android-build.yml \
+  --branch main --event workflow_dispatch --commit "$MERGE_SHA"
+```
+
+如果没有可复用的正式构建，只在远端 `main` 仍指向该 SHA 时触发。若 `main` 已前进，暂停发布。
+
+```bash
+test "$(gh api repos/CATMIAOZHI/orbit/git/ref/heads/main --jq .object.sha)" = "$MERGE_SHA" || {
+  echo "main 已前进，暂停发布" >&2
+  exit 1
+}
 gh workflow run android-build.yml --repo CATMIAOZHI/orbit \
   --ref main \
   -f gradle_task=:app:assembleRelease
 # 可选：-f run_unit_tests=true -f run_android_lint=true（默认均为 false）
+```
 
-# 刚触发时 run 可能还没出现在列表里；取到空值就稍等重试，不要用旧的 run
-RUN_ID=$(gh run list --repo CATMIAOZHI/orbit --workflow android-build.yml \
-  --branch main --event workflow_dispatch --limit 1 \
-  --json databaseId -q '.[0].databaseId')
-test -n "$RUN_ID" || { echo "run 尚不可见，稍后重试" >&2; exit 1; }
+优先使用触发命令返回的运行链接确认 ID。若未返回链接，稍后按合并 SHA 再查，并核对构建任务。选定本轮正式构建的运行 ID 后，核对其 `headSha` 再等待。
+
+```bash
+RUN_ID=<正式构建运行ID>
+test "$(gh run view "$RUN_ID" --repo CATMIAOZHI/orbit --json headSha -q .headSha)" = "$MERGE_SHA" || {
+  echo "构建提交和本轮合并提交不一致" >&2
+  exit 1
+}
 gh run watch "$RUN_ID" --repo CATMIAOZHI/orbit --exit-status --interval 60 >/dev/null 2>&1
 ```
 
@@ -268,7 +292,7 @@ gh run download "$RUN_ID" --repo CATMIAOZHI/orbit \
 APK="$WORK/apk/release/app-release.apk"
 ```
 
-校验该产物确为 release 且签名正确。`aapt`、`apksigner` 在 SDK 的 `build-tools/35.0.0/`（本机 `C:\AndroidSdk\build-tools\35.0.0`，CI 为 `$ANDROID_HOME/build-tools/35.0.0`）；不在 PATH 时用完整路径：
+校验该产物确为 release、版本号与本轮晋升提交一致且签名正确。`aapt`、`apksigner` 在 SDK 的 `build-tools/35.0.0/`（本机 `C:\AndroidSdk\build-tools\35.0.0`，CI 为 `$ANDROID_HOME/build-tools/35.0.0`）；不在 PATH 时用完整路径：
 
 ```bash
 # 必须出现：package: name='com.rainy.operitry' versionCode='<本轮>' versionName='<本轮>'
@@ -465,7 +489,7 @@ git cherry-pick "${PENDING_COMMITS[@]}" || {
 }
 ```
 
-若 cherry-pick 发生冲突，必须保留 main 已审查修复和 dev 专属配置，只重放该提交所属功能的 hunk，验证后执行 `git cherry-pick --continue`。若执行 `git cherry-pick --abort`，dev 会停在缺少待晋升功能的检查点提交；此时不得进入验证或推送，必须重新执行完整 cherry-pick 序列或放弃本轮检查点并先恢复功能。若没有待晋升通用改动，应省略 `PENDING_COMMITS`、revert 和 cherry-pick 段。确认 dev 专属配置仍然存在后，验证最终 dev 工作树：
+若 cherry-pick 发生冲突，必须保留 main 已审查修复和 dev 专属配置，只重放该提交所属功能的 hunk，验证后执行 `git cherry-pick --continue`。若执行 `git cherry-pick --abort`，dev 会停在缺少待晋升功能的检查点提交；此时不得进入验证或推送，必须重新执行完整 cherry-pick 序列或放弃本轮检查点并先恢复功能。若没有待晋升通用改动，应省略 `PENDING_COMMITS`、revert 和 cherry-pick 段。重放待晋升功能时保留本轮 `main` 的 `versionCode`。确认最终 `dev` 的 `versionCode` 与本轮 `main` 一致，且开发版专属配置仍然存在，再验证最终工作树：
 
 ```bash
 test "$(git branch --show-current)" = "dev" &&
