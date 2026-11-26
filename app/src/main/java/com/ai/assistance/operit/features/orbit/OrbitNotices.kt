@@ -28,8 +28,15 @@ internal object OrbitNotices {
 
     private fun prefs(context: Context) = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-    /** Tells Orbit once about [key]; nothing more until [clear] for it. */
-    fun once(context: Context, orbitId: String, key: String, zh: String, en: String) {
+    /** Whether Orbit already got the note [key]. */
+    fun delivered(context: Context, orbitId: String, key: String): Boolean =
+        synchronized(this) { runCatching { prefs(context).getLong("$orbitId|$key", 0L) }.getOrDefault(0L) == DELIVERED }
+
+    /**
+     * Tells Orbit once about [key]; nothing more until [clear] for it. Once it got the note, the
+     * note [alsoTells] needs no telling of its own either.
+     */
+    fun once(context: Context, orbitId: String, key: String, zh: String, en: String, alsoTells: String? = null) {
         val name = "$orbitId|$key"
         val token: Long
         synchronized(this) {
@@ -40,7 +47,7 @@ internal object OrbitNotices {
             p.edit().putLong(name, now).commit()
             token = now
         }
-        tell(context, orbitId, zh, en, name, token)
+        tell(context, orbitId, zh, en, name, token, alsoTells?.let { "$orbitId|$it" })
     }
 
     /** The note queued as [token] is still wanted: not cleared and not replaced by a newer one. */
@@ -60,7 +67,7 @@ internal object OrbitNotices {
      * A hidden note in Orbit's main chat, sent once the chat is quiet (waiting up to ten minutes).
      * Sent: the mark [name] becomes delivered. Not sent: it is dropped, so the next time the problem shows it is told.
      */
-    private fun tell(context: Context, orbitId: String, zh: String, en: String, name: String, token: Long) {
+    private fun tell(context: Context, orbitId: String, zh: String, en: String, name: String, token: Long, alsoTells: String?) {
         val app = context.applicationContext
         scope.launch {
             var sent = false
@@ -92,7 +99,11 @@ internal object OrbitNotices {
                     val p = prefs(app)
                     // Cleared or queued again meanwhile: leave that mark alone.
                     if (p.all[name] as? Long == token) {
-                        if (sent) p.edit().putLong(name, DELIVERED).apply() else p.edit().remove(name).apply()
+                        if (sent) {
+                            p.edit().putLong(name, DELIVERED).apply { alsoTells?.let { putLong(it, DELIVERED) } }.apply()
+                        } else {
+                            p.edit().remove(name).apply()
+                        }
                     }
                 }
             }
