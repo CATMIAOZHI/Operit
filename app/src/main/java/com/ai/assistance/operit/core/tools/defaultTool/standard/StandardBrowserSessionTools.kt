@@ -1737,42 +1737,44 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         if (width <= 0 || height <= 0) {
             return error(tool.name, "width and height must be positive integers")
         }
-        val density =
-            context.resources.displayMetrics.density
-                .takeIf { it.isFinite() && it > 0f }
-                ?: 1f
-        val cssPixelCount = width.toLong() * height.toLong()
-        val layoutWidth = kotlin.math.ceil(width.toDouble() * density).toLong()
-        val layoutHeight = kotlin.math.ceil(height.toDouble() * density).toLong()
-        val layoutPixelCount = layoutWidth * layoutHeight
-        if (
-            width > MAX_VIEWPORT_DIMENSION_CSS_PX ||
-                height > MAX_VIEWPORT_DIMENSION_CSS_PX ||
-                cssPixelCount > MAX_VIEWPORT_PIXEL_COUNT ||
-                layoutPixelCount > MAX_VIEWPORT_LAYOUT_PIXEL_COUNT
-        ) {
+        val screenDensity = context.resources.displayMetrics.density.takeIf { it.isFinite() && it > 0f } ?: 1f
+        // The tab is looked up, checked and resized in one go, so a popup switching tabs in between
+        // cannot make the check use another tab's scale.
+        val session =
+            runOnMainSync {
+                val current = getSession(null)
+                // The tab that resizes draws at its own scale (a desktop engine tab at 1080p); a new one at most at the screen's.
+                val density =
+                    com.ai.assistance.operit.core.tools.defaultTool.websession.browser.layoutScaleOf(current?.page, screenDensity)
+                val layoutWidth = kotlin.math.ceil(width.toDouble() * density).toLong()
+                val layoutHeight = kotlin.math.ceil(height.toDouble() * density).toLong()
+                if (
+                    width > MAX_VIEWPORT_DIMENSION_CSS_PX ||
+                        height > MAX_VIEWPORT_DIMENSION_CSS_PX ||
+                        width.toLong() * height.toLong() > MAX_VIEWPORT_PIXEL_COUNT ||
+                        layoutWidth * layoutHeight > MAX_VIEWPORT_LAYOUT_PIXEL_COUNT
+                ) {
+                    return@runOnMainSync null
+                }
+                val target = current ?: createSessionTabOnMain(context.applicationContext, "about:blank")
+                ensureSessionAttachedOnMain(target.id)
+                target.viewportWidthPx = width
+                target.viewportHeightPx = height
+                target.hasExplicitViewportSize = true
+                // Only the tab on screen resizes the window; one kept behind keeps its own size.
+                if (activeSessionId == target.id) browserHost?.setViewportSize(width, height)
+                applyViewportOverride(target)
+                ensureSessionAttachedOnMain(target.id)
+                refreshSessionUiOnMain(target.id)
+                target
+            }
+        if (session == null) {
             return error(
                 tool.name,
                 "viewport is too large for this device; maximum side is " +
                     "$MAX_VIEWPORT_DIMENSION_CSS_PX CSS px and the requested pixel area " +
                     "must fit the device rendering budget"
             )
-        }
-
-        val session =
-            runOnMainSync {
-                getSession(null) ?: createSessionTabOnMain(context.applicationContext, "about:blank")
-            }
-        runOnMainSync<Unit> {
-            ensureSessionAttachedOnMain(session.id)
-            session.viewportWidthPx = width
-            session.viewportHeightPx = height
-            session.hasExplicitViewportSize = true
-            // Only the tab on screen resizes the window; one kept behind keeps its own size.
-            if (activeSessionId == session.id) browserHost?.setViewportSize(width, height)
-            applyViewportOverride(session)
-            ensureSessionAttachedOnMain(session.id)
-            refreshSessionUiOnMain(session.id)
         }
         Thread.sleep(100)
 
@@ -2119,7 +2121,9 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
             val connection =
                 BrowserCdp.connection(this, session)
                     ?: return error(tool.name, "DevTools is unavailable, so only left-button taps work right now.")
-            val density = context.resources.displayMetrics.density.toDouble().takeIf { it > 0.0 } ?: 1.0
+            // View pixels per CSS pixel: an engine tab's own scale (a desktop one draws at 1080p).
+            val density = com.ai.assistance.operit.core.tools.defaultTool.websession.browser
+                .layoutScaleOf(session.page, context.resources.displayMetrics.density).toDouble().takeIf { it > 0.0 } ?: 1.0
             val cx = viewX(x) / density
             val cy = viewY(y) / density
             val buttonsMask = if (button == "right") 2 else 4

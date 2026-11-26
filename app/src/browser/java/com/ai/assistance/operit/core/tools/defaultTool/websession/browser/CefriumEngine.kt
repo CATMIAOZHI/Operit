@@ -26,8 +26,8 @@ internal object CefriumEngine : BrowserEngine {
     fun profile(name: String): CefriumProfile =
         if (name == BrowserProfiles.MAIN) CefriumProfile.getDefault() else CefriumProfile.get(name)
 
-    override fun createPage(context: Context, profileName: String): EngineBrowserPage =
-        CefriumBrowserPage.create(context, profile(profileName))
+    override fun createPage(context: Context, profileName: String, desktop: Boolean): EngineBrowserPage =
+        CefriumBrowserPage.create(context, profile(profileName), desktop)
 
     override fun cookieFor(profileName: String, url: String): String? {
         if (Looper.myLooper() == Looper.getMainLooper()) return null

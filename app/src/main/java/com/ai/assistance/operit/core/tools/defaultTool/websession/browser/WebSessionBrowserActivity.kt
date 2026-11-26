@@ -3,6 +3,7 @@ package com.ai.assistance.operit.core.tools.defaultTool.websession.browser
 import android.content.Context
 import android.os.Bundle
 import android.widget.FrameLayout
+import androidx.activity.BackEventCompat
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
@@ -25,15 +26,81 @@ class WebSessionBrowserActivity : ComponentActivity() {
     private var firstStart = true
 
     /**
-     * On only while back has something of the browser's own to close: a page menu, or a popup on
-     * Orbit's watch screen. Otherwise back belongs to the system, which shrinks the whole window
-     * with the finger and shows what is below; the browser is put away when the window goes
-     * ([onPause]). Going back in the page is the button in the browser's bottom bar.
+     * True while back has something of the browser's own to close: a page menu, or a popup on
+     * Orbit's watch screen. Otherwise back closes the window: the page shrinks with the finger, as
+     * Orbit's pages do (the system draws nothing of its own here on every phone), and leaves the way
+     * the close button sends it; the browser is put away as the window goes ([onPause]). Going back
+     * in the page is the button in the browser's bottom bar.
      */
+    private var browserTakesBack = false
+
+    /** How far the swipe has shrunk the page: 0 at rest, 1 at the end of the swipe. */
+    private var shrink = 0f
+    private var shrinkFromLeft = true
+    /** This swipe closes something of the browser's own, so the page stays as it is. */
+    private var swipeClosesOwn = false
+    /** Where this swipe found the page: a page still growing back goes on from there, without a jump. */
+    private var swipeStartShrink = 0f
+    private var swipeStartShift = 0f
+    private var settle: android.animation.ValueAnimator? = null
+    private var browserColor = android.graphics.Color.WHITE
+    /** The window shows the darker colour around a shrinking page. */
+    private var darkened = false
+
     private val backCallback =
-        object : OnBackPressedCallback(false) {
+        object : OnBackPressedCallback(true) {
+            override fun handleOnBackStarted(backEvent: BackEventCompat) {
+                swipeClosesOwn = browserTakesBack
+                // A page still shrunk from a swipe let go a moment ago keeps growing back into place.
+                if (swipeClosesOwn) {
+                    if (shrink > 0f && settle?.isRunning != true) settleBack()
+                    return
+                }
+                settle?.cancel()
+                swipeStartShrink = shrink
+                swipeStartShift = container.translationX
+                shrinkFromLeft = backEvent.swipeEdge == BackEventCompat.EDGE_LEFT
+                // Around the shrinking page: the browser's own colour, a little darker.
+                darkened = true
+                window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(
+                    androidx.core.graphics.ColorUtils.blendARGB(browserColor, android.graphics.Color.BLACK, 0.18f)))
+            }
+
+            override fun handleOnBackProgressed(backEvent: BackEventCompat) {
+                if (swipeClosesOwn) return
+                val progress = backEvent.progress.coerceIn(0f, 1f)
+                // Size and side both go on from where the page is, also when this swipe comes from the other edge.
+                val endShift = (if (shrinkFromLeft) 1f else -1f) * container.width * 0.03f
+                setShrink(
+                    swipeStartShrink + (1f - swipeStartShrink) * progress,
+                    swipeStartShift + (endShift - swipeStartShift) * progress,
+                )
+            }
+
+            override fun handleOnBackCancelled() {
+                if (!swipeClosesOwn) settleBack()
+                swipeClosesOwn = false
+            }
+
             override fun handleOnBackPressed() {
-                host()?.handleBack() ?: close()
+                // What back closes is decided now: a menu may have opened or gone since the swipe began.
+                val own = browserTakesBack
+                val startedOwn = swipeClosesOwn
+                swipeClosesOwn = false
+                if (startedOwn && !own) {
+                    // The swipe began to close a menu that has gone meanwhile; it closes nothing else.
+                    if (shrink > 0f && settle?.isRunning != true) settleBack()
+                    return
+                }
+                if (own) {
+                    // A menu that opened mid-swipe closes; the page grows back into place.
+                    if (shrink > 0f && settle?.isRunning != true) settleBack()
+                    host()?.handleBack() ?: close()
+                    return
+                }
+                // The window leaves from where the finger left it, as the close button sends it.
+                settle?.cancel()
+                closeLikeAPage()
             }
         }
 
@@ -62,7 +129,53 @@ class WebSessionBrowserActivity : ComponentActivity() {
     }
 
     internal fun setBrowserTakesBack(takes: Boolean) {
-        backCallback.isEnabled = takes
+        browserTakesBack = takes
+    }
+
+    /** Shrinks the page toward the middle, a little to the side the swipe came from, with rounded corners. */
+    private fun setShrink(progress: Float, shift: Float) {
+        val p = progress.coerceIn(0f, 1f)
+        shrink = p
+        val c = container
+        val scale = 1f - 0.1f * p
+        c.scaleX = scale
+        c.scaleY = scale
+        c.translationX = if (p > 0f) shift else 0f
+        if (p > 0f) {
+            if (!c.clipToOutline) {
+                c.outlineProvider = object : android.view.ViewOutlineProvider() {
+                    override fun getOutline(view: android.view.View, outline: android.graphics.Outline) {
+                        val radius = 28f * view.resources.displayMetrics.density * shrink
+                        outline.setRoundRect(0, 0, view.width, view.height, radius)
+                    }
+                }
+                c.clipToOutline = true
+            }
+            c.invalidateOutline()
+        } else {
+            c.clipToOutline = false
+            c.outlineProvider = android.view.ViewOutlineProvider.BACKGROUND
+            if (darkened) {
+                darkened = false
+                window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(browserColor))
+            }
+        }
+    }
+
+    /** The swipe was let go before the edge: the page grows back into place. */
+    private fun settleBack() {
+        settle?.cancel()
+        val fromShrink = shrink
+        val fromShift = container.translationX
+        settle = android.animation.ValueAnimator.ofFloat(1f, 0f).apply {
+            duration = 180
+            interpolator = android.view.animation.DecelerateInterpolator()
+            addUpdateListener {
+                val left = it.animatedValue as Float
+                setShrink(fromShrink * left, fromShift * left)
+            }
+            start()
+        }
     }
 
     /**
@@ -74,9 +187,9 @@ class WebSessionBrowserActivity : ComponentActivity() {
     }
 
     /**
-     * Closes the window the way it opened, back into the page under it. Only for the browser's
-     * own close button: the system's back keeps its animation that follows the finger. Over
-     * another app the system's own task animation plays.
+     * Closes the window the way it opened, back into the page under it: for the browser's close
+     * button and for back, which first shrinks the page with the finger. Over another app the
+     * system's own task animation plays.
      */
     internal fun closeLikeAPage() {
         val enter = com.ai.assistance.operit.R.anim.browser_window_hold
@@ -117,7 +230,8 @@ class WebSessionBrowserActivity : ComponentActivity() {
      * dark phone, and the other way round.
      */
     internal fun applyBrowserBackground(color: Int) {
-        window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(color))
+        browserColor = color
+        if (shrink == 0f) window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(color))
         container.setBackgroundColor(color)
         val light = androidx.core.graphics.ColorUtils.calculateLuminance(color) > 0.5
         androidx.core.view.WindowCompat.getInsetsController(window, window.decorView).apply {

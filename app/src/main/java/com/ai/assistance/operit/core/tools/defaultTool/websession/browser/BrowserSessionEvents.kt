@@ -217,7 +217,7 @@ internal fun StandardBrowserSessionTools.createEngineSessionOnMain(
 ): BrowserToolSession? {
     val engine = BrowserEngines.current ?: return null
     val page =
-        popup ?: runCatching { engine.createPage(context.applicationContext, profileName) }
+        popup ?: runCatching { engine.createPage(context.applicationContext, profileName, desktopModeOf(browserTaskId)) }
             .onFailure { AppLogger.e(SESSION_EVENTS_TAG, "The browser engine could not open a tab; using the WebView", it) }
             .getOrNull() ?: return null
     val session =
