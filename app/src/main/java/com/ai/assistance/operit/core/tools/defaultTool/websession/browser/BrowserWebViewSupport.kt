@@ -672,9 +672,12 @@ internal fun StandardBrowserSessionTools.createBrowserHostCallbacks(
             }
         }
 
-        override fun onHandlePendingDialog(accept: Boolean, promptText: String?) {
+        override fun onHandlePendingDialog(accept: Boolean, promptText: String?, expectedDialogId: Long?) {
             runOnMainSync<Unit> {
                 val session = getActiveSessionOnMain() ?: return@runOnMainSync
+                if (expectedDialogId != null && session.pendingDialog?.id != expectedDialogId) {
+                    return@runOnMainSync
+                }
                 resolvePendingDialogOnMain(
                     session = session,
                     accept = accept,
@@ -950,7 +953,8 @@ internal fun StandardBrowserSessionTools.buildBrowserState(
                     type = dialog.type,
                     message = dialog.message,
                     defaultValue = dialog.defaultValue,
-                    url = dialog.url
+                    url = dialog.url,
+                    id = dialog.id,
                 )
             },
         tabs =

@@ -912,8 +912,9 @@ private fun MessageItem(
     // The voice message the long-press menu was opened on (its "to text"), and whether it has words.
     var menuVoice by remember { mutableStateOf<String?>(null) }
     val reactionKey = menuPiece?.reactionKey(orbitUserReactions?.byMessage) ?: message.timestamp.toString()
-    val canReactToOrbit = orbitLook && message.sender == "ai" && orbitUserReactions != null && isActionable &&
+    val canInteractOrbitReply = orbitLook && message.sender == "ai" && isActionable &&
         !isMultiSelectMode && !isWriting && message.contentStream == null
+    val canReactToOrbit = canInteractOrbitReply && orbitUserReactions != null
     // Double-tapping one of Orbit's bubbles likes it, like a quick tapback.
     fun like(key: String, said: String?) {
         val reactions = orbitUserReactions ?: return
@@ -1098,11 +1099,15 @@ private fun MessageItem(
         )
     }
     // In an Orbit reply each bubble (words, a card, a Dynamic UI card) takes its own gestures.
+    val cardHasMenu = canReactToOrbit || allowTranscriptMutation || showHiddenRows
     val pieceActions: OrbitPieceActions? =
-        if (canReactToOrbit && !message.displayMode.isCollaborationEvent) {
+        if (canInteractOrbitReply && !message.displayMode.isCollaborationEvent) {
             OrbitPieceActions(
-                like = { piece -> like(piece.reactionKey(orbitUserReactions?.byMessage), piece.summary) },
+                like = if (canReactToOrbit) {
+                    { piece -> like(piece.reactionKey(orbitUserReactions?.byMessage), piece.summary) }
+                } else null,
                 menu = { piece ->
+                    if (piece.summary != null && !cardHasMenu) return@OrbitPieceActions
                     // This bubble's own voice, if it shows one (a card shows none).
                     openMenuFor {
                         if (piece.summary != null) null
@@ -1119,6 +1124,7 @@ private fun MessageItem(
                     openMenuFor { url }
                     menuWords = piece.takeIf { it.summary == null }
                 },
+                cardHasMenu = cardHasMenu,
             )
         } else null
     // The statistics are drawn outside the card, and only by the row that closes it: drawn inside,
@@ -1188,7 +1194,11 @@ private fun MessageItem(
         val unsentMessages = LocalOrbitUnsentMessages.current
         androidx.compose.runtime.CompositionLocalProvider(
             LocalOrbitMessageGestures provides
-                if (orbitLook) OrbitMessageGestures(quickLike, openMessageMenu) else null,
+                when {
+                    !orbitLook -> null
+                    message.sender == "ai" && !cardHasMenu -> OrbitMessageGestures(null, null)
+                    else -> OrbitMessageGestures(quickLike, openMessageMenu)
+                },
             LocalOrbitPieceActions provides pieceActions,
             LocalOrbitPiecePick provides piecePick,
             com.ai.assistance.operit.ui.common.markdown.LocalVoiceMenu provides voiceHost,

@@ -1,7 +1,5 @@
 package com.ai.assistance.operit.ui.features.websession.browser
 
-import com.ai.assistance.operit.ui.features.orbit.orbitDismissLayer
-
 import android.net.Uri
 import android.graphics.Color as AndroidColor
 import android.widget.FrameLayout
@@ -42,12 +40,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserBackMotion
+import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserBackTarget
 import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.WebSessionBookmark
 import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.WebSessionBrowserHostState
 import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.WebSessionBrowserSheetRoute
@@ -61,6 +64,7 @@ import java.util.Locale
 internal fun WebSessionBrowserScreen(
     hostState: WebSessionBrowserHostState,
     watch: com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserWatchUi? = null,
+    backMotion: BrowserBackMotion = remember { BrowserBackMotion() },
     bookmarks: List<WebSessionBookmark>,
     globalHistory: List<WebSessionHistoryEntry>,
     userscriptUiState: WebSessionUserscriptUiState,
@@ -101,7 +105,7 @@ internal fun WebSessionBrowserScreen(
     onOpenDownloadLocation: (String) -> Unit,
     onConfirmExternalOpen: (String) -> Unit,
     onCancelExternalOpen: (String) -> Unit,
-    onHandlePendingDialog: (Boolean, String?) -> Unit,
+    onHandlePendingDialog: (Boolean, String?, Long?) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val browserState = hostState.browserState
@@ -139,7 +143,7 @@ internal fun WebSessionBrowserScreen(
         }
     }
     val activeSheetRoute = hostState.sheetRoute
-    var promptDraft by remember(browserState.pendingDialog?.message, browserState.pendingDialog?.defaultValue) {
+    var promptDraft by remember(browserState.pendingDialog?.id) {
         mutableStateOf(browserState.pendingDialog?.defaultValue.orEmpty())
     }
 
@@ -148,9 +152,16 @@ internal fun WebSessionBrowserScreen(
         Box(modifier.fillMaxSize()) {
             WebSessionWatchScreen(
                 watch = watch,
+                backMotion = backMotion,
                 webViewHost = webViewHost,
                 hasSession = browserState.activeSessionId != null,
                 url = browserState.currentUrl,
+                isEditingUrl = hostState.isEditingUrl,
+                onEditingUrlChange = { editing ->
+                    onHostStateChange { current ->
+                        if (current.isEditingUrl == editing) current else current.copy(isEditingUrl = editing)
+                    }
+                },
                 isLoading = browserState.isLoading,
                 canGoBack = browserState.canGoBack,
                 canGoForward = browserState.canGoForward,
@@ -183,14 +194,14 @@ internal fun WebSessionBrowserScreen(
                 }
             }
             if (watch.controlling && activeSheetRoute == WebSessionBrowserSheetRoute.DOWNLOADS) {
-                val back = com.ai.assistance.operit.ui.features.orbit.rememberOrbitBackMotion()
-                com.ai.assistance.operit.ui.features.orbit.OrbitPopupBack(back, dismissSheet)
-                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.42f))
+                Box(Modifier.fillMaxSize().browserBackScrim(backMotion, BrowserBackTarget.SHEET)
+                    .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.42f))
                     .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null,
-                        onClick = dismissSheet))
+                        onClick = { if (!backMotion.isExiting(BrowserBackTarget.SHEET)) dismissSheet() }))
                 Surface(
                     modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(0.75f)
-                        .navigationBarsPadding().browserKeyboardPadding().orbitDismissLayer(back),
+                        .navigationBarsPadding().browserKeyboardPadding()
+                        .browserBackLayer(backMotion, BrowserBackTarget.SHEET, fromBottom = true),
                     shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
                     color = MaterialTheme.colorScheme.surface,
                 ) {
@@ -208,33 +219,57 @@ internal fun WebSessionBrowserScreen(
                         onOpenDownloadLocation = onOpenDownloadLocation,
                     )
                 }
+                if (backMotion.committing && backMotion.target == BrowserBackTarget.SHEET) {
+                    BrowserCommitTouchShield()
+                }
             }
             // A page dialog needs an answer from whoever holds the page; the user only once in control.
             if (watch.controlling) {
                 hostState.externalOpenPrompt?.let { prompt ->
-                    val back = com.ai.assistance.operit.ui.features.orbit.rememberOrbitBackMotion()
                     val cancel = { onCancelExternalOpen(prompt.requestId) }
-                    com.ai.assistance.operit.ui.features.orbit.OrbitPopupBack(back, cancel)
                     Box(
-                        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.42f))
+                        Modifier.fillMaxSize()
                             .clickable(interactionSource = remember { MutableInteractionSource() },
-                                indication = null, onClick = cancel),
+                                indication = null,
+                                onClick = { if (!backMotion.isExiting(BrowserBackTarget.EXTERNAL_OPEN)) cancel() }),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Box(Modifier.orbitDismissLayer(back)) {
+                        Box(
+                            Modifier.fillMaxSize().browserBackScrim(backMotion, BrowserBackTarget.EXTERNAL_OPEN)
+                                .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.42f)),
+                        )
+                        Box(Modifier.browserBackLayer(backMotion, BrowserBackTarget.EXTERNAL_OPEN)) {
                             ExternalOpenPromptBar(prompt.title, prompt.target,
-                                onConfirm = { onConfirmExternalOpen(prompt.requestId) }, onCancel = cancel)
+                                onConfirm = {
+                                    if (!backMotion.isExiting(BrowserBackTarget.EXTERNAL_OPEN)) {
+                                        onConfirmExternalOpen(prompt.requestId)
+                                    }
+                                },
+                                onCancel = {
+                                    if (!backMotion.isExiting(BrowserBackTarget.EXTERNAL_OPEN)) cancel()
+                                })
+                        }
+                        if (backMotion.committing && backMotion.target == BrowserBackTarget.EXTERNAL_OPEN) {
+                            BrowserCommitTouchShield()
                         }
                     }
                 }
                 browserState.pendingDialog?.let { pendingDialog ->
                     PendingDialogOverlay(
-                        orbitStyle = true,
+                        backMotion = backMotion,
                         dialog = pendingDialog,
                         promptValue = promptDraft,
                         onPromptValueChange = { promptDraft = it },
-                        onConfirm = { onHandlePendingDialog(true, promptDraft) },
-                        onDismiss = { onHandlePendingDialog(false, null) },
+                        onConfirm = {
+                            if (!backMotion.isExiting(BrowserBackTarget.DIALOG)) {
+                                onHandlePendingDialog(true, promptDraft, pendingDialog.id)
+                            }
+                        },
+                        onDismiss = {
+                            if (!backMotion.isExiting(BrowserBackTarget.DIALOG)) {
+                                onHandlePendingDialog(false, null, pendingDialog.id)
+                            }
+                        },
                     )
                 }
             }
@@ -243,12 +278,16 @@ internal fun WebSessionBrowserScreen(
     }
 
     val openTyped: (String) -> Unit = { target ->
-        onNavigate(target)
-        onHostStateChange { current -> current.copy(isEditingUrl = false, urlDraft = target) }
+        if (!backMotion.isExiting(BrowserBackTarget.URL_EDIT)) {
+            onNavigate(target)
+            onHostStateChange { current -> current.copy(isEditingUrl = false, urlDraft = target) }
+        }
     }
     val submitDraft = {
         // Nothing typed: nothing to open.
-        if (hostState.urlDraft.isNotBlank()) openTyped(normalizeNavigationUrl(hostState.urlDraft))
+        if (!backMotion.isExiting(BrowserBackTarget.URL_EDIT) && hostState.urlDraft.isNotBlank()) {
+            openTyped(normalizeNavigationUrl(hostState.urlDraft))
+        }
     }
     // A new tab opens ready to type, as in other browsers.
     val newTabReady = {
@@ -310,12 +349,31 @@ internal fun WebSessionBrowserScreen(
             )
 
             hostState.externalOpenPrompt?.let { prompt ->
-                ExternalOpenPromptBar(
-                    title = prompt.title,
-                    target = prompt.target,
-                    onConfirm = { onConfirmExternalOpen(prompt.requestId) },
-                    onCancel = { onCancelExternalOpen(prompt.requestId) }
-                )
+                Box(Modifier.browserBackLayer(backMotion, BrowserBackTarget.EXTERNAL_OPEN)) {
+                    ExternalOpenPromptBar(
+                        title = prompt.title,
+                        target = prompt.target,
+                        onConfirm = {
+                            if (!backMotion.isExiting(BrowserBackTarget.EXTERNAL_OPEN)) {
+                                onConfirmExternalOpen(prompt.requestId)
+                            }
+                        },
+                        onCancel = {
+                            if (!backMotion.isExiting(BrowserBackTarget.EXTERNAL_OPEN)) {
+                                onCancelExternalOpen(prompt.requestId)
+                            }
+                        }
+                    )
+                    if (backMotion.committing && backMotion.target == BrowserBackTarget.EXTERNAL_OPEN) {
+                        Box(
+                            Modifier.matchParentSize().clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClick = {},
+                            )
+                        )
+                    }
+                }
             }
 
             if (browserState.activeDownloadCount > 0) {
@@ -420,7 +478,15 @@ internal fun WebSessionBrowserScreen(
                         bookmarks = bookmarks,
                         onSubmit = submitDraft,
                         onOpenUrl = openTyped,
+                        modifier = if (hostState.isEditingUrl && !isBlankPage(browserState.currentUrl)) {
+                            Modifier.browserBackLayer(backMotion, BrowserBackTarget.URL_EDIT)
+                        } else {
+                            Modifier
+                        },
                     )
+                    if (backMotion.committing && backMotion.target == BrowserBackTarget.URL_EDIT) {
+                        BrowserCommitTouchShield()
+                    }
                 }
             }
             } },
@@ -463,11 +529,12 @@ internal fun WebSessionBrowserScreen(
                 modifier =
                     Modifier
                         .fillMaxSize()
+                        .browserBackScrim(backMotion, BrowserBackTarget.SHEET)
                         .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.42f))
                         .clickable(
                             interactionSource = scrimInteractionSource,
                             indication = null,
-                            onClick = dismissSheet
+                            onClick = { if (!backMotion.isExiting(BrowserBackTarget.SHEET)) dismissSheet() }
                         )
             )
 
@@ -480,7 +547,8 @@ internal fun WebSessionBrowserScreen(
                         .fillMaxWidth()
                         .padding(horizontal = 6.dp)
                         .navigationBarsPadding()
-                        .imePadding(),
+                        .imePadding()
+                        .browserBackLayer(backMotion, BrowserBackTarget.SHEET, fromBottom = true),
                 shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp),
                 color = MaterialTheme.colorScheme.surface,
                 contentColor = MaterialTheme.colorScheme.onSurface,
@@ -532,46 +600,98 @@ internal fun WebSessionBrowserScreen(
                     onOpenDownloadLocation = onOpenDownloadLocation
                 )
             }
+            if (backMotion.committing && backMotion.target == BrowserBackTarget.SHEET) {
+                BrowserCommitTouchShield()
+            }
         }
 
         browserState.pendingDialog?.let { pendingDialog ->
             PendingDialogOverlay(
+                backMotion = backMotion,
                 dialog = pendingDialog,
                 promptValue = promptDraft,
                 onPromptValueChange = { promptDraft = it },
                 onConfirm = {
-                    onHandlePendingDialog(true, promptDraft)
+                    if (!backMotion.isExiting(BrowserBackTarget.DIALOG)) {
+                        onHandlePendingDialog(true, promptDraft, pendingDialog.id)
+                    }
                 },
                 onDismiss = {
-                    onHandlePendingDialog(false, null)
+                    if (!backMotion.isExiting(BrowserBackTarget.DIALOG)) {
+                        onHandlePendingDialog(false, null, pendingDialog.id)
+                    }
                 }
             )
         }
     }
 }
 
+private fun Modifier.browserBackScrim(motion: BrowserBackMotion, target: BrowserBackTarget): Modifier =
+    graphicsLayer {
+        if (motion.target != target) return@graphicsLayer
+        compositingStrategy = CompositingStrategy.ModulateAlpha
+        alpha = ((1f - 0.35f * motion.progress) * (1f - motion.exit)).coerceIn(0f, 1f)
+    }
+
+/** Absorbs taps while an overlay is finishing its 150ms exit animation, preventing late button clicks. */
+@Composable
+private fun BrowserCommitTouchShield() {
+    Box(
+        Modifier.fillMaxSize().clickable(
+            interactionSource = remember { MutableInteractionSource() },
+            indication = null,
+            onClick = {},
+        )
+    )
+}
+
+private fun Modifier.browserBackLayer(
+    motion: BrowserBackMotion,
+    target: BrowserBackTarget,
+    fromBottom: Boolean = false,
+): Modifier =
+    graphicsLayer {
+        if (motion.target != target) return@graphicsLayer
+        val p = motion.progress
+        val e = motion.exit
+        if (fromBottom) {
+            val scale = 1f - 0.06f * p - 0.04f * e
+            scaleX = scale
+            scaleY = scale
+            transformOrigin = TransformOrigin(0.5f, 1f)
+            translationY = size.height * (0.12f * p + 0.25f * e)
+            alpha = (1f - e).coerceIn(0f, 1f)
+        } else {
+            val scale = 1f - 0.06f * p - 0.06f * e
+            scaleX = scale
+            scaleY = scale
+            alpha = ((1f - 0.25f * p) * (1f - e)).coerceIn(0f, 1f)
+        }
+    }
+
 @Composable
 private fun PendingDialogOverlay(
+    backMotion: BrowserBackMotion,
     dialog: WebSessionPendingDialogState,
     promptValue: String,
     onPromptValueChange: (String) -> Unit,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
-    orbitStyle: Boolean = false,
 ) {
-    val backMotion = if (orbitStyle) com.ai.assistance.operit.ui.features.orbit.rememberOrbitBackMotion() else null
-    if (backMotion != null) com.ai.assistance.operit.ui.features.orbit.OrbitPopupBack(backMotion, onDismiss)
-    Box(
-        modifier =
+    Box(modifier = Modifier.fillMaxSize()) {
+        Box(
             Modifier
                 .fillMaxSize()
+                .browserBackScrim(backMotion, BrowserBackTarget.DIALOG)
                 .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.52f))
-                .browserKeyboardPadding(),
-        contentAlignment = Alignment.Center
-    ) {
-        Surface(
+        )
+        Box(
+            modifier = Modifier.fillMaxSize().browserKeyboardPadding(),
+            contentAlignment = Alignment.Center,
+        ) {
+            Surface(
             modifier = Modifier.padding(horizontal = 20.dp)
-                .then(if (backMotion != null) Modifier.orbitDismissLayer(backMotion) else Modifier),
+                .browserBackLayer(backMotion, BrowserBackTarget.DIALOG),
             shape = RoundedCornerShape(20.dp),
             color = MaterialTheme.colorScheme.surface,
             contentColor = MaterialTheme.colorScheme.onSurface,
@@ -617,6 +737,10 @@ private fun PendingDialogOverlay(
                     }
                 }
             }
+            }
+        }
+        if (backMotion.committing && backMotion.target == BrowserBackTarget.DIALOG) {
+            BrowserCommitTouchShield()
         }
     }
 }
