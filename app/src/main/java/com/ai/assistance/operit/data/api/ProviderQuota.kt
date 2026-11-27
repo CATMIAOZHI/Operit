@@ -261,6 +261,91 @@ class OpenCodeGoQuotaClient(private val client: OkHttpClient = quotaHttpClient()
 }
 
 /**
+ * What the OpenCode Go balance panel remembers between visits. A key is checked automatically only
+ * after the user has checked it once by hand and opencode.ai accepted it, so a key left over from
+ * another provider is never sent there unasked. Only a SHA-256 fingerprint of key and endpoint is
+ * kept on disk; the last result stays in memory so scrolling the settings page does not refetch.
+ */
+object OpenCodeGoQuotaMemory {
+    private const val PREFS = "opencode_go_quota"
+    private const val VERIFIED = "verified"
+    private const val MAX_VERIFIED = 8
+    /** How long a shown balance counts as fresh before an automatic check runs again. */
+    const val FRESH_MS = 5 * 60_000L
+
+    private val last = java.util.concurrent.ConcurrentHashMap<String, Pair<ProviderQuota, Long>>()
+    private val attempted = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private val fetched = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    /**
+     * Keys whose latest check failed after the balance shown, so coming back still says so; the
+     * value is whether opencode.ai refused the key itself (401/403).
+     */
+    private val failed = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+
+    fun noteFailure(fingerprint: String, rejected: Boolean) { failed[fingerprint] = rejected }
+
+    fun lastFailed(fingerprint: String): Boolean = failed.containsKey(fingerprint)
+    fun lastRejected(fingerprint: String): Boolean = failed[fingerprint] == true
+    private const val HEX = "0123456789abcdef"
+
+    /**
+     * Every Go endpoint of the official host reads the same usage page, so the key is remembered
+     * against that page: two configurations with one key share one check.
+     */
+    fun fingerprint(apiKey: String, endpoint: String): String {
+        val target = OpenCodeGoQuotaClient.usageUrl(endpoint)?.toString() ?: endpoint.trim()
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+            .digest("$target\n${apiKey.trim()}".toByteArray(Charsets.UTF_8))
+        val out = CharArray(digest.size * 2)
+        digest.forEachIndexed { i, b ->
+            out[i * 2] = HEX[(b.toInt() shr 4) and 0xf]
+            out[i * 2 + 1] = HEX[b.toInt() and 0xf]
+        }
+        return String(out)
+    }
+
+    /** A refresh the user asked for counts as the latest attempt, so no automatic one follows it. */
+    fun noteAttempt(fingerprint: String) {
+        attempted[fingerprint] = android.os.SystemClock.elapsedRealtime()
+    }
+
+    /**
+     * True at most once per [FRESH_MS] for a key: an automatic check that was cancelled (the page
+     * scrolled away) or failed (401, 429, timeout) is not repeated on every return. A refresh the
+     * user asks for is not limited.
+     */
+    fun claimAutoProbe(fingerprint: String): Boolean {
+        // Measured on the boot clock, so changing the phone's time neither skips nor stretches the wait.
+        val now = android.os.SystemClock.elapsedRealtime()
+        val since = listOfNotNull(attempted[fingerprint], fetched[fingerprint]).maxOrNull()
+        if (since != null && now - since < FRESH_MS) return false
+        attempted[fingerprint] = now
+        return true
+    }
+
+    fun isVerified(context: android.content.Context, fingerprint: String): Boolean =
+        prefs(context).getString(VERIFIED, "").orEmpty().split(',').contains(fingerprint)
+
+    /** The last balance for this key and when it was fetched, if any. */
+    fun cached(fingerprint: String): Pair<ProviderQuota, Long>? = last[fingerprint]
+
+    /** Records a balance opencode.ai returned for this key, which also marks the key as checked. */
+    fun remember(context: android.content.Context, fingerprint: String, quota: ProviderQuota) {
+        last[fingerprint] = quota to System.currentTimeMillis()
+        fetched[fingerprint] = android.os.SystemClock.elapsedRealtime()
+        failed -= fingerprint
+        val prefs = prefs(context)
+        synchronized(this) {
+            val kept = prefs.getString(VERIFIED, "").orEmpty().split(',').filter { it.isNotEmpty() && it != fingerprint }
+            prefs.edit().putString(VERIFIED, (listOf(fingerprint) + kept).take(MAX_VERIFIED).joinToString(",")).apply()
+        }
+    }
+
+    private fun prefs(context: android.content.Context) =
+        context.applicationContext.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
+}
+
+/**
  * Shared OkHttp client for quota probes; short timeout because these are best-effort reads.
  * Redirects are refused rather than followed: a quota probe carries a live API key, so it must not
  * be replayed to whatever host a redirect names.

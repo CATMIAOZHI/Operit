@@ -105,6 +105,9 @@ object OrbitWake {
         val sent get() = this == SPOKE || this == QUIET || this == FAILED || this == CANCELLED
     }
 
+    /** Thrown by a [tell] caller's onSending when the notice is no longer wanted; the tell ends as [Told.DROPPED]. */
+    class Withdrawn : IllegalStateException("The notice was withdrawn before hand-off")
+
     /** The task title of a stored notice, or null when the message is not one. */
     fun titleOf(content: String): String? =
         markerLine.find(content)?.groupValues?.get(1)?.trim()?.takeIf { it.isNotEmpty() }
@@ -280,6 +283,12 @@ object OrbitWake {
         onSending: suspend () -> Unit = {},
         /** Runs on the actual terminal signal, even after this caller's bounded wait expires. */
         onFinished: suspend (Told) -> Unit = {},
+        /**
+         * Checked now and then while the chat is busy, with no side effects: false gives up the
+         * wait at once (as [Told.DROPPED]), so a notice no longer meant for this chat does not hold
+         * up the caller.
+         */
+        stillWanted: (suspend () -> Boolean)? = null,
     ): Told {
         val app = context.applicationContext
         val holder = ChatRuntimeHolder.getInstance(app)
@@ -298,7 +307,15 @@ object OrbitWake {
             chatId !in it.activeStreamingChatIds.value && !it.isSummarizingChat(chatId)
         }
         // Waiting for a quiet chat holds no lock, so a busy chat never holds up another chat.
-        withTimeoutOrNull(minOf(idleWaitMs, totalWaitMs)) { quiet.first { it } } ?: return Told.BUSY
+        val waited = withTimeoutOrNull(minOf(idleWaitMs, totalWaitMs)) {
+            if (stillWanted == null) quiet.first { it }
+            else while (withTimeoutOrNull(WANTED_POLL_MS) { quiet.first { it } } == null) {
+                if (!stillWanted()) return@withTimeoutOrNull false
+            }
+            true
+        }
+        if (waited == null) return Told.BUSY
+        if (!waited) return Told.DROPPED
         var before = 0L
         // Every notice runs as a known turn, so it is only counted as sent once its message is saved.
         val turnId = decision?.turnId ?: java.util.UUID.randomUUID().toString()
@@ -321,7 +338,8 @@ object OrbitWake {
             withContext(NonCancellable) {
                 activeTurns.add(turnId)
                 turnStops[turnId] = { core.cancelRegisteredChatTurnIfRunning(turnId, chatId) }
-                onSending()
+                // Withdrawn between the check above and now: nothing was sent.
+                try { onSending() } catch (e: Withdrawn) { return@withContext Told.DROPPED }
                 val sent = withContext(Dispatchers.Main.immediate) {
                         core.trySendUserMessageToExistingChat(
                             chatId = chatId,
@@ -414,6 +432,8 @@ object OrbitWake {
     }
 
     private const val SAVE_WAIT_MS = 120_000L
+    /** How often a busy chat's waiting notice checks it is still wanted. */
+    private const val WANTED_POLL_MS = 5_000L
     private const val CANCEL_WAIT_MS = 10_000L
 
     /**

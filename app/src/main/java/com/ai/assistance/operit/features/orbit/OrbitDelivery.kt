@@ -114,6 +114,8 @@ object OrbitDelivery {
                 }
                 // Posted before the app stopped, but the message was deleted since: post it again.
                 if (dao.forgetMissingMessage(id) > 0) ask = dao.delivery(id) ?: return@serialized ""
+                // A request not (or no longer) in any chat goes to the chat its task is in now.
+                if (ask.messageId == null && dao.followTaskChat(id, orbit.chatId) == 1) ask = dao.delivery(id) ?: return@serialized ""
                 if (ask.messageId == null && ask.chatId in replying) {
                     dao.postponeDelivery(id, now + BUSY_RETRY_MS)
                     return@serialized ""
@@ -199,6 +201,8 @@ object OrbitDelivery {
                 // retryable; a hand-off alone is never evidence that the user received it.
                 val abandoned = dao.handingDeliveries(orbitId).filterNot { OrbitWake.isWatching(it.handoffTurnId) }
                 if (abandoned.isNotEmpty()) dao.retryDeliveries(abandoned.map { it.id }, now, interrupted = true)
+                // A task moved to another chat takes its unposted results with it.
+                dao.followTaskChats(orbitId, orbit.chatId)
                 // A report for a side chat that is gone goes to the main chat instead.
                 val chats = AppDatabase.getDatabase(context).chatDao()
                 dao.pendingDeliveries(orbitId).map { it.chatId }.distinct()
@@ -236,11 +240,15 @@ object OrbitDelivery {
             earlier, preferences)
         val turn = OrbitChatDecision.Turn()
         val told = OrbitWake.tell(context, orbit, chatId, notice, IDLE_WAIT_MS, totalWaitMs, decision = turn,
-            // A report cancelled or replaced while the chat was busy is not told.
-            ready = { OrbitExecutionGate.serialized { dao.validPending(ids).size == ids.size } },
+            // A report cancelled, replaced or moved to another chat while this one was busy is not
+            // told here, and stops the wait for this chat; the next pass picks it up where it now belongs.
+            ready = { OrbitExecutionGate.serialized { dao.validPending(ids).let { it.size == ids.size && it.all { d -> d.chatId == chatId } } } },
+            stillWanted = { dao.countStillPending(ids, chatId, System.currentTimeMillis()) == ids.size },
             onSending = {
                 OrbitExecutionGate.serialized {
-                    check(dao.validPending(ids).size == ids.size) { "Reports were cancelled before hand-off" }
+                    if (!dao.validPending(ids).let { it.size == ids.size && it.all { d -> d.chatId == chatId } }) {
+                        throw OrbitWake.Withdrawn()
+                    }
                     dao.markHandedToOrbit(ids, turn.turnId)
                 }
             },
@@ -259,9 +267,14 @@ object OrbitDelivery {
                 OrbitTaskScheduler.reschedule(context, fromWorker = true)
             })
         if (told == OrbitWake.Told.BUSY) {
-            OrbitExecutionGate.serialized { dao.retryDeliveries(ids, System.currentTimeMillis()) }
+            // Only the ones still meant for this chat wait for it; one moved elsewhere goes on at once.
+            OrbitExecutionGate.serialized {
+                val stillHere = dao.validPending(ids).filter { it.chatId == chatId }.map { it.id }
+                if (stillHere.isNotEmpty()) dao.retryDeliveries(stillHere, System.currentTimeMillis())
+            }
         }
-        busy += chatId
+        // A batch that changed while it waited may leave others for this chat that can go right away.
+        if (told != OrbitWake.Told.DROPPED) busy += chatId
         return true
     }
 

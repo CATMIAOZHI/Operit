@@ -139,6 +139,12 @@ internal class LlmRequestPerf(
         if (bytes >= 0) bodyBytes = bytes
     }
 
+    /** The size of the body that really goes out, when it was only known once the request was built. */
+    @Synchronized
+    fun bodySize(bytes: Long) {
+        if (bytes >= 0) bodyBytes = bytes
+    }
+
     /** 转 JSON 内部各段的耗时（纳秒）。 */
     @Synchronized
     fun bodyStages(stages: Map<String, Long>) {

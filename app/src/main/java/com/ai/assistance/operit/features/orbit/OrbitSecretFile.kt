@@ -19,6 +19,8 @@ internal class OrbitSecretFile(
     private val key: () -> SecretKey
 ) {
     fun delete() { Files.deleteIfExists(file.toPath()) }
+    /** Whether anything is stored, without decrypting it. */
+    fun exists(): Boolean = file.exists()
     fun read(): String? {
         if (!file.exists()) return null
         require(file.length() in 30L..(maxPlainBytes.toLong() + 29)) { "Invalid protected store" }
@@ -46,6 +48,8 @@ internal class OrbitSecretFile(
 
     companion object {
         private const val ALIAS = "operit.orbit.host.secrets.v1"
+        /** Keystore marks of sends already started, one per approval ([OrbitApprovals]). */
+        const val SENT_PREFIX = "operit.orbit.sent."
         @Synchronized private fun androidKey(): SecretKey {
             val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
             (store.getKey(ALIAS, null) as? SecretKey)?.let { return it }
@@ -74,6 +78,10 @@ internal class OrbitSecretFile(
             context.noBackupFilesDir.listFiles()
                 ?.filter { it.isFile && it.name.startsWith("orbit-") && it.name.endsWith("-$orbitId.bin") }
                 ?.forEach { Files.deleteIfExists(it.toPath()) }
+            runCatching {
+                val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+                store.aliases().toList().filter { it.startsWith("$SENT_PREFIX$orbitId.") }.forEach { store.deleteEntry(it) }
+            }
         }
 
         /** Removes stores older versions kept and nothing reads any more (the old "forgotten" list). */

@@ -232,7 +232,9 @@ private fun QuotaHeading(title: String, subtitle: String, trailing: String, info
                         tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
                 }
             }
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (subtitle.isNotEmpty()) {
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
         Spacer(Modifier.width(12.dp))
         Text(trailing, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -266,7 +268,8 @@ internal fun OrbitQuotaCard(
         Column(Modifier.padding(horizontal = 4.dp)) {
             QuotaHeading(
                 title = stringResource(R.string.orbit_quota_weekly),
-                subtitle = stringResource(R.string.orbit_quota_weekly_reset, OrbitQuota.resetText(context, state.weekEnd)),
+                // When it resets is said once, in the line under the bars.
+                subtitle = "",
                 trailing = if (ready) usedLabel(state.weeklyUsed, state.weeklyLimit) else "",
                 info = stringResource(R.string.orbit_quota_weekly_info, orbitName(orbit)),
             )
@@ -275,9 +278,8 @@ internal fun OrbitQuotaCard(
             Spacer(Modifier.height(20.dp))
             QuotaHeading(
                 title = stringResource(R.string.orbit_quota_extra),
-                subtitle = if (!ready) "" else if (state.extraWeekly)
-                    stringResource(R.string.orbit_quota_extra_weekly_reset, OrbitQuota.resetText(context, state.weekEnd))
-                else stringResource(R.string.orbit_quota_extra_never_expires),
+                // Only an extra allowance that never resets says so; one that resets goes with the week.
+                subtitle = if (ready && !state.extraWeekly) stringResource(R.string.orbit_quota_extra_never_expires) else "",
                 trailing = if (!ready) "" else if (state.extraLimit <= 0L) usedLabel(0, 0) else
                     usedLabel(state.extraUsed, state.extraLimit) + stringResource(
                         R.string.orbit_quota_left, OrbitQuota.amount(context, state, state.extraLeft)),
@@ -286,11 +288,15 @@ internal fun OrbitQuotaCard(
             Spacer(Modifier.height(12.dp))
             QuotaBar(state.extraUsed, state.extraLimit)
             // The line below the bars is always there, so the card does not grow when it changes.
+            // It also says, once for the whole card, when the week's allowance starts again.
             val status = when {
                 !ready -> ""
                 state.paused -> stringResource(R.string.orbit_quota_status_paused, orbitName(orbit))
                 state.weeklyExhausted -> stringResource(R.string.orbit_quota_status_extra)
                 else -> stringResource(R.string.orbit_quota_status_ok, OrbitQuota.amount(context, state, state.weeklyLeft))
+            }.let { line ->
+                if (!ready) line
+                else stringResource(R.string.orbit_quota_status_reset, line, OrbitQuota.resetText(context, state.weekEnd))
             }
             Spacer(Modifier.height(12.dp))
             Text(status, style = MaterialTheme.typography.bodySmall, minLines = 1,
@@ -319,12 +325,12 @@ internal fun OrbitQuotaCard(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            QuotaSmallButton(stringResource(R.string.orbit_quota_usage), "chart-column", onClick = onOpenUsage)
-            QuotaSmallButton(stringResource(R.string.orbit_quota_adjust), "sliders-horizontal", enabled = ready) {
+            QuotaSmallButton(stringResource(R.string.orbit_quota_usage), onClick = onOpenUsage)
+            QuotaSmallButton(stringResource(R.string.orbit_quota_adjust_short), enabled = ready) {
                 adjusting = true
             }
             // The extra allowance can be filled again at any time, not only once it has run out.
-            QuotaSmallButton(stringResource(R.string.orbit_quota_reset_extra), "rotate-ccw", enabled = ready) {
+            QuotaSmallButton(stringResource(R.string.orbit_quota_reset_extra_short), enabled = ready) {
                 resetting = true
             }
         }
@@ -353,9 +359,9 @@ internal fun OrbitQuotaCard(
     }
 }
 
-/** A small rounded button under the allowance bars: an icon and a short word. */
+/** A small rounded button under the allowance bars: a short word, so all three fit on one line. */
 @Composable
-private fun QuotaSmallButton(label: String, icon: String, enabled: Boolean = true, onClick: () -> Unit) {
+private fun QuotaSmallButton(label: String, enabled: Boolean = true, onClick: () -> Unit) {
     val content = MaterialTheme.colorScheme.onSurface
     Row(
         Modifier
@@ -367,8 +373,6 @@ private fun QuotaSmallButton(label: String, icon: String, enabled: Boolean = tru
             .padding(horizontal = 14.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(orbitIcon(icon), contentDescription = null, tint = content, modifier = Modifier.size(16.dp))
-        Spacer(Modifier.width(6.dp))
         // Wraps inside the button on a narrow screen or with large text, instead of being cut off.
         Text(label, style = MaterialTheme.typography.labelLarge, color = content)
     }

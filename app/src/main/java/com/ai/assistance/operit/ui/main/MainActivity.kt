@@ -158,6 +158,7 @@ class MainActivity : ComponentActivity(), com.ai.assistance.operit.ui.components
     companion object {
         const val ACTION_OPEN_SETTINGS_SHORTCUT = "com.ai.assistance.operit.action.OPEN_SETTINGS_SHORTCUT"
         private const val STATE_MAIN_ROUTE = "main_route"
+        private const val RETURN_MAX_WAIT_MS = 3_000L
         private const val STATE_SHORTCUT_ROUTE = "pending_shortcut_route"
         private const val STATE_WIDGET_ROUTE = "pending_widget_route"
         private const val STATE_WIDGET_ARGS = "pending_widget_args"
@@ -303,7 +304,9 @@ class MainActivity : ComponentActivity(), com.ai.assistance.operit.ui.components
         // that one turns until the first page is ready, then opens onto it.
         val splash = installSplashScreen()
         val coldLaunch = savedInstanceState == null
-        if (coldLaunch) {
+        // A page coming back onto Orbit is covered too, so nothing half-drawn shows before Orbit's chat.
+        val returningToOrbit = savedInstanceState != null && restoresToOrbit(savedInstanceState)
+        if (coldLaunch || returningToOrbit) {
             LaunchReveal.reset()
             LaunchReveal.setCovering(true)
         }
@@ -315,7 +318,7 @@ class MainActivity : ComponentActivity(), com.ai.assistance.operit.ui.components
         }
         super.onCreate(savedInstanceState)
         lastOrientation = resources.configuration.orientation
-        if (coldLaunch) openLaunchMarkWhenReady()
+        if (coldLaunch) openLaunchMarkWhenReady() else if (returningToOrbit) openLaunchMarkWhenReady(returning = true)
 
         if (RawSnapshotBackupManager.isProcessRestartRequired()) {
             // If the migration is running in this process (e.g. Activity recreation during
@@ -1009,12 +1012,25 @@ class MainActivity : ComponentActivity(), com.ai.assistance.operit.ui.components
      * Puts Orbit's turning mark over the app, and opens it once the first page is ready (or the wait
      * runs out) and the app has stopped dropping frames, so the opening plays every frame.
      */
-    private fun openLaunchMarkWhenReady() {
+    private fun openLaunchMarkWhenReady(returning: Boolean = false) {
         val overlay = LaunchOverlay.attach(this)
         launchOverlay = overlay
+        // No system launch screen hands over to a returning page, so the ring turns from the start.
+        if (returning) overlay.spin()
         lifecycleScope.launch {
-            kotlinx.coroutines.withTimeoutOrNull(LaunchReveal.MAX_WAIT_MS) {
+            // A returning page waits less: it covers a screen the user was just using.
+            kotlinx.coroutines.withTimeoutOrNull(if (returning) RETURN_MAX_WAIT_MS else LaunchReveal.MAX_WAIT_MS) {
                 LaunchReveal.ready.first { it }
+            }
+            val done = {
+                if (launchOverlay === overlay) {
+                    launchOverlay = null
+                    LaunchReveal.setCovering(false)
+                }
+            }
+            if (returning) {
+                overlay.fade(done)
+                return@launch
             }
             // A page that just drew may still be busy for a few frames; wait a little for frames to
             // come on time, so the opening plays every frame.
@@ -1026,13 +1042,20 @@ class MainActivity : ComponentActivity(), com.ai.assistance.operit.ui.components
                 onTime = if (now - last < 25_000_000L) onTime + 1 else 0
                 last = now
             }
-            overlay.open {
-                if (launchOverlay === overlay) {
-                    launchOverlay = null
-                    LaunchReveal.setCovering(false)
-                }
-            }
+            overlay.open(done)
         }
+    }
+
+    /**
+     * Whether a restored Activity likely lands on Orbit itself, following the order OperitApp picks
+     * its first page in. A stale widget route is not checked here, so that rare case stays uncovered.
+     */
+    private fun restoresToOrbit(state: Bundle): Boolean {
+        val target = state.getString(STATE_WIDGET_ROUTE)
+            ?: state.getString(STATE_SHORTCUT_ROUTE)
+            ?: state.getString(STATE_CURRENT_ROUTE)
+            ?: state.getString(STATE_MAIN_ROUTE)
+        return target == AppRouteCatalog.initialEntry(NavItem.Orbit).routeId
     }
 
     private suspend fun nextFrameNanos(): Long =

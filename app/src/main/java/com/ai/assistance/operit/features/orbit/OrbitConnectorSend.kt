@@ -38,11 +38,14 @@ internal object OrbitConnectorSend {
     )
     /** Tools whose name says "send" but that only talk to the phone itself. */
     private val NOT_SENDING = setOf("system_tools:send_broadcast")
+    /** Orbit's own tools that send in the user's name; Orbit's other tools only touch its own things. */
+    private val ORBIT_SENDING = setOf(com.ai.assistance.operit.core.tools.OrbitMailTools.SEND)
     /** A word of the tool name that starts with a sending word: send_mail, sendmail, postMessage, reply_all. */
     private val sendingName = Regex("(^|_)(send|post|publish|reply|tweet|forward)")
 
     /** A package or MCP tool ("package:tool") that sends something out in the user's name. */
     fun isSendTool(toolName: String): Boolean {
+        if (toolName in ORBIT_SENDING) return true
         if (':' !in toolName || toolName in NOT_SENDING) return false
         return toolName in BUILT_IN || sendingName.containsMatchIn(words(toolName.substringAfter(':')))
     }
@@ -84,17 +87,32 @@ internal object OrbitConnectorSend {
                 "a chat with them, which this chat cannot show. Hand it back to the main agent with the exact text and " +
                 "recipient, so it calls ${tool.name} there."
         }
-        val detail = buildString {
+        // Mail shows the message as it will go out (final recipients, subject, text, quote) and the
+        // card keeps exactly that message; other tools show their call.
+        val mail = if (tool.name == com.ai.assistance.operit.core.tools.OrbitMailTools.SEND) {
+            try {
+                com.ai.assistance.operit.core.tools.OrbitMailTools.prepare(context, orbit, tool)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                return "$PREFIX\nNot sent: ${e.message ?: e.javaClass.simpleName}"
+            }
+        } else null
+        val shown = mail?.params ?: parameters
+        val detail = mail?.detail ?: buildString {
             append(context.getString(R.string.orbit_send_card_tool, tool.name))
             parameters.forEach { append('\n').append(context.getString(R.string.orbit_send_card_param, it.name, it.value)) }
         }
         if (detail.length > OrbitApprovals.MAX_DETAIL) {
-            return "$PREFIX\nNot sent. This call is longer than ${OrbitApprovals.MAX_DETAIL} characters, too long for the " +
+            return if (mail != null) "$PREFIX\nNot sent. This email (text and quoted original) is longer than " +
+                "${OrbitApprovals.MAX_DETAIL} characters, too long for its card. Keep it one email to the same people: " +
+                "shorten the text, or ask the user what to cut."
+            else "$PREFIX\nNot sent. This call is longer than ${OrbitApprovals.MAX_DETAIL} characters, too long for the " +
                 "user to read on an approval card. Split it into shorter messages and send them one by one."
         }
-        val title = context.getString(R.string.orbit_send_card_title, tool.name)
+        val title = mail?.title ?: context.getString(R.string.orbit_send_card_title, tool.name)
         val action = JSONObject().put("type", RUN_TOOL).put("tool", tool.name).put("params", JSONArray().apply {
-            parameters.forEach { put(JSONObject().put("name", it.name).put("value", it.value)) }
+            shown.forEach { put(JSONObject().put("name", it.name).put("value", it.value)) }
         }).toString()
         val approval = try {
             OrbitApprovals.request(context, orbit.id, chatId, title.take(OrbitApprovals.MAX_TITLE), detail, action)
@@ -110,7 +128,7 @@ internal object OrbitConnectorSend {
             .put("approval_id", approval.id)
             .put("state", approval.state)
             .put("note", "Not sent yet. ${tool.name} sends for the user, so it waits for their OK: a card in the chat shows " +
-                "exactly this call with allow once, always allow and decline. End this turn with one short line; do not call " +
+                "exactly this ${if (mail != null) "message" else "call"} to allow or decline. End this turn with one short line; do not call " +
                 "it again or send it another way. If they allow it, the app sends it itself and a hidden note tells you the result.")
             .put(OrbitChatCards.KEY, OrbitChatCards.approval(orbit.id, approval))
         return "$PREFIX\n$body"
@@ -130,6 +148,8 @@ internal object OrbitConnectorSend {
     /** The user chose "always allow": the tool now runs in Orbit's chats without a card. */
     suspend fun allowAlways(context: Context, action: String) {
         val name = toolOf(action) ?: return
+        // Every mail is confirmed on its own card.
+        if (name == com.ai.assistance.operit.core.tools.OrbitMailTools.SEND) return
         approvedTool(JSONObject(action))
         ToolPermissionSystem.getInstance(context).saveOrbitToolPermission(name, PermissionLevel.ALLOW)
     }
@@ -152,6 +172,11 @@ internal object OrbitConnectorSend {
             callerName = orbit.name.ifBlank { null }, callerChatId = approval.chatId.ifBlank { orbit.chatId },
         )
         val result = withContext(Dispatchers.IO + ToolExecutionManager.toolRuntimeContextElement(runtime)) {
+            // A mail the user allowed is sent as stored on its card, straight from here: the mail tool
+            // the model calls only ever makes cards.
+            if (name == com.ai.assistance.operit.core.tools.OrbitMailTools.SEND) {
+                return@withContext com.ai.assistance.operit.core.tools.OrbitMailTools.sendApproved(context, orbit, tool.parameters)
+            }
             val handler = AIToolHandler.getInstance(context)
             val executor = requireNotNull(handler.getToolExecutorOrActivate(name)) { "Tool not found: $name" }
             val contextualTool = if (executor is JsPackageToolExecutorMarker) {

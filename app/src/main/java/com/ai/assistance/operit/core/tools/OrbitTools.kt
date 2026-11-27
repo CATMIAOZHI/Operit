@@ -83,11 +83,14 @@ internal object OrbitTools {
         }?.let { it.chatId == it.rootChatId } == true
         // Any other chat the Orbit owns is one its agents opened: a subagent of the chat or a task.
         val isOrbitSubagent = hasOrbitSkills && !isOrbitChat && !isTaskRoot
-        return visibilityFor(isOrbitChat, hasOrbitSkills, isTaskRoot, isOrbitSubagent)
+        val hasMail = runCatching { com.ai.assistance.operit.features.orbit.OrbitMailAccounts.connected(context, owner?.id) }
+            .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }.getOrDefault(false)
+        return visibilityFor(isOrbitChat, hasOrbitSkills, isTaskRoot, isOrbitSubagent, hasMail)
     }
 
     private fun visibilityFor(
         isOrbitChat: Boolean, hasOrbitSkills: Boolean, isTaskRoot: Boolean, isOrbitSubagent: Boolean,
+        hasMail: Boolean = true,
     ): Map<String, Boolean> =
         mapOf(SET_NAME to isOrbitChat, OrbitSkillTools.NAME to hasOrbitSkills,
             OrbitTaskTools.NAME to (isOrbitChat || isTaskRoot), OrbitSoulTools.NAME to (isOrbitChat || isTaskRoot),
@@ -96,7 +99,7 @@ internal object OrbitTools {
             OrbitBoardTools.FEED to (isOrbitChat || isTaskRoot), OrbitBoardTools.IDEA to (isOrbitChat || isTaskRoot),
             OrbitBoardTools.TRACKING to (isOrbitChat || isTaskRoot),
             com.ai.assistance.operit.features.orbit.OrbitTaskRunner.FINISH to false) +
-            OrbitExtraTools.visibility(isOrbitChat, isTaskRoot, isOrbitSubagent) +
+            OrbitExtraTools.visibility(isOrbitChat, isTaskRoot, isOrbitSubagent, hasMail) +
             // Browsing is mostly left to subagents, and they are the ones who meet a password page.
             mapOf(OrbitBrowserHandoffTools.NAME to hasOrbitSkills, OrbitBrowserShowTools.NAME to hasOrbitSkills)
 
@@ -202,8 +205,8 @@ internal object OrbitTools {
         val sideNote = side?.let {
             val title = escape(it.title)
             if (useEnglish) "\nThis is a side chat titled \"$title\", separate from the main chat. It keeps its own history; " +
-                "reminders and tasks made here report back here unless the user asks for the main chat."
-            else "\n这是一个侧聊，标题是「$title」，和主聊天分开，有自己的记录。在这里安排的提醒和任务，结果回到这里，除非用户要求发到主聊天。"
+                "reminders and tasks made here report back here unless the user asks for another chat (orbit_task chat_id)."
+            else "\n这是一个侧聊，标题是「$title」，和主聊天分开，有自己的记录。在这里安排的提醒和任务，结果回到这里，除非用户要求发到别的聊天（用 orbit_task 的 chat_id）。"
         }.orEmpty()
         val forkReference = side?.forkOrigin?.takeIf { it.chatId in orbit.talkChatIds }?.let {
             com.ai.assistance.operit.features.orbit.OrbitChatFork.prompt(context, it, useEnglish)

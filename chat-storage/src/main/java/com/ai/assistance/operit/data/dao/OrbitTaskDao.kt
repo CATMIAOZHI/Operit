@@ -11,6 +11,12 @@ import kotlinx.coroutines.flow.Flow
 
 data class OrbitSourceMessage(val sender: String, val content: String)
 
+/** The chat a result should be posted in: its task's chat while that chat exists, otherwise :fallback. */
+private const val FOLLOWED_CHAT = "COALESCE((SELECT t.chatId FROM orbit_tasks t WHERE t.id = orbit_deliveries.taskId " +
+    "AND EXISTS (SELECT 1 FROM chats c WHERE c.id = t.chatId)), :fallback)"
+/** Only results of a task that still exists and names a chat follow it. */
+private const val HAS_TASK_CHAT = "EXISTS (SELECT 1 FROM orbit_tasks t WHERE t.id = orbit_deliveries.taskId AND t.chatId != '')"
+
 /** One message of an Orbit's chats inside a review window, with what points back to it. */
 data class OrbitWindowMessage(
     val messageId: Long,
@@ -855,7 +861,9 @@ interface OrbitTaskDao {
             pendingEvents(current.id, current.version).filter { it.id.contains(":completed:") && eventRun(it.id) == null }
         else emptyList()
         markUnreceiptedUnknown(current.id, updated.updatedAt)
-        updateTask(updated.copy(version = current.version + 1))
+        // The chat is moved only by updateChat and moveTaskChat; an edit made from an older read
+        // must not move it back.
+        updateTask(updated.copy(version = current.version + 1, chatId = current.chatId))
         cancelRuns(current.id, updated.updatedAt)
         cancelDeliveries(current.id)
         deleteTaskEvents(current.id)
@@ -874,6 +882,48 @@ interface OrbitTaskDao {
         "timeoutMinutes = :timeoutMinutes, updatedAt = :now WHERE id = :id AND version = :version AND state = :state")
     suspend fun updateLabels(id: String, version: Long, state: String, title: String, notifyPolicy: String,
         modelRole: String, timeoutMinutes: Int, now: Long): Int
+
+    @Query("UPDATE orbit_tasks SET chatId = :chatId, updatedAt = :now WHERE id = :id AND version = :version AND state = :state")
+    suspend fun updateChatRow(id: String, version: Long, state: String, chatId: String, now: Long): Int
+
+    /** The user moved the task: a wait meant for the old chat does not carry over. */
+    @Query("UPDATE orbit_deliveries SET chatId = :chatId, messageId = NULL, messageTimestamp = NULL, retryAt = 0 " +
+        "WHERE taskId = :taskId AND state = 'PENDING' AND messageId IS NULL")
+    suspend fun moveTaskPendingDeliveries(taskId: String, chatId: String)
+
+    /**
+     * Points every result still waiting to be posted at its task's current chat. A result that went
+     * back to waiting after a failed or interrupted hand-off still names the chat it was handed to.
+     * When the task's chat is gone, the result goes to [fallback] (the main chat).
+     */
+    @Query("UPDATE orbit_deliveries SET chatId = " + FOLLOWED_CHAT + ", messageTimestamp = NULL " +
+        "WHERE orbitId = :orbitId AND state = 'PENDING' AND messageId IS NULL AND " + HAS_TASK_CHAT + " AND " + FOLLOWED_CHAT + " != orbit_deliveries.chatId")
+    suspend fun followTaskChats(orbitId: String, fallback: String)
+
+    /** [followTaskChats] for one result; 1 when it moved. */
+    @Query("UPDATE orbit_deliveries SET chatId = " + FOLLOWED_CHAT + ", messageTimestamp = NULL " +
+        "WHERE id = :id AND state = 'PENDING' AND messageId IS NULL AND " + HAS_TASK_CHAT + " AND " + FOLLOWED_CHAT + " != orbit_deliveries.chatId")
+    suspend fun followTaskChat(id: String, fallback: String): Int
+
+    /**
+     * How many of [ids] are still waiting to be told in [chatId], read only: a cheap check while a
+     * busy chat is waited for. The full check (which also settles stale rows) runs before sending.
+     */
+    @Query("SELECT COUNT(*) FROM orbit_deliveries d JOIN orbit_tasks t ON t.id = d.taskId WHERE d.id IN (:ids) " +
+        "AND d.chatId = :chatId AND d.state = 'PENDING' AND t.version = d.taskVersion " +
+        "AND t.state IN ('ACTIVE','DONE','WAITING_USER','VERIFY','PAUSED') AND (d.expiresAt <= 0 OR d.expiresAt > :now)")
+    suspend fun countStillPending(ids: List<String>, chatId: String, now: Long): Int
+
+    /**
+     * Moves where a task reports, with its results still waiting to be posted. Like [updateLabels]
+     * it does not fence out a run in progress: a turn already started in the old chat ends there.
+     */
+    @Transaction
+    suspend fun updateChat(id: String, version: Long, state: String, chatId: String, now: Long): Boolean {
+        if (updateChatRow(id, version, state, chatId, now) != 1) return false
+        moveTaskPendingDeliveries(id, chatId)
+        return true
+    }
 
     /** [replaceDefinition], but only while no run of the task is in progress. */
     @Transaction

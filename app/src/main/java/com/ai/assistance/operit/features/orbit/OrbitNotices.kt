@@ -25,6 +25,8 @@ internal object OrbitNotices {
     /** Longer than a note may wait for a quiet chat (ten minutes). */
     private const val QUEUED_STALE_MS = 15 * 60_000L
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    /** Notes being handed to the chat right now: [withdraw] leaves them alone, their outcome decides the mark. */
+    private val handingOff = HashSet<String>()
 
     private fun prefs(context: Context) = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
@@ -35,8 +37,13 @@ internal object OrbitNotices {
     /**
      * Tells Orbit once about [key]; nothing more until [clear] for it. Once it got the note, the
      * note [alsoTells] needs no telling of its own either.
+     * [wanted] is asked again right before the note goes out; false drops it.
+     * [onSent] runs once Orbit got it.
      */
-    fun once(context: Context, orbitId: String, key: String, zh: String, en: String, alsoTells: String? = null) {
+    fun once(
+        context: Context, orbitId: String, key: String, zh: String, en: String, alsoTells: String? = null,
+        wanted: (suspend () -> Boolean)? = null, onSent: (() -> Unit)? = null,
+    ) {
         val name = "$orbitId|$key"
         val token: Long
         synchronized(this) {
@@ -47,18 +54,30 @@ internal object OrbitNotices {
             p.edit().putLong(name, now).commit()
             token = now
         }
-        tell(context, orbitId, zh, en, name, token, alsoTells?.let { "$orbitId|$it" })
+        tell(context, orbitId, zh, en, name, token, alsoTells?.let { "$orbitId|$it" }, wanted, onSent)
     }
 
     /** The note queued as [token] is still wanted: not cleared and not replaced by a newer one. */
     private fun stillQueued(context: Context, name: String, token: Long): Boolean =
         synchronized(this) { prefs(context).all[name] as? Long == token }
 
-    /** The problems under [prefix] work again; a later failure is told afresh. */
-    fun clear(context: Context, orbitId: String, prefix: String) {
+    /** The problems under [prefix] work again; a later failure is told afresh. The notes in [keep] keep their marks. */
+    fun clear(context: Context, orbitId: String, prefix: String, keep: Collection<String> = emptyList()) {
         synchronized(this) {
             val p = prefs(context)
-            val names = p.all.keys.filter { it.startsWith("$orbitId|$prefix") }
+            val kept = keep.mapTo(HashSet()) { "$orbitId|$it" }
+            val names = p.all.keys.filter { it.startsWith("$orbitId|$prefix") && it !in kept }
+            if (names.isNotEmpty()) p.edit().apply { names.forEach { remove(it) } }.apply()
+        }
+    }
+
+    /** Notes under [prefix] not yet told are no longer wanted; ones Orbit already got stay marked. */
+    fun withdraw(context: Context, orbitId: String, prefix: String) {
+        synchronized(this) {
+            val p = prefs(context)
+            val names = p.all.filter { (k, v) ->
+                k.startsWith("$orbitId|$prefix") && v != DELIVERED && k !in handingOff
+            }.keys
             if (names.isNotEmpty()) p.edit().apply { names.forEach { remove(it) } }.apply()
         }
     }
@@ -67,7 +86,10 @@ internal object OrbitNotices {
      * A hidden note in Orbit's main chat, sent once the chat is quiet (waiting up to ten minutes).
      * Sent: the mark [name] becomes delivered. Not sent: it is dropped, so the next time the problem shows it is told.
      */
-    private fun tell(context: Context, orbitId: String, zh: String, en: String, name: String, token: Long, alsoTells: String?) {
+    private fun tell(
+        context: Context, orbitId: String, zh: String, en: String, name: String, token: Long, alsoTells: String?,
+        wanted: (suspend () -> Boolean)?, onSent: (() -> Unit)?,
+    ) {
         val app = context.applicationContext
         scope.launch {
             var sent = false
@@ -80,11 +102,19 @@ internal object OrbitNotices {
                     val left = deadline - android.os.SystemClock.elapsedRealtime()
                     if (left <= 0) break
                     // The problem went away while the note waited: do not send the old warning.
-                    if (!stillQueued(app, name, token)) break
+                    if (!stillQueued(app, name, token) || wanted?.invoke() == false) break
                     val told = OrbitWake.tell(
                         app, orbit, orbit.chatId, note, left, left,
-                        ready = { stillQueued(app, name, token) },
+                        ready = { stillQueued(app, name, token) && wanted?.invoke() != false },
                         announce = false,
+                        // The last look before the hand-off, after the chat's own checks.
+                        onSending = {
+                            if (wanted?.invoke() == false) throw OrbitWake.Withdrawn()
+                            synchronized(this@OrbitNotices) {
+                                if (!stillQueued(app, name, token)) throw OrbitWake.Withdrawn()
+                                handingOff += name
+                            }
+                        },
                     )
                     sent = told.sent
                     if (told != OrbitWake.Told.BUSY) break
@@ -96,6 +126,7 @@ internal object OrbitNotices {
                 AppLogger.w("OrbitNotices", "Could not tell Orbit: ${e.message}")
             } finally {
                 synchronized(this@OrbitNotices) {
+                    handingOff -= name
                     val p = prefs(app)
                     // Cleared or queued again meanwhile: leave that mark alone.
                     if (p.all[name] as? Long == token) {
@@ -106,6 +137,7 @@ internal object OrbitNotices {
                         }
                     }
                 }
+                if (sent) onSent?.let { runCatching(it) }
             }
         }
     }

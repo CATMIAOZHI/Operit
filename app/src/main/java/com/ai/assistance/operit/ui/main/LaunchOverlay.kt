@@ -95,8 +95,25 @@ internal class LaunchOverlay private constructor(
         content?.importantForAccessibility = contentAccessibility
     }
 
+    /** Fades the mark out quickly, for a page coming back rather than a new launch. */
+    fun fade(onDone: () -> Unit) {
+        if (opening != null) return
+        opening = ValueAnimator.ofFloat(1f, 0f).apply {
+            duration = FADE_MS
+            addUpdateListener { layer.alpha = it.animatedValue as Float }
+            addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: Animator) {
+                    remove()
+                    onDone()
+                }
+            })
+            start()
+        }
+    }
+
     companion object {
         private const val OPEN_MS = 820L
+        private const val FADE_MS = 160L
         private const val DIP_PART = 0.22f
         private const val DIP_SCALE = 0.86f
         private const val DIP_TURN = -12f

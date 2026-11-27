@@ -51,7 +51,7 @@ internal object OrbitChatTools {
   - 主聊天和所有侧聊共用你的同一份记忆。找用户以前说过的话，用 search_chat_history，它会一起搜主聊天和全部侧聊。要读某个聊天最近的原话，先 list 找到它，再 read。
   - read 按时间从旧到新返回。hidden=true 的是用户看不到的系统提示（比如表情回应、到点的任务），不是用户说的话。单条超过2000字会截断并标 cut=true，用 message 带上 chat_id 和 message_id 读全文。has_more=true 时把 next_before 传给 before 再读更早的（这一页可能是空的，照样接着翻）。
   - 要在别的聊天里跟用户说话（比如把结果发到某个侧聊），先 list 拿到 chat_id，再 send。那边的你会收到这段话，并在那个聊天里用平常的口吻告诉用户；用户在当前聊天里看不到它。status=sent 表示已经送到；status=queued 表示那个聊天正忙，空下来后会自动送到，不用重发。已归档的侧聊不能 send。
-  - 在哪个聊天里安排的提醒和定时任务，结果就回到哪个聊天。
+  - 提醒和定时任务默认回到安排它的聊天；要换聊天，用 orbit_task 的 chat_id（create 时指定，或 update 移过去）。list 里 weixin=true 的是微信频道，不能把任务指定或移到那里（在微信频道里安排、不填 chat_id 的提醒照常回到那里）。
 """,
     )
 
@@ -106,10 +106,13 @@ internal object OrbitChatTools {
                 (if (thinking) m.content else ChatUtils.removeThinkingContent(m.content)).trim()
             val result: Any = when (args["action"]) {
                 "list" -> JSONArray().apply {
+                    val weixin = com.ai.assistance.operit.features.orbit.OrbitWeixin.channelChats(context, orbit.id)
                     put(JSONObject().put("chat_id", orbit.chatId).put("title", "main").put("current", caller == orbit.chatId))
                     orbit.sideChats.forEach {
                         put(JSONObject().put("chat_id", it.chatId).put("title", it.title).put("current", caller == it.chatId)
-                            .put("archived", it.archived).apply { it.forkOrigin?.let { source ->
+                            .put("archived", it.archived).apply {
+                                if (it.chatId in weixin) put("weixin", true)
+                                it.forkOrigin?.let { source ->
                                 put("source_chat_id", source.chatId).put("source_message_id", source.messageId)
                             } })
                     }

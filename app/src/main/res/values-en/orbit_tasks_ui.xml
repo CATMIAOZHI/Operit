@@ -9,6 +9,12 @@
     <string name="orbit_task_row_report">Reports</string>
     <string name="orbit_task_row_run">How it runs</string>
     <string name="orbit_task_row_chat">Chat</string>
+    <string name="orbit_task_chat_pick_title">Move to another chat</string>
+    <string name="orbit_task_chat_pick_desc">From now on, this task’s messages and unsent results go to the chat you pick. A run %1$s has already started may finish in the old chat.</string>
+    <string name="orbit_task_chat_moved">Moved to “%1$s”</string>
+    <string name="orbit_task_chat_move_failed">Couldn’t move this task. Please try again.</string>
+    <string name="orbit_task_chat_change">Change</string>
+    <string name="orbit_task_chat_created">Started %1$s</string>
     <string name="orbit_task_in_side_chat">In side chat “%1$s”</string>
     <string name="orbit_task_pause">Pause task</string>
     <string name="orbit_task_resume">Resume task</string>

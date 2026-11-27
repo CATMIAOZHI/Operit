@@ -1022,7 +1022,10 @@ class ConversationService(
             when (turn.kind) {
                 PromptTurnKind.ASSISTANT,
                 PromptTurnKind.TOOL_CALL,
-                PromptTurnKind.TOOL_RESULT -> turn.copy(content = normalizeToolResultMarkupForModel(turn.content))
+                // An unchanged turn is kept as it is, so each tool round does not copy the whole history.
+                PromptTurnKind.TOOL_RESULT -> normalizeToolResultMarkupForModel(turn.content).let { normalized ->
+                    if (normalized == turn.content) turn else turn.copy(content = normalized)
+                }
                 else -> turn
             }
         }

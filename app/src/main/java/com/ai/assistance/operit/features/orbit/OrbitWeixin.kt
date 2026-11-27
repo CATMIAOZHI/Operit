@@ -410,8 +410,25 @@ internal object OrbitWeixin {
             ?: error("Orbit no longer exists")
         if (saved != null && orbit.sideChats.any { it.chatId == saved }) return saved
         if (!orbit.canAddSideChat) throw IllegalStateException(TOO_MANY)
-        return OrbitCompanion.createSideChat(context, orbitId, if (english(context)) "WeChat" else "微信")
+        // Counted as the WeChat chat from before it is listed until the link names it, so a task is
+        // never pointed at it in between. The caller releases it once the link is saved.
+        val id = java.util.UUID.randomUUID().toString()
+        reserving += id
+        return try {
+            OrbitCompanion.createSideChat(context, orbitId, if (english(context)) "WeChat" else "微信", chatId = id)
+        } catch (e: Throwable) {
+            reserving -= id
+            throw e
+        }
     }
+
+    /** New WeChat chats whose link is not saved yet. */
+    private val reserving = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    /** The chats that are WeChat's: the linked one, and one being linked. Tasks never report there. */
+    suspend fun channelChats(context: Context, orbitId: String): Set<String> =
+        // Copied one by one: the set may lose its last id while it is read.
+        reserving.toCollection(HashSet()) + listOfNotNull(boundChatId(context, orbitId))
 
     private suspend fun latestTimestamp(context: Context, chatId: String): Long =
         ChatHistoryManager.getInstance(context).loadOlderChatMessages(chatId, Long.MAX_VALUE, 1).maxOfOrNull { it.timestamp } ?: 0L
@@ -422,7 +439,7 @@ internal object OrbitWeixin {
         // otherwise send its answer for the first user to the new one.
         val before = load(app, orbitId)
         val chatId = ensureChat(app, orbitId, before?.chatId?.takeIf { before.userId == userId })
-        val state = runnerLock.withLock {
+        val state = try { runnerLock.withLock {
             // The old polling stops first, so nothing it still receives can mix into the new link.
             stopLocked(app)
             val previous = load(app, orbitId)
@@ -452,7 +469,7 @@ internal object OrbitWeixin {
                 }
             }
             state
-        }
+        } } finally { reserving -= chatId }
         publish(orbitId, state)
         sync(app)
     }
@@ -750,10 +767,10 @@ internal object OrbitWeixin {
                 delay(60_000L)
                 continue
             }
-            if (chatId != s.chatId) {
+            if (chatId != s.chatId) try {
                 val cursor = latestTimestamp(context, chatId)
                 update(context, orbitId) { it.copy(chatId = chatId, cursor = cursor) }
-            }
+            } finally { reserving -= chatId }
             if (next.firstTryAt > 0L) {
                 // Handed over before (maybe before a restart): only the chat itself says whether it
                 // arrived. Once it has, it leaves at once, so the next one can still join a running turn.

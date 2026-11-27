@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 
 /**
@@ -193,7 +194,8 @@ object OrbitCompanion {
      * Opens a side chat: a separate, lasting conversation with the same Orbit about one topic,
      * next to the main chat. It shares Orbit's memory and tools; its history stays its own.
      */
-    suspend fun createSideChat(context: Context, orbitId: String, title: String): String {
+    /** [chatId] names the new chat ahead of time (the WeChat link reserves it before it is listed). */
+    suspend fun createSideChat(context: Context, orbitId: String, title: String, chatId: String? = null): String {
         val appContext = context.applicationContext
         val clean = title.replace(Regex("\\s+"), " ").trim().take(OrbitSettings.MAX_SIDE_CHAT_TITLE)
         require(clean.isNotEmpty()) { "Missing title" }
@@ -202,11 +204,11 @@ object OrbitCompanion {
             val orbit = preferences.current().orbits.firstOrNull { it.id == orbitId && !it.deleting }
                 ?: error("Orbit no longer exists")
             check(orbit.canAddSideChat) { "Too many side chats" }
-            val chatId = createChat(appContext, null, clean, titled = false)
-            inheritContext(appContext, orbit, chatId)
-            preferences.rememberChatOwner(chatId, orbit.id)
-            preferences.addSideChat(orbit.id, chatId, clean)
-            chatId
+            val madeId = createChat(appContext, null, clean, titled = false, chatId = chatId)
+            inheritContext(appContext, orbit, madeId)
+            preferences.rememberChatOwner(madeId, orbit.id)
+            preferences.addSideChat(orbit.id, madeId, clean)
+            madeId
         }
     }
 
@@ -292,8 +294,10 @@ object OrbitCompanion {
         if (OrbitWeixin.boundChatId(appContext, orbitId) == chatId) throw OrbitWeixin.ChatBoundException()
         val dao = com.ai.assistance.operit.data.db.AppDatabase.getDatabase(appContext).orbitTaskDao()
         OrbitExecutionGate.serialized {
-            dao.moveTaskChat(orbitId, chatId, orbit.chatId)
-            dao.movePendingDeliveries(orbitId, chatId, orbit.chatId)
+            // Read inside the gate: the main chat may have been rebuilt while this was waiting.
+            val main = preferences.current().orbits.firstOrNull { it.id == orbitId }?.chatId ?: orbit.chatId
+            dao.moveTaskChat(orbitId, chatId, main)
+            dao.movePendingDeliveries(orbitId, chatId, main)
         }
         // Deleting the chat on screen would make the chat screen jump to some unrelated chat, so
         // show Orbit's main chat first.
@@ -312,6 +316,13 @@ object OrbitCompanion {
             }
         }
         preferences.removeSideChat(orbitId, chatId)
+        // A task moved here while the history was being deleted goes to the main chat as well.
+        OrbitExecutionGate.serialized {
+            // The main chat may have been rebuilt meanwhile, so it is read again here.
+            val main = preferences.current().orbits.firstOrNull { it.id == orbitId }?.chatId ?: orbit.chatId
+            dao.moveTaskChat(orbitId, chatId, main)
+            dao.movePendingDeliveries(orbitId, chatId, main)
+        }
         OrbitDelivery.markSeen(chatId)
         runCatching { OrbitWeixin.onSideChatDeleted(appContext, orbitId, chatId) }
         runCatching { OrbitReactions.of(appContext, orbitId).removeChat(chatId) }
@@ -420,20 +431,26 @@ object OrbitCompanion {
         }
         val recreated = orbit.copy(chatId = createChat(context, null, orbit.name), memorySpaceId = spaceId,
             ownedChatIds = orbit.ownedChatIds + orbit.chatId)
-        // A deleted Orbit (or one being deleted) is never written back; its new chat goes with it.
-        if (!OrbitPreferences.getInstance(context).replaceLiveOrbit(recreated)) {
-            core(context).deleteChatHistory(recreated.chatId)
-            error("Orbit is being deleted")
-        }
-        OrbitContextSettings.enforce(context, recreated)
-        OrbitExecutionGate.serialized {
+        // Saving the new main chat and moving the tasks onto it finish together, even if the screen
+        // that asked goes away: a task left on the deleted chat would never be moved, since the
+        // next visit finds the new main chat and skips this.
+        withContext(NonCancellable) {
+            // A deleted Orbit (or one being deleted) is never written back; its new chat goes with it.
+            if (!OrbitPreferences.getInstance(context).replaceLiveOrbit(recreated)) {
+                core(context).deleteChatHistory(recreated.chatId)
+                error("Orbit is being deleted")
+            }
+            OrbitExecutionGate.serialized {
             val dao = com.ai.assistance.operit.data.db.AppDatabase.getDatabase(context).orbitTaskDao()
-            // Tasks made in a side chat keep reporting there.
-            dao.tasks(orbit.id).filter { it.chatId == orbit.chatId }.forEach { task ->
-                dao.replaceDefinition(task.copy(chatId = recreated.chatId, updatedAt = System.currentTimeMillis()),
-                    task.version)
+            // Tasks made in a side chat keep reporting there. The ones on the deleted chat, and their
+            // results not yet posted, move to the new one; nothing else about them changes, so a run
+            // that just finished keeps its result. A wake-up already started ends where it began,
+            // as with any move.
+            dao.moveTaskChat(orbit.id, orbit.chatId, recreated.chatId)
+            dao.movePendingDeliveries(orbit.id, orbit.chatId, recreated.chatId)
             }
         }
+        OrbitContextSettings.enforce(context, recreated)
         return recreated
     }
 
@@ -450,11 +467,17 @@ object OrbitCompanion {
         // removes itself, so a timed-out start never leaves a chat nobody knows about. Its id is
         // also written down until it is gone, in case the app is closed before it removes itself.
         val state = java.util.concurrent.atomic.AtomicInteger(0)
-        fun giveUp() {
-            if (state.compareAndSet(0, 2) && chatId != null) {
-                lateInFlight.add(chatId)
-                editLate(context) { it + chatId }
+        // The note is written on one IO worker, in order: the caller and the delete callback may be on
+        // the main thread. Giving up queues the note under the same lock the callback checks with, so
+        // a late chat's removal is always queued after its note.
+        suspend fun giveUp() {
+            val noted = synchronized(lateOrder) {
+                if (state.compareAndSet(0, 2) && chatId != null) {
+                    lateInFlight.add(chatId)
+                    queueLate(context) { it + chatId }
+                } else null
             }
+            noted?.let { withContext(NonCancellable) { it.join() } }
         }
         core.createNewChat(
             inheritGroupFromCurrent = false,
@@ -463,27 +486,46 @@ object OrbitCompanion {
             // A side chat (no role card) starts empty: it is Orbit talking, not the default card.
             withOpeningMessage = roleCardId != null,
             onCreated = { madeId ->
-                if (state.compareAndSet(0, 1)) created.complete(madeId)
+                if (synchronized(lateOrder) { state.compareAndSet(0, 1) }) created.complete(madeId)
                 else core.getChatHistoryDelegate().deleteChatHistory(madeId) { ok ->
                     lateInFlight.remove(madeId)
-                    if (ok) editLate(context) { it - madeId }
+                    if (ok) queueLate(context) { it - madeId }
                     else com.ai.assistance.operit.util.AppLogger.w("OrbitCompanion", "Could not remove a chat made too late")
                 }
             },
             chatId = chatId,
         )
+        // A chat handed over just as the caller was cancelled (or cancelled while it is titled) is
+        // nobody's: the caller never stores it, so it is removed rather than left behind. Like a late
+        // chat it is written down first, so a failed delete or a closed app still has it swept later.
+        suspend fun dropHandedOver(madeId: String) = withContext(NonCancellable) {
+            lateInFlight.add(madeId)
+            queueLate(context) { it + madeId }.join()
+            core.getChatHistoryDelegate().deleteChatHistory(madeId) { ok ->
+                lateInFlight.remove(madeId)
+                if (ok) queueLate(context) { it - madeId }
+                else com.ai.assistance.operit.util.AppLogger.w("OrbitCompanion", "Could not remove an unused chat")
+            }
+        }
         val made = try {
             kotlinx.coroutines.withTimeoutOrNull(CHAT_CREATE_TIMEOUT_MS) { created.await() }
+                ?: run {
+                    giveUp()
+                    if (state.get() == 2) throw IllegalStateException("The chat could not be made in time")
+                    created.await()
+                }
         } catch (e: kotlinx.coroutines.CancellationException) {
             giveUp()
+            if (state.get() == 1) dropHandedOver(withContext(NonCancellable) { created.await() })
             throw e
-        } ?: run {
-            giveUp()
-            if (state.get() == 2) throw IllegalStateException("The chat could not be made in time")
-            created.await()
         }
-        core.getChatHistoryDelegate()
-            .updateChatTitleAndWait(made, if (titled) context.getString(R.string.orbit_chat_title, title) else title)
+        try {
+            core.getChatHistoryDelegate()
+                .updateChatTitleAndWait(made, if (titled) context.getString(R.string.orbit_chat_title, title) else title)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            dropHandedOver(made)
+            throw e
+        }
         return made
     }
 
@@ -491,6 +533,15 @@ object OrbitCompanion {
     private const val KEY_LATE = "ids"
     /** Given-up chats whose making may still finish in this run of the app. */
     private val lateInFlight = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    /** Orders a given-up chat's note before its removal. */
+    private val lateOrder = Any()
+    /** One worker, so notes about late chats are written in the order they were queued. */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private val lateScope = kotlinx.coroutines.CoroutineScope(
+        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO.limitedParallelism(1))
+
+    private fun queueLate(context: Context, change: (Set<String>) -> Set<String>): kotlinx.coroutines.Job =
+        lateScope.launch { editLate(context, change) }
 
     private fun editLate(context: Context, change: (Set<String>) -> Set<String>) = synchronized(lateInFlight) {
         val p = context.applicationContext.getSharedPreferences(LATE_PREFS, Context.MODE_PRIVATE)

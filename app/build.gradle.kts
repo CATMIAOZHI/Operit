@@ -200,8 +200,8 @@ android {
         targetSdk = 34
         // Every stable release increments versionCode by one, including a baseline update.
         // Stable and dev must agree; see docs/agent/dev-to-main-promotion.md.
-        versionCode = 100206
-        versionName = "1.12.2-ry.26"
+        versionCode = 100207
+        versionName = "1.12.2-ry.27"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -337,6 +337,9 @@ android {
             excludes += "/META-INF/NOTICE.txt"
             excludes += "/META-INF/notice.txt"
             excludes += "/META-INF/ASL2.0"
+            // JavaMail and its activation jar ship the same license and notice; keep one copy.
+            pickFirsts += "META-INF/LICENSE.md"
+            pickFirsts += "META-INF/NOTICE.md"
             excludes += "/META-INF/*.SF"
             excludes += "/META-INF/*.DSA"
             excludes += "/META-INF/*.RSA"
@@ -587,6 +590,9 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.okhttp.sse)
     implementation(libs.jsoup)
+    // IMAP/SMTP for Orbit's Gmail and Outlook connector (XOAUTH2, straight to Google and Microsoft).
+    implementation(libs.android.mail)
+    implementation(libs.android.activation)
 
     // DataStore dependencies
     implementation(libs.datastore.preferences)

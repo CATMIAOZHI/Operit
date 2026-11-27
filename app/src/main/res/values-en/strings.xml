@@ -18,6 +18,7 @@
     <string name="dynamic_ui_close_details">Close details</string>
     <string name="dynamic_ui_bad_table">Invalid table data. Check your input.</string>
     <string name="logcat_flush_incomplete">Available logs saved to %1$s. Logs may be incomplete; details are also saved in export-status.txt inside the archive.</string>
+    <string name="logcat_crash_log_missing">Crash details saved to %1$s. The app log is missing or incomplete.</string>
     <string name="logcat_export_pending">%1$d records present when export started were still waiting to finish writing.</string>
     <string name="logcat_export_dropped">%1$d records were dropped due to queue overload or thread interruption and cannot be recovered.</string>
     <string name="logcat_export_write_failed">A file write failed during this logging session.</string>
@@ -1460,6 +1461,17 @@
     <string name="crash_report_copy_success">Copied to clipboard</string>
     <string name="crash_report_export_success">Error report exported to\n%1$s</string>
     <string name="crash_report_export_failed">Export failed: %1$s</string>
+    <string name="crash_page_title">Orbit closed after an error</string>
+    <string name="crash_page_body">Sorry for the interruption. When you open it again, Orbit will know something went wrong and decide whether to carry on.</string>
+    <string name="crash_page_interrupted">Sub-agents and anything running in the terminal (such as a build) were stopped or lost track of. Please check on them after reopening.</string>
+    <string name="crash_page_reopen">Reopen Orbit</string>
+    <string name="crash_page_export">Export crash log</string>
+    <string name="crash_page_export_hint">The error and the app log are packed into one file; attach it when you report the problem. The log may hold bits of chats and device details, so read it and hide anything private before posting it publicly.</string>
+    <string name="crash_page_share">Share</string>
+    <string name="crash_page_copy">Copy error</string>
+    <string name="crash_page_report">Report a problem</string>
+    <string name="crash_page_report_copied">Could not open the feedback page; its link was copied</string>
+    <string name="crash_page_hide_details">Hide details</string>
     
     <!-- Model Prompts Settings Screen -->
     <string name="model_prompts_title">Prompt Settings</string>
@@ -6075,7 +6087,9 @@
     <!-- Skill Market -->
     <string name="available_skills_market">Available Skills</string>
     <string name="beta_plan">Beta Program</string>
-    <string name="beta_plan_desc">After joining, when there are updated test versions, patch updates of about 30MB will be automatically downloaded over WiFi.</string>
+    <string name="beta_plan_desc">After joining you also get test versions, usually as patch updates of about 30MB.</string>
+    <string name="auto_check_updates">Check for updates automatically</string>
+    <string name="auto_check_updates_desc">Looks for a new version once a day. When one is out, Orbit tells you in the chat.</string>
     <string name="beta_plan_enabled">Joined Beta Program</string>
     <string name="beta_plan_disabled">Not in Beta Program</string>
     <string name="beta_plan_join">Join</string>
@@ -8927,6 +8941,8 @@
     <string name="quota_title">Usage &amp; balance</string>
     <string name="quota_refresh">Refresh</string>
     <string name="quota_unavailable">Balance is temporarily unavailable</string>
+    <string name="quota_stale">Refresh failed; the numbers above are from the last check</string>
+    <string name="quota_rejected">The key is invalid or cannot read the balance; check the API key</string>
     <string name="quota_not_fetched">Tap refresh to load the balance</string>
     <string name="quota_no_windows">This account reported no quota windows</string>
     <string name="quota_window_five_hour">5 hours</string>
@@ -9281,6 +9297,8 @@
     <string name="orbit_quota_status_extra">This week\'s allowance is used up; using the extra allowance</string>
     <string name="orbit_quota_usage">Usage</string>
     <string name="orbit_quota_adjust">Change allowances</string>
+    <string name="orbit_quota_adjust_short">Adjust</string>
+    <string name="orbit_quota_reset_extra_short">Refill extra</string>
     <string name="orbit_quota_adjust_help">The weekly allowance starts over every Monday at midnight. The extra allowance is only used once the week\'s is gone; 0 turns it off. With both used up, %1$s pauses.</string>
     <string name="orbit_quota_mode">Count by</string>
     <string name="orbit_quota_mode_money">Spending</string>
@@ -9296,6 +9314,7 @@
     <string name="orbit_quota_unit_size">1000000</string>
     <string name="orbit_quota_number_style">en</string>
     <string name="orbit_quota_status_ok">%1$s left this week</string>
+    <string name="orbit_quota_status_reset">%1$s; the weekly allowance resets %2$s</string>
     <string name="orbit_quota_weekly_min">At least %1$s</string>
     <string name="orbit_quota_extra_invalid">Enter a number</string>
     <string name="orbit_quota_extra_zero">0: pause as soon as the week\'s allowance is gone</string>
@@ -9849,7 +9868,7 @@
     <string name="orbit_chats_title_label">Title</string>
     <string name="orbit_chats_title_hint">For example: Trip plans</string>
     <string name="orbit_chats_delete">Delete side chat</string>
-    <string name="orbit_chats_delete_confirm">Delete “%1$s” and all its messages? Reminders set in this side chat will show up in the main chat.</string>
+    <string name="orbit_chats_delete_confirm">Delete “%1$s” and all its messages? Reminders and tasks now in this side chat will show up in the main chat.</string>
     <string name="orbit_chats_delete_weixin_title">This chat is linked to WeChat</string>
     <string name="orbit_chats_delete_weixin_text">Messages from WeChat land in “%1$s”, so it can\'t be deleted right now. To delete it, first disconnect in Settings → Message channels → WeChat.</string>
     <string name="orbit_chats_delete_weixin_settings">Open settings</string>
@@ -9930,12 +9949,13 @@
     <string name="orbit_vault_empty">No passwords, keys or OAuth logins saved yet. When one is needed, %1$s shows a secure card.</string>
     <string name="orbit_vault_delete_title">Delete this sign-in or key?</string>
     <string name="orbit_vault_delete_confirm">This item for %1$s will be deleted for good.</string>
-    <string name="orbit_section_privacy">Privacy and security</string>
+    <string name="orbit_section_privacy">Privacy and data</string>
     <string name="orbit_section_display">Display</string>
     <string name="orbit_section_messages">Messages and voice</string>
-    <string name="orbit_section_tools">Tools</string>
+    <string name="orbit_section_tools">Tools and connections</string>
     <string name="orbit_section_data">Data</string>
     <string name="orbit_section_developer">Developer</string>
+    <string name="orbit_section_help">Help and about</string>
     <string name="orbit_developer_switch">Developer mode</string>
     <string name="orbit_developer_switch_desc">Shows \"Raw conversation\" at the top of the task list: Orbit\'s chat opened in the normal chat screen, with all thinking and tool calls, and messages hidden in the chat (such as tapback notices and quiet endings) labeled. Background task details also show their full instructions.</string>
     <string name="orbit_tools_row">Per-tool permissions</string>
