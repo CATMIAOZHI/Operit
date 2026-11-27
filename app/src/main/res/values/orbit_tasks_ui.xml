@@ -9,6 +9,12 @@
     <string name="orbit_task_row_report">汇报方式</string>
     <string name="orbit_task_row_run">怎么执行</string>
     <string name="orbit_task_row_chat">所在聊天</string>
+    <string name="orbit_task_chat_pick_title">换个聊天</string>
+    <string name="orbit_task_chat_pick_desc">以后，这个任务的消息和还没发出的结果都会发到选中的聊天。%1$s 已经开始处理的那一次，可能在原聊天收尾。</string>
+    <string name="orbit_task_chat_moved">已移到「%1$s」</string>
+    <string name="orbit_task_chat_move_failed">没能移动这个任务，请再试一次</string>
+    <string name="orbit_task_chat_change">更换</string>
+    <string name="orbit_task_chat_created">建于 %1$s</string>
     <string name="orbit_task_in_side_chat">在侧聊「%1$s」</string>
     <string name="orbit_task_pause">暂停任务</string>
     <string name="orbit_task_resume">恢复任务</string>

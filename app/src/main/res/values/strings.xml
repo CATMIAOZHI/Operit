@@ -8901,6 +8901,8 @@
     <string name="quota_title">用量与余额</string>
     <string name="quota_refresh">刷新</string>
     <string name="quota_unavailable">余额暂时不可用</string>
+    <string name="quota_stale">刷新失败，上面是上次查到的余额</string>
+    <string name="quota_rejected">密钥无效或没有权限查看余额，请检查 API Key</string>
     <string name="quota_not_fetched">点击刷新查看余额</string>
     <string name="quota_no_windows">该账户没有返回配额窗口</string>
     <string name="quota_window_five_hour">5 小时</string>
@@ -9824,7 +9826,7 @@
     <string name="orbit_chats_title_label">标题</string>
     <string name="orbit_chats_title_hint">比如：旅行计划</string>
     <string name="orbit_chats_delete">删除侧聊</string>
-    <string name="orbit_chats_delete_confirm">删除「%1$s」和它的全部聊天记录？这个侧聊里安排的提醒，以后会发到主聊天。</string>
+    <string name="orbit_chats_delete_confirm">删除「%1$s」和它的全部聊天记录？现在放在这个侧聊的提醒和任务，以后会发到主聊天。</string>
     <string name="orbit_chats_delete_weixin_title">这个聊天连着微信</string>
     <string name="orbit_chats_delete_weixin_text">微信发来的消息都会进「%1$s」，所以现在不能删除。想删的话，先到「设置 → 消息频道 → 微信」断开连接。</string>
     <string name="orbit_chats_delete_weixin_settings">去设置</string>

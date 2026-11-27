@@ -47,12 +47,13 @@ internal object OrbitTaskTools {
             ToolParameterSchema("use_subagent", "boolean", "可选，默认 false：到点在聊天里叫醒你本人处理（提醒、问候、几步就能做完的事）。true：到点由后台子代理去做，做完把结果交回给你，再由你决定怎么告诉用户；适合步骤多、耗时长、不需要聊天上下文的活（如批量审查、长时间整理）", false),
             ToolParameterSchema("model", description = "只对 use_subagent=true 的后台任务有用：main 主模型、assistant 辅助模型、default 默认（辅助模型）。在聊天里叫醒你的任务用那个聊天当前选的模型，不填这项（填了也不用）。create 不填用 default；update 不填保留。Only for use_subagent=true background runs: main/assistant/default (assistant). Tasks that wake you in a chat use that chat's current model and ignore this. Returns effective_model with the actual model.", required = false),
             ToolParameterSchema("timeout_minutes", "integer", "use_subagent=true 时子代理单次运行时限，1到1440分钟（最多24小时），不填默认60分钟；超时会停下并暂停任务（夜间对齐复盘固定120分钟，超时会保留进度、下次接着读）", false),
+            ToolParameterSchema("chat_id", description = "可选：任务在哪个聊天叫醒你、结果发到哪个聊天，用 orbit_chat list 的 chat_id（主聊天或没归档的侧聊；weixin=true 的微信频道不能指定或移入）。create 不填就用安排它的聊天（在微信频道里安排的也回到微信频道；在后台任务里安排的，跟那个任务用同一个聊天；都对不上就用主聊天）。后台任务里没有 orbit_chat，就不填或用已知的 chat_id；update 时 chat_id 要单独一次（只带 action、task_id、chat_id），把任务移过去：以后它的消息和还没发出的结果都发到新聊天，已经开始的那一次可能在原聊天收尾。在等用户回复的任务也能移。「动态更新」「每日点子」等你自己的后台任务不能移", required = false),
         ),
         details = "根据用户交代的目标安排后续工作。用户说“某天几点提醒我”用 ONCE+run_at+notify_policy=ALWAYS；" +
-            "update 只改传入的字段（title、instruction、url、watch/script、schedule_mode、run_at、daily_time、repeat_on、interval_minutes、notify_policy、timeout_minutes、use_subagent、model），没传的保持不变。" +
+            "update 只改传入的字段（title、instruction、url、watch/script、schedule_mode、run_at、daily_time、repeat_on、interval_minutes、notify_policy、timeout_minutes、use_subagent、model、chat_id），没传的保持不变。" +
             "只改说明或脚本的一小段时用 instruction_old/instruction_new 或 script_old/script_new，像 edit_file 一样换掉那段，不用整篇重写。" +
             "model 只给后台任务（use_subagent=true）指定主模型或辅助模型，不填写内部配置编号；返回 model 是保存的选择（在聊天里执行的任务是 chat，表示用那个聊天当前的模型），effective_model 是实际角色、配置名和模型名，model_error 表示需用户到设置→模型重新选择。" +
-            "改了时间（schedule_mode、run_at、daily_time、repeat_on、interval_minutes）或网页会重算下次运行，只改 title、notify_policy 等不动下次时间；任何真的改动都会停掉正在进行的这次运行（没做完的结果作废），正在跑时别为了改标题去 update。" +
+            "改了时间（schedule_mode、run_at、daily_time、repeat_on、interval_minutes）或网页会重算下次运行，只改 title、notify_policy 等不动下次时间；改了说明、网页/脚本/地点、时间或执行方式会停掉正在进行的这次运行（没做完的结果作废）；只改 title、notify_policy、model、timeout_minutes 不会停掉。" +
             "改动类操作会返回任务现在的样子、changed（有没有变）和 changed_fields（变了哪些），next_run 是下次执行的本地时间（timezone 是时区，停了的任务为 null）。run 只是排队，结果做完才回来。" +
             "list 里的 instruction、last_observation 只给前200字，要全文用 detail。" +
             "“每天几点”用 DAILY+daily_time；“每周几几点”用 WEEKLY+repeat_on+daily_time；“每月几号”用 MONTHLY+repeat_on+daily_time；" +
@@ -68,7 +69,7 @@ internal object OrbitTaskTools {
             "用户引用了那条消息时，按引用的 timestamp 对 asked_message_timestamp；没引用就按任务名和问题对。能唯一对上才调用 resume，带上它的 request_id 并转达 user_note；" +
             "对不上、或有几个任务都可能，就先问用户是在答哪一个。check_first=verify 要用户先到任务详情核对操作结果，check_first=open_page 要用户在任务详情里打开页面处理，这两种都不能直接 resume。" +
             "中断过的操作先看 detail 核实，不能盲目重做。" +
-            "子代理的工具过程保存在执行记录，它的结果先交给你，由你在安排它的聊天（主聊天或侧聊）里告诉用户。" +
+            "子代理的工具过程保存在执行记录，它的结果先交给你，由你在任务现在所在的聊天（默认是安排它的聊天，可用 chat_id 换）里告诉用户。" +
             "用户说“有某某消息/短信/日程变化就告诉我”时用 WATCH+INTERVAL+notify_policy=CHANGES，间隔按急不急定（最少15分钟）。" +
             "通知、短信、日历需要用户在系统设置里给 Orbit 对应权限，没给时任务会记下原因并提醒用户一次。" +
             "现成来源不够时写一个只读的小脚本（比如 GET 公开接口、看文件），sh 或 python 都行，每轮用 silent 或 wake 给出理由和 JSON 对象。" +
@@ -82,9 +83,11 @@ internal object OrbitTaskTools {
         val runtime = ToolExecutionManager.currentToolRuntimeContext()
         val orbit = OrbitMemoryScope.owner(context, runtime?.callerChatId) ?: error("This tool requires an Orbit chat")
         val repository = OrbitTaskRepository(context)
-        val arguments = tool.parameters.associate { it.name to it.value }
-        val action = arguments["action"]?.trim()?.takeIf { it.isNotEmpty() } ?: error("Missing action; use one of ${ACTIONS.joinToString("/")}")
+        val raw = tool.parameters.associate { it.name to it.value }
+        val action = raw["action"]?.trim()?.takeIf { it.isNotEmpty() } ?: error("Missing action; use one of ${ACTIONS.joinToString("/")}")
         require(action in ACTIONS) { "Unknown action \"$action\"; use one of ${ACTIONS.joinToString("/")}" }
+        // For create, an optional field sent empty counts as left out (update sorts its own fields).
+        val arguments = if (action == "create") raw.filterValues { it.isNotBlank() } else raw
         val payload: Any = when (action) {
             "create" -> {
                 // watch or script without kind would otherwise quietly become a one-off ASSIST task.
@@ -99,6 +102,9 @@ internal object OrbitTaskTools {
                 } else if (kind == OrbitWatchSources.KIND) {
                     watchSource(context, orbit.id, arguments, arguments["title"].orEmpty(), requestId)
                 } else arguments["url"].orEmpty()
+                // Made in a side chat: its reports go back to that side chat, like Muse. Made by a
+                // running task: its reports go where that task reports. A chat named here is always checked.
+                val namedChat = arguments["chat_id"]?.trim()?.takeIf { it.isNotEmpty() }
                 json(repository.create(orbit,
                 arguments["title"] ?: error("create needs title (at most 80 characters)"),
                 arguments["instruction"] ?: error("create needs instruction: what the task should do each run"),
@@ -117,9 +123,8 @@ internal object OrbitTaskTools {
                 // Only a background run has a model of its own; one woken in a chat uses the chat's.
                 modelRole = arguments["model"]?.takeIf { parseFlag(arguments["use_subagent"]) == true }
                     ?.let(OrbitModels::checkedRole) ?: OrbitModels.DEFAULT,
-                // Made in a side chat: its reports go back to that side chat, like Muse. Made by a
-                // running task: its reports go where that task reports.
-                chatId = reportChatId(context, orbit, runtime?.callerChatId)), context).apply {
+                chatId = namedChat ?: reportChatId(context, orbit, runtime?.callerChatId),
+                chosenChat = namedChat != null), context).apply {
                     if (!androidx.core.app.NotificationManagerCompat.from(context).areNotificationsEnabled() ||
                         !OrbitDelivery.channelOn(context)) {
                         put("notification_permission", false)
@@ -224,10 +229,15 @@ internal object OrbitTaskTools {
                         // text: *_old only counts as left out when empty, and an empty *_new deletes its piece.
                         val given = arguments.filter { (name, value) ->
                             when (name) {
-                                in PIECE_NEW -> true
+                                // An empty *_new only means something next to its *_old.
+                                in PIECE_NEW -> value.isNotEmpty() || !arguments[name.removeSuffix("_new") + "_old"].isNullOrEmpty()
                                 in PIECE_OLD -> value.isNotEmpty()
                                 else -> value.isNotBlank()
                             }
+                        }
+                        // Moving is its own update, so it either happens whole or not at all.
+                        require(given["chat_id"] == null || (given.keys - setOf("action", "task_id", "chat_id")).isEmpty()) {
+                            "Send chat_id in an update of its own (only action, task_id and chat_id); send the other changes in a separate update"
                         }
                         val mode = given["schedule_mode"]?.trim()?.uppercase()?.takeIf { it.isNotEmpty() } ?: task.scheduleMode
                         val timed = mode == "DAILY" || mode in OrbitCalendarSchedule.modes
@@ -244,7 +254,10 @@ internal object OrbitTaskTools {
                         val hookOnly = hook != null && given["script"] == null && given["watch"] == null &&
                             listOf("language", "vault_proxy", "vault_env").any { it in given }
                         val args = if (pieceGiven(given, "script") || hookOnly) scriptArgs(context, orbit.id, task, given) else given
-                        after(repository.edit(task,
+                        val moveTo = given["chat_id"]?.trim()?.takeIf { it != task.chatId }
+                        // A move skips the edit, so it also works for a task waiting on the user.
+                        val onlyMove = "chat_id" in given
+                        after(if (onlyMove) moveTo == null || repository.changeChat(orbit.id, id, moveTo) else repository.edit(task,
                         given["title"] ?: task.title, instruction,
                         if (task.kind == OrbitGeofence.KIND) {
                             given["location"]?.let { OrbitGeofence.source(context, it) } ?: task.source
@@ -453,6 +466,7 @@ internal object OrbitTaskTools {
         if (before.timeoutMinutes != after.timeoutMinutes) add("timeout_minutes")
         if (before.useSubagent != after.useSubagent) add("use_subagent")
         if (before.modelRole != after.modelRole) add("model")
+        if (before.chatId != after.chatId) add("chat_id")
         if (before.nextRunAt != after.nextRunAt) add("next_run")
     }
 
@@ -623,6 +637,7 @@ internal object OrbitTaskTools {
         .put("state", task.state).put("url", task.source).put("instruction", task.instruction)
         .put("interval_minutes", task.intervalMinutes).put("notify_policy", task.notifyPolicy)
         .put("timeout_minutes", OrbitTaskRepository.timeoutMinutes(task))
+        .put("chat_id", task.chatId)
         .apply {
             if (task.kind == OrbitGeofence.KIND) {
                 remove("url")

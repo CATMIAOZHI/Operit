@@ -85,6 +85,8 @@ class OrbitTaskRepository(private val context: Context) {
         runAt: Long? = null, dailyMinute: Int = 0, calendarRule: String = "",
         timeoutMinutes: Int = 0, chatId: String? = null, useSubagent: Boolean = false,
         modelRole: String = OrbitModels.DEFAULT,
+        /** The chat was picked by name (chat_id), so it must also be an open, unarchived chat. */
+        chosenChat: Boolean = false,
     ): OrbitTaskEntity {
         OrbitModels.checkedRole(modelRole)
         checkTaskFields(title, instruction, intervalMinutes, notifyPolicy, dailyMinute)
@@ -115,7 +117,16 @@ class OrbitTaskRepository(private val context: Context) {
             "", "", now, now, scheduleMode, goalId, triggerTaskId, sourceArtifactVersionId, rule, timeoutMinutes,
             useSubagent = useSubagent, modelRole = modelRole)
         OrbitExecutionGate.serialized {
-            check(OrbitPreferences.getInstance(context).current().orbits.any { it.id == orbit.id && !it.deleting }) { "This Orbit no longer exists" }
+            val current = OrbitPreferences.getInstance(context).current().orbits.firstOrNull { it.id == orbit.id && !it.deleting }
+            checkNotNull(current) { "This Orbit no longer exists" }
+            if (chosenChat) require(reportChatId in current.talkChatIds &&
+                current.sideChats.none { it.chatId == reportChatId && it.archived }) {
+                "chat_id must be this Orbit's main chat or a side chat that is not archived; check orbit_chat list"
+            }
+            if (chosenChat) check(com.ai.assistance.operit.data.db.AppDatabase.getDatabase(context).chatDao()
+                .getChatById(reportChatId) != null) { "That chat no longer exists; pick another from orbit_chat list" }
+            // The WeChat channel is only for talking in WeChat; a task is never sent there on purpose.
+            if (chosenChat) check(reportChatId !in OrbitWeixin.channelChats(context, orbit.id)) { WEIXIN_TARGET }
             if (dao.task(id) != null) return@serialized
             check(dao.tasks(orbit.id).count { it.state !in setOf("CANCELLED", "DONE") } < 20) { "At most 20 unfinished tasks" }
             if (goalId.isNotBlank()) check(dao.goal(goalId)?.let { it.orbitId == orbit.id && it.state == "ACTIVE" } == true) {
@@ -179,6 +190,44 @@ class OrbitTaskRepository(private val context: Context) {
             OrbitTaskScheduler.reschedule(context)
         }
         return changed
+    }
+
+    /**
+     * Throws unless [task] may move to [chatId]: the Orbit's main chat or a side chat that is not
+     * archived, for a task that is not cancelled and is not one of Orbit's own routines.
+     */
+    suspend fun checkChatTarget(task: OrbitTaskEntity, chatId: String) {
+        check(task.state != "CANCELLED") { "A cancelled task cannot be moved; create a new one" }
+        check(!OrbitRoutines.isRoutine(task)) { "Orbit's own routines stay in their own chat" }
+        if (task.chatId == chatId) return
+        val orbit = OrbitPreferences.getInstance(context).current().orbits.firstOrNull { it.id == task.orbitId && !it.deleting }
+        checkNotNull(orbit) { "This Orbit no longer exists" }
+        require(chatId in orbit.talkChatIds && orbit.sideChats.none { it.chatId == chatId && it.archived }) {
+            "chat_id must be this Orbit's main chat or a side chat that is not archived; check orbit_chat list"
+        }
+        // Chat history settings can delete a side chat's history while the Orbit still lists it.
+        check(com.ai.assistance.operit.data.db.AppDatabase.getDatabase(context).chatDao().getChatById(chatId) != null) {
+            "That chat no longer exists; pick another from orbit_chat list"
+        }
+        check(chatId !in OrbitWeixin.channelChats(context, task.orbitId)) { WEIXIN_TARGET }
+    }
+
+    /**
+     * Moves a task to another of its Orbit's chats. Messages and results it sends from now on go
+     * there; a turn Orbit already started in the old chat finishes there. False when the task
+     * changed meanwhile and nothing was moved.
+     */
+    suspend fun changeChat(orbitId: String, taskId: String, chatId: String): Boolean {
+        val task = dao.task(taskId)?.takeIf { it.orbitId == orbitId } ?: error("No task $taskId in this Orbit; check orbit_task list")
+        if (task.chatId == chatId) return true
+        val moved = OrbitExecutionGate.serialized {
+            // Checked inside the gate, so a side chat being deleted cannot take the task after its sweep.
+            checkChatTarget(task, chatId)
+            dao.updateChat(task.id, task.version, task.state, chatId, System.currentTimeMillis())
+        }
+        // Results that were waiting out a busy old chat can go to the new one now.
+        if (moved) OrbitTaskScheduler.reschedule(context, syncPlaces = false)
+        return moved
     }
 
     suspend fun edit(task: OrbitTaskEntity, title: String, instruction: String, source: String,
@@ -315,6 +364,8 @@ class OrbitTaskRepository(private val context: Context) {
 
     companion object {
         private val calendarZoneLock = Mutex()
+        private const val WEIXIN_TARGET =
+            "That chat is the WeChat channel; a task cannot report there. Pick the main chat or another side chat from orbit_chat list"
 
         /** The retired built-in daily check-in, or a manual run of it. */
         fun isRetiredCheckIn(task: OrbitTaskEntity): Boolean =

@@ -38,6 +38,10 @@ interface ChatDao {
     )
     fun getRecentChats(): Flow<List<ChatEntity>>
 
+    /** 给定 ID 中仍存在的聊天 ID */
+    @Query("SELECT id FROM chats WHERE id IN (:chatIds)")
+    suspend fun existingChatIds(chatIds: List<String>): List<String>
+
     /** 根据ID获取单个聊天 */
     @Query("SELECT * FROM chats WHERE id = :chatId")
     suspend fun getChatById(chatId: String): ChatEntity?

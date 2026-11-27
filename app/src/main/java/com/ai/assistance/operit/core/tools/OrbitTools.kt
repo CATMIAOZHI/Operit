@@ -202,8 +202,8 @@ internal object OrbitTools {
         val sideNote = side?.let {
             val title = escape(it.title)
             if (useEnglish) "\nThis is a side chat titled \"$title\", separate from the main chat. It keeps its own history; " +
-                "reminders and tasks made here report back here unless the user asks for the main chat."
-            else "\n这是一个侧聊，标题是「$title」，和主聊天分开，有自己的记录。在这里安排的提醒和任务，结果回到这里，除非用户要求发到主聊天。"
+                "reminders and tasks made here report back here unless the user asks for another chat (orbit_task chat_id)."
+            else "\n这是一个侧聊，标题是「$title」，和主聊天分开，有自己的记录。在这里安排的提醒和任务，结果回到这里，除非用户要求发到别的聊天（用 orbit_task 的 chat_id）。"
         }.orEmpty()
         val forkReference = side?.forkOrigin?.takeIf { it.chatId in orbit.talkChatIds }?.let {
             com.ai.assistance.operit.features.orbit.OrbitChatFork.prompt(context, it, useEnglish)

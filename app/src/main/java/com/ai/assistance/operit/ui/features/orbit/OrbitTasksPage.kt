@@ -22,6 +22,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -798,6 +800,30 @@ private fun TaskDetail(
     val resources = LocalResources.current
     val task = tasks?.firstOrNull { it.id == taskId }
     var userNote by rememberSaveable(taskId) { mutableStateOf("") }
+    var pickChat by rememberSaveable(taskId) { mutableStateOf(false) }
+    // Checked once here and shared with the sheet, so opening it does not query again.
+    val movableChats = rememberMovableChats(orbitId, enabled = task != null && task.state != "CANCELLED" &&
+        !OrbitRoutines.isRoutine(task))
+    // Restored after a rotation, the sheet waits for the list instead of opening empty.
+    if (pickChat && task != null && movableChats != null) {
+        TaskChatSheet(orbitId, task, movableChats, onDismiss = { pickChat = false }) { chatId, title ->
+            pickChat = false
+            action {
+                // Shown as a toast: the page's own feedback sits at the end of the list, out of sight
+                // from the chat row the user just tapped.
+                val moved = try {
+                    // Finishes even if the user leaves the page right away.
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { repository.changeChat(orbitId, task.id, chatId) }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    false
+                }
+                android.widget.Toast.makeText(context, if (moved) resources.getString(R.string.orbit_task_chat_moved, title)
+                    else resources.getString(R.string.orbit_task_chat_move_failed), android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
     val lastRun by produceState<OrbitRunEntity?>(null, taskId, retry) {
         try { repository.dao.observeLatestRun(taskId).collect { run -> value = run } }
         catch (e: CancellationException) { throw e }
@@ -862,9 +888,13 @@ private fun TaskDetail(
             TaskCard(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp), spacing = 0.dp) {
                 val (icon, whenText) = taskIconAndSchedule(task, tasks)
                 InfoRow(taskIconName(task, icon), stringResource(R.string.orbit_task_row_when), whenText, divider, first = true)
-                // The chat it runs and reports in; tapping opens it.
+                // The chat it runs and reports in; tapping opens it. Moving is a separate button,
+                // shown only when there is another open chat to move to (routines stay put).
+                val movable = movableChats.orEmpty().any { it.id != task.chatId }
                 InfoRow("messages-square", stringResource(R.string.orbit_task_row_chat),
                     rememberSideChatTitle(task.chatId) ?: stringResource(R.string.orbit_chats_main), divider,
+                    trailing = if (movable) stringResource(R.string.orbit_task_chat_change) to { pickChat = true } else null,
+                    trailingEnabled = !busy,
                     onClick = { com.ai.assistance.operit.features.orbit.OrbitNavigation.openChat(task.chatId) })
                 if (task.state == "ACTIVE" && task.scheduleMode != "EVENT" &&
                     (task.kind != OrbitGeofence.KIND || dueAt != null)) {
@@ -1168,7 +1198,7 @@ private fun CardLabel(text: String) {
 /** One fact about the task: round icon, a small label and its value. */
 @Composable
 private fun InfoRow(icon: String, label: String, value: String, divider: Color, first: Boolean = false,
-    onClick: (() -> Unit)? = null) {
+    trailing: Pair<String, () -> Unit>? = null, trailingEnabled: Boolean = true, onClick: (() -> Unit)? = null) {
     if (!first) HorizontalDivider(Modifier.padding(start = 50.dp), color = divider)
     Row(Modifier.fillMaxWidth().then(if (onClick != null) Modifier.clickable(role = Role.Button, onClick = onClick) else Modifier)
         .padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1178,9 +1208,114 @@ private fun InfoRow(icon: String, label: String, value: String, divider: Color, 
             Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(value, style = MaterialTheme.typography.bodyLarge)
         }
+        trailing?.let { (text, act) -> TextButton(onClick = act, enabled = trailingEnabled) { Text(text) } }
         if (onClick != null) Icon(orbitIcon("chevron-right"), null, Modifier.size(20.dp),
             tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
     }
+}
+
+/** A chat a task can move to; [createdAt] tells apart side chats with the same title. */
+private data class MovableChat(val id: String, val title: String, val createdAt: Long, val main: Boolean)
+
+/** Picks the chat a task reports to: the main chat or an open side chat. The current one is checked. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TaskChatSheet(orbitId: String, task: OrbitTaskEntity, chats: List<MovableChat>, onDismiss: () -> Unit,
+    onPick: (String, String) -> Unit) {
+    val divider = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+    val createdLabel = stringResource(R.string.orbit_task_chat_created)
+    // Side chats with the same name also show when each was started (to the second); two started in
+    // the same second are numbered in the order shown.
+    val notes = remember(chats, createdLabel) {
+        val dateFormat = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.MEDIUM)
+        // A side chat named like the main chat counts as a repeat too.
+        val repeated = chats.groupingBy { it.title }.eachCount().filterValues { it > 1 }.keys
+        val raw = chats.associate { chat ->
+            chat.id to if (!chat.main && chat.title in repeated)
+                createdLabel.format(if (chat.createdAt > 0) dateFormat.format(Date(chat.createdAt)) else "?") else null
+        }
+        val seen = HashMap<Pair<String, String?>, Int>()
+        val clashes = chats.groupingBy { it.title to raw[it.id] }.eachCount()
+        chats.associate { chat ->
+            val key = chat.title to raw[chat.id]
+            val note = raw[chat.id]
+            chat.id to if (note != null && (clashes[key] ?: 0) > 1) "$note · #${seen.merge(key, 1, Int::plus)}" else note
+        }
+    }
+    OrbitModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        Column(
+            Modifier.fillMaxWidth().verticalScroll(androidx.compose.foundation.rememberScrollState())
+                .navigationBarsPadding().padding(horizontal = 20.dp).padding(bottom = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(stringResource(R.string.orbit_task_chat_pick_title), style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold)
+            Text(stringResource(R.string.orbit_task_chat_pick_desc, rememberOrbitName(orbitId)),
+                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            TaskCard(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp), spacing = 0.dp) {
+              Column(Modifier.selectableGroup()) {
+                chats.forEachIndexed { index, chat ->
+                    if (index > 0) HorizontalDivider(Modifier.padding(start = 50.dp), color = divider)
+                    val current = chat.id == task.chatId
+                    val created = notes[chat.id]
+                    Row(Modifier.fillMaxWidth().selectable(selected = current, role = Role.RadioButton) {
+                        if (current) onDismiss() else onPick(chat.id, if (created != null) "${chat.title} · $created" else chat.title)
+                    }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        TaskIcon(if (chat.main) "house" else "message-circle", size = 36.dp, iconSize = 18.dp)
+                        Spacer(Modifier.width(14.dp))
+                        Column(Modifier.weight(1f)) {
+                            // Shown whole, so long titles that differ only at the end can be told apart.
+                            Text(chat.title, style = MaterialTheme.typography.bodyLarge)
+                            created?.let {
+                                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                        if (current) Icon(orbitIcon("check"), null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+                    }
+                }
+              }
+            }
+        }
+    }
+}
+
+/**
+ * The chats a task can move to: the main chat, then open side chats in the side menu's order
+ * (pinned first, newest first), leaving out the WeChat channel and side chats whose history was
+ * deleted from chat history settings. Null until checked; only looked up when [enabled].
+ */
+@Composable
+private fun rememberMovableChats(orbitId: String, enabled: Boolean): List<MovableChat>? {
+    val context = LocalContext.current.applicationContext
+    val preferences = com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context)
+    val settings by preferences.settingsFlow.collectAsState(initial = preferences.snapshot)
+    val orbit = settings.orbits.firstOrNull { it.id == orbitId }
+    val main = stringResource(R.string.orbit_chats_main)
+    val untitled = stringResource(R.string.orbit_chats_side_section)
+    val listed = remember(enabled, orbit?.chatId, orbit?.sideChats, main, untitled) {
+        if (!enabled || orbit == null) emptyList()
+        else listOf(MovableChat(orbit.chatId, main, 0L, true)) + orbit.sideChats.filter { !it.archived }
+            .sortedWith(compareByDescending<com.ai.assistance.operit.data.preferences.OrbitSideChat> { it.pinnedAt }
+                .thenByDescending { it.createdAt })
+            .map { MovableChat(it.chatId, it.title.ifBlank { untitled }, it.createdAt, false) }
+    }
+    val chats by produceState<List<MovableChat>?>(null, listed) {
+        // The last list stays while the new one is read, so an open sheet is not closed and reopened.
+        if (listed.isEmpty()) { value = emptyList(); return@produceState }
+        value = try {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val existing = com.ai.assistance.operit.data.db.AppDatabase.getDatabase(context).chatDao()
+                    .existingChatIds(listed.map { it.id }).toSet()
+                val channel = com.ai.assistance.operit.features.orbit.OrbitWeixin.channelChats(context, orbitId)
+                listed.filter { it.id in existing && it.id !in channel }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+    return chats
 }
 
 /** The title of the side chat [chatId] is; null for an Orbit's main chat or a chat it no longer has. */

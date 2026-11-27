@@ -61,6 +61,7 @@ import com.ai.assistance.operit.data.api.AccountProvider
 import com.ai.assistance.operit.data.api.ClaudeOAuthProtocol
 import com.ai.assistance.operit.data.api.ProviderAccountManager
 import com.ai.assistance.operit.data.api.OpenCodeGoQuotaClient
+import com.ai.assistance.operit.data.api.OpenCodeGoQuotaMemory
 import com.ai.assistance.operit.data.api.ProviderQuota
 import com.ai.assistance.operit.api.chat.llmprovider.AntigravityTransport
 import com.ai.assistance.operit.ui.features.codex.ProviderAccountSettings
@@ -301,30 +302,45 @@ fun ModelApiSettingsSection(
     var openCodeGoQuota by remember(config.id) { mutableStateOf<ProviderQuota?>(null) }
     var openCodeGoQuotaLoading by remember(config.id) { mutableStateOf(false) }
     var openCodeGoQuotaFailed by remember(config.id) { mutableStateOf(false) }
+    var openCodeGoQuotaRejected by remember(config.id) { mutableStateOf(false) }
     var openCodeGoRequestId by remember(config.id) { mutableLongStateOf(0L) }
+    var openCodeGoJob by remember(config.id) { mutableStateOf<kotlinx.coroutines.Job?>(null) }
 
-    // No automatic probe: the key field keeps the previous provider's value while the user switches
-    // providers, and autosave then persists that key into this row. Probing on arrival would send a
-    // credential the user never associated with OpenCode Go, so the probe only runs when asked for.
+    // The key field keeps the previous provider's value while the user switches providers, and
+    // autosave can store that key under OpenCode Go. So a key is checked automatically only once
+    // opencode.ai has accepted it from a refresh the user asked for (OpenCodeGoQuotaMemory).
     val isOpenCodeGoProvider = selectedApiProvider == ApiProviderType.OPENCODE_GO
     val openCodeGoProbeKey = apiKeyInput.trim()
-    val openCodeGoProbeEndpoint = apiEndpointInput
+    // Every Go path of the official host reads one usage page, so only a change of that page restarts the check.
+    val openCodeGoProbeEndpoint = remember(apiEndpointInput) {
+        OpenCodeGoQuotaClient.usageUrl(apiEndpointInput)?.toString() ?: apiEndpointInput
+    }
 
     fun refreshOpenCodeGoQuota() {
         val key = openCodeGoProbeKey
-        if (key.isEmpty()) return
+        // One request at a time: a tap while the automatic check runs does not send a second one.
+        if (key.isEmpty() || openCodeGoQuotaLoading) return
+        val endpoint = openCodeGoProbeEndpoint
         val requestId = ++openCodeGoRequestId
         openCodeGoQuotaFailed = false
         openCodeGoQuotaLoading = true
-        scope.launch {
+        openCodeGoJob = scope.launch {
+            val fingerprint = withContext(Dispatchers.IO) { OpenCodeGoQuotaMemory.fingerprint(key, endpoint) }
+            OpenCodeGoQuotaMemory.noteAttempt(fingerprint)
+            var rejected = false
             val result = try {
                 withContext(Dispatchers.IO) {
-                    openCodeGoQuotaClient.fetch(key, openCodeGoProbeEndpoint)
+                    openCodeGoQuotaClient.fetch(key, endpoint).also {
+                        OpenCodeGoQuotaMemory.remember(context, fingerprint, it)
+                    }
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
                 AppLogger.e(TAG, "获取 OpenCode Go 余额失败", error)
+                // 401/403: opencode.ai refused the key itself, so the panel says to check it.
+                rejected = (error as? com.ai.assistance.operit.data.api.AccountHttpException)?.status in setOf(401, 403)
+                OpenCodeGoQuotaMemory.noteFailure(fingerprint, rejected)
                 null
             }
             // A slow probe for a superseded key must not land on the current one's panel.
@@ -333,16 +349,35 @@ fun ModelApiSettingsSection(
             // A transient failure keeps the last good numbers; only the note changes.
             if (result != null) openCodeGoQuota = result
             openCodeGoQuotaFailed = result == null
+            openCodeGoQuotaRejected = rejected
         }
     }
 
     LaunchedEffect(isOpenCodeGoProvider, openCodeGoProbeKey, openCodeGoProbeEndpoint) {
         // Supersede any in-flight probe so neither its result nor its spinner outlives the target,
         // and drop the previous target's numbers rather than attribute them to the new one.
-        openCodeGoRequestId++
-        openCodeGoQuotaLoading = false
+        // A request for the previous key or endpoint is stopped, not just ignored.
+        openCodeGoJob?.cancel()
+        openCodeGoJob = null
+        val readId = ++openCodeGoRequestId
         openCodeGoQuotaFailed = false
+        openCodeGoQuotaRejected = false
         openCodeGoQuota = null
+        val probing = isOpenCodeGoProvider && openCodeGoProbeKey.isNotEmpty()
+        // While the saved state is read, the panel shows it is loading rather than asking for a tap.
+        openCodeGoQuotaLoading = probing
+        if (!probing) return@LaunchedEffect
+        val (fingerprint, verified) = withContext(Dispatchers.IO) {
+            val print = OpenCodeGoQuotaMemory.fingerprint(openCodeGoProbeKey, openCodeGoProbeEndpoint)
+            print to OpenCodeGoQuotaMemory.isVerified(context, print)
+        }
+        if (readId != openCodeGoRequestId) return@LaunchedEffect
+        openCodeGoQuotaLoading = false
+        // Coming back to the page (or scrolling back to this section) shows the last balance at once.
+        OpenCodeGoQuotaMemory.cached(fingerprint)?.let { openCodeGoQuota = it.first }
+        openCodeGoQuotaFailed = OpenCodeGoQuotaMemory.lastFailed(fingerprint)
+        openCodeGoQuotaRejected = OpenCodeGoQuotaMemory.lastRejected(fingerprint)
+        if (verified && OpenCodeGoQuotaMemory.claimAutoProbe(fingerprint)) refreshOpenCodeGoQuota()
     }
 
     // 多模态处理配置状态
@@ -1346,6 +1381,7 @@ fun ModelApiSettingsSection(
                     loading = openCodeGoQuotaLoading,
                     failed = openCodeGoQuotaFailed,
                     onRefresh = { refreshOpenCodeGoQuota() },
+                    rejected = openCodeGoQuotaRejected,
                 )
             }
 
