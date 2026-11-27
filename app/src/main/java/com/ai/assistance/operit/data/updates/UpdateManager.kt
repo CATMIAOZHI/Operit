@@ -66,9 +66,7 @@ class UpdateManager private constructor(private val context: Context) {
         fun getInstance(context: Context): UpdateManager {
             return INSTANCE
                     ?: synchronized(this) {
-                        val instance = UpdateManager(context.applicationContext)
-                        INSTANCE = instance
-                        instance
+                        INSTANCE ?: UpdateManager(context.applicationContext).also { INSTANCE = it }
                     }
         }
 
@@ -361,8 +359,6 @@ class UpdateManager private constructor(private val context: Context) {
         var bestTargetSha = ""
         var bestFullVersion = ""
         val isPersonalDev = BuildConfig.PERSONAL_DEV_UPDATE_CHANNEL
-        // 所有渠道的可达性预检都需要当前安装 APK 的 SHA-256 作为链起点。
-        val currentApkSha = sha256Hex(File(context.applicationInfo.sourceDir))
         val patchEdges = mutableMapOf<String, MutableSet<String>>()
 
         for (r in releases) {
@@ -462,7 +458,9 @@ class UpdateManager private constructor(private val context: Context) {
         }
         // 所有渠道都做链可达性预检：不可达时回退到完整 APK（bestFull），
         // 而不是等到安装阶段才让 resolvePatchChain 失败。
-        val patchIsReachable = canReachSha(currentApkSha, bestTargetSha, patchEdges)
+        // 链起点是当前安装 APK 的 SHA-256；读整个 APK 较慢，只在确实有补丁候选时才算。
+        val patchIsReachable =
+            best != null && canReachSha(sha256Hex(File(context.applicationInfo.sourceDir)), bestTargetSha, patchEdges)
         return if (patchIsReachable) best ?: bestFull else bestFull
     }
 

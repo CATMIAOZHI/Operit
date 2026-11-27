@@ -437,6 +437,7 @@ class UserPreferencesManager private constructor(private val context: Context) {
         private val KEY_SHOW_CHAT_FLOATING_DOTS_ANIMATION = booleanPreferencesKey("show_chat_floating_dots_animation")
         private val KEY_UI_ACCESSIBILITY_MODE = booleanPreferencesKey("ui_accessibility_mode")
         private val KEY_BETA_PLAN_ENABLED = booleanPreferencesKey("beta_plan_enabled")
+        private val KEY_AUTO_CHECK_UPDATES = booleanPreferencesKey("auto_check_updates")
 
         // 布局调整设置
         private val CHAT_SETTINGS_BUTTON_END_PADDING = floatPreferencesKey("chat_settings_button_end_padding")
@@ -515,6 +516,12 @@ class UserPreferencesManager private constructor(private val context: Context) {
     suspend fun saveBetaPlanEnabled(enabled: Boolean) {
         context.userPreferencesDataStore.edit { preferences ->
             preferences[KEY_BETA_PLAN_ENABLED] = enabled
+        }
+    }
+
+    suspend fun saveAutoCheckUpdates(enabled: Boolean) {
+        context.userPreferencesDataStore.edit { preferences ->
+            preferences[KEY_AUTO_CHECK_UPDATES] = enabled
         }
     }
 
@@ -1301,6 +1308,12 @@ class UserPreferencesManager private constructor(private val context: Context) {
     val betaPlanEnabled: Flow<Boolean> =
         context.userPreferencesDataStore.data.map { preferences ->
             preferences[KEY_BETA_PLAN_ENABLED] ?: false
+        }
+
+    /** Whether the app looks for a new version by itself once a day (on unless turned off). */
+    val autoCheckUpdates: Flow<Boolean> =
+        context.userPreferencesDataStore.data.map { preferences ->
+            preferences[KEY_AUTO_CHECK_UPDATES] ?: true
         }
 
     // 字体设置相关Flow
