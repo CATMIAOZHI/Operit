@@ -7,51 +7,88 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.Environment
-import com.ai.assistance.operit.util.AppLogger
-import com.ai.assistance.operit.util.CrashRecoveryState
-import com.ai.assistance.operit.util.ThrowableTextFormatter
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.Description
-import androidx.compose.material.icons.filled.RestartAlt
-import androidx.compose.material.icons.filled.Save
-import androidx.compose.material3.*
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.core.config.DistributionConfig
 import com.ai.assistance.operit.ui.common.OperitUtilityTheme
 import com.ai.assistance.operit.ui.features.toolbox.screens.logcat.LogcatExportHelper
+import com.ai.assistance.operit.ui.features.toolbox.screens.logcat.LogcatExportResult
 import com.ai.assistance.operit.ui.main.MainActivity
+import com.ai.assistance.operit.util.AppLogger
+import com.ai.assistance.operit.util.ThrowableTextFormatter
 import kotlinx.coroutines.launch
-import java.io.File
-import java.io.FileOutputStream
-import java.nio.charset.StandardCharsets
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.viewmodel.compose.viewModel
 
+/** Holds the export while it runs and its outcome, so turning the phone neither cuts it off nor loses it. */
+class CrashReportViewModel(application: Application) : AndroidViewModel(application) {
+    var exporting by mutableStateOf(false)
+        private set
+    var result by mutableStateOf<LogcatExportResult?>(null)
+        private set
+
+    fun export(report: String) {
+        if (exporting) return
+        exporting = true
+        viewModelScope.launch {
+            try {
+                result = LogcatExportHelper.exportLogs(getApplication(), crashReport = report)
+            } finally {
+                exporting = false
+            }
+        }
+    }
+}
+
+/**
+ * Shown in its own process after the app crashed. The flag that keeps the crashed run's log is
+ * left for the next start of the app itself, so the log can still be exported from the settings
+ * after reopening.
+ */
 class CrashReportActivity : ComponentActivity() {
 
     companion object {
@@ -61,7 +98,6 @@ class CrashReportActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        CrashRecoveryState.consumePendingCrashReportLaunch(this)
         val stackTrace = ThrowableTextFormatter.truncateText(
             intent.getStringExtra(EXTRA_STACK_TRACE) ?: "No stack trace available.",
             MAX_CRASH_REPORT_CHARS
@@ -73,209 +109,162 @@ class CrashReportActivity : ComponentActivity() {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun CrashReportScreen(stackTrace: String) {
     val context = LocalContext.current
-    val coroutineScope = rememberCoroutineScope()
-    var isExportingLogs by remember { mutableStateOf(false) }
-    var logExportMessage by remember { mutableStateOf<String?>(null) }
-    var logExportSuccess by remember { mutableStateOf<Boolean?>(null) }
+    val model: CrashReportViewModel = viewModel()
+    val exporting = model.exporting
+    val exported = model.result
+    var showDetails by rememberSaveable { mutableStateOf(false) }
 
-    Scaffold(
-            topBar = {
-                TopAppBar(
-                        title = { Text(stringResource(id = R.string.title_activity_crash_report)) },
-                        colors = TopAppBarDefaults.topAppBarColors(
-                            containerColor = MaterialTheme.colorScheme.errorContainer,
-                            titleContentColor = MaterialTheme.colorScheme.onErrorContainer
-                        )
+    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .safeDrawingPadding()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 24.dp, vertical = 32.dp),
+        ) {
+            Text(stringResource(R.string.crash_page_title), style = MaterialTheme.typography.headlineSmall)
+            Spacer(Modifier.height(12.dp))
+            Text(
+                stringResource(R.string.crash_page_body),
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(16.dp))
+            Card(
+                Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+            ) {
+                Text(
+                    stringResource(R.string.crash_page_interrupted),
+                    Modifier.padding(16.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-            },
-            content = { paddingValues ->
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(paddingValues)
-                        .padding(16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
+            }
+
+            Spacer(Modifier.height(28.dp))
+            // Not while the file is written: reopening ends this process and would cut it off.
+            Button(onClick = { restartApp(context) }, enabled = !exporting, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.crash_page_reopen))
+            }
+            Spacer(Modifier.height(12.dp))
+            OutlinedButton(
+                onClick = { model.export(stackTrace) },
+                enabled = !exporting,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                if (exporting) {
+                    CircularProgressIndicator(Modifier.size(ButtonDefaults.IconSize), strokeWidth = 2.dp)
+                    Spacer(Modifier.size(ButtonDefaults.IconSpacing))
+                }
+                Text(stringResource(R.string.crash_page_export))
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                stringResource(R.string.crash_page_export_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            exported?.let { result ->
+                val ok = result.success && result.complete
+                Spacer(Modifier.height(12.dp))
+                Card(
+                    Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (ok) MaterialTheme.colorScheme.secondaryContainer
+                            else MaterialTheme.colorScheme.errorContainer
+                    ),
                 ) {
-                    Text(
-                        stringResource(id = R.string.crash_report_header),
-                        style = MaterialTheme.typography.bodyLarge,
-                        textAlign = TextAlign.Center
-                    )
-                    Spacer(modifier = Modifier.height(24.dp))
-
-                    // 主要操作按钮
-                    Button(
-                        onClick = { restartApp(context) },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.error
-                        )
-                    ) {
-                        Icon(Icons.Default.RestartAlt, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
-                        Spacer(Modifier.size(ButtonDefaults.IconSpacing))
-                        Text(stringResource(id = R.string.crash_report_restart_button))
-                    }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    // 次要操作按钮
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        OutlinedButton(
-                            onClick = {
-                                copyToClipboard(context, stackTrace)
-                            },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
-                            Spacer(Modifier.size(ButtonDefaults.IconSpacing))
-                            Text(stringResource(id = R.string.crash_report_copy_button))
-                        }
-
-                        OutlinedButton(
-                            onClick = {
-                                coroutineScope.launch {
-                                    exportToFile(context, stackTrace)
-                                }
-                            },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
-                            Spacer(Modifier.size(ButtonDefaults.IconSpacing))
-                            Text(stringResource(id = R.string.crash_report_export_button))
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    OutlinedButton(
-                        onClick = {
-                            coroutineScope.launch {
-                                isExportingLogs = true
-                                logExportMessage = null
-                                logExportSuccess = null
-                                try {
-                                    val result = LogcatExportHelper.exportLogs(context)
-                                    logExportMessage = result.message
-                                    logExportSuccess = result.success
-                                } finally {
-                                    isExportingLogs = false
-                                }
-                            }
-                        },
-                        enabled = !isExportingLogs,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        if (isExportingLogs) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(ButtonDefaults.IconSize),
-                                strokeWidth = 2.dp
-                            )
-                        } else {
-                            Icon(
-                                Icons.Default.Description,
-                                contentDescription = null,
-                                modifier = Modifier.size(ButtonDefaults.IconSize)
+                    Column(Modifier.padding(16.dp)) {
+                        SelectionContainer {
+                            Text(
+                                result.message,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (ok) MaterialTheme.colorScheme.onSecondaryContainer
+                                    else MaterialTheme.colorScheme.onErrorContainer,
                             )
                         }
-                        Spacer(Modifier.size(ButtonDefaults.IconSpacing))
-                        Text(stringResource(id = R.string.crash_report_export_logs_button))
-                    }
-
-                    if (logExportMessage != null) {
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(
-                                containerColor = if (logExportSuccess == true) {
-                                    MaterialTheme.colorScheme.primaryContainer
-                                } else {
-                                    MaterialTheme.colorScheme.errorContainer
-                                }
-                            )
-                        ) {
-                            SelectionContainer {
-                                Text(
-                                    text = logExportMessage.orEmpty(),
-                                    modifier = Modifier.padding(12.dp),
-                                    style = MaterialTheme.typography.bodySmall.copy(
-                                        fontFamily = FontFamily.Monospace
-                                    ),
-                                    color = if (logExportSuccess == true) {
-                                        MaterialTheme.colorScheme.onPrimaryContainer
-                                    } else {
-                                        MaterialTheme.colorScheme.onErrorContainer
-                                    }
-                                )
+                        val uri = result.uri
+                        if (result.success && uri != null) {
+                            TextButton(onClick = { shareFile(context, uri, result.fileName.orEmpty()) }) {
+                                Text(stringResource(R.string.crash_page_share))
                             }
                         }
                     }
+                }
+            }
 
-                    Spacer(modifier = Modifier.height(24.dp))
-                    Text(
-                        stringResource(id = R.string.crash_report_details_title),
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Card(
-                        modifier = Modifier.fillMaxWidth().weight(1f),
-                        shape = RoundedCornerShape(8.dp),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant
-                        )
-                    ) {
+            Spacer(Modifier.height(12.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = { copyToClipboard(context, stackTrace) }) {
+                    Text(stringResource(R.string.crash_page_copy))
+                }
+                TextButton(onClick = { openIssues(context) }) {
+                    Text(stringResource(R.string.crash_page_report))
+                }
+                TextButton(onClick = { showDetails = !showDetails }) {
+                    Text(stringResource(if (showDetails) R.string.crash_page_hide_details else R.string.crash_report_details_title))
+                }
+            }
+
+            if (showDetails) {
+                Spacer(Modifier.height(8.dp))
+                Card(
+                    Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                ) {
+                    SelectionContainer {
                         Text(
                             text = stackTrace,
                             modifier = Modifier
-                                .fillMaxSize()
+                                .heightIn(max = 420.dp)
                                 .verticalScroll(rememberScrollState())
+                                .horizontalScroll(rememberScrollState())
                                 .padding(12.dp),
-                            style = MaterialTheme.typography.bodySmall.copy(
-                                fontFamily = FontFamily.Monospace,
-                                lineHeight = MaterialTheme.typography.bodySmall.lineHeight * 1.2
-                            ),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
             }
-    )
+        }
+    }
 }
 
 private fun copyToClipboard(context: Context, text: String) {
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-    val clip = ClipData.newPlainText("error_stack_trace", text)
-    clipboard.setPrimaryClip(clip)
+    clipboard.setPrimaryClip(ClipData.newPlainText("error_stack_trace", text))
     Toast.makeText(context, R.string.crash_report_copy_success, Toast.LENGTH_SHORT).show()
 }
 
-private fun exportToFile(context: Context, text: String) {
+private fun shareFile(context: Context, uri: Uri, name: String) {
     try {
-        val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-        val errorDir = File(downloadsDir, "Operit/error")
-        if (!errorDir.exists()) {
-            errorDir.mkdirs()
-        }
-
-        val timestamp = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).format(Date())
-        val file = File(errorDir, "error-report-$timestamp.log")
-
-        FileOutputStream(file).use {
-            it.write(text.toByteArray(StandardCharsets.UTF_8))
-        }
-        val successMsg = context.getString(R.string.crash_report_export_success, file.absolutePath)
-        Toast.makeText(context, successMsg, Toast.LENGTH_LONG).show()
-
+        val intent = Intent(Intent.ACTION_SEND).setType("application/zip")
+            .putExtra(Intent.EXTRA_STREAM, uri)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        context.startActivity(Intent.createChooser(intent, name).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     } catch (e: Exception) {
-        val errorMsg = context.getString(R.string.crash_report_export_failed, e.localizedMessage)
-        Toast.makeText(context, errorMsg, Toast.LENGTH_LONG).show()
-        AppLogger.e("CrashReportActivity", "Failed to export crash report", e)
+        AppLogger.e("CrashReportActivity", "Failed to share the crash log", e)
+        Toast.makeText(context, R.string.orbit_file_share_failed, Toast.LENGTH_LONG).show()
+    }
+}
+
+private fun openIssues(context: Context) {
+    val url = "https://github.com/${DistributionConfig.OWNER}/${DistributionConfig.SOURCE_REPOSITORY}/issues"
+    try {
+        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    } catch (e: Exception) {
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("issues", url))
+        Toast.makeText(context, R.string.crash_page_report_copied, Toast.LENGTH_LONG).show()
     }
 }
 

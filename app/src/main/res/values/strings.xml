@@ -18,6 +18,7 @@
     <string name="dynamic_ui_close_details">关闭详情</string>
     <string name="dynamic_ui_bad_table">表格数据格式有误，请检查输入</string>
     <string name="logcat_flush_incomplete">现有日志已保存至 %1$s；日志可能不完整，原因也已记录在压缩包的 export-status.txt 中。</string>
+    <string name="logcat_crash_log_missing">崩溃信息已保存至 %1$s，但应用日志缺失或不完整。</string>
     <string name="logcat_export_pending">开始导出时的日志仍有 %1$d 条未完成写入。</string>
     <string name="logcat_export_dropped">日志队列曾因繁忙或线程中断丢弃 %1$d 条记录，无法恢复。</string>
     <string name="logcat_export_write_failed">本次日志记录期间发生过文件写入失败。</string>
@@ -1441,6 +1442,17 @@
     <string name="crash_report_copy_success">已复制到剪贴板</string>
     <string name="crash_report_export_success">错误报告已导出到\n%1$s</string>
     <string name="crash_report_export_failed">导出失败: %1$s</string>
+    <string name="crash_page_title">Orbit 刚才出错关闭了</string>
+    <string name="crash_page_body">抱歉打断你。重新打开后，Orbit 会知道刚才出了问题，并自己决定要不要接着做。</string>
+    <string name="crash_page_interrupted">后台的子代理和终端里正在跑的任务（比如编译）已经中断或失去联系，重新打开后请检查一下。</string>
+    <string name="crash_page_reopen">重新打开 Orbit</string>
+    <string name="crash_page_export">导出崩溃日志</string>
+    <string name="crash_page_export_hint">错误信息和应用日志会打包成一个文件，反馈问题时附上它。日志里可能有聊天片段和设备信息，公开发出前请先看一遍，遮掉不想公开的内容。</string>
+    <string name="crash_page_share">分享</string>
+    <string name="crash_page_copy">复制错误</string>
+    <string name="crash_page_report">反馈问题</string>
+    <string name="crash_page_report_copied">打不开反馈页，已复制反馈链接</string>
+    <string name="crash_page_hide_details">收起详情</string>
     
     <!-- 模型提示词设置屏幕 -->
     <string name="model_prompts_title">提示词设置</string>
