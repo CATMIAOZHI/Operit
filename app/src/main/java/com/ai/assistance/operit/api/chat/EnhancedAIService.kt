@@ -3131,6 +3131,9 @@ class EnhancedAIService private constructor(
             inputOnly: Boolean = false,
     ) {
         val startTime = messageTimingNow()
+        // Only the count is kept for the closing log: the next round runs inside this call, and the
+        // results must not stay alive for all of it.
+        val resultCount = results.size
         val perf = com.ai.assistance.operit.core.chat.LlmRequestPerf(
             "工具结果回传 $functionType", streaming = stream, chatId = chatId, toolResult = true,
         )
@@ -3523,6 +3526,10 @@ class EnhancedAIService private constructor(
                         throw e
                     } } }
 
+                    // The next round runs inside this call (processStreamCompletion below); this
+                    // round's copy of the whole history must not stay alive through it.
+                    currentChatHistory = emptyList()
+
                     // Update accumulated token counts and persist them
                     val inputTokens = if (requestReportedTokens) serviceForFunction.inputTokenCount else 0
                     val cachedInputTokens = if (requestReportedTokens) serviceForFunction.cachedInputTokenCount else 0
@@ -3587,7 +3594,7 @@ class EnhancedAIService private constructor(
                     logMessageTiming(
                         stage = "enhanced.processToolResults.complete",
                         startTimeMs = startTime,
-                        details = "toolNames=$displayToolNames, resultCount=${results.size}"
+                        details = "toolNames=$displayToolNames, resultCount=$resultCount"
                     )
                 }
             }

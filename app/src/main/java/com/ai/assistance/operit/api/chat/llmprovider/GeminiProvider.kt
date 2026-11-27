@@ -1639,7 +1639,9 @@ open class GeminiProvider(
                             throw e
                         }
                         if (AppLogger.logRequestBodies) RequestBodyLog.write(TAG, context.getString(R.string.gemini_request_body_json), json)
-                        json.toString().toRequestBody(JSON)
+                        // An account route takes the request object as it is, without a text round trip.
+                        if (antigravity != null && !usingInteractions) AntigravityTransport.JsonBody(json)
+                        else json.toString().toRequestBody(JSON)
                     }
                 }
                 val parent = attemptParent
@@ -1656,6 +1658,8 @@ open class GeminiProvider(
                 } else createRequest(context, requestBody, stream, requestId, key, attemptAccount)
                 // What really goes out: an account route (Antigravity) rewrites and wraps the body.
                 perf?.captured(providerModel, request.body ?: requestBody)
+                // An account route encodes its body only when the request is built.
+                if (requestBody is AntigravityTransport.JsonBody) perf?.bodySize(request.body?.contentLength() ?: -1L)
 
                 announceAccountSwitch(apiKeyProvider, onNonFatalError)
                 val call = client.newCall(request.withPerf(perf))
