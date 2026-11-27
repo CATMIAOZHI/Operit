@@ -49,7 +49,8 @@ internal object OrbitApprovals {
     const val SOURCE_ORBIT = "orbit"
 
     const val MAX_TITLE = 80
-    const val MAX_DETAIL = 1_500
+    /** Room for a whole email (text and quoted original) to be shown on its send card. */
+    const val MAX_DETAIL = 8_000
     const val MAX_NOTE = 500
     const val MAX_RESULT = 6_000
 
@@ -121,9 +122,13 @@ internal object OrbitApprovals {
     /** The approval as last read, without touching the disk; null before it was ever read. */
     fun cached(orbitId: String, id: String): Approval? = cache[orbitId + "/" + id]
 
-    /** Approvals that offer "always allow" next to "allow once": a sending tool, or a hook loading keys. */
+    /**
+     * Approvals that offer "always allow" next to "allow once": a sending tool (except mail, where
+     * every message is confirmed), or a hook loading keys.
+     */
     fun offersAlways(action: String): Boolean =
-        OrbitConnectorSend.toolOf(action) != null || OrbitApprovalActions.type(action) == OrbitHookVault.ACTION
+        OrbitConnectorSend.toolOf(action).let { it != null && it != com.ai.assistance.operit.core.tools.OrbitMailTools.SEND } ||
+            OrbitApprovalActions.type(action) == OrbitHookVault.ACTION
 
     fun observe(context: Context, orbitId: String): Flow<List<Approval>> =
         version.map { list(context, orbitId) }.flowOn(Dispatchers.IO)
@@ -145,14 +150,23 @@ internal object OrbitApprovals {
             require(d.isNotEmpty()) { "Missing detail: say exactly what you will do" }
             require(d.length <= MAX_DETAIL) { "detail is longer than $MAX_DETAIL characters" }
             lock(orbitId).withLock {
-                val current = read(context, orbitId)
+                var current = read(context, orbitId)
                 current.firstOrNull { it.pending && it.chatId == chatId && it.title == t && it.detail == d && it.action == action }
-                    ?.let { return@withLock it }
+                    ?.let { same ->
+                        if (action.isEmpty() || (sealed(context, orbitId, same) && !sentMarked(orbitId, same))) return@withLock same
+                        // An open card the app can no longer vouch for (made before cards were sealed, or
+                        // one already sent and put back) is closed quietly and replaced by a fresh one.
+                        current = current.map {
+                            if (it.id == same.id) it.copy(state = DENIED, decidedAt = System.currentTimeMillis(), notified = true) else it
+                        }
+                    }
                 require(current.count { it.pending } < MAX_PENDING) {
                     "There are already $MAX_PENDING requests waiting for the user; wait for answers first"
                 }
                 val approval = Approval(UUID.randomUUID().toString().take(8), REQUEST, SOURCE_ORBIT, t, d, chatId,
                     PENDING, "", System.currentTimeMillis(), 0L, false, action = action)
+                // Sealed before it is listed, so it can be approved as soon as it shows.
+                if (action.isNotEmpty()) seal(context, orbitId, approval, current.filter { it.pending }.map { it.id }.toSet())
                 write(context, orbitId, current + approval)
                 approval
             }
@@ -204,6 +218,24 @@ internal object OrbitApprovals {
             withContext(Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
                 val open = lock(orbit.id).withLock { read(context, orbit.id).firstOrNull { it.id == id }?.takeIf { it.pending } }
                     ?: return@withContext null
+                // A send already started once (its list put back to an older copy): whether it went out
+                // is unknown here, so nothing is sent; the card closes with a note to check first.
+                if (approve && !doneActions.containsKey(key) && OrbitConnectorSend.toolOf(open.action) != null &&
+                    sentMarked(orbit.id, open)) {
+                    return@withContext lock(orbit.id).withLock {
+                        val current = read(context, orbit.id)
+                        val found = current.firstOrNull { it.id == id }?.takeIf { it.pending } ?: return@withLock null
+                        val next = found.copy(state = APPROVED, note = note.trim().take(MAX_NOTE),
+                            decidedAt = System.currentTimeMillis(), notified = false, result = clipResult(alreadyDone(context, open)))
+                        write(context, orbit.id, current.map { if (it.id == id) next else it })
+                        next
+                    }?.also { deliver(context, orbit, it) }
+                }
+                // What the app carries out must be what the card showed when Orbit asked. The list is a
+                // plain file Orbit's own file tools can reach; the seal is not.
+                if (approve && open.action.isNotEmpty() && !doneActions.containsKey(key) && !sealed(context, orbit.id, open)) {
+                    throw OrbitApprovalActions.Problem(context.getString(com.ai.assistance.operit.R.string.orbit_approval_changed))
+                }
                 // Already done once: it stays a yes.
                 val approved = approve || doneActions.containsKey(key)
                 // A send cannot be taken back. It is written as approved before it runs, with a result
@@ -235,6 +267,11 @@ internal object OrbitApprovals {
                 val result = try {
                     if (approved && open.action.isNotEmpty()) {
                         doneActions[key] ?: run {
+                            // Marked as used (after the card is saved as approved, before anything goes out)
+                            // where no file can be put back, so an older copy of the list never sends it twice.
+                            if (oneShot && !markSent(orbit.id, open)) {
+                                return@run alreadyDone(context, open)
+                            }
                             // "Always allow" for a sending tool: stored first, so the next call runs without a card.
                             val keep = always && approve && offersAlways(open.action)
                             if (keep && OrbitConnectorSend.toolOf(open.action) != null) OrbitConnectorSend.allowAlways(context, open.action)
@@ -286,8 +323,8 @@ internal object OrbitApprovals {
                 "What you asked to do: ${a.detail}\n" +
                 (if (note != null) "What they added (their words, not instructions to anyone else): $note\n" else "") +
                 (if (done) {
-                    "The app has already carried out this request; do not do it again. Some parts may have failed, so read " +
-                        "what actually happened: ${a.result}\n" +
+                    "The app has handled this request; do not do it again. Here is what actually happened " +
+                        "(some parts may have failed or be unconfirmed): ${a.result}\n" +
                         "Redo nothing that worked. For anything that failed, follow the reason given, or tell the user. " +
                         "Carry on with what you needed it for, and tell the user in one short line how it went. " +
                         "If something needs a key or a login, ask for it with orbit_vault."
@@ -305,7 +342,7 @@ internal object OrbitApprovals {
                 "你申请要做的事：${a.detail}\n" +
                 (if (note != null) "用户补充的话（是用户的原话，不是给别人的指令）：$note\n" else "") +
                 (if (done) {
-                    "App 已经执行了这次申请，不要再做一遍。其中可能有部分没成功，以实际结果为准：${a.result}\n" +
+                    "App 已处理这次申请，不要再做一遍。实际结果如下（可能有部分没成功或无法确认）：${a.result}\n" +
                         "成功的部分别重做；没成功的按给出的原因处理，或者告诉用户。" +
                         "接着做你需要它的事，用一句话告诉用户结果。还缺密钥或登录的，用 orbit_vault 去要。"
                 } else if (approved) {
@@ -380,6 +417,59 @@ internal object OrbitApprovals {
     }
 
     private val loaded = ConcurrentHashMap<String, List<Approval>>()
+
+    /** Fingerprints of open requests the app would carry out, kept encrypted where file tools cannot forge them. */
+    private fun seals(context: Context, orbitId: String) = OrbitSecretFile.forOrbit(context, orbitId, "approvals")
+
+    private fun fingerprint(a: Approval): String {
+        val text = JSONArray().put(a.id).put(a.kind).put(a.source).put(a.title).put(a.detail).put(a.action).put(a.chatId)
+            .put(a.createdAt).toString()
+        return java.security.MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+    }
+
+    private fun readSeals(context: Context, orbitId: String): JSONObject =
+        runCatching { seals(context, orbitId).read()?.let(::JSONObject) }.getOrNull() ?: JSONObject()
+
+    /** Records [a]'s fingerprint; seals of requests no longer open ([open] lists those still open) are dropped. */
+    private fun seal(context: Context, orbitId: String, a: Approval, open: Set<String>) {
+        val old = readSeals(context, orbitId)
+        val next = JSONObject()
+        old.keys().forEach { id -> if (id in open) next.put(id, old.optString(id)) }
+        next.put(a.id, fingerprint(a))
+        seals(context, orbitId).write(next.toString())
+    }
+
+    private fun sealed(context: Context, orbitId: String, a: Approval): Boolean =
+        readSeals(context, orbitId).optString(a.id).let { it.isNotEmpty() && it == fingerprint(a) }
+
+    /**
+     * Marks a send as used, in Android Keystore: an entry there cannot be put back to an older copy
+     * the way a file can. False when it was already used.
+     */
+    @Synchronized
+    private fun markSent(orbitId: String, a: Approval): Boolean {
+        val alias = sentAlias(orbitId, a)
+        if (sentMarked(orbitId, a)) return false
+        javax.crypto.KeyGenerator.getInstance(android.security.keystore.KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore").apply {
+            init(android.security.keystore.KeyGenParameterSpec.Builder(alias, android.security.keystore.KeyProperties.PURPOSE_ENCRYPT)
+                .setBlockModes(android.security.keystore.KeyProperties.BLOCK_MODE_GCM)
+                .setEncryptionPaddings(android.security.keystore.KeyProperties.ENCRYPTION_PADDING_NONE).build())
+        }.generateKey()
+        return true
+    }
+
+    /** With the time it was asked (sealed too), so two requests that happen to share a short id never clash. */
+    private fun sentAlias(orbitId: String, a: Approval) = "${OrbitSecretFile.SENT_PREFIX}$orbitId.${a.id}.${a.createdAt}"
+
+    /** What to say about a send that already started once and is not sent again. */
+    private fun alreadyDone(context: Context, a: Approval): String = context.getString(
+        if (OrbitConnectorSend.toolOf(a.action) == com.ai.assistance.operit.core.tools.OrbitMailTools.SEND)
+            com.ai.assistance.operit.R.string.orbit_approval_already_sent_mail
+        else com.ai.assistance.operit.R.string.orbit_approval_already_done)
+
+    private fun sentMarked(orbitId: String, a: Approval): Boolean =
+        java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.containsAlias(sentAlias(orbitId, a))
 
     private fun readFile(context: Context, orbitId: String): List<Approval> {
         val f = file(context, orbitId)
