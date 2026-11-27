@@ -95,7 +95,9 @@ object AppLogger {
     @JvmStatic
     fun bindContext(context: Context) {
         if (boundContext == null) {
-            boundContext = context.applicationContext
+            // While the Application is still being attached it has no application context yet;
+            // its base context reaches the same files.
+            boundContext = context.applicationContext ?: context
         }
     }
 

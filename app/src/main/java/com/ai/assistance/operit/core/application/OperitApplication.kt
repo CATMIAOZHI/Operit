@@ -104,6 +104,8 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
             private set
 
         private const val TAG = "OperitApplication"
+        /** A log kept after a crash is still cleared past this, so a run of crashes cannot grow it without end. */
+        private const val MAX_KEPT_CRASH_LOG_BYTES = 48L * 1024 * 1024
 
         fun initializeMainApplication(context: Context): MainApplicationInitResult {
             val application = context.applicationContext as OperitApplication
@@ -155,7 +157,9 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
         com.ai.assistance.operit.features.orbit.OrbitAppLock.register(this)
 
         configureOpenMpEnvironment()
-        Thread.setDefaultUncaughtExceptionHandler(GlobalExceptionHandler(this))
+        Thread.setDefaultUncaughtExceptionHandler(
+            GlobalExceptionHandler(this, currentProcessName(), Thread.getDefaultUncaughtExceptionHandler())
+        )
 
         json = Json {
             serializersModule = SerializationSetup.module
@@ -274,9 +278,12 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
 
         configureOpenMpEnvironment()
 
-        // 每次应用冷启动时重置上一轮日志，避免日志无限增长
+        // 每次应用冷启动时重置上一轮日志，避免日志无限增长。崩溃后的第一次启动保留它，
+        // 方便之后导出；连续崩溃时日志超过上限也照样清掉。
         val isCrashReportRecoveryStartup = CrashRecoveryState.consumePendingCrashReportLaunch(this)
-        if (!isCrashReportRecoveryStartup) {
+        val keepCrashLog = isCrashReportRecoveryStartup &&
+            (AppLogger.getLogFile()?.length() ?: 0L) <= MAX_KEPT_CRASH_LOG_BYTES
+        if (!keepCrashLog) {
             AppLogger.resetLogFile()
         }
 
@@ -321,7 +328,7 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
 
         ensureWorkManagerInitialized()
 
-        if (isCrashReportRecoveryStartup) {
+        if (keepCrashLog) {
             AppLogger.w(TAG, "检测到崩溃报告启动，保留上一轮日志供崩溃页导出")
         }
 
@@ -598,6 +605,9 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
             runCatching {
                 com.ai.assistance.operit.features.orbit.OrbitAppUpdate.onAppStart(applicationContext)
             }.onFailure { AppLogger.e(TAG, "Failed to tell Orbit about the app update", it) }
+            if (isMainAppProcess()) runCatching {
+                com.ai.assistance.operit.features.orbit.OrbitCrashNotice.onAppStart(applicationContext)
+            }.onFailure { AppLogger.e(TAG, "Failed to tell Orbit about the last crash", it) }
             runCatching {
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                     com.ai.assistance.operit.features.orbit.OrbitFiles.dropOldTrash(applicationContext)
@@ -808,6 +818,9 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
             super.attachBaseContext(base)
             return
         }
+        // Records written while attaching (the language below) would otherwise find no log file and
+        // mark the whole run's log as incomplete.
+        AppLogger.bindContext(base)
         com.ai.assistance.operit.core.tools.defaultTool.websession.browser.configureBrowserEngineStartup()
         configureOpenMpEnvironment()
         // 在基础上下文附加前应用语言设置

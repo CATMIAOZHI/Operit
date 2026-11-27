@@ -38,10 +38,11 @@ internal object OrbitNotices {
      * Tells Orbit once about [key]; nothing more until [clear] for it. Once it got the note, the
      * note [alsoTells] needs no telling of its own either.
      * [wanted] is asked again right before the note goes out; false drops it.
+     * [onSent] runs once Orbit got it.
      */
     fun once(
         context: Context, orbitId: String, key: String, zh: String, en: String, alsoTells: String? = null,
-        wanted: (suspend () -> Boolean)? = null,
+        wanted: (suspend () -> Boolean)? = null, onSent: (() -> Unit)? = null,
     ) {
         val name = "$orbitId|$key"
         val token: Long
@@ -53,7 +54,7 @@ internal object OrbitNotices {
             p.edit().putLong(name, now).commit()
             token = now
         }
-        tell(context, orbitId, zh, en, name, token, alsoTells?.let { "$orbitId|$it" }, wanted)
+        tell(context, orbitId, zh, en, name, token, alsoTells?.let { "$orbitId|$it" }, wanted, onSent)
     }
 
     /** The note queued as [token] is still wanted: not cleared and not replaced by a newer one. */
@@ -87,7 +88,7 @@ internal object OrbitNotices {
      */
     private fun tell(
         context: Context, orbitId: String, zh: String, en: String, name: String, token: Long, alsoTells: String?,
-        wanted: (suspend () -> Boolean)?,
+        wanted: (suspend () -> Boolean)?, onSent: (() -> Unit)?,
     ) {
         val app = context.applicationContext
         scope.launch {
@@ -136,6 +137,7 @@ internal object OrbitNotices {
                         }
                     }
                 }
+                if (sent) onSent?.let { runCatching(it) }
             }
         }
     }
