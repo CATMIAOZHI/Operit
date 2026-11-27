@@ -328,7 +328,9 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         val snapshot: BrowserSnapshot?,
         val consoleMarker: Long,
         val downloadMarker: Long,
-        val timedOut: Boolean = false
+        val timedOut: Boolean = false,
+        /** Said in place of [snapshot] when it could not be built (the action itself went through). */
+        val snapshotNote: String? = null
     )
 
     override fun invoke(tool: AITool): ToolResult {
@@ -946,13 +948,14 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         return runJsonScript(page, script, "click_dispatch_error")
     }
 
-    internal fun runJsonScript(page: BrowserPage, script: String, fallbackError: String): JSONObject? {
+    internal fun runJsonScript(page: BrowserPage, script: String, fallbackError: String,
+        timeoutMs: Long = DEFAULT_TIMEOUT_MS.coerceAtMost(8_000L)): JSONObject? {
         return try {
             val payload =
                 evaluateJavascriptAsync(
                     page,
                     script,
-                    DEFAULT_TIMEOUT_MS.coerceIn(2_000L, 8_000L)
+                    timeoutMs.coerceAtLeast(2_000L)
                 )
             JSONObject(extractAsyncJsValue(payload))
         } catch (e: Exception) {
@@ -1120,7 +1123,9 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
             val deadline = System.currentTimeMillis() + (timeoutSeconds * 1000).toLong()
             var lastProblem: String? = null
             while (true) {
-                val check = checkWaitCondition(session, text, textGone, selector, state)
+                // Each look gets only the time still left, so a page too busy to answer cannot stretch the wait.
+                val check = checkWaitCondition(session, text, textGone, selector, state,
+                    (deadline - System.currentTimeMillis()).coerceIn(2_000L, 8_000L))
                 if (check.badSelector != null) return error(tool.name, check.badSelector)
                 if (check.met) break
                 lastProblem = check.problem
@@ -1129,7 +1134,8 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
                         tool.name,
                         sessionById(session.id) ?: session,
                         "Timed out after ${timeoutSeconds}s waiting for the condition" +
-                            (lastProblem?.let { " ($it)" } ?: "") + "."
+                            (lastProblem?.let { " ($it)" } ?: "") + ".",
+                        liveSnapshot = false
                     )
                 }
                 Thread.sleep(250L)
@@ -1139,14 +1145,16 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         runOnMainSync<Unit> {
             ensureSessionAttachedOnMain(finalSession.id)
         }
+        val (finalSnapshot, snapshotNote) = snapshotForReply(finalSession)
         val settlement =
             BrowserActionSettlement(
                 registry = buildPageRegistry(),
                 session = finalSession,
-                snapshot = latestSnapshot(finalSession),
+                snapshot = finalSnapshot,
                 consoleMarker = markers.consoleTimestamp,
                 downloadMarker = markers.downloadTimestamp,
-                timedOut = false
+                timedOut = false,
+                snapshotNote = snapshotNote
             )
 
         val summary =
@@ -1180,7 +1188,8 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         text: String?,
         textGone: String?,
         selector: String?,
-        state: String
+        state: String,
+        timeoutMs: Long
     ): WaitCheck {
         val script =
             """
@@ -1204,6 +1213,8 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
                     }
                 }
                 const needText = ${if (text != null || textGone != null) "true" else "false"};
+                const wantText = ${text?.let(JSONObject::quote) ?: "null"};
+                const goneText = ${textGone?.let(JSONObject::quote) ?: "null"};
                 const selector = ${selector?.let(JSONObject::quote) ?: "null"};
                 let pageText = "";
                 let attached = false;
@@ -1234,17 +1245,24 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
                         }
                     }
                 }
-                return JSON.stringify({ ok: true, text: pageText, attached: attached, visible: visible });
+                // Only the answers go back, not the text of the whole page.
+                return JSON.stringify({
+                    ok: true,
+                    textOk: wantText == null || pageText.includes(wantText),
+                    goneOk: goneText == null || !pageText.includes(goneText),
+                    attached: attached,
+                    visible: visible
+                });
             })();
             """.trimIndent()
-        val json = runJsonScript(session.page, script, "wait_check_error") ?: return WaitCheck(false, "the page could not be read")
+        val json = runJsonScript(session.page, script, "wait_check_error", timeoutMs)
+            ?: return WaitCheck(false, "the page could not be read")
         json.optString("badSelector").takeIf { it.isNotBlank() }?.let {
             return WaitCheck(false, badSelector = "selector is not valid: $it")
         }
         if (!json.optBoolean("ok", false)) return WaitCheck(false, "the page could not be read")
-        val pageText = json.optString("text")
-        val textOk = text == null || pageText.contains(text)
-        val goneOk = textGone == null || !pageText.contains(textGone)
+        val textOk = json.optBoolean("textOk", false)
+        val goneOk = json.optBoolean("goneOk", false)
         val attached = json.optBoolean("attached", false)
         val visible = json.optBoolean("visible", false)
         val selectorOk =
@@ -1281,8 +1299,7 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
             ensureSessionAttachedOnMain(session.id)
         }
 
-        val snapshot = captureSnapshotModel(session, selector = selector, depth = depth)
-        session.lastSnapshot = snapshot
+        val snapshot = rememberSnapshot(session, captureSnapshotModel(session, selector = selector, depth = depth))
         val filename = param(tool, "filename")?.trim()?.takeIf { it.isNotBlank() }
         val snapshotSection =
             if (filename != null) {
@@ -1809,7 +1826,7 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
                 code = "await page.setViewportSize({ width: $width, height: $height });",
                 openTabs = renderOpenTabs(),
                 pageState = renderPageState(session),
-                snapshot = captureSnapshotText(session),
+                snapshot = replySnapshotText(session),
                 result = "Resized browser viewport to ${width}x${height}."
             )
         )
@@ -1888,12 +1905,12 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
             "list" -> {
                 val registry = buildPageRegistry()
                 val session = registry.activeSessionId?.let { sessionId -> sessionById(sessionId) }
+                // Listing tabs reads nothing from the page, so a heavy page never slows it down.
                 ok(
                     tool.name,
                     buildBrowserResponse(
                         openTabs = renderOpenTabs(registry),
                         pageState = session?.let { activeSession -> renderPageState(activeSession) } ?: "No active page.",
-                        snapshot = session?.let { activeSession -> captureSnapshotText(activeSession) },
                         result = "Listed open tabs."
                     )
                 )
@@ -1980,7 +1997,7 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
                     buildBrowserResponse(
                         openTabs = renderOpenTabs(registry),
                         pageState = active?.let { activeSession -> renderPageState(activeSession) } ?: "No active page.",
-                        snapshot = active?.let { activeSession -> captureSnapshotText(activeSession) },
+                        snapshot = active?.let { activeSession -> replySnapshotText(activeSession) },
                         result =
                             if (active != null) {
                                 "Closed tab. Active tab is now ${currentTabIndex(active.id)}."
@@ -2488,7 +2505,7 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
             buildBrowserResponse(
                 openTabs = renderOpenTabs(registry),
                 pageState = active?.let { activeSession -> renderPageState(activeSession) } ?: "No active page.",
-                snapshot = active?.let { activeSession -> captureSnapshotText(activeSession) },
+                snapshot = active?.let { activeSession -> replySnapshotText(activeSession) },
                 result =
                     if (active != null) {
                         "Closed the current tab."

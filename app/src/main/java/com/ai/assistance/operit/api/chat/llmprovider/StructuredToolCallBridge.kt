@@ -135,8 +135,8 @@ internal object StructuredToolCallBridge {
             if (callIndex >= 0) {
                 val call = openToolCalls.removeAt(callIndex)
                 matched.add(MatchedToolCall(resultIndex, call))
-                AppLogger.d("ToolResultCorrelation",
-                    "Matched: callId=${call.id}, resultIndex=$resultIndex, executed=$normalizedResultName")
+                // Not logged: the whole history is paired again on every request, so a long chat would
+                // write thousands of identical lines.
             } else {
                 AppLogger.w("ToolResultCorrelation",
                     "No matching call: resultIndex=$resultIndex, resultTool=$normalizedResultName, " +
