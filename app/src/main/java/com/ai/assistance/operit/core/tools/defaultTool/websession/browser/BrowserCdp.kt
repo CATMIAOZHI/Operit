@@ -305,8 +305,22 @@ internal class EngineCdpConnection(private val devTools: BrowserDevTools) : CdpC
 
     init {
         devTools.eventListener = { method, params ->
-            if (!closed) deliverEvent(method, runCatching { JSONObject(params) }.getOrElse { JSONObject() })
+            // Events the listener drops anyway (data chunks, extra headers...) are not even read:
+            // a busy page sends many of them, on the main thread.
+            if (!closed && !droppedUnread(method)) {
+                deliverEvent(method, runCatching { JSONObject(params) }.getOrElse { JSONObject() })
+            }
         }
+    }
+
+    private fun droppedUnread(method: String): Boolean =
+        method.startsWith("Network.") && !method.startsWith("Network.webSocket") && method !in NETWORK_EVENTS_READ
+
+    private companion object {
+        /** The request events [BrowserCdp] summarizes; other non-WebSocket network events are dropped. */
+        val NETWORK_EVENTS_READ = setOf(
+            "Network.requestWillBeSent", "Network.responseReceived", "Network.loadingFailed", "Network.loadingFinished",
+        )
     }
 
     override val isOpen: Boolean get() = !closed

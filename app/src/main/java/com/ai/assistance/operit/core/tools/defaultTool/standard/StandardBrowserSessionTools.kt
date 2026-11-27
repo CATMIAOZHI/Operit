@@ -117,10 +117,15 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         }
         internal val chromeMajorVersion: String get() = chromeFullVersion.substringBefore('.')
 
-        /** Chrome's reduced user agents, which carry only the major version. */
+        /**
+         * Chrome's reduced user agents, which carry only the major version. The desktop one is
+         * what Chrome on Android sends for "Desktop site": a page still sees a phone (touch,
+         * screen, `navigator.platform`), so claiming Windows would contradict it, which sign-in
+         * pages may distrust.
+         */
         internal val DEFAULT_USER_AGENT: String
             get() =
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 " +
                     "(KHTML, like Gecko) Chrome/$chromeMajorVersion.0.0.0 Safari/537.36"
         internal val MOBILE_USER_AGENT: String
             get() =
@@ -142,6 +147,34 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         /** The last tab each login profile had in front, so an Orbit returns to its own tab. */
         internal val lastActiveByProfile = ConcurrentHashMap<String, String>()
         internal val lastActiveByTask = ConcurrentHashMap<String, String>()
+        /** The user's own tab last in front, per login set; opening their window again goes back to it. */
+        internal val lastOwnByProfile = ConcurrentHashMap<String, String>()
+        /** Virtual tab id projected while the user's blank own start page has not initialized the engine yet. */
+        internal const val PENDING_OWN_TAB_ID = "__pending_own_blank_tab__"
+        /** User's own window opened on a blank start page before initializing the browser engine. Main thread. */
+        @Volatile internal var pendingOwnProfile: String? = null
+        @Volatile internal var pendingOwnLaunching: Boolean = false
+        @Volatile internal var pendingOwnTargetUrl: String? = null
+        internal var pendingOwnLaunchId: Long = 0L
+        internal var pendingOwnLaunchRunnable: Runnable? = null
+        internal var pendingOwnLaunchFallbackRunnable: Runnable? = null
+        internal var pendingOwnLaunchScheduled: Boolean = false
+
+        internal fun clearPendingOwnLaunchOnMain() {
+            pendingOwnLaunchRunnable?.let(mainHandler::removeCallbacks)
+            pendingOwnLaunchRunnable = null
+            pendingOwnLaunchFallbackRunnable?.let(mainHandler::removeCallbacks)
+            pendingOwnLaunchFallbackRunnable = null
+            pendingOwnLaunchScheduled = false
+            pendingOwnLaunching = false
+            pendingOwnTargetUrl = null
+        }
+
+        internal fun clearPendingOwnOnMain() {
+            clearPendingOwnLaunchOnMain()
+            pendingOwnProfile = null
+        }
+
         @Volatile internal var activeSessionId: String? = null
             set(value) {
                 field = value
@@ -205,13 +238,13 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
                     refreshSessionUiOnMain(sessionId)
                 }
             },
-            onToast = { message -> showToast(message) }
+            onToast = { message -> showToast(message) },
+            profileOf = { sessionId -> sessions[sessionId]?.profileName }
         )
     }
 
     init {
         ensureDesktopModeInitialized()
-        initializeBrowserDownloadSupport()
     }
 
     internal data class WebSession(
@@ -1729,41 +1762,44 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         if (width <= 0 || height <= 0) {
             return error(tool.name, "width and height must be positive integers")
         }
-        val density =
-            context.resources.displayMetrics.density
-                .takeIf { it.isFinite() && it > 0f }
-                ?: 1f
-        val cssPixelCount = width.toLong() * height.toLong()
-        val layoutWidth = kotlin.math.ceil(width.toDouble() * density).toLong()
-        val layoutHeight = kotlin.math.ceil(height.toDouble() * density).toLong()
-        val layoutPixelCount = layoutWidth * layoutHeight
-        if (
-            width > MAX_VIEWPORT_DIMENSION_CSS_PX ||
-                height > MAX_VIEWPORT_DIMENSION_CSS_PX ||
-                cssPixelCount > MAX_VIEWPORT_PIXEL_COUNT ||
-                layoutPixelCount > MAX_VIEWPORT_LAYOUT_PIXEL_COUNT
-        ) {
+        val screenDensity = context.resources.displayMetrics.density.takeIf { it.isFinite() && it > 0f } ?: 1f
+        // The tab is looked up, checked and resized in one go, so a popup switching tabs in between
+        // cannot make the check use another tab's scale.
+        val session =
+            runOnMainSync {
+                val current = getSession(null)
+                // The tab that resizes draws at its own scale (a desktop engine tab at 1080p); a new one at most at the screen's.
+                val density =
+                    com.ai.assistance.operit.core.tools.defaultTool.websession.browser.layoutScaleOf(current?.page, screenDensity)
+                val layoutWidth = kotlin.math.ceil(width.toDouble() * density).toLong()
+                val layoutHeight = kotlin.math.ceil(height.toDouble() * density).toLong()
+                if (
+                    width > MAX_VIEWPORT_DIMENSION_CSS_PX ||
+                        height > MAX_VIEWPORT_DIMENSION_CSS_PX ||
+                        width.toLong() * height.toLong() > MAX_VIEWPORT_PIXEL_COUNT ||
+                        layoutWidth * layoutHeight > MAX_VIEWPORT_LAYOUT_PIXEL_COUNT
+                ) {
+                    return@runOnMainSync null
+                }
+                val target = current ?: createSessionTabOnMain(context.applicationContext, "about:blank")
+                ensureSessionAttachedOnMain(target.id)
+                target.viewportWidthPx = width
+                target.viewportHeightPx = height
+                target.hasExplicitViewportSize = true
+                // Only the tab on screen resizes the window; one kept behind keeps its own size.
+                if (activeSessionId == target.id) browserHost?.setViewportSize(width, height)
+                applyViewportOverride(target)
+                ensureSessionAttachedOnMain(target.id)
+                refreshSessionUiOnMain(target.id)
+                target
+            }
+        if (session == null) {
             return error(
                 tool.name,
                 "viewport is too large for this device; maximum side is " +
                     "$MAX_VIEWPORT_DIMENSION_CSS_PX CSS px and the requested pixel area " +
                     "must fit the device rendering budget"
             )
-        }
-
-        val session =
-            runOnMainSync {
-                getSession(null) ?: createSessionTabOnMain(context.applicationContext, "about:blank")
-            }
-        runOnMainSync<Unit> {
-            ensureSessionAttachedOnMain(session.id)
-            session.viewportWidthPx = width
-            session.viewportHeightPx = height
-            session.hasExplicitViewportSize = true
-            if (BrowserTaskScope.current() == null || activeSessionId == session.id) browserHost?.setViewportSize(width, height)
-            applyViewportOverride(session)
-            ensureSessionAttachedOnMain(session.id)
-            refreshSessionUiOnMain(session.id)
         }
         Thread.sleep(100)
 
@@ -2110,7 +2146,9 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
             val connection =
                 BrowserCdp.connection(this, session)
                     ?: return error(tool.name, "DevTools is unavailable, so only left-button taps work right now.")
-            val density = context.resources.displayMetrics.density.toDouble().takeIf { it > 0.0 } ?: 1.0
+            // View pixels per CSS pixel: an engine tab's own scale (a desktop one draws at 1080p).
+            val density = com.ai.assistance.operit.core.tools.defaultTool.websession.browser
+                .layoutScaleOf(session.page, context.resources.displayMetrics.density).toDouble().takeIf { it > 0.0 } ?: 1.0
             val cx = viewX(x) / density
             val cy = viewY(y) / density
             val buttonsMask = if (button == "right") 2 else 4

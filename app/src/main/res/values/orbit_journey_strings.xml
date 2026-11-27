@@ -26,7 +26,7 @@
     <string name="orbit_page_card_orbit_models_sub">选 Orbit 聊天、后台和看图分别用哪个模型</string>
     <string name="orbit_page_card_orbit_models_open">打开模型</string>
     <string name="orbit_page_card_notify_title">通知</string>
-    <string name="orbit_page_card_notify_sub">通知开关、夜间安静时间、多久汇报一次</string>
+    <string name="orbit_page_card_notify_sub">通知权限和消息通知开关</string>
     <string name="orbit_page_card_notify_open">打开通知设置</string>
     <string name="orbit_login_card_relogin_sub">登录好像失效了，重新登录一下</string>
     <string name="orbit_login_card_relogin">重新登录</string>

@@ -31,6 +31,7 @@ import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.WebSes
 @Composable
 internal fun WebSessionTabSheet(
     tabs: List<WebSessionBrowserTab>,
+    canCreateTab: Boolean = true,
     onSelectTab: (String) -> Unit,
     onCloseTab: (String) -> Unit,
     onNewTab: () -> Unit,
@@ -142,12 +143,15 @@ internal fun WebSessionTabSheet(
         }
 
         Surface(
+            onClick = onNewTab,
+            enabled = canCreateTab,
             modifier =
                 Modifier
                     .fillMaxWidth()
                     .padding(top = 2.dp),
             shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
             color = MaterialTheme.colorScheme.surface,
+            contentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = if (canCreateTab) 1f else 0.38f),
             border =
                 BorderStroke(
                     width = 1.dp,
@@ -164,12 +168,11 @@ internal fun WebSessionTabSheet(
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(
-                    modifier = Modifier.size(28.dp),
-                    onClick = onNewTab
-                ) {
-                    Icon(imageVector = Icons.Filled.Add, contentDescription = null)
-                }
+                Icon(
+                    imageVector = Icons.Filled.Add,
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp)
+                )
                 Text(
                     text = stringResource(R.string.web_session_new_tab),
                     modifier = Modifier.padding(start = 4.dp),

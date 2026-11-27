@@ -75,6 +75,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.ui.features.settings.components.rememberSettingsCardColor
 import com.ai.assistance.operit.ui.features.settings.components.SettingsCardShape
+import com.ai.assistance.operit.ui.features.settings.components.settingsSearchTarget
 import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogs
 import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogStyle
 import com.ai.assistance.operit.R
@@ -118,9 +119,11 @@ fun SpeechServicesSettingsScreen(
     onNavigateToTextToSpeech: (() -> Unit)? = null,
     onNavigateToSpeechToText: (() -> Unit)? = null,
     dialogStyle: SettingsDialogStyle = SettingsDialogStyle.MATERIAL,
+    // Shown at the top of the read-aloud tab, scrolling with it (Orbit's own voice).
+    readAloudHeader: (@Composable () -> Unit)? = null,
 ) {
     SettingsDialogs(dialogStyle) {
-        SpeechServicesSettingsContent(onBackPressed, onNavigateToTextToSpeech, onNavigateToSpeechToText)
+        SpeechServicesSettingsContent(onBackPressed, onNavigateToTextToSpeech, onNavigateToSpeechToText, readAloudHeader)
     }
 }
 
@@ -131,6 +134,7 @@ private fun SpeechServicesSettingsContent(
     onBackPressed: () -> Unit,
     onNavigateToTextToSpeech: (() -> Unit)?,
     onNavigateToSpeechToText: (() -> Unit)?,
+    readAloudHeader: (@Composable () -> Unit)?,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -187,7 +191,12 @@ private fun SpeechServicesSettingsContent(
     var ttsProfileError by remember { mutableStateOf<String?>(null) }
     var sttProfileError by remember { mutableStateOf<String?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
-    var selectedTabIndex by remember { mutableStateOf(0) }
+    // A search for a voice input setting opens on the voice input tab.
+    val searchedStt = com.ai.assistance.operit.ui.features.settings.components.SettingsSearchFocus.peek().let { wanted ->
+        wanted != null && (wanted == stringResource(R.string.speech_services_stt_engine) ||
+            wanted == stringResource(R.string.speech_services_stt_profiles))
+    }
+    var selectedTabIndex by remember { mutableStateOf(if (searchedStt) 1 else 0) }
     // Only one tab's settings show at a time; the profile it edits is left out of key offers.
     val speechKeyScope = remember(keySources, selectedTabIndex, currentTtsProfileId, currentSttProfileId) {
         SpeechKeyScope(keySources, if (selectedTabIndex == 0) "tts:$currentTtsProfileId" else "stt:$currentSttProfileId")
@@ -234,8 +243,6 @@ private fun SpeechServicesSettingsContent(
     var vitsOptionsJsonError by remember(currentTtsProfileId) { mutableStateOf<String?>(null) }
     var httpMethodDropdownExpanded by remember(currentTtsProfileId) { mutableStateOf(false) }
     val ttsCleanerRegexsState = remember(currentTtsProfileId) { mutableStateListOf(*ttsCleanerRegexs.toTypedArray()) }
-    val hasHttpTtsJsonError = ttsHeadersJsonError != null || ttsResponsePipelineJsonError != null
-    val hasVitsTtsJsonError = vitsOptionsJsonError != null
     var simpleTtsVoices by remember(currentTtsProfileId) { mutableStateOf<List<VoiceService.Voice>>(emptyList()) }
     var simpleTtsVoicesLoading by remember(currentTtsProfileId) { mutableStateOf(false) }
     var simpleTtsVoicesError by remember(currentTtsProfileId) { mutableStateOf<String?>(null) }
@@ -260,11 +267,21 @@ private fun SpeechServicesSettingsContent(
     }
 
     // Read again when the page closes, so it sees the latest edits.
-    fun pendingNow(): Boolean =
+    // Reading and recognition are saved apart, so an edit on one tab never holds back the other.
+    fun sttPendingNow(): Boolean =
+        sttServiceTypeInput != sttServiceType ||
+            sttEndpointUrlInput != sttHttpConfig.endpointUrl ||
+            sttApiKeyInput != sttHttpConfig.apiKey ||
+            sttModelNameInput != sttHttpConfig.modelName
+    // What is saved, written out once per change, so typing does not encode it again each time.
+    val savedHeadersJson = remember(httpConfig.headers) { Json.encodeToString(httpConfig.headers) }
+    val savedPipelineJson = remember(httpConfig.responsePipeline) { HttpTtsResponsePipelineStep.encodeList(httpConfig.responsePipeline) }
+    val savedVitsOptionsJson = remember(vitsConfig.options) { Json.encodeToString(vitsConfig.options) }
+    fun ttsPendingNow(): Boolean =
         ttsServiceTypeInput != ttsServiceType ||
             ttsUrlTemplateInput != httpConfig.urlTemplate ||
             ttsApiKeyInput != httpConfig.apiKey ||
-            ttsHeadersInput != Json.encodeToString(httpConfig.headers) ||
+            ttsHeadersInput != savedHeadersJson ||
             ttsHttpMethodInput != httpConfig.httpMethod ||
             ttsRequestBodyInput != httpConfig.requestBody ||
             ttsContentTypeInput != httpConfig.contentType ||
@@ -272,23 +289,25 @@ private fun SpeechServicesSettingsContent(
             ttsVoiceIdInput != httpConfig.voiceId ||
             ttsModelNameInput != httpConfig.modelName ||
             ttsInstructionInput != httpConfig.instruction ||
-            ttsResponsePipelineInput != HttpTtsResponsePipelineStep.encodeList(httpConfig.responsePipeline) ||
+            ttsResponsePipelineInput != savedPipelineJson ||
             vitsPackagePathInput != vitsConfig.packagePath ||
             vitsSpeakerIdInput != vitsConfig.speakerId ||
-            vitsOptionsInput != Json.encodeToString(vitsConfig.options) ||
+            vitsOptionsInput != savedVitsOptionsJson ||
             ttsCleanerRegexsState.toList() != ttsCleanerRegexs ||
             ttsSpeechRateInput != ttsSpeechRate ||
-            ttsPitchInput != ttsPitch ||
-            sttServiceTypeInput != sttServiceType ||
-            sttEndpointUrlInput != sttHttpConfig.endpointUrl ||
-            sttApiKeyInput != sttHttpConfig.apiKey ||
-            sttModelNameInput != sttHttpConfig.modelName
-    val hasPendingChanges = pendingNow()
+            ttsPitchInput != ttsPitch
+    fun pendingNow(): Boolean = ttsPendingNow() || sttPendingNow()
+    val ttsPending = ttsPendingNow()
+    val sttPending = sttPendingNow()
+    val hasPendingChanges = ttsPending || sttPending
 
     // Writes what is on the page into the profiles; used by the debounced save and when leaving.
     val saveInputs: suspend () -> Unit = save@{
         // Nothing edited, nothing written (leaving the page calls this too).
         if (!pendingNow()) return@save
+        // A JSON field still being typed holds back only the reading settings; recognition changes
+        // are saved all the same.
+        var ttsReady = true
         // Headers are kept for every service: MiMo, for one, sends a profile's extra headers too.
         // A new service starts from the empty set the picker puts in the box.
         val headers = if (ttsHeadersInput.isBlank()) {
@@ -297,7 +316,7 @@ private fun SpeechServicesSettingsContent(
             try {
                 Json.decodeFromString<Map<String, String>>(ttsHeadersInput)
             } catch (_: Exception) {
-                if (ttsServiceTypeInput == VoiceServiceFactory.VoiceServiceType.HTTP_TTS) return@save
+                if (ttsServiceTypeInput == VoiceServiceFactory.VoiceServiceType.HTTP_TTS) ttsReady = false
                 httpConfig.headers
             }
         }
@@ -307,7 +326,8 @@ private fun SpeechServicesSettingsContent(
                 try {
                     HttpTtsResponsePipelineStep.parseList(ttsResponsePipelineInput)
                 } catch (_: Exception) {
-                    return@save
+                    ttsReady = false
+                    httpConfig.responsePipeline
                 }
             } else {
                 httpConfig.responsePipeline
@@ -321,7 +341,8 @@ private fun SpeechServicesSettingsContent(
                     try {
                         Json.decodeFromString<Map<String, String>>(vitsOptionsInput)
                     } catch (_: Exception) {
-                        return@save
+                        ttsReady = false
+                        vitsConfig.options
                     }
                 }
             } else {
@@ -363,7 +384,7 @@ private fun SpeechServicesSettingsContent(
                     speechRate = ttsSpeechRateInput,
                     pitch = ttsPitchInput,
                 )
-            if (nextTts != activeTtsProfile) {
+            if (ttsReady && nextTts != activeTtsProfile) {
                 profilePrefs.updateTtsProfile(nextTts)
                 VoiceServiceFactory.resetInstance()
             }
@@ -374,7 +395,7 @@ private fun SpeechServicesSettingsContent(
                 )
             if (nextStt != activeSttProfile) {
                 profilePrefs.updateSttProfile(nextStt)
-                SpeechServiceFactory.resetInstance()
+                // The recognizer is made again from the new profile when next used; resetting it here could close one a session just took.
             }
         } catch (error: Exception) {
             AppLogger.e("SpeechServicesSettings", "Failed to save speech service profile", error)
@@ -418,14 +439,10 @@ private fun SpeechServicesSettingsContent(
         currentSttProfileId,
     ) {
         if (!hasPendingChanges) return@LaunchedEffect
-        if (ttsServiceTypeInput == VoiceServiceFactory.VoiceServiceType.HTTP_TTS && hasHttpTtsJsonError) return@LaunchedEffect
-        if (ttsServiceTypeInput == VoiceServiceFactory.VoiceServiceType.VITS_TTS && hasVitsTtsJsonError) return@LaunchedEffect
 
         kotlinx.coroutines.delay(500)
 
         if (!hasPendingChanges) return@LaunchedEffect
-        if (ttsServiceTypeInput == VoiceServiceFactory.VoiceServiceType.HTTP_TTS && hasHttpTtsJsonError) return@LaunchedEffect
-        if (ttsServiceTypeInput == VoiceServiceFactory.VoiceServiceType.VITS_TTS && hasVitsTtsJsonError) return@LaunchedEffect
 
         saveInputs()
     }
@@ -499,6 +516,10 @@ private fun SpeechServicesSettingsContent(
                     )
                 }
 
+                if (selectedTabIndex == 0 && readAloudHeader != null) item(key = "read-aloud-header") {
+                    readAloudHeader()
+                }
+
                 item {
                     SpeechProfileManagementBar(
                         selectedTabIndex = selectedTabIndex,
@@ -534,7 +555,7 @@ private fun SpeechServicesSettingsContent(
                             scope.launch {
                                 try {
                                     profilePrefs.selectSttProfile(id)
-                                    SpeechServiceFactory.resetInstance()
+                                    // The recognizer is made again from the new profile when next used; resetting it here could close one a session just took.
                                     sttProfileError = null
                                 } catch (error: Exception) {
                                     AppLogger.e("SpeechServicesSettings", "Failed to select STT profile", error)
@@ -739,128 +760,6 @@ private fun SpeechServicesSettingsContent(
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.error
                                     )
-                                }
-                            }
-                        }
-
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { ttsCleanerExpanded = !ttsCleanerExpanded }
-                                .padding(vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "${stringResource(R.string.speech_services_tts_cleaner_title)} (${ttsCleanerRegexsState.size})",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.Medium,
-                                )
-                                Text(
-                                    text = stringResource(R.string.speech_services_tts_cleaner_desc),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            Icon(
-                                imageVector = if (ttsCleanerExpanded) {
-                                    Icons.Default.KeyboardArrowUp
-                                } else {
-                                    Icons.Default.KeyboardArrowDown
-                                },
-                                contentDescription = stringResource(
-                                    if (ttsCleanerExpanded) R.string.collapse else R.string.expand,
-                                ),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-
-                        AnimatedVisibility(visible = ttsCleanerExpanded) {
-                            Column {
-                                ttsCleanerRegexsState.forEachIndexed { index, regex ->
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                    ) {
-                                        OutlinedTextField(
-                                            value = regex,
-                                            onValueChange = { ttsCleanerRegexsState[index] = it },
-                                            placeholder = { Text(stringResource(R.string.speech_services_tts_cleaner_placeholder)) },
-                                            modifier = Modifier.weight(1f),
-                                            singleLine = true,
-                                        )
-                                        IconButton(onClick = { ttsCleanerRegexsState.removeAt(index) }) {
-                                            Icon(
-                                                Icons.Default.Delete,
-                                                contentDescription = stringResource(R.string.speech_services_tts_cleaner_delete),
-                                            )
-                                        }
-                                    }
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                }
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                ) {
-                                    TextButton(
-                                        onClick = { ttsCleanerRegexsState.add("") },
-                                        modifier = Modifier.weight(1f),
-                                    ) {
-                                        Icon(Icons.Default.Add, contentDescription = null)
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text(stringResource(R.string.speech_services_tts_cleaner_add))
-                                    }
-
-                                    var showTemplateMenu by remember { mutableStateOf(false) }
-                                    TextButton(
-                                        onClick = { showTemplateMenu = true },
-                                        modifier = Modifier.weight(1f),
-                                    ) {
-                                        Text(stringResource(R.string.speech_services_tts_cleaner_template))
-                                        Icon(Icons.Default.ArrowDropDown, contentDescription = null)
-                                    }
-
-                                    OrbitAwareDropdownMenu(
-                                        expanded = showTemplateMenu,
-                                        onDismissRequest = { showTemplateMenu = false },
-                                    ) {
-                                        DropdownMenuItem(
-                                            text = { Text(stringResource(R.string.speech_services_tts_cleaner_template_asterisk)) },
-                                            onClick = {
-                                                ttsCleanerRegexsState.add("\\*[^*]+\\*")
-                                                showTemplateMenu = false
-                                            },
-                                        )
-                                        DropdownMenuItem(
-                                            text = { Text(stringResource(R.string.speech_services_tts_cleaner_template_double_asterisk)) },
-                                            onClick = {
-                                                ttsCleanerRegexsState.add("\\*\\*[^*]+\\*\\*")
-                                                showTemplateMenu = false
-                                            },
-                                        )
-                                        DropdownMenuItem(
-                                            text = { Text(stringResource(R.string.speech_services_tts_cleaner_template_parenthesis)) },
-                                            onClick = {
-                                                ttsCleanerRegexsState.add("\\([^)]+\\)")
-                                                showTemplateMenu = false
-                                            },
-                                        )
-                                        DropdownMenuItem(
-                                            text = { Text(stringResource(R.string.speech_services_tts_cleaner_template_chinese_parenthesis)) },
-                                            onClick = {
-                                                ttsCleanerRegexsState.add("（[^）]+）")
-                                                showTemplateMenu = false
-                                            },
-                                        )
-                                        DropdownMenuItem(
-                                            text = { Text(stringResource(R.string.speech_services_tts_cleaner_template_xml)) },
-                                            onClick = {
-                                                ttsCleanerRegexsState.add("<[^>]+>")
-                                                showTemplateMenu = false
-                                            },
-                                        )
-                                    }
                                 }
                             }
                         }
@@ -1933,7 +1832,7 @@ private fun SpeechServicesSettingsContent(
                         // Tied to this section: leaving the tab cancels a preview still under way.
                         val previewScope = rememberCoroutineScope()
                         var previewBusy by remember { mutableStateOf(false) }
-                        SpeechPreviewButton(enabled = !hasPendingChanges, busy = previewBusy) {
+                        SpeechPreviewButton(enabled = !ttsPending, busy = previewBusy) {
                             previewBusy = true
                             previewScope.launch {
                                 var problem: String? = null
@@ -1952,6 +1851,131 @@ private fun SpeechServicesSettingsContent(
                                     previewBusy = false
                                 }
                                 problem?.let { scope.launch { snackbarHostState.showSnackbar(it) } }
+                            }
+                        }
+
+                        // Rarely changed: below the voice and its preview.
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { ttsCleanerExpanded = !ttsCleanerExpanded }
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "${stringResource(R.string.speech_services_tts_cleaner_title)} (${ttsCleanerRegexsState.size})",
+                                    modifier = Modifier.settingsSearchTarget(stringResource(R.string.speech_services_tts_cleaner_title)),
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Medium,
+                                )
+                                Text(
+                                    text = stringResource(R.string.speech_services_tts_cleaner_desc),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Icon(
+                                imageVector = if (ttsCleanerExpanded) {
+                                    Icons.Default.KeyboardArrowUp
+                                } else {
+                                    Icons.Default.KeyboardArrowDown
+                                },
+                                contentDescription = stringResource(
+                                    if (ttsCleanerExpanded) R.string.collapse else R.string.expand,
+                                ),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+
+                        AnimatedVisibility(visible = ttsCleanerExpanded) {
+                            Column {
+                                ttsCleanerRegexsState.forEachIndexed { index, regex ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        OutlinedTextField(
+                                            value = regex,
+                                            onValueChange = { ttsCleanerRegexsState[index] = it },
+                                            placeholder = { Text(stringResource(R.string.speech_services_tts_cleaner_placeholder)) },
+                                            modifier = Modifier.weight(1f),
+                                            singleLine = true,
+                                        )
+                                        IconButton(onClick = { ttsCleanerRegexsState.removeAt(index) }) {
+                                            Icon(
+                                                Icons.Default.Delete,
+                                                contentDescription = stringResource(R.string.speech_services_tts_cleaner_delete),
+                                            )
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                }
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    TextButton(
+                                        onClick = { ttsCleanerRegexsState.add("") },
+                                        modifier = Modifier.weight(1f),
+                                    ) {
+                                        Icon(Icons.Default.Add, contentDescription = null)
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(stringResource(R.string.speech_services_tts_cleaner_add))
+                                    }
+
+                                    var showTemplateMenu by remember { mutableStateOf(false) }
+                                    TextButton(
+                                        onClick = { showTemplateMenu = true },
+                                        modifier = Modifier.weight(1f),
+                                    ) {
+                                        Text(stringResource(R.string.speech_services_tts_cleaner_template))
+                                        Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                                    }
+
+                                    OrbitAwareDropdownMenu(
+                                        expanded = showTemplateMenu,
+                                        onDismissRequest = { showTemplateMenu = false },
+                                    ) {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.speech_services_tts_cleaner_template_asterisk)) },
+                                            onClick = {
+                                                ttsCleanerRegexsState.add("\\*[^*]+\\*")
+                                                showTemplateMenu = false
+                                            },
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.speech_services_tts_cleaner_template_double_asterisk)) },
+                                            onClick = {
+                                                ttsCleanerRegexsState.add("\\*\\*[^*]+\\*\\*")
+                                                showTemplateMenu = false
+                                            },
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.speech_services_tts_cleaner_template_parenthesis)) },
+                                            onClick = {
+                                                ttsCleanerRegexsState.add("\\([^)]+\\)")
+                                                showTemplateMenu = false
+                                            },
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.speech_services_tts_cleaner_template_chinese_parenthesis)) },
+                                            onClick = {
+                                                ttsCleanerRegexsState.add("（[^）]+）")
+                                                showTemplateMenu = false
+                                            },
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.speech_services_tts_cleaner_template_xml)) },
+                                            onClick = {
+                                                ttsCleanerRegexsState.add("<[^>]+>")
+                                                showTemplateMenu = false
+                                            },
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -2109,36 +2133,10 @@ private fun SpeechServicesSettingsContent(
                 }
                 }
 
-                item {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 4.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.Top,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Info,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(18.dp),
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = if (selectedTabIndex == 0) {
-                                stringResource(R.string.speech_services_info_tts_desc)
-                            } else {
-                                stringResource(R.string.speech_services_info_stt_desc)
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-
                 if (selectedTabIndex == 0 && onNavigateToTextToSpeech != null) item {
                     OutlinedButton(
                         onClick = onNavigateToTextToSpeech,
-                        enabled = !hasPendingChanges,
+                        enabled = !ttsPending,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Icon(
@@ -2152,12 +2150,19 @@ private fun SpeechServicesSettingsContent(
                 }
                 if (selectedTabIndex == 1 && onNavigateToSpeechToText != null) item {
                     OutlinedButton(onClick = onNavigateToSpeechToText,
-                        enabled = !hasPendingChanges, modifier = Modifier.fillMaxWidth()) {
+                        enabled = !sttPending, modifier = Modifier.fillMaxWidth()) {
                         Text(stringResource(R.string.voice_test_current))
                     }
                 }
 
-                item {
+                // Local models only matter while a local engine is chosen; a cloud page stays short.
+                val localEngine = if (selectedTabIndex == 1) {
+                    sttServiceTypeInput == SpeechServiceFactory.SpeechServiceType.SHERPA_ONNX ||
+                        sttServiceTypeInput == SpeechServiceFactory.SpeechServiceType.SHERPA_NCNN
+                } else {
+                    ttsServiceTypeInput == VoiceServiceFactory.VoiceServiceType.SHERPA_ONNX
+                }
+                if (localEngine) item {
                     val targetRecognition = selectedTabIndex == 1
                     val targetSttProfile = activeSttProfile
                     val targetTtsProfile = activeTtsProfile
@@ -2169,11 +2174,11 @@ private fun SpeechServicesSettingsContent(
                         } else {
                             if (ttsServiceType == VoiceServiceFactory.VoiceServiceType.SHERPA_ONNX) activeTtsProfile.localModelId else ""
                         },
-                        enabled = !hasPendingChanges,
+                        enabled = if (targetRecognition) !sttPending else !ttsPending,
                         onSelect = { id ->
                                 if (targetRecognition) {
                                     profilePrefs.selectLocalVoiceModel(targetSttProfile.id, true, id)
-                                    SpeechServiceFactory.resetInstance()
+                                    // The recognizer is made again from the new profile when next used; resetting it here could close one a session just took.
                                 } else {
                                     profilePrefs.selectLocalVoiceModel(targetTtsProfile.id, false, id)
                                     VoiceServiceFactory.resetInstance()
@@ -2264,7 +2269,7 @@ private fun SpeechServicesSettingsContent(
                 scope.launch {
                     try {
                         profilePrefs.createSttProfile(name, activeSttProfile)
-                        SpeechServiceFactory.resetInstance()
+                        // The recognizer is made again from the new profile when next used; resetting it here could close one a session just took.
                         sttProfileError = null
                         showCreateSttProfileDialog = false
                         snackbarHostState.showSnackbar(context.getString(R.string.speech_services_profile_created))

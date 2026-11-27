@@ -9,8 +9,10 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import java.util.Locale
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -47,13 +49,13 @@ internal class WebSessionHistoryStore private constructor(private val context: C
         context.webSessionHistoryDataStore.data.map { preferences ->
             decodeBookmarks(preferences[KEY_BOOKMARKS])
                 .sortedByDescending { it.updatedAt }
-        }
+        }.flowOn(Dispatchers.Default)
 
     val historyFlow: Flow<List<WebSessionHistoryEntry>> =
         context.webSessionHistoryDataStore.data.map { preferences ->
             decodeHistory(preferences[KEY_HISTORY])
                 .sortedByDescending { it.visitedAt }
-        }
+        }.flowOn(Dispatchers.Default)
 
     val desktopModeFlow: Flow<Boolean> =
         context.webSessionHistoryDataStore.data.map { preferences ->
@@ -111,7 +113,8 @@ internal class WebSessionHistoryStore private constructor(private val context: C
 
             val bookmarks =
                 decodeBookmarks(preferences[KEY_BOOKMARKS]).map { bookmark ->
-                    if (bookmark.url == normalizedUrl && normalizedTitle.isNotBlank()) {
+                    // Only a real change touches a bookmark, so an unchanged title writes nothing.
+                    if (bookmark.url == normalizedUrl && normalizedTitle.isNotBlank() && bookmark.title != normalizedTitle) {
                         bookmark.copy(title = normalizedTitle, updatedAt = System.currentTimeMillis())
                     } else {
                         bookmark
@@ -177,6 +180,14 @@ internal class WebSessionHistoryStore private constructor(private val context: C
     suspend fun clearHistory() {
         context.webSessionHistoryDataStore.edit { preferences ->
             preferences[KEY_HISTORY] = json.encodeToString(emptyList<WebSessionHistoryEntry>())
+        }
+    }
+
+    /** Removes one visit from the history list. */
+    suspend fun removeHistoryEntry(url: String, visitedAt: Long) {
+        context.webSessionHistoryDataStore.edit { preferences ->
+            val updated = decodeHistory(preferences[KEY_HISTORY]).filterNot { it.url == url && it.visitedAt == visitedAt }
+            preferences[KEY_HISTORY] = json.encodeToString(updated)
         }
     }
 

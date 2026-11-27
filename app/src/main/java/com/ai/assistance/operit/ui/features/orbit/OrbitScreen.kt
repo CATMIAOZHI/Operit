@@ -554,6 +554,23 @@ private fun OrbitChatPage(
         com.ai.assistance.operit.features.orbit.OrbitLastChat.set(context, orbit.id, currentChatId)
     }
     val currentSide = orbit.sideChats.firstOrNull { it.chatId == currentChatId }
+    // The side chat WeChat writes to is a channel: read here, answered in WeChat, so nothing in it
+    // sends. Until the link is read, an open side chat might be it and waits the same way.
+    LaunchedEffect(orbit.id) { com.ai.assistance.operit.features.orbit.OrbitWeixin.refreshStatus(context, orbit.id) }
+    val weixinLinks by com.ai.assistance.operit.features.orbit.OrbitWeixin.channels.collectAsState()
+    val weixinLink = weixinLinks[orbit.id]
+    val weixinRead = weixinLink != null
+    val channelChatId = orbitChannelChatId(orbit, weixinLink)
+    val inChannel = currentChatId == channelChatId || (!weixinRead && currentSide != null)
+    val openWeixinSettings = rememberUpdatedState { push(OrbitSubPage.WEIXIN) }
+    val readOnlyChannel = if (!inChannel) null else {
+        val expired = weixinRead && weixinLink?.loginExpired == true
+        remember(weixinRead, expired) {
+            com.ai.assistance.operit.ui.features.chat.components.OrbitReadOnlyChannel(
+                ready = weixinRead, loginExpired = expired, onReconnect = { openWeixinSettings.value() },
+            )
+        }
+    }
     // Entering the chat, its messages stay hidden until they are loaded, prepared and at the newest
     // one, then show together instead of one by one. On launch the mark opens on them instead.
     val entryPreparing = remember(orbit.id) { mutableStateOf(true) }
@@ -742,9 +759,12 @@ private fun OrbitChatPage(
         com.ai.assistance.operit.features.orbit.OrbitReactions.of(context, orbit.id).observe(currentChatId)
     }.collectAsState(initial = emptyMap())
     // The user's own tapbacks on Orbit's messages, set from the long-press menu.
-    val userReactionStore = remember(orbit.id) { com.ai.assistance.operit.features.orbit.OrbitReactions.ofUser(context, orbit.id) }
+    // In the WeChat channel reactions are disabled, so skip loading/observing the user reaction store.
+    val userReactionStore = remember(orbit.id, inChannel) {
+        if (inChannel) null else com.ai.assistance.operit.features.orbit.OrbitReactions.ofUser(context, orbit.id)
+    }
     val userReactionMap by remember(userReactionStore, currentChatId) {
-        userReactionStore.observe(currentChatId)
+        userReactionStore?.observe(currentChatId) ?: kotlinx.coroutines.flow.flowOf(emptyMap())
     }.collectAsState(initial = emptyMap())
     val reactionScope = rememberCoroutineScope()
     var forkingMessage by remember(orbit.id) { mutableStateOf(false) }
@@ -769,7 +789,9 @@ private fun OrbitChatPage(
         }
     }
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
-    val userReactions = remember(userReactionMap, currentChatId, haptic) {
+    val userReactions = remember(userReactionStore, userReactionMap, currentChatId, haptic) {
+        // The WeChat channel is read-only here: emoji reactions are disabled along with replies.
+        val store = userReactionStore ?: return@remember null
         com.ai.assistance.operit.ui.features.chat.components.OrbitUserReactions(userReactionMap) { key, emoji, said ->
             // Taking a tapback off says nothing to Orbit; putting one on lets it decide what to do.
             val adding = userReactionMap[key] != emoji
@@ -778,7 +800,7 @@ private fun OrbitChatPage(
             val chatId = currentChatId
             reactionScope.launch {
                 try {
-                    userReactionStore.toggle(chatId, key, emoji)
+                    store.toggle(chatId, key, emoji)
                     if (adding) OrbitReactionSender.onReacted(context, orbit.id, chatId, key, emoji, said)
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
@@ -794,12 +816,18 @@ private fun OrbitChatPage(
     // here, as if the user had picked it; they finish the message and decide whether to send.
     val sharedFiles by com.ai.assistance.operit.ui.main.SharedFileHandler.sharedFiles.collectAsState()
     val sharedText by com.ai.assistance.operit.ui.main.SharedFileHandler.sharedText.collectAsState()
-    LaunchedEffect(sharedFiles, sharedText) {
+    // A side chat open before the WeChat link is read might be the channel: the share waits for it.
+    val shareTargetKnown = weixinRead || currentSide == null
+    LaunchedEffect(sharedFiles, sharedText, shareTargetKnown) {
+        if (!shareTargetKnown) return@LaunchedEffect
         val handler = com.ai.assistance.operit.ui.main.SharedFileHandler
+        // The WeChat channel takes no input: a share there goes to the main chat instead. The page
+        // switches to it; the view model only keeps the share for that chat.
+        val target = if (currentChatId == channelChatId) orbit.chatId else currentChatId
         // The chat comes to the front, closing any page over it, so the filled box is in view.
         fun showChat() {
             tab = OrbitTab.CHAT
-            com.ai.assistance.operit.features.orbit.OrbitNavigation.openChat(currentChatId)
+            com.ai.assistance.operit.features.orbit.OrbitNavigation.openChat(target)
         }
         val files = sharedFiles
         if (!files.isNullOrEmpty()) {
@@ -807,14 +835,14 @@ private fun OrbitChatPage(
             handler.clearSharedFiles()
             handler.clearSharedText()
             showChat()
-            chatViewModel.handleSharedFiles(files, currentChatId, note)
+            chatViewModel.handleSharedFiles(files, target, note, switchedByCaller = true)
             return@LaunchedEffect
         }
         val text = sharedText?.trim()
         if (!text.isNullOrBlank()) {
             handler.clearSharedText()
             showChat()
-            chatViewModel.handleSharedText(text, currentChatId)
+            chatViewModel.handleSharedText(text, target, switchedByCaller = true)
         }
     }
     // A button that asks Orbit for something: its prompt waits in the main chat's input box, and
@@ -1009,8 +1037,7 @@ private fun OrbitChatPage(
             OrbitSubPage.PHONE_PERMISSIONS -> OrbitPhonePermissionsPage(onBack = back,
                 onOpenDeviceAccess = { push(OrbitSubPage.DEVICE_ACCESS) })
             OrbitSubPage.DEVICE_ACCESS -> OrbitDeviceAccessPage(orbitName(orbit), onBack = back)
-            OrbitSubPage.NOTIFICATION_SETTINGS -> OrbitNotificationSettingsPage(orbit, onBack = back,
-                onOpenDelivery = { push(OrbitSubPage.NOTIFICATIONS) })
+            OrbitSubPage.NOTIFICATION_SETTINGS -> OrbitNotificationSettingsPage(orbit, onBack = back)
             OrbitSubPage.USAGE -> OrbitUsagePage(orbit, onBack = back,
                 onOpenTrends = { push(OrbitSubPage.USAGE_TRENDS) },
                 onOpenAppCosts = { push(OrbitSubPage.APP_COSTS) },
@@ -1056,7 +1083,6 @@ private fun OrbitChatPage(
                 else LaunchedEffect(Unit) { back() }
             }
             OrbitSubPage.TOOL_ACCESS -> OrbitToolAccessPage(onBack = back)
-            OrbitSubPage.NOTIFICATIONS -> OrbitNotificationsPage(orbit.id, onBack = back)
             OrbitSubPage.FILES -> OrbitFilesPage(orbit.id, onBack = back, onDraft = ::draftToChat)
             // No id opens the grouped list of every task.
             OrbitSubPage.TASK -> OrbitTasksPage(orbit.id, onBack = back, initialTaskId = openTaskId,
@@ -1224,6 +1250,7 @@ private fun OrbitChatPage(
                         if (!devView && currentChatId == orbit.chatId && !forkingMessage && orbit.canAddSideChat)
                             ::forkMessage else null,
                     com.ai.assistance.operit.ui.features.chat.components.LocalShowHiddenChatRows provides devView,
+                    com.ai.assistance.operit.ui.features.chat.components.LocalOrbitReadOnlyChannel provides readOnlyChannel,
                     com.ai.assistance.operit.ui.features.chat.components.LocalTranscriptPreparing provides
                         (devPreparing.takeIf { devEntering } ?: entryPreparing.takeIf { entering }),
                     com.ai.assistance.operit.ui.features.chat.components.LocalTranscriptAlpha provides entryAlpha.asState(),
@@ -1337,9 +1364,25 @@ private fun OrbitChatPage(
                             },
                             onQuoteFiles = { files ->
                                 // In the input box of the chat the user was last in (main or side), as
-                                // files the user picked; only their places are sent.
-                                tab = OrbitTab.CHAT
-                                chatViewModel.attachOrbitFiles(files)
+                                // files the user picked; only their places are sent. The WeChat channel
+                                // has no input box, so they go to the main chat's then.
+                                val shown = currentChatId
+                                val tabAtQuote = tab
+                                fun quote(toMain: Boolean, show: Boolean) {
+                                    if (show) {
+                                        tab = OrbitTab.CHAT
+                                        if (toMain) talkChatId = orbit.chatId
+                                    }
+                                    chatViewModel.attachOrbitFiles(files, if (toMain) orbit.chatId else shown)
+                                }
+                                if (weixinRead || currentSide == null) {
+                                    quote(toMain = shown == channelChatId, show = true)
+                                } else reactionScope.launch {
+                                    // A side chat open before the link was read: the saved link decides. If the
+                                    // user picked another chat meanwhile, the files still go, the page stays.
+                                    val toMain = shown == com.ai.assistance.operit.features.orbit.OrbitWeixin.boundChatId(context, orbit.id)
+                                    quote(toMain, show = talkChatId == shown && tab == tabAtQuote)
+                                }
                             },
                             filesVersion = filesVersion, onOpenFile = { editingFile = it })
                     }
@@ -1362,6 +1405,7 @@ private fun OrbitChatPage(
         OrbitSideMenu(
             visible = showChats,
             orbit = orbit, currentChatId = currentChatId, unread = unreadChats,
+            channelChatId = channelChatId, channelRead = weixinRead,
             onSelect = {
                 if (it !in orbit.talkChatIds) justCreatedChatId = it
                 talkChatId = it
@@ -1532,6 +1576,7 @@ private fun OrbitChatPage(
         OrbitSideMenu(
             visible = docked,
             orbit = orbit, currentChatId = currentChatId, unread = unreadChats,
+            channelChatId = channelChatId, channelRead = weixinRead,
             onSelect = {
                 if (showInPage()) {
                     if (it !in orbit.talkChatIds) justCreatedChatId = it
@@ -1656,7 +1701,7 @@ private fun OrbitChatPage(
     }
 }
 
-private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, ALIGNMENT, FILES, PACKAGES, TOOL_PERMISSIONS, TOOL_ACCESS, VAULT, VAULT_ENTRY, USAGE, USAGE_TRENDS, APPEARANCE, PET, MODELS, CONTEXT, MODEL_CONFIG, PHONE_PERMISSIONS, DEVICE_ACCESS, NOTIFICATION_SETTINGS, SPEECH_SETTINGS, CHANNELS, WEIXIN, TEXT_SETTINGS, AUTOMATION_SETTINGS, BACKUP, ABOUT, UPDATE_HISTORY, LANGUAGE, STORAGE, COMPONENTS, MCP_CONFIG, TERMINAL_STARTUP, HELP, AGREEMENT, APP_COSTS, APP_PRICING, APP_GROUPS, ROLE_CARDS, LESSONS }
+private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, MEMORY, MEMORY_LIBRARY, IDENTITY, USER, PROMPTS, PROMPT, ALIGNMENT, FILES, PACKAGES, TOOL_PERMISSIONS, TOOL_ACCESS, VAULT, VAULT_ENTRY, USAGE, USAGE_TRENDS, APPEARANCE, PET, MODELS, CONTEXT, MODEL_CONFIG, PHONE_PERMISSIONS, DEVICE_ACCESS, NOTIFICATION_SETTINGS, SPEECH_SETTINGS, CHANNELS, WEIXIN, TEXT_SETTINGS, AUTOMATION_SETTINGS, BACKUP, ABOUT, UPDATE_HISTORY, LANGUAGE, STORAGE, COMPONENTS, MCP_CONFIG, TERMINAL_STARTUP, HELP, AGREEMENT, APP_COSTS, APP_PRICING, APP_GROUPS, ROLE_CARDS, LESSONS }
 
 /** iOS-like timing: a quick start that settles softly (UIKit's default presentation curve). */
 internal object OrbitMotion {
@@ -2448,8 +2493,6 @@ private fun OrbitSettingsPage(
                         com.ai.assistance.operit.ui.features.settings.components.LaunchModeSettingsRow(searchable = false)
                     }
                     SettingsRowDivider(inset = false)
-                    com.ai.assistance.operit.ui.features.settings.components.AppIconSettingsRow(searchable = false)
-                    SettingsRowDivider(inset = false)
                     SettingsNavRow(
                         title = stringResource(R.string.orbit_appearance_title),
                         subtitle = stringResource(R.string.orbit_appearance_note),
@@ -2765,6 +2808,9 @@ private fun orbitSettingsEntries(
     val data = stringResource(R.string.orbit_section_data)
     val troubleshoot = stringResource(R.string.orbit_section_troubleshoot)
     val developer = stringResource(R.string.orbit_section_developer)
+    val permissionLevel by com.ai.assistance.operit.data.preferences.androidPermissionPreferences.preferredPermissionLevelFlow
+        .collectAsState(initial = null)
+    val rootChosen = permissionLevel == com.ai.assistance.operit.core.tools.system.AndroidPermissionLevel.ROOT
     @Composable
     fun entry(title: Int, subtitle: Int, icon: String, section: String, onClick: () -> Unit) =
         OrbitSettingsEntry(stringResource(title), stringResource(subtitle), lucide(icon), section, onClick)
@@ -2795,6 +2841,20 @@ private fun orbitSettingsEntries(
         add(entry(R.string.orbit_clear_logins_title, R.string.orbit_clear_logins_desc_own, "cookie", privacy) { onShowSwitch(ROW_CLEAR_LOGINS) })
         add(entry(R.string.orbit_web_wait_title, R.string.orbit_web_wait_desc, "timer", device, onOpenAutomation))
         add(entry(R.string.keep_screen_on, R.string.keep_screen_on_description, "monitor-smartphone", device, onOpenAutomation))
+        // Found, these open their page at the very row.
+        val keepAlive = stringResource(R.string.orbit_phone_keep_alive)
+        add(entry(R.string.orbit_phone_keep_alive, R.string.orbit_phone_keep_alive_note, "battery-charging", device) {
+            com.ai.assistance.operit.ui.features.settings.components.SettingsSearchFocus.request(keepAlive)
+            onOpenPhonePermissions()
+        })
+        // The Root row shows only while Root is the chosen permission level.
+        if (rootChosen) {
+            val rootMode = stringResource(R.string.root_execution_mode_title)
+            add(entry(R.string.root_execution_mode_title, R.string.root_execution_mode_description, "terminal", device) {
+                com.ai.assistance.operit.ui.features.settings.components.SettingsSearchFocus.request(rootMode)
+                onOpenAutomation()
+            })
+        }
         // Switches on the page itself: found, they are shown where they are.
         add(entry(R.string.launch_mode_setting_title, R.string.launch_mode_setting_orbit, "rocket", display) { onShowSwitch(SWITCH_LAUNCH_MODE) })
         add(entry(R.string.orbit_log_export_app, R.string.orbit_log_export_app_desc, "scroll-text", troubleshoot) { onShowSwitch(ROW_LOGS) })

@@ -61,7 +61,6 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -152,20 +151,31 @@ internal object OrbitShareImage {
     class Result(val file: File, val tiles: List<Tile>)
     class Tile(val file: File, val height: Int)
 
-    suspend fun groups(context: Context, messages: List<ChatMessage>): List<Group> =
+    /** A picked message; [pieces]: only these of its bubbles were picked (null: all of it). */
+    class Pick(val message: ChatMessage, val pieces: Set<Int>? = null)
+
+    suspend fun groups(context: Context, picks: List<Pick>): List<Group> =
         withContext(Dispatchers.Default) {
             val groups = ArrayList<Group>()
             var current = ArrayList<ChatMessage>()
             var wholes = ArrayList<String>()
             var offsets = ArrayList<com.ai.assistance.operit.ui.common.dynamicui.DynamicUiPartOffset?>()
             var words = 0
-            for (original in messages) {
+            for (pick in picks) {
                 ensureActive()
-                val parts = pieces(original)
+                val original = pick.message
                 // Cards in the parts before this one, counted as the whole reply counts them.
                 var cards = 0
                 val same = HashMap<String, Int>()
-                for (message in parts) {
+                fun count(sources: List<String>) = sources.forEach {
+                    cards += 1
+                    same[it] = (same[it] ?: 0) + 1
+                }
+                fun emit(message: ChatMessage, numbered: Boolean) {
+                    ensureActive()
+                    val sources = if (numbered && original.sender == "ai")
+                        com.ai.assistance.operit.ui.features.chat.components.OrbitSpeech.uiSources(message.content)
+                    else emptyList()
                     if (current.isNotEmpty() && (current.size >= GROUP_MESSAGES || words >= GROUP_WORDS)) {
                         groups += Group(current, wholes, offsets)
                         current = ArrayList()
@@ -175,18 +185,27 @@ internal object OrbitShareImage {
                     }
                     current += message
                     wholes += original.content
-                    val sources = if (parts.size > 1 && original.sender == "ai")
-                        com.ai.assistance.operit.ui.features.chat.components.OrbitSpeech.uiSources(message.content)
-                    else emptyList()
                     // Only the counts of the cards this part holds, so each part keeps a small table.
                     offsets += if (cards == 0) null else com.ai.assistance.operit.ui.common.dynamicui.DynamicUiPartOffset(
                         cards, sources.distinct().mapNotNull { s -> same[s]?.let { s to it } }.toMap(),
                     )
-                    sources.forEach {
-                        cards += 1
-                        same[it] = (same[it] ?: 0) + 1
-                    }
+                    count(sources)
                     words += OrbitMessageActions.shownText(context, message).length
+                }
+                val kept = pick.pieces
+                if (kept == null) {
+                    val parts = pieces(original)
+                    parts.forEach { emit(it, parts.size > 1) }
+                } else {
+                    // A reply picked in part is drawn bubble by bubble, each still numbered in the
+                    // whole reply, so a card picked alone shows what was filled in that card. A
+                    // bubble left out only adds its Dynamic UI card to the count.
+                    OrbitMessageActions.bubbles(context, original).forEachIndexed { i, piece ->
+                        ensureActive()
+                        if (i in kept) pieces(original.copy(content = piece.content, contentStream = null)).forEach { emit(it, true) }
+                        else if (piece.uiIndex != null) count(
+                            com.ai.assistance.operit.ui.features.chat.components.OrbitSpeech.uiSources(piece.content))
+                    }
                 }
             }
             if (current.isNotEmpty()) groups += Group(current, wholes, offsets)
@@ -653,11 +672,12 @@ private fun OrbitSharePage(
         if (last) {
             Row(
                 Modifier.fillMaxWidth().padding(top = 20.dp),
-                horizontalArrangement = Arrangement.Center,
+                horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Image(painterResource(R.drawable.ic_launcher_simple_foreground), null, Modifier.size(24.dp))
-                Text("Operit Ry", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+                // Orbit's own mark, still: a picture has no frames to turn in.
+                OrbitLogoAvatar(com.ai.assistance.operit.pet.PetActivity.IDLE, animate = false, modifier = Modifier.size(20.dp))
+                Text(stringResource(R.string.nav_orbit), style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
             }
         }
     }
@@ -672,7 +692,7 @@ internal fun rememberOrbitPictureShare(
     host: OrbitMessageHost,
     horizontalPadding: Dp,
     row: @Composable (ChatMessage) -> Unit,
-): (List<ChatMessage>) -> Unit {
+): (List<OrbitShareImage.Pick>) -> Unit {
     val context = LocalContext.current
     val parent = rememberCompositionContext()
     val scope = rememberCoroutineScope()
@@ -692,7 +712,7 @@ internal fun rememberOrbitPictureShare(
         }
     }
     return remember {
-        { messages ->
+        { picks ->
             job[0]?.cancel()
             file = null
             progress = 0f
@@ -701,7 +721,12 @@ internal fun rememberOrbitPictureShare(
             val padding = currentPadding
             job[0] = scope.launch {
                 try {
-                    val groups = OrbitShareImage.groups(context, messages)
+                    val groups = OrbitShareImage.groups(context, picks)
+                    // Every picked bubble is gone (the replies changed): nothing to draw.
+                    if (groups.isEmpty()) {
+                        open = false
+                        return@launch
+                    }
                     file = OrbitShareImage.render(context, parent, groups, onProgress = { progress = it }) { index ->
                         OrbitSharePage(
                             host = shown,

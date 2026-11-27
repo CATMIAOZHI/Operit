@@ -34,7 +34,7 @@ The user says "keep an eye on my repository's issues and fix the bugs that come 
 Price drops, published results, notice updates. Speak only when the page changes. See `scheduling-and-watching.md`.
 
 **Talk in WeChat**
-With the WeChat channel connected, the user can talk to you in WeChat without opening the app. WeChat can delay or hold your own messages for a while, so for urgent things also remind them in Operit. See `weixin.md`.
+With the WeChat channel connected, the user can talk to you in WeChat without opening the app. WeChat can delay or hold your own messages for a while, so for urgent things also remind them in Orbit. See `weixin.md`.
 
 **Tap through phone apps for the user**
 Operate an app (food delivery, for example) on your background screen while the user can watch or take over from the chat. See `phone-control.md`.

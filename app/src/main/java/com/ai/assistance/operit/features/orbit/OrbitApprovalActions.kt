@@ -765,7 +765,7 @@ internal object OrbitApprovalActions {
     }
 
     /** Providers Orbit may add, for the tool's list. Sign-in accounts need the user signed in first. */
-    fun providers(): List<String> = ApiProviderType.values().filterNot { it.isRetired }.map { it.name }
+    fun providers(): List<String> = ApiProviderType.values().filter { it.isOffered }.map { it.name }
 
     fun defaultEndpoint(provider: ApiProviderType): String = ApiProviderConfigs.getDefaultApiEndpoint(provider)
 

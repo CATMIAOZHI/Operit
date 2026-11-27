@@ -1,7 +1,5 @@
 package com.ai.assistance.operit.ui.features.websession.browser
 
-import com.ai.assistance.operit.ui.features.orbit.orbitDismissLayer
-
 import android.net.Uri
 import android.graphics.Color as AndroidColor
 import android.widget.FrameLayout
@@ -33,6 +31,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -42,12 +41,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserBackMotion
+import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserBackTarget
 import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.WebSessionBookmark
 import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.WebSessionBrowserHostState
 import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.WebSessionBrowserSheetRoute
@@ -61,6 +66,7 @@ import java.util.Locale
 internal fun WebSessionBrowserScreen(
     hostState: WebSessionBrowserHostState,
     watch: com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserWatchUi? = null,
+    backMotion: BrowserBackMotion = remember { BrowserBackMotion() },
     bookmarks: List<WebSessionBookmark>,
     globalHistory: List<WebSessionHistoryEntry>,
     userscriptUiState: WebSessionUserscriptUiState,
@@ -81,6 +87,7 @@ internal fun WebSessionBrowserScreen(
     onSelectSessionHistory: (Int) -> Unit,
     onOpenUrl: (String) -> Unit,
     onClearHistory: () -> Unit,
+    onRemoveHistoryEntry: (String, Long) -> Unit,
     onToggleDesktopMode: () -> Unit,
     onOpenUserscripts: () -> Unit,
     onImportUserscript: () -> Unit,
@@ -100,7 +107,8 @@ internal fun WebSessionBrowserScreen(
     onOpenDownloadLocation: (String) -> Unit,
     onConfirmExternalOpen: (String) -> Unit,
     onCancelExternalOpen: (String) -> Unit,
-    onHandlePendingDialog: (Boolean, String?) -> Unit,
+    onHandlePendingDialog: (Boolean, String?, Long?) -> Unit,
+    onPendingLaunchFrameDrawn: (Long) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val browserState = hostState.browserState
@@ -127,11 +135,6 @@ internal fun WebSessionBrowserScreen(
             }
         }
     }
-    val currentTabNumber =
-        browserState.tabs.indexOfFirst { it.isActive }
-            .takeIf { it >= 0 }
-            ?.plus(1)
-            ?: 0
     val isBookmarked =
         remember(browserState.currentUrl, bookmarks) {
             val normalizedUrl = normalizeLookupUrl(browserState.currentUrl)
@@ -143,7 +146,7 @@ internal fun WebSessionBrowserScreen(
         }
     }
     val activeSheetRoute = hostState.sheetRoute
-    var promptDraft by remember(browserState.pendingDialog?.message, browserState.pendingDialog?.defaultValue) {
+    var promptDraft by remember(browserState.pendingDialog?.id) {
         mutableStateOf(browserState.pendingDialog?.defaultValue.orEmpty())
     }
 
@@ -152,9 +155,16 @@ internal fun WebSessionBrowserScreen(
         Box(modifier.fillMaxSize()) {
             WebSessionWatchScreen(
                 watch = watch,
+                backMotion = backMotion,
                 webViewHost = webViewHost,
                 hasSession = browserState.activeSessionId != null,
                 url = browserState.currentUrl,
+                isEditingUrl = hostState.isEditingUrl,
+                onEditingUrlChange = { editing ->
+                    onHostStateChange { current ->
+                        if (current.isEditingUrl == editing) current else current.copy(isEditingUrl = editing)
+                    }
+                },
                 isLoading = browserState.isLoading,
                 canGoBack = browserState.canGoBack,
                 canGoForward = browserState.canGoForward,
@@ -187,14 +197,14 @@ internal fun WebSessionBrowserScreen(
                 }
             }
             if (watch.controlling && activeSheetRoute == WebSessionBrowserSheetRoute.DOWNLOADS) {
-                val back = com.ai.assistance.operit.ui.features.orbit.rememberOrbitBackMotion()
-                com.ai.assistance.operit.ui.features.orbit.OrbitPopupBack(back, dismissSheet)
-                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.42f))
+                Box(Modifier.fillMaxSize().browserBackScrim(backMotion, BrowserBackTarget.SHEET)
+                    .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.42f))
                     .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null,
-                        onClick = dismissSheet))
+                        onClick = { if (!backMotion.isExiting(BrowserBackTarget.SHEET)) dismissSheet() }))
                 Surface(
                     modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(0.75f)
-                        .navigationBarsPadding().browserKeyboardPadding().orbitDismissLayer(back),
+                        .navigationBarsPadding().browserKeyboardPadding()
+                        .browserBackLayer(backMotion, BrowserBackTarget.SHEET, fromBottom = true),
                     shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
                     color = MaterialTheme.colorScheme.surface,
                 ) {
@@ -212,38 +222,85 @@ internal fun WebSessionBrowserScreen(
                         onOpenDownloadLocation = onOpenDownloadLocation,
                     )
                 }
+                if (backMotion.committing && backMotion.target == BrowserBackTarget.SHEET) {
+                    BrowserCommitTouchShield()
+                }
             }
             // A page dialog needs an answer from whoever holds the page; the user only once in control.
             if (watch.controlling) {
                 hostState.externalOpenPrompt?.let { prompt ->
-                    val back = com.ai.assistance.operit.ui.features.orbit.rememberOrbitBackMotion()
                     val cancel = { onCancelExternalOpen(prompt.requestId) }
-                    com.ai.assistance.operit.ui.features.orbit.OrbitPopupBack(back, cancel)
                     Box(
-                        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.42f))
+                        Modifier.fillMaxSize()
                             .clickable(interactionSource = remember { MutableInteractionSource() },
-                                indication = null, onClick = cancel),
+                                indication = null,
+                                onClick = { if (!backMotion.isExiting(BrowserBackTarget.EXTERNAL_OPEN)) cancel() }),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Box(Modifier.orbitDismissLayer(back)) {
+                        Box(
+                            Modifier.fillMaxSize().browserBackScrim(backMotion, BrowserBackTarget.EXTERNAL_OPEN)
+                                .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.42f)),
+                        )
+                        Box(Modifier.browserBackLayer(backMotion, BrowserBackTarget.EXTERNAL_OPEN)) {
                             ExternalOpenPromptBar(prompt.title, prompt.target,
-                                onConfirm = { onConfirmExternalOpen(prompt.requestId) }, onCancel = cancel)
+                                onConfirm = {
+                                    if (!backMotion.isExiting(BrowserBackTarget.EXTERNAL_OPEN)) {
+                                        onConfirmExternalOpen(prompt.requestId)
+                                    }
+                                },
+                                onCancel = {
+                                    if (!backMotion.isExiting(BrowserBackTarget.EXTERNAL_OPEN)) cancel()
+                                })
+                        }
+                        if (backMotion.committing && backMotion.target == BrowserBackTarget.EXTERNAL_OPEN) {
+                            BrowserCommitTouchShield()
                         }
                     }
                 }
                 browserState.pendingDialog?.let { pendingDialog ->
                     PendingDialogOverlay(
-                        orbitStyle = true,
+                        backMotion = backMotion,
                         dialog = pendingDialog,
                         promptValue = promptDraft,
                         onPromptValueChange = { promptDraft = it },
-                        onConfirm = { onHandlePendingDialog(true, promptDraft) },
-                        onDismiss = { onHandlePendingDialog(false, null) },
+                        onConfirm = {
+                            if (!backMotion.isExiting(BrowserBackTarget.DIALOG)) {
+                                onHandlePendingDialog(true, promptDraft, pendingDialog.id)
+                            }
+                        },
+                        onDismiss = {
+                            if (!backMotion.isExiting(BrowserBackTarget.DIALOG)) {
+                                onHandlePendingDialog(false, null, pendingDialog.id)
+                            }
+                        },
                     )
                 }
             }
         }
         return
+    }
+
+    val openTyped: (String) -> Unit = { target ->
+        if (!backMotion.isExiting(BrowserBackTarget.URL_EDIT)) {
+            onNavigate(target)
+            onHostStateChange { current -> current.copy(isEditingUrl = false, urlDraft = target) }
+        }
+    }
+    val submitDraft = {
+        // Nothing typed: nothing to open.
+        if (!backMotion.isExiting(BrowserBackTarget.URL_EDIT) && hostState.urlDraft.isNotBlank()) {
+            openTyped(normalizeNavigationUrl(hostState.urlDraft))
+        }
+    }
+    val canCreateTab = browserState.activeSessionId != null
+    // A new tab opens ready to type, as in other browsers.
+    val newTabReady = {
+        if (canCreateTab) {
+            onNewTab()
+            onHostStateChange { current ->
+                current.copy(isEditingUrl = true, urlDraft = "", sheetRoute = WebSessionBrowserSheetRoute.NONE)
+            }
+        }
     }
 
     Box(
@@ -270,7 +327,7 @@ internal fun WebSessionBrowserScreen(
                     onHostStateChange { current ->
                         current.copy(
                             isEditingUrl = true,
-                            urlDraft = browserState.currentUrl.ifBlank { "about:blank" }
+                            urlDraft = browserState.currentUrl.takeUnless(::isBlankPage).orEmpty()
                         )
                     }
                 },
@@ -279,16 +336,7 @@ internal fun WebSessionBrowserScreen(
                         current.copy(urlDraft = draft)
                     }
                 },
-                onSubmitUrl = {
-                    val target = normalizeNavigationUrl(hostState.urlDraft)
-                    onNavigate(target)
-                    onHostStateChange { current ->
-                        current.copy(
-                            isEditingUrl = false,
-                            urlDraft = target
-                        )
-                    }
-                },
+                onSubmitUrl = submitDraft,
                 onStopEditing = {
                     onHostStateChange { current ->
                         current.copy(
@@ -302,16 +350,36 @@ internal fun WebSessionBrowserScreen(
                 },
                 onRefreshOrStop = onRefreshOrStop,
                 onMinimize = onMinimize,
-                modifier = Modifier.statusBarsPadding()
+                modifier = Modifier.statusBarsPadding(),
+                focusKey = browserState.activeSessionId,
             )
 
             hostState.externalOpenPrompt?.let { prompt ->
-                ExternalOpenPromptBar(
-                    title = prompt.title,
-                    target = prompt.target,
-                    onConfirm = { onConfirmExternalOpen(prompt.requestId) },
-                    onCancel = { onCancelExternalOpen(prompt.requestId) }
-                )
+                Box(Modifier.browserBackLayer(backMotion, BrowserBackTarget.EXTERNAL_OPEN)) {
+                    ExternalOpenPromptBar(
+                        title = prompt.title,
+                        target = prompt.target,
+                        onConfirm = {
+                            if (!backMotion.isExiting(BrowserBackTarget.EXTERNAL_OPEN)) {
+                                onConfirmExternalOpen(prompt.requestId)
+                            }
+                        },
+                        onCancel = {
+                            if (!backMotion.isExiting(BrowserBackTarget.EXTERNAL_OPEN)) {
+                                onCancelExternalOpen(prompt.requestId)
+                            }
+                        }
+                    )
+                    if (backMotion.committing && backMotion.target == BrowserBackTarget.EXTERNAL_OPEN) {
+                        Box(
+                            Modifier.matchParentSize().clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClick = {},
+                            )
+                        )
+                    }
+                }
             }
 
             if (browserState.activeDownloadCount > 0) {
@@ -353,7 +421,44 @@ internal fun WebSessionBrowserScreen(
                         }
                         .background(MaterialTheme.colorScheme.background)
             ) {
-                if (browserState.activeSessionId == null) {
+                if (browserState.activeSessionId == null && browserState.isLoading) {
+                    val view = LocalView.current
+                    val launchId = browserState.pendingLaunchId
+                    DisposableEffect(view, launchId) {
+                        var notified = false
+                        lateinit var listener: android.view.ViewTreeObserver.OnPreDrawListener
+                        listener =
+                            android.view.ViewTreeObserver.OnPreDrawListener {
+                                if (!notified) {
+                                    notified = true
+                                    val currentObserver = view.viewTreeObserver
+                                    if (currentObserver.isAlive) {
+                                        currentObserver.removeOnPreDrawListener(listener)
+                                    }
+                                    onPendingLaunchFrameDrawn(launchId)
+                                }
+                                true
+                            }
+                        val observer = view.viewTreeObserver
+                        if (observer.isAlive) {
+                            observer.addOnPreDrawListener(listener)
+                        } else {
+                            onPendingLaunchFrameDrawn(launchId)
+                        }
+                        onDispose {
+                            val currentObserver = view.viewTreeObserver
+                            if (currentObserver.isAlive) {
+                                currentObserver.removeOnPreDrawListener(listener)
+                            }
+                        }
+                    }
+                    Box(
+                        modifier =
+                            Modifier
+                                .fillMaxSize()
+                                .background(MaterialTheme.colorScheme.background)
+                    )
+                } else if (browserState.activeSessionId == null) {
                     Surface(
                         modifier = Modifier.fillMaxSize(),
                         color = MaterialTheme.colorScheme.background
@@ -408,6 +513,24 @@ internal fun WebSessionBrowserScreen(
                         )
                     }
                 }
+                // Typing an address, or a tab with nothing in it yet: suggestions and sites over the page.
+                if (hostState.isEditingUrl || isBlankPage(browserState.currentUrl)) {
+                    WebSessionStartPanel(
+                        query = if (hostState.isEditingUrl) hostState.urlDraft else "",
+                        history = globalHistory,
+                        bookmarks = bookmarks,
+                        onSubmit = submitDraft,
+                        onOpenUrl = openTyped,
+                        modifier = if (hostState.isEditingUrl && !isBlankPage(browserState.currentUrl)) {
+                            Modifier.browserBackLayer(backMotion, BrowserBackTarget.URL_EDIT)
+                        } else {
+                            Modifier
+                        },
+                    )
+                    if (backMotion.committing && backMotion.target == BrowserBackTarget.URL_EDIT) {
+                        BrowserCommitTouchShield()
+                    }
+                }
             }
             } },
                 bottomBar = { Column(Modifier.fillMaxWidth()) {
@@ -422,10 +545,11 @@ internal fun WebSessionBrowserScreen(
             WebSessionBottomToolbar(
                 canGoBack = browserState.canGoBack,
                 canGoForward = browserState.canGoForward,
-                currentTabNumber = currentTabNumber,
+                tabCount = browserState.tabs.size,
+                canCreateTab = canCreateTab,
                 onBack = onBack,
                 onForward = onForward,
-                onNewTab = onNewTab,
+                onNewTab = newTabReady,
                 onTabs = {
                     onHostStateChange { current ->
                         current.copy(sheetRoute = WebSessionBrowserSheetRoute.TABS)
@@ -449,11 +573,12 @@ internal fun WebSessionBrowserScreen(
                 modifier =
                     Modifier
                         .fillMaxSize()
+                        .browserBackScrim(backMotion, BrowserBackTarget.SHEET)
                         .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.42f))
                         .clickable(
                             interactionSource = scrimInteractionSource,
                             indication = null,
-                            onClick = dismissSheet
+                            onClick = { if (!backMotion.isExiting(BrowserBackTarget.SHEET)) dismissSheet() }
                         )
             )
 
@@ -466,7 +591,8 @@ internal fun WebSessionBrowserScreen(
                         .fillMaxWidth()
                         .padding(horizontal = 6.dp)
                         .navigationBarsPadding()
-                        .imePadding(),
+                        .imePadding()
+                        .browserBackLayer(backMotion, BrowserBackTarget.SHEET, fromBottom = true),
                 shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp),
                 color = MaterialTheme.colorScheme.surface,
                 contentColor = MaterialTheme.colorScheme.onSurface,
@@ -476,19 +602,28 @@ internal fun WebSessionBrowserScreen(
                 WebSessionOverlaySheetContent(
                     sheetRoute = activeSheetRoute,
                     browserState = browserState,
+                    canCreateTab = canCreateTab,
                     bookmarks = bookmarks,
                     globalHistory = globalHistory,
                     userscriptUiState = userscriptUiState,
                     onDismiss = dismissSheet,
                     onSelectTab = onSelectTab,
                     onCloseTab = onCloseTab,
-                    onNewTab = onNewTab,
+                    onNewTab = newTabReady,
                     onCloseCurrentTab = onCloseCurrentTab,
                     onCloseAllTabs = onCloseAllTabs,
                     onRemoveBookmark = onRemoveBookmark,
-                    onSelectSessionHistory = onSelectSessionHistory,
-                    onOpenUrl = onOpenUrl,
+                    // Going somewhere from a list ends any typing in the address bar.
+                    onSelectSessionHistory = { index ->
+                        onHostStateChange { it.copy(isEditingUrl = false) }
+                        onSelectSessionHistory(index)
+                    },
+                    onOpenUrl = { url ->
+                        onHostStateChange { it.copy(isEditingUrl = false, urlDraft = url) }
+                        onOpenUrl(url)
+                    },
                     onClearHistory = onClearHistory,
+                    onRemoveHistoryEntry = onRemoveHistoryEntry,
                     onToggleDesktopMode = onToggleDesktopMode,
                     onHostStateChange = onHostStateChange,
                     hostState = hostState,
@@ -510,46 +645,98 @@ internal fun WebSessionBrowserScreen(
                     onOpenDownloadLocation = onOpenDownloadLocation
                 )
             }
+            if (backMotion.committing && backMotion.target == BrowserBackTarget.SHEET) {
+                BrowserCommitTouchShield()
+            }
         }
 
         browserState.pendingDialog?.let { pendingDialog ->
             PendingDialogOverlay(
+                backMotion = backMotion,
                 dialog = pendingDialog,
                 promptValue = promptDraft,
                 onPromptValueChange = { promptDraft = it },
                 onConfirm = {
-                    onHandlePendingDialog(true, promptDraft)
+                    if (!backMotion.isExiting(BrowserBackTarget.DIALOG)) {
+                        onHandlePendingDialog(true, promptDraft, pendingDialog.id)
+                    }
                 },
                 onDismiss = {
-                    onHandlePendingDialog(false, null)
+                    if (!backMotion.isExiting(BrowserBackTarget.DIALOG)) {
+                        onHandlePendingDialog(false, null, pendingDialog.id)
+                    }
                 }
             )
         }
     }
 }
 
+private fun Modifier.browserBackScrim(motion: BrowserBackMotion, target: BrowserBackTarget): Modifier =
+    graphicsLayer {
+        if (motion.target != target) return@graphicsLayer
+        compositingStrategy = CompositingStrategy.ModulateAlpha
+        alpha = ((1f - 0.35f * motion.progress) * (1f - motion.exit)).coerceIn(0f, 1f)
+    }
+
+/** Absorbs taps while an overlay is finishing its 150ms exit animation, preventing late button clicks. */
+@Composable
+private fun BrowserCommitTouchShield() {
+    Box(
+        Modifier.fillMaxSize().clickable(
+            interactionSource = remember { MutableInteractionSource() },
+            indication = null,
+            onClick = {},
+        )
+    )
+}
+
+private fun Modifier.browserBackLayer(
+    motion: BrowserBackMotion,
+    target: BrowserBackTarget,
+    fromBottom: Boolean = false,
+): Modifier =
+    graphicsLayer {
+        if (motion.target != target) return@graphicsLayer
+        val p = motion.progress
+        val e = motion.exit
+        if (fromBottom) {
+            val scale = 1f - 0.06f * p - 0.04f * e
+            scaleX = scale
+            scaleY = scale
+            transformOrigin = TransformOrigin(0.5f, 1f)
+            translationY = size.height * (0.12f * p + 0.25f * e)
+            alpha = (1f - e).coerceIn(0f, 1f)
+        } else {
+            val scale = 1f - 0.06f * p - 0.06f * e
+            scaleX = scale
+            scaleY = scale
+            alpha = ((1f - 0.25f * p) * (1f - e)).coerceIn(0f, 1f)
+        }
+    }
+
 @Composable
 private fun PendingDialogOverlay(
+    backMotion: BrowserBackMotion,
     dialog: WebSessionPendingDialogState,
     promptValue: String,
     onPromptValueChange: (String) -> Unit,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
-    orbitStyle: Boolean = false,
 ) {
-    val backMotion = if (orbitStyle) com.ai.assistance.operit.ui.features.orbit.rememberOrbitBackMotion() else null
-    if (backMotion != null) com.ai.assistance.operit.ui.features.orbit.OrbitPopupBack(backMotion, onDismiss)
-    Box(
-        modifier =
+    Box(modifier = Modifier.fillMaxSize()) {
+        Box(
             Modifier
                 .fillMaxSize()
+                .browserBackScrim(backMotion, BrowserBackTarget.DIALOG)
                 .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.52f))
-                .browserKeyboardPadding(),
-        contentAlignment = Alignment.Center
-    ) {
-        Surface(
+        )
+        Box(
+            modifier = Modifier.fillMaxSize().browserKeyboardPadding(),
+            contentAlignment = Alignment.Center,
+        ) {
+            Surface(
             modifier = Modifier.padding(horizontal = 20.dp)
-                .then(if (backMotion != null) Modifier.orbitDismissLayer(backMotion) else Modifier),
+                .browserBackLayer(backMotion, BrowserBackTarget.DIALOG),
             shape = RoundedCornerShape(20.dp),
             color = MaterialTheme.colorScheme.surface,
             contentColor = MaterialTheme.colorScheme.onSurface,
@@ -595,6 +782,10 @@ private fun PendingDialogOverlay(
                     }
                 }
             }
+            }
+        }
+        if (backMotion.committing && backMotion.target == BrowserBackTarget.DIALOG) {
+            BrowserCommitTouchShield()
         }
     }
 }
@@ -603,6 +794,7 @@ private fun PendingDialogOverlay(
 private fun WebSessionOverlaySheetContent(
     sheetRoute: WebSessionBrowserSheetRoute,
     browserState: com.ai.assistance.operit.core.tools.defaultTool.websession.browser.WebSessionBrowserState,
+    canCreateTab: Boolean,
     bookmarks: List<WebSessionBookmark>,
     globalHistory: List<WebSessionHistoryEntry>,
     userscriptUiState: WebSessionUserscriptUiState,
@@ -616,6 +808,7 @@ private fun WebSessionOverlaySheetContent(
     onSelectSessionHistory: (Int) -> Unit,
     onOpenUrl: (String) -> Unit,
     onClearHistory: () -> Unit,
+    onRemoveHistoryEntry: (String, Long) -> Unit,
     onToggleDesktopMode: () -> Unit,
     onHostStateChange: ((WebSessionBrowserHostState) -> WebSessionBrowserHostState) -> Unit,
     hostState: WebSessionBrowserHostState,
@@ -640,26 +833,24 @@ private fun WebSessionOverlaySheetContent(
         WebSessionBrowserSheetRoute.TABS ->
             WebSessionTabSheet(
                 tabs = browserState.tabs,
+                canCreateTab = canCreateTab,
                 onSelectTab = { sessionId ->
                     onSelectTab(sessionId)
                     onDismiss()
                 },
                 onCloseTab = onCloseTab,
                 onNewTab = {
-                    onNewTab()
-                    onDismiss()
+                    if (canCreateTab) {
+                        onNewTab()
+                        onDismiss()
+                    }
                 }
             )
 
         WebSessionBrowserSheetRoute.MENU ->
             WebSessionMenuSheet(
                 isDesktopMode = browserState.isDesktopMode,
-                downloadSummary =
-                    stringResource(
-                        R.string.web_session_downloads_summary,
-                        browserState.activeDownloadCount,
-                        browserState.failedDownloadCount
-                    ),
+                activeDownloadCount = browserState.activeDownloadCount,
                 onOpenHistory = {
                     onHostStateChange { current ->
                         current.copy(sheetRoute = WebSessionBrowserSheetRoute.HISTORY)
@@ -732,7 +923,8 @@ private fun WebSessionOverlaySheetContent(
                     onOpenUrl(url)
                     onDismiss()
                 },
-                onClearHistory = onClearHistory
+                onClearHistory = onClearHistory,
+                onRemoveEntry = { onRemoveHistoryEntry(it.url, it.visitedAt) }
             )
 
         WebSessionBrowserSheetRoute.BOOKMARKS ->
@@ -847,25 +1039,70 @@ private fun BrowserDownloadSummaryBar(
     }
 }
 
+/** Where words typed in the address bar are searched. */
+private const val SEARCH_URL = "https://www.bing.com/search?q="
+
+private val URI_SCHEME = Regex("^([a-zA-Z][a-zA-Z0-9+.-]*):(.*)$", RegexOption.DOT_MATCHES_ALL)
+
+/** Schemes written without "//" that still name something to open, never words to search for. */
+private val OPAQUE_SCHEMES = setOf("about", "blob", "data", "javascript", "mailto", "tel", "sms", "geo", "market", "intent")
+
+private enum class TypedTarget { SEARCH, AS_IS, WEB_HOST }
+
+/** A bare host such as "example.com", "localhost", "192.168.1.1" or "[::1]", optionally with a port and path. */
+private fun isBareHost(text: String): Boolean {
+    if (text.any { it.isWhitespace() }) return false
+    val hostPort = text.substringBefore('/').substringBefore('?').substringBefore('#')
+    if (hostPort.startsWith("[")) {
+        val end = hostPort.indexOf(']')
+        if (end < 2) return false
+        val inside = hostPort.substring(1, end)
+        val after = hostPort.substring(end + 1)
+        return ':' in inside && inside.all { it.isLetterOrDigit() || it == ':' || it == '.' || it == '%' } &&
+            (after.isEmpty() || (after.length > 1 && after[0] == ':' && after.drop(1).all(Char::isDigit)))
+    }
+    // "example.com." names the same site; its last dot is not an empty label.
+    val host = hostPort.substringBefore(':').removeSuffix(".")
+    val port = hostPort.substringAfter(':', "")
+    if (port.isNotEmpty() && !port.all(Char::isDigit)) return false
+    val labels = host.split('.')
+    return host.equals("localhost", ignoreCase = true) ||
+        (labels.size > 1 && labels.all { label -> label.isNotEmpty() && label.all { it.isLetterOrDigit() || it == '-' } })
+}
+
+private fun typedTarget(trimmed: String): TypedTarget {
+    if (trimmed.isEmpty()) return TypedTarget.SEARCH
+    URI_SCHEME.matchEntire(trimmed)?.let { match ->
+        val scheme = match.groupValues[1].lowercase(Locale.ROOT)
+        val rest = match.groupValues[2]
+        return when {
+            // A web address needs a host; anything else after "http(s):" is searched for.
+            scheme == "http" || scheme == "https" ->
+                Uri.parse(trimmed).host.let { host ->
+                    if (host.isNullOrBlank() || host.any { it.isWhitespace() }) TypedTarget.SEARCH else TypedTarget.AS_IS
+                }
+            rest.startsWith("//") -> if (rest.length > 2) TypedTarget.AS_IS else TypedTarget.SEARCH
+            scheme in OPAQUE_SCHEMES -> if (rest.isNotEmpty()) TypedTarget.AS_IS else TypedTarget.SEARCH
+            // "example.com:8080/path" reads as a scheme too.
+            isBareHost(trimmed) -> TypedTarget.WEB_HOST
+            else -> TypedTarget.SEARCH
+        }
+    }
+    return if (isBareHost(trimmed)) TypedTarget.WEB_HOST else TypedTarget.SEARCH
+}
+
+/** Whether text typed in the address bar is something to open; otherwise it is searched for. */
+internal fun navigationTargetIsAddress(raw: String): Boolean = typedTarget(raw.trim()) != TypedTarget.SEARCH
+
 internal fun normalizeNavigationUrl(raw: String): String {
     val trimmed = raw.trim()
     if (trimmed.isBlank()) {
         return "about:blank"
     }
-
-    val lower = trimmed.lowercase(Locale.ROOT)
-    if (
-        lower.startsWith("http://") ||
-        lower.startsWith("https://") ||
-        lower.startsWith("about:")
-    ) {
-        return trimmed
-    }
-
-    return if (!trimmed.contains("://") && trimmed.contains(".") && !trimmed.contains(" ")) {
-        "https://$trimmed"
-    } else {
-        trimmed
+    return when (typedTarget(trimmed)) {
+        TypedTarget.AS_IS -> trimmed
+        TypedTarget.WEB_HOST -> "https://$trimmed"
+        TypedTarget.SEARCH -> SEARCH_URL + Uri.encode(trimmed)
     }
 }
 

@@ -19,24 +19,32 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 object OrbitDelivery {
+    /**
+     * The delivery rules every Orbit follows (no quiet hours, reports at least 15 minutes apart,
+     * digests at 9:00); only when this Orbit last reported is read from its stored row.
+     */
+    private suspend fun policyOf(context: Context, orbitId: String) =
+        com.ai.assistance.operit.data.model.OrbitNotificationEntity(
+            orbitId,
+            lastDeliveredAt = AppDatabase.getDatabase(context).orbitTaskDao().notificationPolicy(orbitId)?.lastDeliveredAt ?: 0,
+        )
+
     internal suspend fun dueAt(context: Context, item: com.ai.assistance.operit.data.model.OrbitDeliveryEntity, now: Long): Long {
         val dao = AppDatabase.getDatabase(context).orbitTaskDao()
-        val policy = dao.notificationPolicy(item.orbitId)
-            ?: com.ai.assistance.operit.data.model.OrbitNotificationEntity(item.orbitId)
+        val policy = policyOf(context, item.orbitId)
         return maxOf(item.retryAt,
             OrbitDeliveryPolicy.nextAllowed(if (item.messageId == null) policy else policy.copy(intervalMinutes = 0),
                 item.createdAt, item.messageId == null && dao.task(item.taskId)?.notifyPolicy == "DIGEST", now))
     }
 
     /**
-     * When Orbit may be woken for a due task, by the same notification settings its reports
-     * follow (quiet hours, interval, digest time). "Run now" is the user asking, so it goes at once.
+     * When Orbit may be woken for a due task, by the same rules its reports follow (interval,
+     * digest time). "Run now" is the user asking, so it goes at once.
      */
     internal suspend fun wakeAllowedAt(context: Context, task: com.ai.assistance.operit.data.model.OrbitTaskEntity,
         event: com.ai.assistance.operit.data.model.OrbitEventEntity, now: Long): Long {
         if (event.id.contains(":manual:")) return now
-        val policy = AppDatabase.getDatabase(context).orbitTaskDao().notificationPolicy(task.orbitId)
-            ?: com.ai.assistance.operit.data.model.OrbitNotificationEntity(task.orbitId)
+        val policy = policyOf(context, task.orbitId)
         return OrbitDeliveryPolicy.nextAllowed(policy, event.createdAt, task.notifyPolicy == "DIGEST", now,
             graceMs = DIGEST_WAKE_GRACE_MS)
     }
@@ -305,10 +313,10 @@ object OrbitDelivery {
 
     private fun tellBlocked(context: Context, orbitId: String) = OrbitNotices.once(context, orbitId, NOTIFY_BLOCKED,
         "[orbit-notify] 通知发不出去\n这是 App 发给你的说明，不是用户说的，用户也看不到。刚才 App 在后台想把你说的话用通知告诉用户，" +
-            "但系统把 Operit 的通知（或 Orbit 的通知渠道）关掉了，用户没收到。找合适的时机用一句话告诉用户，并调用 " +
+            "但系统把 Orbit 的通知（或它的消息通知渠道）关掉了，用户没收到。找合适的时机用一句话告诉用户，并调用 " +
             "orbit_permission_card permission=notify 放一张卡片让他打开。他以前说过不要通知的话，就调用 orbit_nothing_to_do 保持安静。",
         "[orbit-notify] Notifications cannot get through\nThis is a note from the app, not from the user; they cannot see it. " +
-            "The app just tried to show what you said as a notification, but the system has Operit's notifications (or Orbit's " +
+            "The app just tried to show what you said as a notification, but the system has Orbit's notifications (or its message " +
             "channel) turned off, so the user did not get it. When it fits, tell them in one line and call orbit_permission_card " +
             "permission=notify to put a card in the chat for turning them on. If they said before they don't want notifications, " +
             "call orbit_nothing_to_do to stay quiet.")

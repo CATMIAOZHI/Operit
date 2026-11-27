@@ -412,37 +412,43 @@ object AIServiceFactory {
                         config.protocolSettingsForModel(config.modelName).reasoningEfforts,
                 )
 
-            ApiProviderType.GROK_ACCOUNT ->
+            ApiProviderType.GROK_ACCOUNT -> {
+                val manager = com.ai.assistance.operit.data.api.ProviderAccountManager.get(context,
+                    com.ai.assistance.operit.data.api.AccountProvider.GROK)
                 GrokAccountProvider(
-                    com.ai.assistance.operit.data.api.ProviderAccountManager.get(context,
-                        com.ai.assistance.operit.data.api.AccountProvider.GROK),
-                    config.modelName, httpClient, customHeaders, supportsVision, enableToolCall,
+                    manager, config.modelName, manager.requestClient(httpClient), customHeaders,
+                    supportsVision, enableToolCall,
                 )
+            }
 
-            ApiProviderType.COMMAND_CODE ->
+            ApiProviderType.COMMAND_CODE -> {
+                val manager = com.ai.assistance.operit.data.api.ProviderAccountManager.get(context,
+                    com.ai.assistance.operit.data.api.AccountProvider.COMMAND_CODE)
                 CommandCodeProvider(
-                    com.ai.assistance.operit.data.api.ProviderAccountManager.get(context,
-                        com.ai.assistance.operit.data.api.AccountProvider.COMMAND_CODE),
-                    config.modelName, httpClient, customHeaders, supportsVision, enableToolCall,
+                    manager, config.modelName, manager.requestClient(httpClient), customHeaders,
+                    supportsVision, enableToolCall,
                 )
+            }
 
             ApiProviderType.GOOGLE_ANTIGRAVITY -> {
                 val manager = com.ai.assistance.operit.data.api.ProviderAccountManager.get(context,
                     com.ai.assistance.operit.data.api.AccountProvider.ANTIGRAVITY)
+                val keys = AccountApiKeyProvider(manager)
                 GeminiProvider(
-                    apiEndpoint = com.ai.assistance.operit.data.api.ProviderAccountManager.CCA,
-                    apiKeyProvider = AccountApiKeyProvider(manager), modelName = config.modelName,
-                    client = httpClient, providerType = providerType,
+                    apiEndpoint = com.ai.assistance.operit.data.api.ProviderAccountManager.CCA_DAILY,
+                    apiKeyProvider = keys, modelName = config.modelName,
+                    client = manager.requestClient(httpClient), providerType = providerType,
                     supportsVision = supportsVision, supportsAudio = supportsAudio, supportsVideo = supportsVideo,
-                    enableToolCall = enableToolCall, antigravity = AntigravityTransport(manager, config.modelName),
+                    enableToolCall = enableToolCall, antigravity = AntigravityTransport(manager, config.modelName, keys),
                 )
             }
 
-            ApiProviderType.OPENAI_CODEX ->
+            ApiProviderType.OPENAI_CODEX -> {
+                val authManager = com.ai.assistance.operit.data.api.CodexAuthManager.getInstance(context)
                 CodexProvider(
-                    authManager = com.ai.assistance.operit.data.api.CodexAuthManager.getInstance(context),
+                    authManager = authManager,
                     modelName = config.modelName,
-                    httpClient = httpClient,
+                    httpClient = authManager.requestClient(httpClient),
                     customHeaders = customHeaders,
                     supportsVision = supportsVision,
                     supportsAudio = false,
@@ -450,19 +456,19 @@ object AIServiceFactory {
                     supportsFiles = supportsVision,
                     enableToolCall = enableToolCall,
                 )
+            }
 
             // Claude 订阅账户登录：令牌来自账户管理器，请求仍走 Anthropic 原生格式
-            ApiProviderType.CLAUDE_ACCOUNT ->
+            ApiProviderType.CLAUDE_ACCOUNT -> {
+                val manager = com.ai.assistance.operit.data.api.ProviderAccountManager.get(
+                    context,
+                    com.ai.assistance.operit.data.api.AccountProvider.CLAUDE,
+                )
                 ClaudeProvider(
                     config.apiEndpoint,
-                    AccountApiKeyProvider(
-                        com.ai.assistance.operit.data.api.ProviderAccountManager.get(
-                            context,
-                            com.ai.assistance.operit.data.api.AccountProvider.CLAUDE,
-                        )
-                    ),
+                    AccountApiKeyProvider(manager),
                     config.modelName,
-                    httpClient,
+                    manager.requestClient(httpClient),
                     customHeaders,
                     providerType,
                     supportsVision,
@@ -470,6 +476,7 @@ object AIServiceFactory {
                     config.enableClaude1hPromptCache,
                     config.id,
                 )
+            }
 
             // Claude格式，支持Anthropic Claude系列
             ApiProviderType.ANTHROPIC,

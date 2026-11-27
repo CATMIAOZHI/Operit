@@ -215,7 +215,8 @@ internal object OrbitVoiceProfiles {
             append("\n").append(context.getString(R.string.orbit_approval_voice_current, current))
         }
         when (action.optString("op")) {
-            OP_CREATE -> append("\n").append(context.getString(R.string.orbit_approval_voice_create_note))
+            OP_CREATE -> append("\n").append(context.getString(
+                if (action.optBoolean("switch", true)) R.string.orbit_approval_voice_create_note else R.string.orbit_approval_voice_create_keep_note))
             OP_DELETE -> append("\n").append(context.getString(R.string.orbit_approval_voice_delete_note))
         }
         if (action.optBoolean("needs_key")) append("\n").append(context.getString(R.string.orbit_approval_voice_key_needed))
@@ -390,7 +391,8 @@ internal object OrbitVoiceProfiles {
                 speechRate = SpeechServicesPreferences.DEFAULT_TTS_SPEECH_RATE,
                 pitch = SpeechServicesPreferences.DEFAULT_TTS_PITCH,
             )
-            p.createTtsProfile(name, base.copy(serviceType = type, httpConfig = http, localModelId = localModelId))
+            p.createTtsProfile(name, base.copy(serviceType = type, httpConfig = http, localModelId = localModelId),
+                select = action.optBoolean("switch", true))
         } else {
             val type = SpeechServiceType.valueOf(service)
             val template = p.getCurrentSttProfile()
@@ -415,12 +417,13 @@ internal object OrbitVoiceProfiles {
             if (english) " The new address is another server, so the old API key was not carried over; ask the user for its own key."
             else "新地址和原来的不是同一个服务器，所以没有沿用原来的 API 密钥，需要请用户填这个服务器的密钥。"
         } else ""
+        val inUse = action.optBoolean("switch", true)
         return if (english) {
             "Added the $what profile \"$name\" ($label)" + (if (key.isNotEmpty()) " with the API key the user typed" else "") +
-                ". It is now the profile in use.$download$keyNote"
+                (if (inUse) ". It is now the profile in use." else ". It is only saved; the profile in use did not change.") + "$download$keyNote"
         } else {
             "已新建${what}配置「$name」（$label）" + (if (key.isNotEmpty()) "，API 密钥是用户亲手填的" else "") +
-                "，现在正在用它。$download$keyNote"
+                (if (inUse) "，现在正在用它。" else "，只是存下了，正在用的配置没变。") + "$download$keyNote"
         }
     }
 }

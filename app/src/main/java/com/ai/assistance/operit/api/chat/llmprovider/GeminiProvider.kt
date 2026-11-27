@@ -512,9 +512,12 @@ open class GeminiProvider(
         )
     }
 
-    private fun encodeGeminiContent(content: JSONObject): String {
+    private fun encodeGeminiContent(
+        content: JSONObject,
+        accountScope: String? = antigravity?.currentReplayScope(),
+    ): String {
         val encodedContent = JSONObject(content.toString())
-        antigravity?.let { encodedContent.put("_operit_account_scope", it.activeReplayScope) }
+        accountScope?.let { encodedContent.put("_operit_account_scope", it) }
         return Base64.getEncoder()
             .encodeToString(encodedContent.toString().toByteArray(Charsets.UTF_8))
     }
@@ -1438,6 +1441,8 @@ open class GeminiProvider(
         if (exception is ReplayMediaException) {
             throw exception
         }
+        // Only a new login brings the account back; retrying would only wait.
+        if (exception is com.ai.assistance.operit.data.api.AccountLoginExpiredException) throw exception
         if (isManuallyCancelled) {
             logError("请求被用户取消，停止重试。", exception)
             throw UserCancellationException(context.getString(R.string.gemini_error_request_cancelled), exception)
@@ -1447,6 +1452,13 @@ open class GeminiProvider(
 
         if (!enableRetry || com.ai.assistance.operit.api.chat.compaction.ContextCompaction.isContextOverflow(exception)) {
             throw IOException(errorText, exception)
+        }
+
+        // A server refused the account and the pool moved to one this request has not tried:
+        // trying it does not spend a retry. Once per account, so this ends with the pool.
+        if (freeAccountSwitchRetry(apiKeyProvider, exception)) {
+            delay(LlmRetryPolicy.nextDelayMs(1))
+            return retryCount
         }
 
         val newRetryCount = retryCount + 1
@@ -1468,9 +1480,8 @@ open class GeminiProvider(
             context.getString(R.string.orbit_dev_event_retry, newRetryCount, maxRetries, retryDelayMs, errorText),
         )
         AppLogger.w(TAG, "$errorText，将在 ${retryDelayMs}ms 后进行第 $newRetryCount 次重试...", exception)
-        if (!shouldSuppressKeyPoolRateLimitNotice(apiKeyProvider, exception, TAG)) {
-            onNonFatalError(buildRetryMessage(errorText, newRetryCount))
-        }
+        retryNotice(apiKeyProvider, exception, TAG) { buildRetryMessage(errorText, newRetryCount) }
+            ?.let { onNonFatalError(it) }
         delay(retryDelayMs)
         return newRetryCount
     }
@@ -1573,6 +1584,11 @@ open class GeminiProvider(
                 }
 
                 val perf = com.ai.assistance.operit.core.chat.currentLlmPerf()
+                // An account route fixes this attempt's account first, so the history it builds
+                // keeps only that account's signatures, and its reply is marked with it.
+                val attemptAccount = antigravity?.pick()
+                val accountScope = if (antigravity != null && attemptAccount != null) antigravity.scoped(attemptAccount)
+                    else kotlin.coroutines.EmptyCoroutineContext
                 val key = if (preferInteractions) apiKeyProvider.getApiKey() else fallbackKey
                 fallbackKey = null
                 var history: InteractionHistory? = null
@@ -1582,7 +1598,7 @@ open class GeminiProvider(
                 reportedInteractionUsage = false
                 if (preferInteractions) fallbackKey = key
                 val requestBody = perf.timeBody({ it.contentLength() }) {
-                    withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    withContext(kotlinx.coroutines.Dispatchers.IO + accountScope) {
                         val source = createRequestOptions(context, modelParameters, enableThinking, availableTools)
                         var compiled: List<PromptTurn>? = null
                         var options: JSONObject? = null
@@ -1637,10 +1653,11 @@ open class GeminiProvider(
                     Request.Builder().url("https://generativelanguage.googleapis.com/v1beta/interactions")
                         .apply { customHeaders.forEach { (name, value) -> header(name, value) } }
                         .header("x-goog-api-key", key!!).post(requestBody).build()
-                } else createRequest(context, requestBody, stream, requestId, key)
+                } else createRequest(context, requestBody, stream, requestId, key, attemptAccount)
                 // What really goes out: an account route (Antigravity) rewrites and wraps the body.
                 perf?.captured(providerModel, request.body ?: requestBody)
 
+                announceAccountSwitch(apiKeyProvider, onNonFatalError)
                 val call = client.newCall(request.withPerf(perf))
                 activeCall = call
                 kotlin.coroutines.coroutineContext[com.ai.assistance.operit.core.chat.SamplingInterrupt]
@@ -1649,7 +1666,7 @@ open class GeminiProvider(
                 emitConnectionStatus(context.getString(R.string.gemini_connecting))
 
                 val startTime = System.currentTimeMillis()
-                withContext(kotlinx.coroutines.Dispatchers.IO) {
+                withContext(kotlinx.coroutines.Dispatchers.IO + accountScope) {
                     val response = call.execute()
                     activeResponse = response
                     try {
@@ -1948,8 +1965,9 @@ open class GeminiProvider(
             isStreaming: Boolean,
             requestId: String,
             selectedKey: String? = null,
+            antigravityAccount: com.ai.assistance.operit.data.api.ProviderAccount? = null,
     ): Request {
-        antigravity?.let { return it.request(requestBody, isStreaming) }
+        antigravity?.let { return it.request(requestBody, isStreaming, antigravityAccount) }
         val currentApiKey = selectedKey ?: apiKeyProvider.getApiKey()
         val requestUrl =
             buildGeminiGenerateContentUrl(
@@ -2013,9 +2031,11 @@ open class GeminiProvider(
         var contentCount = 0
         val replayContentAccumulator = GeminiReplayContentAccumulator()
         val sampling = kotlin.coroutines.coroutineContext[com.ai.assistance.operit.core.chat.SamplingInterrupt]
+        // Read here, in the attempt: the closure runs after it ended, outside its account.
+        val replayScope = antigravity?.currentReplayScope()
         sampling?.replayMetadata = {
             replayContentAccumulator.buildInterruptedContentOrNull()?.let {
-                "\n" + ChatMarkupRegex.geminiContentMetaTag(encodeGeminiContent(it))
+                "\n" + ChatMarkupRegex.geminiContentMetaTag(encodeGeminiContent(it, replayScope))
             }
         }
 

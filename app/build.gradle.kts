@@ -32,15 +32,15 @@ plugins {
     alias(libs.plugins.kotlin.parcelize)
 }
 
-// -PoperitBrowser=true builds the version with the Cefrium browser engine built in (Android 10+,
-// about 100 MB larger, compiled with JDK 25). Without it the app uses the system WebView.
+// The app is built with the Cefrium browser engine (Android 10+, about 100 MB larger, compiled
+// with JDK 25). -PoperitBrowser=false builds it on the system WebView instead, for quick local runs.
 // Read from the command line like the root build script, which puts the plugin on the classpath.
-val browserBuild = gradle.startParameter.projectProperties["operitBrowser"] == "true"
+val browserBuild = gradle.startParameter.projectProperties["operitBrowser"] != "false"
 if (browserBuild && !JavaVersion.current().isCompatibleWith(JavaVersion.toVersion(25))) {
     throw GradleException(
-        "-PoperitBrowser=true builds with the Cefrium engine, which needs Gradle to run on JDK 25 " +
+        "The app builds with the Cefrium engine, which needs Gradle to run on JDK 25 " +
             "(this run uses JDK ${JavaVersion.current()}). Point JAVA_HOME at a JDK 25 and build again; " +
-            "leave out -PoperitBrowser=true for the usual version.",
+            "-PoperitBrowser=false builds without the engine.",
     )
 }
 if (browserBuild) apply(plugin = "com.cefrium")
@@ -195,11 +195,13 @@ android {
 
     defaultConfig {
         applicationId = "com.rainy.operitry"
-        // The engine needs Android 10; older phones install the version without it.
+        // The engine needs Android 10.
         minSdk = if (browserBuild) 29 else 26
         targetSdk = 34
-        versionCode = 100205
-        versionName = "1.12.2-ry.25"
+        // Every stable release increments versionCode by one, including a baseline update.
+        // Stable and dev must agree; see docs/agent/dev-to-main-promotion.md.
+        versionCode = 100206
+        versionName = "1.12.2-ry.26"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -307,7 +309,11 @@ android {
     }
 
     packaging {
-        
+        // From minSdk 28 AGP stores dex uncompressed by default; with this unminified app the
+        // debug APK grew from 311 to 541 MB. Compressed, as before the engine raised minSdk to 29.
+        dex {
+            useLegacyPackaging = true
+        }
         jniLibs {
             useLegacyPackaging = true
             // This app packages arm64 only. Sherpa's static ORT AAR still contains a
@@ -359,6 +365,23 @@ kotlin {
 // Drawing the README pictures (tools/readme/readme-shots.ps1) loads UI libraries built for Java 21 and
 // the chat's markdown library built for the computer; only that run needs them.
 val readmeShots = providers.gradleProperty("orbitReadmeShots").orNull
+
+// Robolectric downloads the Android framework jar from Maven Central the first time a test needs it,
+// inside the test run and without retrying; on CI that download failed now and then and failed the
+// tests with it. Gradle fetches the jar with the other dependencies (with retries and its cache), and
+// Robolectric reads it from there offline. This is the jar Robolectric fetches for SDK 34; change it
+// together with the Robolectric version, or the tests stop with a missing jar.
+val robolectricAndroidAll: Configuration by configurations.creating { isTransitive = false }
+dependencies { add(robolectricAndroidAll.name, "org.robolectric:android-all-instrumented:14-robolectric-10818077-i7") }
+tasks.withType<Test>().configureEach {
+    val androidAll: FileCollection = robolectricAndroidAll
+    // Lets Gradle see the jar, so a changed pin reruns the tests instead of reusing an old result.
+    inputs.files(androidAll).withPropertyName("robolectricAndroidAll").withPathSensitivity(PathSensitivity.NAME_ONLY)
+    systemProperty("robolectric.offline", "true")
+    // Read where Gradle keeps it, so the 150 MB jar is never copied.
+    doFirst { systemProperty("robolectric.dependency.dir", androidAll.singleFile.parentFile.absolutePath) }
+}
+
 if (readmeShots == null) {
     // Ordinary test runs leave the picture classes out entirely.
     tasks.withType<Test>().configureEach { exclude("com/ai/assistance/operit/readme/**") }

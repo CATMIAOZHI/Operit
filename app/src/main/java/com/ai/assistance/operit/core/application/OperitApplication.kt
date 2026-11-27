@@ -172,6 +172,13 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
         if (isMainAppProcess()) {
             // Notifications show the home-screen name and icon; read which one it is, off the main thread.
             AppLauncherIdentity.load(this)
+            // Only Orbit is on the home screen now; one picked as Operit Ry turns back while no
+            // window is open: each time the app goes to the background, and once after start-up
+            // for a start by a service or notification alone.
+            com.ai.assistance.operit.util.AppActivityTracker.onBackground = {
+                AppLauncherIdentity.restoreOrbit(this)
+            }
+            AppLauncherIdentity.restoreOrbit(this, delayMs = 10_000L)
             runCatching {
                 com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserProfiles
                     .deletePendingAtStartup(this)
@@ -796,6 +803,7 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
             super.attachBaseContext(base)
             return
         }
+        com.ai.assistance.operit.core.tools.defaultTool.websession.browser.configureBrowserEngineStartup()
         configureOpenMpEnvironment()
         // 在基础上下文附加前应用语言设置
         try {

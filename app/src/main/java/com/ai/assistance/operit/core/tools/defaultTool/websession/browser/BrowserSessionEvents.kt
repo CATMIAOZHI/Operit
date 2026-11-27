@@ -63,7 +63,8 @@ internal fun StandardBrowserSessionTools.sessionPageFinished(session: BrowserToo
     refreshNavigationStateTwice(session)
     injectDownloadHelper(session.page)
     injectTextSelectionHelper(session.page)
-    ioScope.launch {
+    // Titles only matter for the user's own history and bookmarks.
+    if (session.browserTaskId == null) ioScope.launch {
         historyStore.updateTitle(url, session.pageTitle)
     }
 }
@@ -73,7 +74,8 @@ internal fun StandardBrowserSessionTools.sessionHistoryUpdated(session: BrowserT
     val pageTitle = session.page.title.orEmpty()
     notifySessionStateChanged(session)
     refreshNavigationStateTwice(session)
-    ioScope.launch {
+    // The history lists the user's own browsing: pages an Orbit task opens stay out of it.
+    if (session.browserTaskId == null) ioScope.launch {
         historyStore.recordVisit(url, pageTitle, isReload)
     }
 }
@@ -81,7 +83,7 @@ internal fun StandardBrowserSessionTools.sessionHistoryUpdated(session: BrowserT
 internal fun StandardBrowserSessionTools.sessionTitleChanged(session: BrowserToolSession, title: String?) {
     session.pageTitle = title.orEmpty()
     refreshSessionUiOnMain(session.id)
-    ioScope.launch {
+    if (session.browserTaskId == null) ioScope.launch {
         historyStore.updateTitle(session.currentUrl, session.pageTitle)
     }
 }
@@ -215,7 +217,7 @@ internal fun StandardBrowserSessionTools.createEngineSessionOnMain(
 ): BrowserToolSession? {
     val engine = BrowserEngines.current ?: return null
     val page =
-        popup ?: runCatching { engine.createPage(context.applicationContext, profileName) }
+        popup ?: runCatching { engine.createPage(context.applicationContext, profileName, desktopModeOf(browserTaskId)) }
             .onFailure { AppLogger.e(SESSION_EVENTS_TAG, "The browser engine could not open a tab; using the WebView", it) }
             .getOrNull() ?: return null
     val session =
@@ -227,13 +229,13 @@ internal fun StandardBrowserSessionTools.createEngineSessionOnMain(
             profileName = profileName,
             browserTaskId = browserTaskId,
         )
-    if (StandardBrowserSessionTools.desktopModeEnabled) {
+    if (desktopModeOf(browserTaskId)) {
         session.viewportWidthPx = StandardBrowserSessionTools.DEFAULT_DESKTOP_VIEWPORT_WIDTH
         session.viewportHeightPx = StandardBrowserSessionTools.DEFAULT_DESKTOP_VIEWPORT_HEIGHT
     }
     page.view.contentDescription = context.getString(R.string.web_session_accessibility_web_content)
     page.events = engineEvents(session)
-    applySessionUserAgent(session, resolveUserAgent(customUserAgent))
+    applySessionUserAgent(session, resolveUserAgent(customUserAgent, desktopModeOf(browserTaskId)))
     BrowserCdp.attachEngineOnMain(this, session, page)
     userscriptManager.attachSession(session.id, session.page)
     return session

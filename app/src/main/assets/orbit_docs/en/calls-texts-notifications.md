@@ -65,7 +65,7 @@ Check existing tasks first to avoid duplicates.
 - `calendar`, or `calendar:days` to inspect the next 1–30 days of calendar events, default 7. Calendar permission is required.
 
 These are periodic reads and change checks, not real-time triggers for every incoming message.
-Notification watches inspect notifications still present at check time, excluding this app and ongoing notifications. SMS and notification watches each take at most 50 items, with up to 500 characters per item.
+Notification watches inspect notifications still present at check time, excluding ongoing notifications and those from the app that hosts Orbit (Operit Ry, including its classic chat). SMS and notification watches each take at most 50 items, with up to 500 characters per item.
 Fleeting notifications and messages outside these bounds can be missed. Do not promise a complete record.
 After a change wakes you, still decide whether it matches the user's request. Do not copy unrelated private content.
 See [scheduling-and-watching.md](scheduling-and-watching.md) for location arrival/departure and script conditions. Do not assume arbitrary phone event subscriptions exist.
@@ -74,17 +74,17 @@ See [scheduling-and-watching.md](scheduling-and-watching.md) for location arriva
 
 Task reminders and background results first return to their source chat for you to tell the user. If that chat was deleted, they return to the main chat.
 After you speak proactively, the app marks the chat unread. When the app is not open, system notifications are allowed and the “Message notifications” switch is on, the app attempts to show your messages (proactive or replies) as a notification with your picture that opens the chat.
-“Message notifications” is your own switch (Settings → Notifications, or `message_notifications` in `orbit_settings`), separate from the system notification permission: the permission only decides whether Operit can post notifications, and the switch decides whether your messages also get their own notification. When it is off, messages stay in the chat only.
+“Message notifications” is your own switch (Settings → Notifications, or `message_notifications` in `orbit_settings`), separate from the system notification permission: the permission only decides whether Orbit can post notifications, and the switch decides whether your messages also get their own notification. When it is off, messages stay in the chat only.
 A saved task, a completed task, a result in chat, a displayed notification, and the user having seen it are different states.
 Tool success alone does not prove the user received or read a notification.
 
-“Notifications” in Orbit settings offers a night quiet-hours switch (22:00–08:00) and reporting intervals of immediate, 15 minutes, or 60 minutes.
-Task wakes and result delivery also follow quiet hours, intervals, and daily digest policy. A task wake explicitly requested with “run now” does not wait for these arrangements.
+Orbit's proactive reports are at least 15 minutes apart; this interval is not adjustable in settings.
+Task wakes and result delivery both follow this interval and the daily digest (9 AM). A task wake explicitly requested with “run now” does not wait for these arrangements.
 Use `notify_policy=ALWAYS` for every-run reports, `CHANGES` for useful changes, and `DIGEST` for daily roundups.
 These policies do not guarantee bypassing system Do Not Disturb, notification channel settings, battery restrictions, force-stop, lost connectivity, or a powered-off phone.
 
 If the user explicitly needs an immediate system notification and the tool is available, use `send_notification`, with required `message` and optional `title`.
-It does not pass through Orbit's task reporting queue or quiet hours. Do not use it to bypass the user's notification preferences or replace a saved future reminder.
+It does not pass through Orbit's task reporting queue. Do not use it to bypass the user's notification preferences or replace a saved future reminder.
 A successful result confirms the call completed, not that the user saw the notification.
 
 ## Permission cards

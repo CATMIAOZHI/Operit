@@ -270,7 +270,7 @@ object ThinkingRequestSemantics {
                         resolveSiliconFlowOverrideWhenThinkingDisabled(modelName, modelParameters)
 
                     ApiProviderType.GOOGLE_ANTIGRAVITY -> ThinkingRequestSummary.Effort(
-                        antigravityThinkingEffort(modelName, qualityLevel, false, modelParameters))
+                        antigravityShownEffort(modelName, qualityLevel, false, modelParameters))
                     ApiProviderType.GOOGLE,
                     ApiProviderType.GEMINI_GENERIC ->
                         if (isGemini37FlashModel(modelName)) {
@@ -407,7 +407,7 @@ object ThinkingRequestSemantics {
             }
 
             ApiProviderType.GOOGLE_ANTIGRAVITY -> ThinkingRequestSummary.Effort(
-                antigravityThinkingEffort(modelName, qualityLevel, true, modelParameters))
+                antigravityShownEffort(modelName, qualityLevel, true, modelParameters))
             ApiProviderType.GOOGLE,
             ApiProviderType.GEMINI_GENERIC ->
                 resolveGeminiNativeThinkingConfigOverride(modelParameters)

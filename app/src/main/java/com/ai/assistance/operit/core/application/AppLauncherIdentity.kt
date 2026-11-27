@@ -3,20 +3,26 @@ package com.ai.assistance.operit.core.application
 import android.content.ComponentName
 import android.content.Context
 import android.content.pm.PackageManager
+import com.ai.assistance.operit.util.AppActivityTracker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
-/** Which name and icon the app shows on the home screen. Orbit is the default. */
+/**
+ * Which name and icon the app shows on the home screen. Only Orbit is offered now; the Operit Ry
+ * entry stays declared so a phone that picked it earlier can be turned back to Orbit.
+ */
 enum class AppLauncherIdentity(internal val aliasClass: String) {
     ORBIT("com.ai.assistance.operit.launcher.OrbitLauncher"),
     OPERIT("com.ai.assistance.operit.launcher.OperitLauncher");
 
     companion object {
-        // Outlives the settings page, so a confirmed switch finishes even if the page closes.
+        // Outlives any screen, so a switch back to Orbit finishes once begun.
         private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         // Switches one at a time: two interleaved ones could leave both entries off.
         private val lock = Mutex()
@@ -71,34 +77,48 @@ enum class AppLauncherIdentity(internal val aliasClass: String) {
             )
 
         /**
-         * Shows [identity] on the home screen and hides the other entry, off the main thread, then
-         * calls [onDone] on the main thread with the entry now shown. The new one is turned on
-         * first, so the app never has no icon. Launchers may take a few seconds to redraw.
+         * Turns a home screen that still shows Operit Ry back to Orbit. Called when the app goes to
+         * the background and, after [delayMs], at start-up. Turning off the old entry would close a
+         * window opened from it, so both changes run on the main thread, in turn with the window
+         * callbacks, and only while no window is started; otherwise they wait for the next time the
+         * app goes to the background. Orbit is turned on first, so the app never has no icon.
          */
-        fun switchTo(context: Context, identity: AppLauncherIdentity, onDone: (AppLauncherIdentity) -> Unit) {
+        fun restoreOrbit(context: Context, delayMs: Long = 0L) {
+            if (_known.value == ORBIT) return
             val app = context.applicationContext
             scope.launch {
-                val now = lock.withLock {
-                    runCatching { set(app, identity) }
-                    current(app).also { _known.value = it }
+                if (delayMs > 0) delay(delayMs)
+                val switched = lock.withLock {
+                    // An earlier read or switch may have settled it while this one waited.
+                    if (_known.value == ORBIT) return@withLock false
+                    val now = runCatching { current(app) }.getOrNull() ?: return@withLock false
+                    if (now == ORBIT) {
+                        _known.value = ORBIT
+                        return@withLock false
+                    }
+                    // Two binder calls, once per phone that picked Operit Ry.
+                    val changed = withContext(Dispatchers.Main) {
+                        !AppActivityTracker.hasStartedActivity() &&
+                            runCatching {
+                                setEnabled(app, ORBIT, true)
+                                setEnabled(app, OPERIT, false)
+                            }.isSuccess
+                    }
+                    if (!changed) return@withLock false
+                    val after = runCatching { current(app) }.getOrNull() ?: return@withLock false
+                    _known.value = after
+                    after == ORBIT
                 }
-                // Also the shared notification when only the pet or a floating window holds it.
-                runCatching { CompanionNotification.refresh(app) }
-                android.os.Handler(android.os.Looper.getMainLooper()).post { onDone(now) }
+                // The shared notification follows the new name and icon, once the switch is confirmed.
+                if (switched) runCatching { CompanionNotification.refresh(app) }
             }
         }
 
-        private fun set(context: Context, identity: AppLauncherIdentity) {
-            val pm = context.packageManager
-            val other = if (identity == ORBIT) OPERIT else ORBIT
-            pm.setComponentEnabledSetting(
+        private fun setEnabled(context: Context, identity: AppLauncherIdentity, enabled: Boolean) {
+            context.packageManager.setComponentEnabledSetting(
                 component(context, identity),
-                PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
-                PackageManager.DONT_KILL_APP,
-            )
-            pm.setComponentEnabledSetting(
-                component(context, other),
-                PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                if (enabled) PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+                else PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
                 PackageManager.DONT_KILL_APP,
             )
         }

@@ -7,6 +7,51 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AntigravityQuotaTest {
+    @Test fun summaryGivesFiveHourAndWeeklyPerFamily() {
+        val body = JSONObject(
+            "{\"groups\": [" +
+                "{\"displayName\": \"Gemini models\", \"buckets\": [" +
+                "{\"window\": \"WEEKLY\", \"remainingFraction\": 0.9, \"resetTime\": \"2026-11-30T00:00:00Z\"}," +
+                "{\"window\": \"5h\", \"remaining\": {\"remainingFraction\": 0.4}}]}," +
+                "{\"displayName\": \"Claude and other models\", \"buckets\": [" +
+                "{\"bucketId\": \"claude-5h\", \"remainingFraction\": 1}]}," +
+                "{\"displayName\": \"Gemini 4 Argon\", \"buckets\": [" +
+                "{\"displayName\": \"Weekly limit\", \"remainingFraction\": 0.5}," +
+                "{\"displayName\": \"no window\", \"remainingFraction\": 0.5}]}" +
+                "]}"
+        )
+        val windows = AntigravityQuota.summaryWindows(body)
+        assertEquals(
+            listOf("Gemini" to QuotaWindow.FIVE_HOUR, "Gemini" to QuotaWindow.WEEKLY,
+                "Claude" to QuotaWindow.FIVE_HOUR, "Argon" to QuotaWindow.WEEKLY),
+            windows.map { it.label to it.window },
+        )
+        assertEquals(60.0, windows[0].percent, 0.001)
+        assertEquals(10.0, windows[1].percent, 0.001)
+        assertEquals(java.time.Instant.parse("2026-11-30T00:00:00Z").toEpochMilli(), windows[1].resetAtEpochMillis)
+        assertEquals(0.0, windows[2].percent, 0.001)
+        assertTrue(AntigravityQuota.summaryWindows(JSONObject("{}")).isEmpty())
+    }
+
+    @Test fun summaryAsTheServerSendsIt() {
+        val body = JSONObject("""{"groups":[
+          {"displayName":"Gemini Models","description":"Models within this group: Gemini 4 Neon, Gemini 4 Argon",
+           "buckets":[{"bucketId":"gemini-weekly","displayName":"Weekly Limit Remaining","window":"weekly",
+             "resetTime":"2026-12-01T03:43:57Z","remainingFraction":0.834198},
+            {"bucketId":"gemini-5h","displayName":"Five Hour Limit Remaining","window":"5h","remainingFraction":1}]},
+          {"displayName":"Claude and GPT models","description":"Models within this group: Claude Opus 5.5, GPT-OSS 120B",
+           "buckets":[{"bucketId":"3p-weekly","displayName":"Weekly Limit Remaining","window":"weekly","remainingFraction":1},
+            {"bucketId":"3p-5h","displayName":"Five Hour Limit Remaining","window":"5h","remainingFraction":0.5}]}]}""")
+        val windows = AntigravityQuota.summaryWindows(body)
+        assertEquals(
+            listOf("Gemini" to QuotaWindow.FIVE_HOUR, "Gemini" to QuotaWindow.WEEKLY,
+                "Claude / GPT" to QuotaWindow.FIVE_HOUR, "Claude / GPT" to QuotaWindow.WEEKLY),
+            windows.map { it.label to it.window },
+        )
+        assertEquals(17.0, windows[1].percent, 0.6)
+        assertEquals(50.0, windows[2].percent, 0.001)
+    }
+
     @Test fun oneRowPerFamilyFromTheModelList() {
         val body = JSONObject(
             "{\"models\": {" +

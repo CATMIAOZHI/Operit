@@ -20,20 +20,20 @@
 
 ## **1. 第一步：安装系统基础依赖**
 
-首先，我们需要更新包管理器并安装编译所需的关键基础软件：**Git**、**JDK 21**、**Node.js**、**npm** 和 **Python 3**。  
+首先，我们需要更新包管理器并安装编译所需的关键基础软件：**Git**、**JDK 25**、**Node.js**、**npm** 和 **Python 3**。
 ```bash 
 # 更新软件包列表  
 sudo apt update
 
-# 安装必要的工具、JDK 21、Node.js、npm 和 Python 3
-sudo apt install -y git wget unzip openjdk-21-jdk nodejs npm python3
+# 安装必要的工具、JDK 25、Node.js、npm 和 Python 3
+sudo apt install -y git wget unzip openjdk-25-jdk nodejs npm python3
 
 # 安装 pnpm（tools/example_packages/sync_example_packages.py 预构建 examples 时会用到）
 sudo npm install -g pnpm
 
 # 安装完成后，请验证 Java 版本是否正确
 java -version  
-# 预期输出应包含 "OpenJDK Runtime Environment (build 21..." 或类似信息
+# 预期输出应包含 "OpenJDK Runtime Environment (build 25..." 或类似信息
 
 # 建议同时确认 Node.js、npm、pnpm 和 Python 3 可用
 node -v
@@ -41,7 +41,7 @@ npm -v
 pnpm -v
 python3 --version
 ``` 
-**注意：** 项目官方要求 **JDK 21**。为确保最大兼容性，强烈建议优先安装和使用 JDK 21。
+**注意：** 项目要求 **JDK 25**：App 内置的 Cefrium 浏览器引擎要用 JDK 25 或更高版本编译，低于 25 会直接报错。
 
 **补充说明：** 项目中的 `web-chat` 使用 React + Vite 构建；`tools/example_packages/sync_example_packages.py` 会预构建 `examples/` 下的脚本包并打包 `.toolpkg`。因此除了 Android 环境外，还需要准备好 Node.js、npm、pnpm 和 Python 3。如果后续执行前端构建时提示 Node.js 版本过低，请升级到较新的 Node.js LTS 版本后再继续。
 
@@ -86,8 +86,8 @@ nano ~/.bashrc
 
 2. **在文件末尾添加以下内容：**  
 ```bash
-# =============== Java JDK 21 配置 ===============  
-export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64  
+# =============== Java JDK 25 配置 ===============
+export JAVA_HOME=/usr/lib/jvm/java-25-openjdk-amd64
 export PATH=$JAVA_HOME/bin:$PATH
 
 # =============== Android SDK 配置 ===============  
@@ -269,7 +269,7 @@ app/build/outputs/apk/clone/app-clone.apk
 | 错误信息 | 解决方案 |
 | :---- | :---- |
 | sdkmanager: command not found | 环境变量未正确设置或生效。请检查 **~/.bashrc** 文件内容，并执行 source ~/.bashrc。 |
-| Could not determine Java version... | **JAVA_HOME** 环境变量不正确，或安装了错误的 JDK 版本。请确保已安装 **JDK 21** 并指向正确的路径。 |
+| Could not determine Java version... | **JAVA_HOME** 环境变量不正确，或安装了错误的 JDK 版本。请确保已安装 **JDK 25** 并指向正确的路径。 |
 | NDK not found. | 确保已在 **第四步** 中使用 sdkmanager 安装了项目所需的 **ndk;25.1.8937393** 版本。 |
 | pnpm: command not found | 尚未安装 `pnpm`。请先执行 `sudo npm install -g pnpm`，再重新运行 `python3 ./tools/example_packages/sync_example_packages.py`。 |
 | Missing web-chat/dist. Run `npm --prefix web-chat run build` first. | 尚未构建 `web-chat` 或构建失败。请先执行 `npm --prefix web-chat install`，再在项目根目录执行 `npm run build:webchat`。 |

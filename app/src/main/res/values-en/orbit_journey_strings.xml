@@ -26,7 +26,7 @@
     <string name="orbit_page_card_orbit_models_sub">Pick the models Orbit uses for chat, background work and pictures</string>
     <string name="orbit_page_card_orbit_models_open">Open models</string>
     <string name="orbit_page_card_notify_title">Notifications</string>
-    <string name="orbit_page_card_notify_sub">Notification switch, quiet hours at night, how often reports come</string>
+    <string name="orbit_page_card_notify_sub">Notification permission and message notifications</string>
     <string name="orbit_page_card_notify_open">Open notification settings</string>
     <string name="orbit_login_card_relogin_sub">The sign-in seems to have stopped working; sign in again</string>
     <string name="orbit_login_card_relogin">Sign in again</string>

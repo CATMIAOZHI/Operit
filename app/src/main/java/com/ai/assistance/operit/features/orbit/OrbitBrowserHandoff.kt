@@ -32,7 +32,8 @@ internal object OrbitBrowserHandoff {
                 val session = input.sessionId.takeIf { alreadyOwned }?.let(StandardBrowserSessionTools.sessions::get)
                     ?.takeIf { it.profileName == profile }
                     ?: browser.createSessionTabOnMain(context.applicationContext, input.requestedUrl, expected.title)
-                browser.ensureSessionAttachedOnMain(session.id)
+                // The user asked to take this page over: it comes in front even over their own window.
+                browser.ensureSessionAttachedOnMain(session.id, explicit = true)
                 browser.setExpandedOnMain(true)
                 session.id
                 }

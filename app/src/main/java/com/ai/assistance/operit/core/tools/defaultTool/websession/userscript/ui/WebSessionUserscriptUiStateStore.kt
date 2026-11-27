@@ -13,6 +13,8 @@ import kotlinx.coroutines.flow.update
 internal data class WebSessionUserscriptUiState(
     val supportState: UserscriptSupportState = UserscriptSupportState(isSupported = false),
     val installedScripts: List<UserscriptListItem> = emptyList(),
+    val scriptsLoaded: Boolean = false,
+    val hasLoadError: Boolean = false,
     val recentLogs: List<UserscriptLogItem> = emptyList(),
     val currentPageStatuses: Map<Long, UserscriptPageRuntimeStatus> = emptyMap(),
     val pendingInstall: UserscriptInstallPreview? = null
@@ -29,7 +31,15 @@ internal class WebSessionUserscriptUiStateStore(
     }
 
     fun updateScripts(items: List<UserscriptListItem>) {
-        mutableState.update { current -> current.copy(installedScripts = items) }
+        mutableState.update { current ->
+            current.copy(installedScripts = items, scriptsLoaded = true, hasLoadError = false)
+        }
+    }
+
+    fun markScriptsLoadError() {
+        mutableState.update { current ->
+            current.copy(scriptsLoaded = true, hasLoadError = true)
+        }
     }
 
     fun updateLogs(items: List<UserscriptLogItem>) {

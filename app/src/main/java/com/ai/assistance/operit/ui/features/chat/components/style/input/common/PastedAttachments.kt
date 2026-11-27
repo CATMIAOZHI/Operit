@@ -29,6 +29,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.PlatformTextInputInterceptor
 import androidx.compose.ui.platform.PlatformTextInputMethodRequest
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.core.view.inputmethod.EditorInfoCompat
 import androidx.core.view.inputmethod.InputConnectionCompat
 import com.ai.assistance.operit.R
@@ -68,6 +70,94 @@ private val stagedSweptThisRun = java.util.concurrent.atomic.AtomicBoolean(false
 private val pasteScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
 private object PasteAsAttachmentKey
+
+/** Text pasted at this length or more goes in as a .txt attachment instead of filling the input. */
+internal const val LONG_PASTE_CHARS = 5_000
+
+/**
+ * Wraps a chat field's [onValueChange] so a very long paste (system paste, the keyboard's clipboard
+ * or Ctrl+V alike) leaves the field and becomes a .txt attachment: [onLongPaste] gets the field
+ * with the paste, the span pasted and the field without it, which is what the field now shows.
+ * Typing never adds this much at once; text the app sets itself does not pass through here.
+ */
+@Composable
+internal fun rememberLongPasteAsAttachment(
+    value: TextFieldValue,
+    enabled: Boolean,
+    onLongPaste: (next: TextFieldValue, pasted: IntRange, shown: TextFieldValue) -> Unit,
+    onValueChange: (TextFieldValue) -> Unit,
+): (TextFieldValue) -> Unit {
+    // Compared by reference: an equality check would compare the whole draft on every change.
+    val current = remember { androidx.compose.runtime.mutableStateOf(value, androidx.compose.runtime.referentialEqualityPolicy()) }
+    current.value = value
+    val active by rememberUpdatedState(enabled)
+    val change by rememberUpdatedState(onValueChange)
+    val longPaste by rememberUpdatedState(onLongPaste)
+    return remember {
+        { next: TextFieldValue ->
+            // Text still being composed by the keyboard is typing, not a paste.
+            val range = if (active && next.composition == null) longInsertion(current.value, next) else null
+            if (range == null) {
+                // Kept at once, not only on the next recomposition: two edits in one frame compare right.
+                current.value = next
+                change(next)
+            } else {
+                val shown = TextFieldValue(next.text.removeRange(range), TextRange(range.first))
+                current.value = shown
+                change(shown)
+                longPaste(next, range, shown)
+            }
+        }
+    }
+}
+
+/**
+ * The span [next] put where [before] had its cursor or selection, when it is one block of at least
+ * [LONG_PASTE_CHARS] and the text around it is unchanged; null otherwise. Cheap for ordinary
+ * typing: only a change that grows the text by that much is compared.
+ */
+private fun longInsertion(before: TextFieldValue, next: TextFieldValue): IntRange? {
+    val old = before.text
+    val new = next.text
+    // Only the cursor or selection moved (a long selection collapsing, say): nothing was pasted.
+    if (new === old) return null
+    val start = before.selection.min
+    val tail = old.length - before.selection.max
+    val end = new.length - tail
+    if (end - start < LONG_PASTE_CHARS || start < 0 || tail < 0) return null
+    if (new.length == old.length && new == old) return null
+    if (!new.regionMatches(0, old, 0, start) || !new.regionMatches(end, old, before.selection.max, tail)) return null
+    return start until end
+}
+
+/**
+ * Writes the [range] of [text] that was pasted to a .txt in the paste folder; null when it cannot.
+ * The chat copies it as an attachment, then it is deleted ([releaseStagedPasteLater]).
+ */
+internal suspend fun stageLongPaste(context: Context, text: String, range: IntRange): File? {
+    // Known here so a cancelled write can still be removed; the cache folder is looked up off the main thread.
+    var folder: File? = null
+    return try {
+        withContext(Dispatchers.IO) {
+            val target = File(File(context.cacheDir, STAGED_DIR), System.nanoTime().toString()).also { folder = it }
+            sweepStaged(context)
+            target.mkdirs()
+            val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+            val name = fitName(context.getString(R.string.pasted_text_file_name) + "_" + stamp + ".txt")
+            File(target, name).apply {
+                bufferedWriter(Charsets.UTF_8).use { it.write(text, range.first, range.last + 1 - range.first) }
+            }
+        }
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        // Cancelled, even just after writing: the caller never gets the file to delete.
+        withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) { folder?.deleteRecursively() }
+        throw e
+    } catch (e: Exception) {
+        AppLogger.w(TAG, "Could not save the pasted text: ${e.message}")
+        withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) { folder?.deleteRecursively() }
+        null
+    }
+}
 
 /**
  * Lets the chat input take pictures and files, not only text: a picture the keyboard inserts (its

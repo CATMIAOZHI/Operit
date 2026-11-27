@@ -37,12 +37,58 @@ private val WeixinGreen = Color(0xFF07C160)
 
 /** WeChat's mark as Orbit draws it: a green rounded square with a white speech bubble. */
 @Composable
-private fun WeixinMark(size: Dp) {
+internal fun OrbitWeixinMark(size: Dp) {
     Box(
         Modifier.size(size).clip(RoundedCornerShape(size * 0.28f)).background(WeixinGreen),
         contentAlignment = Alignment.Center,
     ) {
         Icon(orbitIcon("message-circle"), contentDescription = null, tint = Color.White, modifier = Modifier.size(size * 0.56f))
+    }
+}
+
+/**
+ * The chat WeChat writes to, when [orbit] is linked: a channel, read in Orbit and answered in
+ * WeChat. Null otherwise (or not read yet), and for a chat that is no longer one of its side chats.
+ */
+internal fun orbitChannelChatId(orbit: OrbitProfile, channel: OrbitWeixin.ChatChannel?): String? =
+    channel?.chatId
+        ?.takeIf { id -> orbit.sideChats.any { it.chatId == id } }
+
+/**
+ * Where the input box would be in the WeChat channel: messages go through WeChat, so the chat
+ * points there instead, like Muse's WhatsApp channel. With the login expired it says so, and
+ * [onReconnect] opens the WeChat settings to scan again.
+ */
+@Composable
+internal fun OrbitWeixinChannelFooter(loginExpired: Boolean, onReconnect: () -> Unit, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    Column(modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            stringResource(if (loginExpired) R.string.orbit_weixin_expired else R.string.orbit_weixin_continue_there),
+            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+        )
+        if (loginExpired) {
+            TextButton(onClick = onReconnect) {
+                Text(stringResource(R.string.orbit_weixin_reconnect), style = MaterialTheme.typography.bodyMedium)
+            }
+        } else {
+            TextButton(onClick = {
+                val launch = context.packageManager.getLaunchIntentForPackage("com.tencent.mm")
+                val opened = launch != null && runCatching {
+                    context.startActivity(launch.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+                }.isSuccess
+                if (!opened) {
+                    Toast.makeText(
+                        context,
+                        if (launch == null) R.string.orbit_weixin_not_installed else R.string.orbit_weixin_open_failed,
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            }) {
+                Text(stringResource(R.string.orbit_weixin_open_app), style = MaterialTheme.typography.bodyMedium)
+            }
+        }
     }
 }
 
@@ -85,7 +131,7 @@ internal fun OrbitChannelsPage(orbit: OrbitProfile, onBack: () -> Unit, onOpenWe
                         Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        WeixinMark(40.dp)
+                        OrbitWeixinMark(40.dp)
                         Spacer(Modifier.width(14.dp))
                         Column(Modifier.weight(1f)) {
                             Text(stringResource(R.string.orbit_weixin), style = MaterialTheme.typography.titleMedium)
@@ -127,7 +173,7 @@ internal fun OrbitWeixinPage(orbit: OrbitProfile, onBack: () -> Unit, onOpenChat
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Spacer(Modifier.height(48.dp))
-                WeixinMark(88.dp)
+                OrbitWeixinMark(88.dp)
                 Spacer(Modifier.height(20.dp))
                 Text(stringResource(R.string.orbit_weixin), style = MaterialTheme.typography.headlineMedium)
                 Spacer(Modifier.height(16.dp))
@@ -383,7 +429,7 @@ internal fun WeixinConnectSheet(orbit: OrbitProfile, onDismiss: () -> Unit, onCo
                 }
                 OrbitWeixin.Login.Step.Done -> {
                     Spacer(Modifier.height(8.dp))
-                    WeixinMark(64.dp)
+                    OrbitWeixinMark(64.dp)
                     Text(stringResource(R.string.orbit_weixin_done), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                     Text(stringResource(R.string.orbit_weixin_done_note, orbit.name), color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center)

@@ -546,7 +546,7 @@ class FloatingFullscreenModeViewModel(
                  wakePrefs.voiceInterruptionEnabledFlow.collectLatest { voiceInterruptionEnabled = it }
              }
              launch {
-                 speechManager.speechService.speechActivityFlow.collectLatest { active ->
+                 speechManager.speechActivityFlow.collectLatest { active ->
                      if (active && interruptionCapture && canListenDuringPlayback()) {
                          interruptionSpeechDetected = true
                          delay(150)

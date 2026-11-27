@@ -138,13 +138,15 @@
             android:noHistory="true"
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
-        <!-- The open browser: an ordinary window, so swiping home and the recent apps work. -->
+        <!-- The open browser: an ordinary window, so it leaves the screen with the app instead of
+             covering other apps. Opened in the app, it joins the app's task and opens like a page;
+             opened from the floating button over another app, it gets a task of its own. The
+             affinity only names that task of its own, so the app never lands in it. -->
         <activity
             android:name=".core.tools.defaultTool.websession.browser.WebSessionBrowserActivity"
             android:exported="false"
             android:label="@string/orbit_launcher_name"
             android:taskAffinity="${applicationId}.browser"
-            android:launchMode="singleTask"
             android:autoRemoveFromRecents="true"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|screenLayout|smallestScreenSize|uiMode|density"
             android:windowSoftInputMode="adjustResize"
@@ -285,8 +287,8 @@
             </intent-filter>
         </activity>
 
-        <!-- The home-screen entry: Orbit's name and icon by default, or Operit Ry's. Settings turns one
-             on and the other off (AppLauncherIdentity); exactly one stays enabled. -->
+        <!-- The home-screen entry is always Orbit. The Operit Ry entry stays declared, off, only so a
+             phone that picked it in an older version is turned back to Orbit (AppLauncherIdentity). -->
         <activity-alias
             android:name=".launcher.OrbitLauncher"
             android:targetActivity=".ui.main.MainActivity"

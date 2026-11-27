@@ -182,12 +182,17 @@ internal fun WebSessionUserscriptSheet(
             }
 
             WebSessionSectionLabel(text = stringResource(R.string.web_session_userscript_library))
-            if (state.installedScripts.isEmpty()) {
+            if (state.hasLoadError && state.installedScripts.isEmpty()) {
+                WebSessionEmptyState(
+                    icon = Icons.Filled.Description,
+                    title = stringResource(R.string.web_session_userscript_load_failed)
+                )
+            } else if (state.scriptsLoaded && state.installedScripts.isEmpty()) {
                 WebSessionEmptyState(
                     icon = Icons.Filled.Description,
                     title = stringResource(R.string.web_session_userscript_none)
                 )
-            } else {
+            } else if (state.installedScripts.isNotEmpty()) {
                 state.installedScripts.forEach { script ->
                     InstalledUserscriptCard(
                         script = script,

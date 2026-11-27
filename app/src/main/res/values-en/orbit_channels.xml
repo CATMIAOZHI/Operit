@@ -7,6 +7,11 @@
     <string name="orbit_channels_connected">Connected</string>
 
     <string name="orbit_weixin">WeChat</string>
+    <string name="orbit_channels_section">Channels</string>
+    <string name="orbit_weixin_continue_there">Continue this conversation in WeChat.</string>
+    <string name="orbit_weixin_open_app">Open in WeChat</string>
+    <string name="orbit_weixin_not_installed">WeChat isn\'t installed</string>
+    <string name="orbit_weixin_open_failed">Couldn\'t open WeChat</string>
     <string name="orbit_weixin_intro">Once connected, you can message %1$s from WeChat.</string>
     <string name="orbit_weixin_detail">If you continue, your conversation with %1$s is linked to a chat of its own in WeChat. %1$s cannot read any of your other WeChat chats, and you can disconnect at any time.</string>
     <string name="orbit_weixin_footer">Connecting means scanning a code with WeChat to bind a bot of your own. After a long silence in WeChat, WeChat may hold back messages %1$s starts; they go out once you send something there.</string>
@@ -15,7 +20,7 @@
     <string name="orbit_weixin_open_chat">Open the WeChat chat</string>
     <string name="orbit_weixin_disconnect">Disconnect</string>
     <string name="orbit_weixin_disconnect_title">Disconnect WeChat?</string>
-    <string name="orbit_weixin_disconnect_note">Messages from WeChat will no longer reach %1$s. The WeChat chat here and its history stay.</string>
+    <string name="orbit_weixin_disconnect_note">Messages from WeChat will no longer reach %1$s. The WeChat chat here moves back to your side chats (or the archive, if it was archived), with its history.</string>
     <string name="orbit_weixin_disconnect_failed">Could not disconnect. Try again.</string>
     <string name="orbit_weixin_status">Status</string>
     <string name="orbit_weixin_online">Online</string>

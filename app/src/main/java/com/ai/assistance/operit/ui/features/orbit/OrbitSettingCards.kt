@@ -365,41 +365,6 @@ internal fun OrbitSpeechSettingsPage(orbitId: String, onBack: () -> Unit) {
         .statusBarsPadding().navigationBarsPadding()) {
         OrbitPageHeader(stringResource(R.string.orbit_speech_card_title), onBack,
             Modifier.padding(horizontal = 20.dp).padding(top = 8.dp))
-        com.ai.assistance.operit.ui.features.settings.components.SettingsCard(
-            backgroundColor = com.ai.assistance.operit.ui.features.settings.components.settingsCardColor(false),
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-        ) {
-            com.ai.assistance.operit.ui.features.settings.components.SettingsNavRow(
-                title = stringResource(R.string.orbit_voice_own_title),
-                subtitle = when {
-                    voiceState == null -> null
-                    ownVoice != null -> stringResource(R.string.orbit_voice_own_custom, ownVoice.name)
-                    appVoiceName.isEmpty() -> stringResource(R.string.orbit_voice_own_app)
-                    else -> stringResource(R.string.orbit_voice_own_follow, appVoiceName)
-                },
-                onClick = { pickingVoice = true },
-                searchable = false,
-            )
-            com.ai.assistance.operit.ui.features.settings.components.SettingsSwitchRow(
-                // Off by default: voice messages use a cloud voice; the phone's only when the user picks it.
-                title = stringResource(R.string.orbit_voice_phone_title),
-                // Nothing about the voice until it has been read, so a missing one never flashes as fine.
-                subtitle = when {
-                    !readAloud -> R.string.orbit_voice_phone_on
-                    voiceState == null -> null
-                    voiceState?.noAudioVoice != true -> R.string.orbit_voice_phone_off
-                    // Chosen for this Orbit alone: setting up the app's voice below would not change it.
-                    voiceState?.own != null -> R.string.orbit_voice_phone_missing_own
-                    else -> R.string.orbit_voice_phone_missing
-                }?.let { stringResource(it) },
-                checked = !readAloud,
-                onCheckedChange = {
-                    readAloud = !it
-                    com.ai.assistance.operit.features.orbit.OrbitVoice.setUsesReadAloud(context, orbitId, !it)
-                },
-                searchable = false,
-            )
-        }
         // Shown once the voices are read, so nothing is offered as picked before it really is.
         val state = voiceState
         if (pickingVoice && state != null) {
@@ -414,15 +379,55 @@ internal fun OrbitSpeechSettingsPage(orbitId: String, onBack: () -> Unit) {
                 onDismiss = { pickingVoice = false },
             )
         }
-        Text(
-            stringResource(R.string.orbit_voice_shared_note),
-            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 28.dp).padding(bottom = 4.dp),
-        )
+        // Orbit's own voice heads the read-aloud tab and scrolls with it; the rest is shared with the app.
+        val ownVoiceHeader: @Composable () -> Unit = {
+            Column {
+                com.ai.assistance.operit.ui.features.settings.components.SettingsCard(
+                    backgroundColor = com.ai.assistance.operit.ui.features.settings.components.settingsCardColor(false),
+                ) {
+                    com.ai.assistance.operit.ui.features.settings.components.SettingsNavRow(
+                        title = stringResource(R.string.orbit_voice_own_title),
+                        subtitle = when {
+                            voiceState == null -> null
+                            ownVoice != null -> stringResource(R.string.orbit_voice_own_custom, ownVoice.name)
+                            appVoiceName.isEmpty() -> stringResource(R.string.orbit_voice_own_app)
+                            else -> stringResource(R.string.orbit_voice_own_follow, appVoiceName)
+                        },
+                        onClick = { pickingVoice = true },
+                        searchable = false,
+                    )
+                    com.ai.assistance.operit.ui.features.settings.components.SettingsSwitchRow(
+                        // Off by default: voice messages use a cloud voice; the phone's only when the user picks it.
+                        title = stringResource(R.string.orbit_voice_phone_title),
+                        // Nothing about the voice until it has been read, so a missing one never flashes as fine.
+                        subtitle = when {
+                            !readAloud -> R.string.orbit_voice_phone_on
+                            voiceState == null -> null
+                            voiceState?.noAudioVoice != true -> R.string.orbit_voice_phone_off
+                            // Chosen for this Orbit alone: setting up the app's voice below would not change it.
+                            voiceState?.own != null -> R.string.orbit_voice_phone_missing_own
+                            else -> R.string.orbit_voice_phone_missing
+                        }?.let { stringResource(it) },
+                        checked = !readAloud,
+                        onCheckedChange = {
+                            readAloud = !it
+                            com.ai.assistance.operit.features.orbit.OrbitVoice.setUsesReadAloud(context, orbitId, !it)
+                        },
+                        searchable = false,
+                    )
+                }
+                Text(
+                    stringResource(R.string.orbit_voice_shared_note),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 12.dp).padding(top = 8.dp),
+                )
+            }
+        }
         Box(Modifier.fillMaxWidth().weight(1f)) {
             com.ai.assistance.operit.ui.features.settings.screens.SpeechServicesSettingsScreen(
                 onBackPressed = onBack,
                 dialogStyle = com.ai.assistance.operit.ui.features.settings.components.SettingsDialogStyle.ORBIT,
+                readAloudHeader = ownVoiceHeader,
             )
         }
     }

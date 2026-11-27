@@ -327,6 +327,10 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                     currentChatView.hiddenReason == "MEMORY_LEARNING")
         ) || com.ai.assistance.operit.core.chat.AuditChatNavigation.hasPendingReturnFor(currentChatId)
     val isReadOnlyTranscript = isSubagentChat || isHiddenReadingAuditChat
+    // Orbit's WeChat channel: read here, answered in WeChat, so it has no input box of its own.
+    val orbitChannel = com.ai.assistance.operit.ui.features.chat.components.LocalOrbitReadOnlyChannel.current
+        ?.takeIf { orbitLook }
+    val isOrbitWeixinChannel = orbitChannel != null
     val subagentRunRepository = remember(context) { SubagentRunRepository.getInstance(context) }
     val currentSubagentRunFlow =
         remember(isSubagentChat, currentChatView?.id) {
@@ -468,19 +472,6 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
         )
     }
 
-    SharedIncomingContentHandler(
-        sharedFiles = sharedFiles,
-        sharedFileText = sharedFileText,
-        sharedText = sharedText,
-        chatHistories = chatHistories,
-        currentChatId = currentChatId,
-        onHandleSharedFiles = actualViewModel::handleSharedFiles,
-        onHandleSharedText = actualViewModel::handleSharedText,
-        onClearSharedFiles = SharedFileHandler::clearSharedFiles,
-        onClearSharedText = SharedFileHandler::clearSharedText,
-        onOpenOrbit = onNavigateToOrbit,
-    )
-
     val pendingChatDraft by PendingChatDraftHandler.pendingDraft.collectAsState()
     LaunchedEffect(pendingChatDraft, isCurrentScreen) {
         if (!isCurrentScreen) return@LaunchedEffect
@@ -556,6 +547,22 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
         chatHistories.filter {
             it.chatKind != ChatKind.SUBAGENT.name && !it.isHidden && it.id !in orbitChatIds
         }
+    }
+    // Orbit's chat is this screen too; Orbit takes shares into its own input box, so only the
+    // normal chat page in front asks where a share goes, offering the chats its list shows.
+    if (chatIdOverride == null && !embedded && isCurrentScreen) {
+        SharedIncomingContentHandler(
+            sharedFiles = sharedFiles,
+            sharedFileText = sharedFileText,
+            sharedText = sharedText,
+            chatHistories = visibleAllChatHistories,
+            currentChatId = currentChatId,
+            onHandleSharedFiles = actualViewModel::handleSharedFiles,
+            onHandleSharedText = actualViewModel::handleSharedText,
+            onClearSharedFiles = SharedFileHandler::clearSharedFiles,
+            onClearSharedText = SharedFileHandler::clearSharedText,
+            onOpenOrbit = onNavigateToOrbit,
+        )
     }
     // The normal chat page never stays on an Orbit chat: it can be left there when Orbit closes
     // with no earlier chat to return to, or when the app restarts on it. The short wait lets
@@ -1058,6 +1065,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                         androidx.compose.runtime.CompositionLocalProvider(
                             com.ai.assistance.operit.ui.features.chat.components.LocalLongScreenshotEnabled provides longScreenshotEnabled,
                             com.ai.assistance.operit.ui.features.chat.components.LocalOrbitTurnFloor provides orbitTurnFloor,
+                            com.ai.assistance.operit.ui.features.chat.components.LocalOrbitWritingTimestamp provides orbitStreaming?.timestamp,
                             com.ai.assistance.operit.ui.features.chat.components.LocalOrbitBottomNoteLift provides
                                 with(density) { orbitNoteHeightPx.toDp() },
                             com.ai.assistance.operit.ui.features.chat.components.LocalSubagentTranscriptRole provides
@@ -1078,7 +1086,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                                  actualViewModel = actualViewModel,
                                  enableMessageDialogs = !isFloatingMode,
                                  readOnlyTranscript = isReadOnlyTranscript,
-                                 lockTranscript = orbitDevView,
+                                 lockTranscript = orbitDevView || isOrbitWeixinChannel,
                                  showChatHistorySelector = showChatHistorySelector,
                                 // Leaving the Orbit page, the normal chat page can appear a moment
                                 // before Orbit hands the chat back; never show Orbit's messages here.
@@ -1143,7 +1151,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                         }
 
                         if (
-                            !isReadOnlyTranscript && !orbitDevView &&
+                            !isReadOnlyTranscript && !orbitDevView && !isOrbitWeixinChannel &&
                                 inputStyle == UserPreferencesManager.INPUT_STYLE_CLASSIC
                         ) {
                             ClassicChatSettingsBar(
@@ -1232,7 +1240,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                         }
                     }
 
-                    if (!isReadOnlyTranscript && !orbitDevView) {
+                    if (!isReadOnlyTranscript && !orbitDevView && !isOrbitWeixinChannel) {
                         Box(
                             modifier =
                                 Modifier
@@ -1290,7 +1298,6 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                             )
                         }
                     } else {
-                        val todos by actualViewModel.currentTodos.collectAsState()
                         Box(
                             modifier =
                                 Modifier
@@ -1300,7 +1307,14 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                                     }
                         ) {
                             if (isSubagentChat) {
+                                val todos by actualViewModel.currentTodos.collectAsState()
                                 ChatTodoDock(chatId = currentChatId, todos = todos)
+                            }
+                            if (orbitChannel != null && orbitChannel.ready && !orbitDevView) {
+                                com.ai.assistance.operit.ui.features.orbit.OrbitWeixinChannelFooter(
+                                    loginExpired = orbitChannel.loginExpired,
+                                    onReconnect = orbitChannel.onReconnect,
+                                )
                             }
                         }
                     }
@@ -2065,9 +2079,10 @@ private fun ChatInputBottomBar(
     }
 
     val queueAddedMessage = stringResource(R.string.chat_queue_added)
+    val attachmentStillAdding = stringResource(R.string.chat_processing_attachment)
     fun enqueueDraftToPendingQueue() {
         val draftText = userMessage.text.trim()
-        if (draftText.isBlank() && attachments.isEmpty()) return
+        if (draftText.isBlank() && actualViewModel.attachments.value.isEmpty()) return
         val chatId = currentChatId ?: return
 
         actualViewModel.enqueuePendingQueueMessage(
@@ -2084,7 +2099,7 @@ private fun ChatInputBottomBar(
     val steerWhileBusy = orbitChat || currentChatId in orbitOwnedChatIds
     fun steerDraftIntoCurrentTurn() {
         val draftText = userMessage.text.trim()
-        if (draftText.isBlank() && attachments.isEmpty()) return
+        if (draftText.isBlank() && actualViewModel.attachments.value.isEmpty()) return
         val chatId = currentChatId ?: return
         val id = actualViewModel.enqueuePendingQueueMessage(
             chatId = chatId,
@@ -2103,7 +2118,10 @@ private fun ChatInputBottomBar(
         // As for sending: the draft belongs to the chat the view model holds, so it waits until
         // that is the chat on screen.
         if (currentChatId == actualViewModel.currentChatId.value) {
-            if (steerWhileBusy) steerDraftIntoCurrentTurn() else enqueueDraftToPendingQueue()
+            // An attachment still being added (a long paste) would miss this message: wait a moment.
+            if (actualViewModel.attachmentsPending(currentChatId)) {
+                actualViewModel.showToast(attachmentStillAdding)
+            } else if (steerWhileBusy) steerDraftIntoCurrentTurn() else enqueueDraftToPendingQueue()
         }
     }
 
@@ -2123,6 +2141,11 @@ private fun ChatInputBottomBar(
                 return@launch
             }
             val expectedChatId = currentChatId
+            // An attachment still being added (a long paste) would miss this message: wait a moment.
+            if (actualViewModel.attachmentsPending(expectedChatId)) {
+                actualViewModel.showToast(attachmentStillAdding)
+                return@launch
+            }
 
             val submitDecision =
                 ChatInputHookRegistry.dispatchSubmitRequested(
@@ -2133,6 +2156,11 @@ private fun ChatInputBottomBar(
                 )
             // The hook may take a while: the chat may have changed meanwhile, and its draft is not ours.
             if (expectedChatId != actualViewModel.currentChatId.value) return@launch
+            // ...or a long paste may have started becoming an attachment.
+            if (actualViewModel.attachmentsPending(expectedChatId)) {
+                actualViewModel.showToast(attachmentStillAdding)
+                return@launch
+            }
             when (submitDecision.action) {
                 ChatInputSubmitActions.BLOCK -> {
                     showChatInputHookMessage(submitDecision.message)
@@ -2161,7 +2189,7 @@ private fun ChatInputBottomBar(
             val shouldUseWaifuMergeSend =
                 isWaifuModeEnabled &&
                     isWaifuMergeSendEnabled &&
-                    attachments.isEmpty() &&
+                    actualViewModel.attachments.value.isEmpty() &&
                     replyToMessage == null &&
                     finalText.isNotBlank()
             if (shouldUseWaifuMergeSend) {

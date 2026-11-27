@@ -53,6 +53,7 @@ internal object OrbitVoiceTools {
             ToolParameterSchema("model", description = "request_create：服务商的模型名，可省略", required = false),
             ToolParameterSchema("voice_id", description = "request_create（tts）：服务商的音色 ID，可省略", required = false),
             ToolParameterSchema("local_model", description = "request_create，service=SHERPA_ONNX：profiles 的 local_models 里的 id", required = false),
+            ToolParameterSchema("switch", description = "request_create（tts）：false 时只保存、不换用，正在用的声音不变（第一次给 MiMo 填密钥做试听时用）；默认 true", required = false),
             ToolParameterSchema("needs_key", description = "request_create：true / false；默认远程服务要填密钥，与正在用的同一服务且已有密钥时可写 false 沿用", required = false),
             ToolParameterSchema("reason", description = "request_*：一句话告诉用户为什么", required = false),
         ),
@@ -71,8 +72,9 @@ internal object OrbitVoiceTools {
   - 服务地址、模型名、音色 ID 按服务商官方文档填，别靠猜；不确定就省略，用户可以之后在设置页里补。VITS 本地模型要从手机文件里选模型包，没法在聊天里配。
   - 语速、音调、请求头这类细项，或者用户想自己慢慢调，用 request_settings 放一张语音设置卡片，用户点它打开设置页。放完用一句话结束这一轮。
   - 你可以有自己的声音：用于你聊天里的朗读、speak 的语音消息和 podcast 里的 orbit。App 别处不变。
-  - 用户要你换声音或设计声音时（包括用户安排的任务里）：用 design 按描述做一段试听（用 App 里已存的小米 MiMo 密钥，每段都花用户一点钱），把 markdown 放进回复。在聊天里做完就结束这一轮等用户听完；一次只做一段，用户说要改再改描述重做。用户没要求时别自己做。
-  - 用户说满意后用 request_own_voice：sample 写那段试听的 path，name 起个名字；批准后照这段录音复刻，之后用它朗读。用户发来的真人录音只在用户明确要求时当 sample。
+  - 第一次用小米 MiMo 给你配声音时，一定让用户先挑：先问用户想要什么样的声音（没想法就按你的人设提一个），再用 design 做 2～3 段描述不同的试听，title 分别写清是哪一版，markdown 各放一行，结束这一轮等用户听完挑。不要直接拿 MiMo 预置声音当你的声音。步骤见 docs/voice.md。
+  - 用户要你换声音或设计声音时（包括用户安排的任务里）：用 design 按描述做试听（用 App 里已存的小米 MiMo 密钥，每段都花用户一点钱），把 markdown 放进回复。在聊天里做完就结束这一轮等用户听完；用户说要改再改描述重做。用户没要求时别自己做。
+  - 用户挑定后用 request_own_voice：sample 写那段试听的 path，name 起个名字；批准后照这段录音复刻，之后用它朗读。用户发来的真人录音只在用户明确要求时当 sample。
   - request_own_voice 也可以写 profile 换成已有的朗读配置，或写 follow_app=true 改回和 App 一样。放完卡片用一句话结束这一轮。
 """,
     )
@@ -120,8 +122,9 @@ internal object OrbitVoiceTools {
                         "design needs text: what the voice says in the sample, at most ${OrbitVoice.MAX_SAMPLE_TEXT} characters"
                     }
                     val key = OrbitVoice.mimoKey(context)?.second ?: error(
-                        "No Xiaomi MiMo API key is saved in the app. Tell the user that designing a voice needs one: they can add " +
-                            "Xiaomi MiMo as a chat model, or put the key in the voice settings (request_settings)"
+                        "No Xiaomi MiMo API key is saved in the app. Tell the user that designing a voice needs one: use request_create " +
+                            "with kind=tts, service=MIMO_TTS and switch=false so they type the key on the card without changing the voice " +
+                            "in use, then design again once it is approved"
                     )
                     val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
                     val name = fileTitle(arg("title")) ?: "voice-design-$stamp"
@@ -137,7 +140,9 @@ internal object OrbitVoiceTools {
                             .put("note", "If this turn has ${com.ai.assistance.operit.features.orbit.OrbitTaskRunner.FINISH} (a separate task run), " +
                                 "finish as usual and put this markdown unchanged in its userMessage; Orbit then decides how to pass it on. " +
                                 "Otherwise (in the chat, also when a schedule woke you there) put the markdown in your reply so the user " +
-                                "can listen; if the user asked just now, end this turn and wait for them. " +
+                                "can listen; if the user asked just now and you are making several samples to choose from (2 or 3), make the rest " +
+                                "first, put a line with each one's number and name (e.g. \"1. Gentle\") above its markdown, then end this " +
+                                "turn and wait for them. " +
                                 "Only when they say they like it, use request_own_voice with sample=${entry.path}; " +
                                 "if they want changes, design once more with a new description.")
                             .toString()
@@ -241,6 +246,7 @@ internal object OrbitVoiceTools {
                         .apply { if (!isLocal) put("endpoint", endpoint).put("model", model) }
                         .apply { if (voice.isNotEmpty()) put("voice", voice) }
                         .apply { if (local.isNotEmpty()) put("local_model", local) }
+                        .apply { if (kind == OrbitVoiceProfiles.TTS && arg("switch").lowercase() == "false") put("switch", false) }
                         .put("needs_key", needsKey), currentName(kind))
                 }
                 "request_settings" -> {

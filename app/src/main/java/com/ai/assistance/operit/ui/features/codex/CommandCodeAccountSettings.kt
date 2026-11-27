@@ -26,9 +26,15 @@ import com.ai.assistance.operit.ui.features.settings.sections.ApiKeyVisualTransf
 import kotlinx.coroutines.*
 
 @Composable
-internal fun CommandCodeAccountSettings(manager: ProviderAccountManager, onAccountChanged: () -> Unit) {
+internal fun CommandCodeAccountSettings(
+    manager: ProviderAccountManager,
+    onActiveAccountChanged: () -> Unit,
+    onAccountChanged: () -> Unit,
+) {
     val context = LocalContext.current
     val account by manager.account.collectAsState()
+    val accounts by manager.accounts.collectAsState()
+    var removing by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     var key by remember { mutableStateOf("") }
     var manualJob by remember { mutableStateOf<Job?>(null) }
@@ -74,8 +80,19 @@ internal fun CommandCodeAccountSettings(manager: ProviderAccountManager, onAccou
         if (account != null) refreshQuota()
     }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(stringResource(if (account == null) R.string.provider_account_not_logged_in else R.string.provider_account_logged_in))
-        account?.email?.takeIf { it.isNotBlank() }?.let { Text(it) }
+        if (accounts.isEmpty()) {
+            Text(stringResource(R.string.provider_account_not_logged_in))
+        } else {
+            AccountPoolList(
+                rows = accountPoolRows(accounts, account?.identity),
+                enabled = !busy && !removing,
+                onUse = { id -> scope.launch { manager.setActive(id); onActiveAccountChanged() } },
+                onRemove = { id ->
+                    removing = true
+                    scope.launch { try { manager.remove(id); onAccountChanged() } finally { removing = false } }
+                },
+            )
+        }
         Text(stringResource(R.string.command_code_login_hint), style = MaterialTheme.typography.bodySmall)
         // Same affordance as an ordinary provider: the stored key stays visible (middle-masked) and
         // turns into plain text while focused, so a wrong key can be corrected in place.
@@ -110,16 +127,13 @@ internal fun CommandCodeAccountSettings(manager: ProviderAccountManager, onAccou
                 }
             }) { Text(stringResource(R.string.command_code_save_key)) }
             OutlinedButton(enabled = !busy, onClick = { failed = false; browserLogin = true }) {
-                Text(stringResource(R.string.provider_account_login))
+                Text(stringResource(if (accounts.isEmpty()) R.string.provider_account_login else R.string.provider_account_add))
             }
         }
         if (manualJob != null) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             CircularProgressIndicator(Modifier.size(24.dp))
             TextButton(onClick = { manualJob?.cancel() }) { Text(stringResource(R.string.cancel_action)) }
         }
-        if (account != null) TextButton(enabled = !busy, onClick = {
-            scope.launch { manager.logout(); key = ""; onAccountChanged() }
-        }) { Text(stringResource(R.string.provider_account_logout)) }
         if (account != null) {
             ProviderQuotaPanel(
                 quota = quota,

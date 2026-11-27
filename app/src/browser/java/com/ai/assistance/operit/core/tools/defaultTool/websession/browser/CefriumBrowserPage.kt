@@ -59,7 +59,11 @@ internal class CefriumBrowserPage private constructor(
     private var agent = ""
     /** Whether the client hints say desktop, mobile, or nothing yet. */
     private var hintsDesktop: Boolean? = null
-    private val messageListeners = HashMap<String, (String, Boolean, BrowserMessageReply) -> Unit>()
+    private val messageListeners = HashMap<String, (String, Boolean, String?, BrowserMessageReply) -> Unit>()
+
+    /** Proves a message came through a channel this tab made (see channelScript). */
+    private val channelSecret: String =
+        ByteArray(24).also { java.security.SecureRandom().nextBytes(it) }.joinToString("") { "%02x".format(it) }
 
     /** Document-start scripts in the order added; re-added after a message channel so the channel exists first. */
     private class StartScript(val script: String, var handler: CefriumBrowser.ScriptHandler?)
@@ -120,6 +124,10 @@ internal class CefriumBrowserPage private constructor(
         browser.setDownloadClient(downloadClient())
         // No request interceptor until the tab has request rules (interceptsRequests).
         browser.setDevToolsEventListener { method, params -> devTools.eventListener?.invoke(method, params) }
+        // Every page may call, sandboxed ones too: the app's script objects (async results, text
+        // selection, downloads) must work on every page. The engine still turns away a query from
+        // a document the frame has left. The message channels keep sandboxed pages out themselves
+        // (see channelScript).
         browser.setQueryHandler(CefriumBrowser.QueryOriginPolicy.anyOrigin().withSubframes(), queryHandler())
         // The app's own script objects, before any page script, as the WebView's JavaScript interfaces.
         browser.addDocumentStartJavaScript(BRIDGE_SCRIPT, setOf("*"))
@@ -131,12 +139,14 @@ internal class CefriumBrowserPage private constructor(
         /** Tabs by engine browser, to find the one a page's window belongs to. Main thread. */
         private val pages = WeakHashMap<CefriumBrowser, CefriumBrowserPage>()
 
-        fun create(context: Context, profile: CefriumProfile): CefriumBrowserPage {
+        fun create(context: Context, profile: CefriumProfile, desktop: Boolean): CefriumBrowserPage {
             val metrics = context.resources.displayMetrics
+            // The engine's scale is fixed for the tab's life; a desktop tab is drawn at 1080p.
+            val scale = if (desktop) minOf(metrics.density, DESKTOP_RASTER_SCALE) else metrics.density
             val browser =
-                CefriumBrowser(metrics.widthPixels.coerceAtLeast(1), metrics.heightPixels.coerceAtLeast(1), metrics.density, profile)
+                CefriumBrowser(metrics.widthPixels.coerceAtLeast(1), metrics.heightPixels.coerceAtLeast(1), scale, profile)
             return try {
-                CefriumBrowserPage(context, browser, metrics.density)
+                CefriumBrowserPage(context, browser, scale)
             } catch (e: Throwable) {
                 runCatching { browser.close() }
                 throw e
@@ -185,25 +195,53 @@ internal class CefriumBrowserPage private constructor(
             """.trimIndent()
 
         /**
-         * `window.<name>` with postMessage and onmessage, like WebView's web message listener. In a
-         * frame inside the page, the first message also starts a "listen" query that brings the
-         * app's answers (see [frameInboxes]).
+         * `window.<name>` with postMessage and onmessage, like WebView's web message listener. Each
+         * document draws a random id: a frame inside the page names itself with it, and its first
+         * message also starts a "listen" query that brings the app's answers (see [frameInboxes]);
+         * the main frame's answers come through the page and are taken only by the document whose
+         * id they carry, never by the next one.
+         *
+         * The engine names the calling frame by its address only, which a sandboxed document (an
+         * opaque origin) shares with its site. So a sandboxed document gets no channel, and each
+         * call carries [secret], kept where page scripts cannot read it: its calls through the
+         * engine's query function, captured with the functions it uses before any page script
+         * runs. A page calling the query function itself does not know the secret.
          */
-        private fun channelScript(name: String): String {
+        private fun channelScript(name: String, secret: String): String {
             val quoted = JSONObject.quote(name)
             return """
             (function() {
                 var name = $quoted;
                 if (window[name]) return;
+                var opaque = true;
+                try { opaque = self.origin === 'null'; } catch (e) {}
+                if (opaque) return;
+                var secret = ${JSONObject.quote(secret)};
+                var stringify = JSON.stringify;
+                var apply = Reflect.apply;
+                var send = null;
                 var target = new EventTarget();
                 var inFrame = true;
                 try { inFrame = window.top !== window; } catch (e) {}
-                var frameId = inFrame ? Date.now().toString(36) + Math.random().toString(36).slice(2) : '';
+                var frameId = '';
+                try {
+                    var bytes = new Uint8Array(16);
+                    crypto.getRandomValues(bytes);
+                    frameId = Array.prototype.map.call(bytes, function(b) { return ('0' + b.toString(16)).slice(-2); }).join('');
+                } catch (e) {
+                    frameId = Date.now().toString(36) + Math.random().toString(36).slice(2);
+                }
                 var listening = 0;
                 var generation = 0;
                 var query = function(method, args, onSuccess, onFailure) {
                     try {
-                        window.cefriumQuery({ request: JSON.stringify({ b: 'msg:' + name, m: method, a: args, f: frameId }), onSuccess: onSuccess || function() {}, onFailure: onFailure || function() {} });
+                        // The engine sets the query function read-only before any script runs.
+                        if (!send) send = window.cefriumQuery;
+                        // Written piece by piece: no object holding the secret passes through the
+                        // page's reach (a toJSON it set on Object.prototype, for one).
+                        var request = '{"b":' + stringify('msg:' + name) + ',"m":' + stringify(String(method)) +
+                            ',"a":' + stringify(args) + ',"f":' + stringify(frameId) + ',"s":' + stringify(secret) + '}';
+                        apply(send, window, [{ request: request, onSuccess: onSuccess || function() {}, onFailure: onFailure || function() {} }]);
                         return true;
                     } catch (e) { return false; }
                 };
@@ -233,6 +271,7 @@ internal class CefriumBrowserPage private constructor(
                         target.dispatchEvent(event);
                     }
                 });
+                Object.defineProperty(channel, '__id', { value: frameId });
                 Object.defineProperty(window, name, { value: channel });
             })();
             """.trimIndent()
@@ -260,13 +299,29 @@ internal class CefriumBrowserPage private constructor(
 
     /**
      * The user agent and, once known, client hints that name Chrome (the engine itself adds
-     * "Cefrium" and leaves out the Google Chrome brand). One DevTools call sets both, so neither
-     * undoes the other.
+     * "Cefrium" and leaves out the Google Chrome brand), with the phone's languages: the engine
+     * otherwise tells every page the user reads English. One DevTools call sets them all, so none
+     * undoes another.
      */
     private fun applyUserAgent() {
         if (closed || agent.isBlank()) return
         browser.setUserAgentOverride(agent)
-        val desktop = hintsDesktop ?: return
+        val languages = phoneLanguages()
+        if (!localeSet) {
+            localeSet = true
+            // Dates and numbers in the page's scripts follow the phone too.
+            callDevTools("Emulation.setLocaleOverride", JSONObject().put("locale", languages.first()).toString()) { ok, json ->
+                if (!ok) AppLogger.w(PAGE_TAG, "Page locale was not set: $json")
+            }
+        }
+        val params = JSONObject().put("userAgent", agent).put("acceptLanguage", languages.joinToString(","))
+        val desktop = hintsDesktop
+        if (desktop == null) {
+            callDevTools("Emulation.setUserAgentOverride", params.toString()) { ok, json ->
+                if (!ok) AppLogger.w(PAGE_TAG, "Page languages were not set: $json")
+            }
+            return
+        }
         val full = CefriumEngine.chromeFullVersion
         val major = full.substringBefore('.')
         val brands = JSONArray()
@@ -280,8 +335,9 @@ internal class CefriumBrowserPage private constructor(
                 .put("brands", brands)
                 .put("fullVersionList", fullList)
                 .put("fullVersion", full)
-                .put("platform", if (desktop) "Windows" else "Android")
-                .put("platformVersion", if (desktop) "10.0.0" else Build.VERSION.RELEASE.orEmpty())
+                // Desktop: what Chrome on Android sends for "Desktop site", matching the user agent.
+                .put("platform", if (desktop) "Linux" else "Android")
+                .put("platformVersion", if (desktop) "" else Build.VERSION.RELEASE.orEmpty())
                 .put("architecture", if (desktop) "x86" else "")
                 .put("model", if (desktop) "" else Build.MODEL.orEmpty())
                 .put("mobile", !desktop)
@@ -289,8 +345,40 @@ internal class CefriumBrowserPage private constructor(
                 .put("wow64", false)
         callDevTools(
             "Emulation.setUserAgentOverride",
-            JSONObject().put("userAgent", agent).put("userAgentMetadata", metadata).toString()
+            params.put("userAgentMetadata", metadata).toString()
         ) { ok, json -> if (!ok) AppLogger.w(PAGE_TAG, "Client hints were not set: $json") }
+    }
+
+    /** Whether the page's locale was set; it lasts for the tab, so it is set once. */
+    private var localeSet = false
+
+    /**
+     * The phone's languages as Chrome on Android lists them, most preferred first, each regional
+     * one followed by its language ("zh-CN", "zh", "en-US", "en"). The system's list: the app's own
+     * language setting may name a language without its region. A script the user chose stays
+     * ("sr-Latn-RS"), except Chinese, which Chrome names by region ("zh-CN", "zh-TW").
+     */
+    private fun phoneLanguages(): List<String> {
+        val tags = LinkedHashSet<String>()
+        val list = android.content.res.Resources.getSystem().configuration.locales
+        for (i in 0 until list.size()) {
+            val locale = list[i]
+            if (locale.language.isNullOrBlank()) continue
+            val language = java.util.Locale(locale.language).toLanguageTag()
+            if (language == "und") continue
+            val chinese = language == "zh"
+            val region = locale.country.takeUnless { it.isNullOrBlank() }
+                ?: if (chinese) when (locale.script) { "Hans" -> "CN"; "Hant" -> "TW"; else -> null } else null
+            val script = locale.script.takeUnless { chinese || it.isNullOrBlank() }
+            if (region != null || script != null) {
+                val regional = runCatching {
+                    java.util.Locale.Builder().setLanguage(language).setScript(script).setRegion(region).build().toLanguageTag()
+                }.getOrNull()
+                if (regional != null && regional != "und") tags += regional
+            }
+            tags += language
+        }
+        return tags.toList().ifEmpty { listOf("en-US", "en") }
     }
 
     /**
@@ -396,13 +484,13 @@ internal class CefriumBrowserPage private constructor(
 
     override fun addMessageListener(
         name: String,
-        onMessage: (message: String, isMainFrame: Boolean, reply: BrowserMessageReply) -> Unit,
+        onMessage: (message: String, isMainFrame: Boolean, sourceOrigin: String?, reply: BrowserMessageReply) -> Unit,
     ): Boolean {
         if (closed) return false
         val fresh = name !in messageListeners
         messageListeners[name] = onMessage
         if (fresh) {
-            runCatching { browser.addDocumentStartJavaScript(channelScript(name), setOf("*")) }.getOrElse { return false }
+            runCatching { browser.addDocumentStartJavaScript(channelScript(name, channelSecret), setOf("*")) }.getOrElse { return false }
             // The scripts added earlier read the channel at document start: run them after it.
             startScripts.forEach { entry ->
                 entry.handler?.remove()
@@ -766,13 +854,22 @@ internal class CefriumBrowserPage private constructor(
                 isMainFrame: Boolean,
                 callback: CefriumBrowser.QueryCallback,
             ): Boolean {
-                queryReader.execute { readQuery(request, isMainFrame, callback) }
+                queryReader.execute { readQuery(request, origin, isMainFrame, callback) }
                 return true
             }
         }
 
-    /** Reader thread; the channels' state is the main thread's. */
-    private fun readQuery(request: String, isMainFrame: Boolean, callback: CefriumBrowser.QueryCallback) {
+    /**
+     * Reader thread; the channels' state is the main thread's. [origin] is the URL of the frame
+     * that asked, of the document that asked (the policy turned away opaque frames and frames that
+     * moved on).
+     */
+    private fun readQuery(
+        request: String,
+        origin: String,
+        isMainFrame: Boolean,
+        callback: CefriumBrowser.QueryCallback,
+    ) {
         val call = runCatching { JSONObject(request) }.getOrNull()
         val bridge = call?.optString("b").orEmpty()
         if (call == null || !bridge.startsWith("msg:")) {
@@ -781,8 +878,18 @@ internal class CefriumBrowserPage private constructor(
             return
         }
         val name = bridge.removePrefix("msg:")
-        // A frame inside the page names itself; the main frame is answered through the page.
-        val frame = if (isMainFrame) null else call.optString("f").ifBlank { null }
+        // A page calling the engine's query function itself: not through a channel of this tab.
+        if (call.optString("s") != channelSecret) {
+            callback.failure(-1, "not a channel of this tab")
+            return
+        }
+        // A frame inside the page names itself; the main frame is answered through the page. The
+        // frame's origin is part of the name, so a frame of another site cannot take its answers;
+        // its origin, not its address, which the page changes with its history.
+        val documentId = call.optString("f")
+        val frame =
+            if (isMainFrame) null
+            else documentId.ifBlank { null }?.let { "${CefriumBrowser.QueryOriginPolicy.originOf(origin)}\n$it" }
         val listen = call.optString("m") == "listen"
         if (!listen) callback.success("")
         val text = call.optJSONArray("a")?.optString(0).orEmpty()
@@ -798,8 +905,9 @@ internal class CefriumBrowserPage private constructor(
                 else -> {
                     val listener = messageListeners[name] ?: return@post
                     if (!isMainFrame && frame == null) return@post
-                    val reply = BrowserMessageReply { answer -> replyTo(name, answer, frame) }
-                    listener(text, isMainFrame, reply)
+                    val reply = BrowserMessageReply { answer -> replyTo(name, answer, frame, documentId) }
+                    // The origin is the engine's, of the frame that asked: the page cannot set it.
+                    listener(text, isMainFrame, origin, reply)
                 }
             }
         }
@@ -856,8 +964,12 @@ internal class CefriumBrowserPage private constructor(
         }
     }
 
-    /** Answers reach the main frame's channel through the page, a frame inside it through its listen query. */
-    private fun replyTo(name: String, text: String, frame: String?) {
+    /**
+     * Answers reach the main frame's channel through the page, taken only by the document whose
+     * channel drew [documentId] (the next document draws another); a frame inside it gets them
+     * through its listen query.
+     */
+    private fun replyTo(name: String, text: String, frame: String?, documentId: String) {
         val deliver = Runnable {
             if (closed) {
                 return@Runnable
@@ -873,8 +985,12 @@ internal class CefriumBrowserPage private constructor(
                 trimFrameQueues(keep = inbox)
                 flush(inbox)
             } else {
+                // Strict, so nothing the page set up (a getter on the channel's name, for one) can
+                // reach this script's text through its callers; the answer is handed over only
+                // after the id matched.
                 browser.evaluateJavaScript(
-                    "(function(){var c=window[${JSONObject.quote(name)}];if(c&&c.__deliver)c.__deliver(${JSONObject.quote(text)});})()"
+                    "(function(){'use strict';var c=window[${JSONObject.quote(name)}];" +
+                        "if(!c||c.__id!==${JSONObject.quote(documentId)})return;c.__deliver(${JSONObject.quote(text)});})()"
                 )
             }
         }

@@ -226,6 +226,8 @@ internal class BrowserDownloadManager private constructor(
         @Volatile
         private var instance: BrowserDownloadManager? = null
 
+        fun getInstanceOrNull(): BrowserDownloadManager? = instance
+
         fun getInstance(context: Context): BrowserDownloadManager =
             instance ?: synchronized(this) {
                 instance ?: BrowserDownloadManager(context.applicationContext).also {
@@ -250,13 +252,17 @@ internal class BrowserDownloadManager private constructor(
     @Volatile private var uiRefreshListener: (() -> Unit)? = null
     @Volatile private var lastUiDispatchAt: Long = 0L
     @Volatile private var lastPersistAt: Long = 0L
+    @Volatile private var cachedProjection: BrowserDownloadProjection = EMPTY_BROWSER_DOWNLOAD_PROJECTION
     /** Latest event per login profile. */
     private val lastEvents = ConcurrentHashMap<String, Pair<Long, WebDownloadEvent>>()
 
     init {
         loadState()
         normalizeRestoredTasks()
+        rebuildProjection()
     }
+
+    fun cachedProjection(): BrowserDownloadProjection = cachedProjection
 
     fun setTaskListener(listener: ((BrowserDownloadTaskRecord, WebDownloadEvent) -> Unit)?) {
         taskListener = listener
@@ -998,7 +1004,90 @@ internal class BrowserDownloadManager private constructor(
             return
         }
         lastUiDispatchAt = now
+        rebuildProjection()
         uiRefreshListener?.invoke()
+    }
+
+    private fun rebuildProjection() {
+        synchronized(tasks) {
+                val ordered =
+                    tasks.values.sortedWith(
+                        compareByDescending<BrowserDownloadTaskRecord> { it.updatedAt }
+                            .thenByDescending { it.createdAt }
+                    )
+                var activeCount = 0
+                var failedCount = 0
+                var latestCompletedAt = Long.MIN_VALUE
+                var latestCompletedName: String? = null
+                var downloadedSum = 0.0
+                var totalSum = 0.0
+                var hasProgressTask = false
+                val uiItems = ArrayList<BrowserDownloadItem>(ordered.size)
+                for (task in ordered) {
+                    if (task.activeOrPending()) {
+                        activeCount++
+                        if (task.totalBytes > 0L) {
+                            hasProgressTask = true
+                            downloadedSum += task.downloadedBytes.toDouble()
+                            totalSum += task.totalBytes.toDouble()
+                        }
+                    }
+                    if (task.status == BrowserDownloadStatus.FAILED) {
+                        failedCount++
+                    }
+                    val completedAt = task.completedAt
+                    if (task.status == BrowserDownloadStatus.COMPLETED && completedAt != null && completedAt >= latestCompletedAt) {
+                        latestCompletedAt = completedAt
+                        latestCompletedName = task.fileName
+                    }
+                    uiItems.add(
+                        BrowserDownloadItem(
+                            id = task.id,
+                            fileName = task.fileName,
+                            status = task.status.wireName,
+                            type = task.type,
+                            progress = task.progressOrNull(),
+                            downloadedBytes = task.downloadedBytes,
+                            totalBytes = task.totalBytes,
+                            speedBytesPerSecond = task.speedBytesPerSecond,
+                            destinationPath = task.destinationPath,
+                            errorMessage = task.errorMessage,
+                            canPause = task.status == BrowserDownloadStatus.CONNECTING || task.status == BrowserDownloadStatus.DOWNLOADING,
+                            canResume = task.supportsResumeAction(),
+                            canCancel =
+                                task.status == BrowserDownloadStatus.CONNECTING ||
+                                    task.status == BrowserDownloadStatus.DOWNLOADING ||
+                                    task.status == BrowserDownloadStatus.PAUSED,
+                            canRetry = task.supportsRetry(),
+                            canDelete = true,
+                            canDeleteFile = task.destinationPath.isNotBlank(),
+                            canOpenFile = task.status == BrowserDownloadStatus.COMPLETED,
+                            canOpenLocation = task.status == BrowserDownloadStatus.COMPLETED
+                        )
+                    )
+                }
+                val progress =
+                    if (activeCount > 0 && hasProgressTask && totalSum > 0.0) {
+                        (downloadedSum / totalSum).toFloat()
+                    } else {
+                        null
+                    }
+            cachedProjection =
+                BrowserDownloadProjection(
+                    summary =
+                        BrowserDownloadSummary(
+                            activeCount = activeCount,
+                            failedCount = failedCount,
+                            overallProgress = progress,
+                            latestCompletedFileName = latestCompletedName
+                        ),
+                    uiState =
+                        BrowserDownloadUiState(
+                            tasks = uiItems,
+                            storageUnavailable = storageUnavailable
+                        )
+                )
+        }
     }
 
     private fun buildTaskEvent(task: BrowserDownloadTaskRecord, status: String): WebDownloadEvent =
@@ -1109,8 +1198,11 @@ internal data class PendingExternalOpenRequest(
 internal fun StandardBrowserSessionTools.browserDownloadManager(): BrowserDownloadManager =
     BrowserDownloadManager.getInstance(context.applicationContext)
 
-internal fun StandardBrowserSessionTools.initializeBrowserDownloadSupport() {
-    browserDownloadManager().setTaskListener { task, event ->
+internal fun StandardBrowserSessionTools.initializeBrowserDownloadSupport(
+    host: WebSessionBrowserHost? = null,
+    manager: BrowserDownloadManager = browserDownloadManager()
+) {
+    manager.setTaskListener { task, event ->
         task.sessionId?.let { sessionId ->
             sessionById(sessionId)?.let { session ->
                 session.lastDownloadEvent = event
@@ -1118,9 +1210,11 @@ internal fun StandardBrowserSessionTools.initializeBrowserDownloadSupport() {
             }
         }
     }
-    browserDownloadManager().setUiRefreshListener {
+    manager.setUiRefreshListener {
         StandardBrowserSessionTools.mainHandler.post {
-            refreshSessionUiOnMain()
+            if (host == null || StandardBrowserSessionTools.browserHost === host) {
+                refreshSessionUiOnMain()
+            }
         }
     }
 }
@@ -1183,68 +1277,25 @@ internal fun StandardBrowserSessionTools.startInlineManagedDownload(
     showToast(context.getString(com.ai.assistance.operit.R.string.download_started, resolvedFileName))
 }
 
-internal fun StandardBrowserSessionTools.buildBrowserDownloadSummary(): BrowserDownloadSummary {
-    val tasks = browserDownloadManager().snapshotTasks()
-    val active = tasks.filter { it.activeOrPending() }
-    val failed = tasks.count { it.status == BrowserDownloadStatus.FAILED }
-    val latestCompleted =
-        tasks.filter { it.status == BrowserDownloadStatus.COMPLETED && it.completedAt != null }
-            .maxByOrNull { it.completedAt ?: 0L }
-            ?.fileName
-    val progress =
-        if (active.isEmpty()) {
-            null
-        } else {
-            val progressTasks = active.filter { it.totalBytes > 0L }
-            if (progressTasks.isEmpty()) {
-                null
-            } else {
-                val downloaded = progressTasks.sumOf { it.downloadedBytes.toDouble() }
-                val total = progressTasks.sumOf { it.totalBytes.toDouble() }
-                if (total > 0.0) {
-                    (downloaded / total).toFloat()
-                } else {
-                    null
-                }
-            }
-        }
-    return BrowserDownloadSummary(
-        activeCount = active.size,
-        failedCount = failed,
-        overallProgress = progress,
-        latestCompletedFileName = latestCompleted
-    )
-}
+internal data class BrowserDownloadProjection(
+    val summary: BrowserDownloadSummary,
+    val uiState: BrowserDownloadUiState
+)
 
-internal fun StandardBrowserSessionTools.buildBrowserDownloadUiState(): BrowserDownloadUiState {
-    val tasks =
-        browserDownloadManager().snapshotTasks().map { task ->
-            BrowserDownloadItem(
-                id = task.id,
-                fileName = task.fileName,
-                status = task.status.wireName,
-                type = task.type,
-                progress = task.progressOrNull(),
-                downloadedBytes = task.downloadedBytes,
-                totalBytes = task.totalBytes,
-                speedBytesPerSecond = task.speedBytesPerSecond,
-                destinationPath = task.destinationPath,
-                errorMessage = task.errorMessage,
-                canPause = task.status == BrowserDownloadStatus.CONNECTING || task.status == BrowserDownloadStatus.DOWNLOADING,
-                canResume = task.supportsResumeAction(),
-                canCancel =
-                    task.status == BrowserDownloadStatus.CONNECTING ||
-                        task.status == BrowserDownloadStatus.DOWNLOADING ||
-                        task.status == BrowserDownloadStatus.PAUSED,
-                canRetry = task.supportsRetry(),
-                canDelete = true,
-                canDeleteFile = task.destinationPath.isNotBlank(),
-                canOpenFile = task.status == BrowserDownloadStatus.COMPLETED,
-                canOpenLocation = task.status == BrowserDownloadStatus.COMPLETED
-            )
-        }
-    return BrowserDownloadUiState(tasks = tasks, storageUnavailable = browserDownloadManager().storageUnavailable)
-}
+private val EMPTY_BROWSER_DOWNLOAD_PROJECTION =
+    BrowserDownloadProjection(
+        summary = BrowserDownloadSummary(),
+        uiState = BrowserDownloadUiState()
+    )
+
+internal fun StandardBrowserSessionTools.buildBrowserDownloadProjection(): BrowserDownloadProjection =
+    BrowserDownloadManager.getInstanceOrNull()?.cachedProjection() ?: EMPTY_BROWSER_DOWNLOAD_PROJECTION
+
+internal fun StandardBrowserSessionTools.buildBrowserDownloadSummary(): BrowserDownloadSummary =
+    buildBrowserDownloadProjection().summary
+
+internal fun StandardBrowserSessionTools.buildBrowserDownloadUiState(): BrowserDownloadUiState =
+    buildBrowserDownloadProjection().uiState
 
 internal fun StandardBrowserSessionTools.renderManagedDownloads(
     session: StandardBrowserSessionTools.WebSession,

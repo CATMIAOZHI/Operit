@@ -27,7 +27,7 @@
 
 项目是 Android 主应用，同时包含 native 子模块、WebChat 和脚本构建步骤。完整环境要求以 [Android 编译指南](./BUILDING.md) 为准，当前 CI 使用的主要版本包括：
 
-- JDK 21
+- JDK 25
 - Node.js 22、npm 和 pnpm
 - Python 3
 - Android SDK 34/36、Build Tools 34/35

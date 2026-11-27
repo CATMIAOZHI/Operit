@@ -394,8 +394,8 @@ internal class OrbitReading(
 /** Turns a Legado failure into words the model can act on. */
 internal fun ReaderProviderException.forModel(): String = when (reason) {
     ReaderProviderException.Reason.LEGADO_NOT_INSTALLED ->
-        "Legado (阅读) with Operit support is not installed, so there is no book to read together. " +
-            "Tell the user it needs the Legado build that works with Operit."
+        "Legado (阅读) with Orbit support is not installed, so there is no book to read together. " +
+            "Tell the user it needs the Legado build that works with Orbit."
     ReaderProviderException.Reason.CONNECTION_FAILED ->
         "Could not reach Legado. Ask the user to open Legado once, then try again."
     ReaderProviderException.Reason.EMPTY_BOOKSHELF -> "Legado's bookshelf is empty."

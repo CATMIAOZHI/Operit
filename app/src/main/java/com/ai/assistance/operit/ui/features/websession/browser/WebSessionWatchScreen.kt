@@ -41,6 +41,7 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -55,6 +56,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserBackMotion
+import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserBackTarget
 import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserWatchUi
 import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.WebSessionWebViewHost
 
@@ -69,9 +72,12 @@ import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.WebSes
 @Composable
 internal fun WebSessionWatchScreen(
     watch: BrowserWatchUi,
+    backMotion: BrowserBackMotion,
     webViewHost: WebSessionWebViewHost,
     hasSession: Boolean,
     url: String,
+    isEditingUrl: Boolean,
+    onEditingUrlChange: (Boolean) -> Unit,
     isLoading: Boolean,
     canGoBack: Boolean,
     canGoForward: Boolean,
@@ -83,6 +89,9 @@ internal fun WebSessionWatchScreen(
     onBrowserArea: (width: Int, height: Int) -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
+    androidx.compose.runtime.LaunchedEffect(watch.controlling) {
+        if (!watch.controlling && isEditingUrl) onEditingUrlChange(false)
+    }
     BrowserKeyboardLayout(
         modifier = Modifier.fillMaxSize().background(colors.background).onSizeChanged { onTotalHeight(it.height) },
         body = {
@@ -97,7 +106,19 @@ internal fun WebSessionWatchScreen(
                 }
                 // Once the user drives the page, they get a browser's own controls.
                 if (watch.controlling) {
-                    WatchControls(url, isLoading, canGoBack, canGoForward, onNavigate, onBack, onForward, onRefreshOrStop)
+                    WatchControls(
+                        url,
+                        isEditingUrl,
+                        onEditingUrlChange,
+                        backMotion,
+                        isLoading,
+                        canGoBack,
+                        canGoForward,
+                        onNavigate,
+                        onBack,
+                        onForward,
+                        onRefreshOrStop,
+                    )
                 }
                 WatchBrowserArea(watch, webViewHost, hasSession, onBrowserArea, Modifier.weight(1f).fillMaxWidth())
             }
@@ -115,7 +136,8 @@ internal fun WebSessionWatchScreen(
 
 /**
  * The page picture. Margins around it take the screen's own background. Two fingers zoom and move
- * the picture; until the user takes control, every other touch stops at a layer over the page.
+ * the picture; until the user takes control, one finger moves a zoomed picture too, and every
+ * other touch stops at a layer over the page.
  */
 @Composable
 private fun WatchBrowserArea(
@@ -131,17 +153,20 @@ private fun WatchBrowserArea(
             // A zoomed picture is bigger than its area; it must not draw over the bars above and below.
             .clipToBounds()
             .onSizeChanged { onBrowserArea(it.width, it.height) }
-            .pointerInput(webViewHost) {
+            .pointerInput(webViewHost, watch.controlling) {
                 // Seen before the page: once a second finger lands the gesture is the picture's,
                 // and the page gets a cancel for the first finger, until every finger lifts.
+                val controlling = watch.controlling
                 awaitEachGesture {
                     awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                     var zooming = false
                     do {
                         val event = awaitPointerEvent(PointerEventPass.Initial)
                         if (!zooming && event.changes.count { it.pressed } >= 2) zooming = true
-                        if (zooming) {
-                            val zoom = event.calculateZoom()
+                        // Only watching, the page takes no touch: one finger moves the zoomed picture.
+                        val panning = !zooming && !controlling && webViewHost.isUserZoomed
+                        if (zooming || panning) {
+                            val zoom = if (zooming) event.calculateZoom() else 1f
                             val pan = event.calculatePan()
                             val centroid = event.calculateCentroid(useCurrent = false)
                             if (centroid.isSpecified() && (zoom != 1f || pan.x != 0f || pan.y != 0f)) {
@@ -271,6 +296,9 @@ private fun WatchButton(text: String, color: Color, textColor: Color, busy: Bool
 @Composable
 private fun WatchControls(
     url: String,
+    editing: Boolean,
+    onEditingChange: (Boolean) -> Unit,
+    backMotion: BrowserBackMotion,
     isLoading: Boolean,
     canGoBack: Boolean,
     canGoForward: Boolean,
@@ -280,13 +308,13 @@ private fun WatchControls(
     onRefreshOrStop: () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
-    var editing by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
     var draft by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf("") }
     val focus = androidx.compose.runtime.remember { androidx.compose.ui.focus.FocusRequester() }
     val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     fun submit() {
+        if (backMotion.isExiting(BrowserBackTarget.URL_EDIT)) return
         val target = normalizeNavigationUrl(draft)
-        editing = false
+        onEditingChange(false)
         keyboard?.hide()
         if (target != "about:blank") onNavigate(target)
     }
@@ -306,7 +334,22 @@ private fun WatchControls(
         Surface(
             shape = RoundedCornerShape(20.dp),
             color = colors.surfaceVariant,
-            modifier = Modifier.weight(1f).height(40.dp).padding(start = if (editing) 4.dp else 6.dp),
+            modifier = Modifier.weight(1f).height(40.dp).padding(start = if (editing) 4.dp else 6.dp)
+                .then(
+                    if (editing) {
+                        Modifier.graphicsLayer {
+                            if (backMotion.target != BrowserBackTarget.URL_EDIT) return@graphicsLayer
+                            val p = backMotion.progress
+                            val e = backMotion.exit
+                            val scale = 1f - 0.04f * p - 0.04f * e
+                            scaleX = scale
+                            scaleY = scale
+                            alpha = ((1f - 0.25f * p) * (1f - e)).coerceIn(0f, 1f)
+                        }
+                    } else {
+                        Modifier
+                    }
+                ),
         ) {
             if (editing) {
                 Row(Modifier.fillMaxSize().padding(start = 14.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -327,7 +370,7 @@ private fun WatchControls(
                         modifier = Modifier.weight(1f).focusRequester(focus)
                             .onFocusChanged {
                                 if (it.isFocused) hadFocus = true
-                                else if (hadFocus) editing = false
+                                else if (hadFocus) onEditingChange(false)
                             }
                             .semantics { contentDescription = inputLabel },
                     )
@@ -339,7 +382,7 @@ private fun WatchControls(
                 Box(
                     Modifier.fillMaxSize().clickable {
                         draft = url
-                        editing = true
+                        onEditingChange(true)
                     }.padding(horizontal = 14.dp).semantics { contentDescription = barLabel },
                     contentAlignment = Alignment.CenterStart,
                 ) {

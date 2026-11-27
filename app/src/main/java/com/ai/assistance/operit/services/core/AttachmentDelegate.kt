@@ -236,9 +236,9 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
      * Quotes an Orbit's own files in the input box. The files themselves are attached, not copies:
      * the message only tells Orbit where they are, and it reads them when it needs to.
      */
-    suspend fun attachOrbitFiles(files: List<java.io.File>) =
+    suspend fun attachOrbitFiles(files: List<java.io.File>, targetChatId: String? = null) =
             withContext(Dispatchers.IO) {
-                val target = targetChat()
+                val target = targetChatId ?: targetChat()
                 val found = files.filter { it.isFile }
                 found.forEach {
                     com.ai.assistance.operit.features.orbit.OrbitUploads.retainReference(context, it.absolutePath)
@@ -258,7 +258,7 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
             }
 
     /** Handles a file or image attachment selected by the user 确保在IO线程执行所有文件操作 */
-    suspend fun handleAttachment(filePath: String, targetChatId: String? = null) =
+    suspend fun handleAttachment(filePath: String, targetChatId: String? = null): Boolean =
             withContext(Dispatchers.IO) {
                 // Copying can take a while; the file goes to the chat it was picked in.
                 val target = targetChatId ?: targetChat()
@@ -266,19 +266,19 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
                     when {
                         filePath == "screen_capture" -> {
                             captureScreenContent(target)
-                            return@withContext
+                            return@withContext true
                         }
                         filePath == "notifications_capture" -> {
                             captureNotifications(target = target)
-                            return@withContext
+                            return@withContext true
                         }
                         filePath == "location_capture" -> {
                             captureLocation(target = target)
-                            return@withContext
+                            return@withContext true
                         }
                         filePath.startsWith(PACKAGE_ATTACHMENT_PREFIX) -> {
                             attachPackageInternal(filePath.removePrefix(PACKAGE_ATTACHMENT_PREFIX).trim())
-                            return@withContext
+                            return@withContext true
                         }
                     }
 
@@ -299,13 +299,13 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
                         val localPath = if (filePath.startsWith("file://")) Uri.parse(filePath).path else filePath
                         if (localPath.isNullOrBlank()) {
                             _toastEvent.emit(context.getString(R.string.attachment_cannot_attach, filePath))
-                            return@withContext
+                            return@withContext false
                         }
 
                         val file = java.io.File(localPath)
                         if (!file.exists()) {
                             _toastEvent.emit(context.getString(R.string.attachment_file_not_exist))
-                            return@withContext
+                            return@withContext false
                         }
 
                         sourceUri = Uri.fromFile(file)
@@ -319,7 +319,7 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
                     val resolvedMimeType = mimeType
                     if (resolvedUri == null || resolvedFileName.isNullOrBlank() || resolvedMimeType.isNullOrBlank()) {
                         _toastEvent.emit(context.getString(R.string.attachment_cannot_attach, filePath))
-                        return@withContext
+                        return@withContext false
                     }
 
                     AppLogger.d(TAG, "Copying attachment source to a local temporary file: $resolvedUri")
@@ -330,7 +330,7 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
                     if (tempFile == null || !tempFile.exists()) {
                         AppLogger.e(TAG, "Failed to create temp file from source: $resolvedUri")
                         _toastEvent.emit(context.getString(R.string.attachment_cannot_attach, resolvedFileName))
-                        return@withContext
+                        return@withContext false
                     }
 
                     val attachmentInfo =
@@ -343,9 +343,11 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
                     val addedAttachment = appendAttachment(attachmentInfo, target)
 
                     _toastEvent.emit(context.getString(R.string.attachment_added, addedAttachment.fileName))
+                    true
                 } catch (e: Exception) {
                     _toastEvent.emit(context.getString(R.string.attachment_add_failed, e.message ?: ""))
                     AppLogger.e(TAG, "Error adding attachment", e)
+                    false
                 }
             }
 

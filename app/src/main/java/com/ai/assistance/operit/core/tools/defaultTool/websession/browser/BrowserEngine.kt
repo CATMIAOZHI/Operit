@@ -14,14 +14,31 @@ internal interface BrowserEngine {
     /** Chrome's full version of the engine, for the user agent and its client hints. */
     val chromeFullVersion: String
 
+    /** Whether the engine has already been initialized in this process. Any thread. */
+    val isStarted: Boolean get() = true
+
+    /**
+     * Warms the engine's native library into the OS page cache on a background thread at most
+     * once per process, without initializing the engine or allocating its memory. Safe to call
+     * from any thread.
+     */
+    fun warmLibrary(context: Context) {}
+
     /**
      * A new tab with [profileName]'s logins that has not loaded anything yet. Throws when the
      * engine cannot start; the caller then opens the tab on the WebView.
+     * A [desktop] tab is drawn at 1080p (see [DESKTOP_RASTER_SCALE]) instead of the screen's density.
      */
-    fun createPage(context: Context, profileName: String): EngineBrowserPage
+    fun createPage(context: Context, profileName: String, desktop: Boolean): EngineBrowserPage
 
     /** The Cookie header for [url] in [profileName]; null on the main thread, which it would block. Any thread. */
     fun cookieFor(profileName: String, url: String): String?
+
+    /**
+     * Stores Set-Cookie lines for [url] in [profileName]; true when the engine took every one.
+     * Waits for it, so not on the main thread (false there). Any other thread.
+     */
+    fun setCookies(profileName: String, url: String, setCookies: List<String>): Boolean
 
     /** Signs [profileName] out of every site: its cookies and site storage. [onDone] gets whether it worked. */
     fun clearLogins(profileName: String, onDone: (Boolean) -> Unit)
@@ -34,6 +51,18 @@ internal object BrowserEngines {
     /** The engine built into this version, or null when tabs use the system WebView. */
     val current: BrowserEngine? by lazy { runCatching { builtInBrowserEngine() }.getOrNull() }
 }
+
+/**
+ * Device pixels per CSS pixel of a desktop tab on the engine: its 1280×720 page is drawn at
+ * 1920×1080, about twice what a phone shows of it, instead of at the screen's density (4480×2520
+ * at 3.5), whose every frame the page view copies and uploads on the main thread. Pinching past
+ * about 1.8× softens the text. Never more than the screen's density.
+ */
+internal const val DESKTOP_RASTER_SCALE = 1.5f
+
+/** Device pixels per CSS pixel [page] is laid out at: its own for an engine tab, the screen's for a WebView. */
+internal fun layoutScaleOf(page: BrowserPage?, density: Float): Float =
+    (page as? EngineBrowserPage)?.scale?.takeIf { it.isFinite() && it > 0f } ?: density
 
 /** A tab on the built-in engine. Its session listens through [events]. */
 internal interface EngineBrowserPage : BrowserPage {

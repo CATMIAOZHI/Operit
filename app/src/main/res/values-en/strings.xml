@@ -71,7 +71,7 @@
     <string name="chat_title_no_content">No conversation content available for a title</string>
     <string name="chat_title_generation_failed">Title generation failed. The original title was kept.</string>
     <string name="provider_command_code">Command Code (account login)</string>
-    <string name="command_code_login_hint">Sign in through your browser or enter a Command Code API key. The verified key is encrypted on this device and can be used to fetch models.</string>
+    <string name="command_code_login_hint">Sign in through your browser or enter a Command Code API key. The verified key is encrypted on this device. A key for the current account updates it; a key for another account adds that account and uses it.</string>
     <string name="command_code_save_key">Verify and save</string>
     <string name="command_code_login_failed">Sign-in or verification failed. Check your API key and network, then try again.</string>
     <string name="app_name">Operit Ry</string>
@@ -6489,7 +6489,7 @@
     <!-- Global Display Settings Screen -->
     <string name="display_rainbow_border">Fullscreen Rainbow Border</string>
     <string name="display_top_hint">Top Hint Bar</string>
-    <string name="display_png_default">PNG (lossless, default)</string>
+    <string name="display_png_default">PNG (lossless)</string>
     <string name="display_jpg_smaller">JPG (lossy, smaller size)</string>
 
     <!-- Script Execution Dialog -->
@@ -6856,6 +6856,7 @@
     <string name="paste_as_attachment">Paste as attachment</string>
     <string name="attachment_paste">Paste</string>
     <string name="paste_attachment_failed">Couldn\'t read what was pasted</string>
+    <string name="pasted_text_file_name">Pasted text</string>
     <string name="attachment_file_not_exist">File does not exist</string>
     <string name="attachment_add_failed">Failed to add attachment: %1$s</string>
     <string name="attachment_screen_content_failed">Failed to get screen content: %1$s</string>
@@ -7093,9 +7094,10 @@
     <string name="root_custom_su_command_description">Applies only in KernelSU mode. You can enter commands like su or su --mount-master.</string>
     <string name="global_display_virtual_screen_bitrate">Virtual Screen Bitrate</string>
     <string name="global_display_status_indicator_style">Status Indicator Style</string>
-    <string name="global_display_screenshot_settings">Screenshot Settings</string>
+    <string name="global_display_screenshot_settings">Screenshots</string>
+    <string name="global_display_virtual_screen_section">Virtual screen</string>
     <string name="global_display_image_format">Image Format</string>
-    <string name="global_display_image_quality">Quality (JPG only)</string>
+    <string name="global_display_image_quality">JPG quality</string>
     <string name="global_display_resolution_scale">Resolution Scale (downscale before sending)</string>
     <string name="visit_web_wait_time_title">Visit Web Wait Time</string>
     <string name="visit_web_wait_time_description">Controls how long visit_web waits before returning after page content is extracted. Set to 0 seconds to return immediately.</string>
@@ -7701,7 +7703,7 @@
     <string name="favorite_model_label">%1$s: %2$s</string>
     <string name="add_model_to_favorites">Add model to favorites</string>
     <string name="remove_model_from_favorites">Remove model from favorites</string>
-    <string name="collapsed_providers_count">Collapsed Providers (%d)</string>
+    <string name="collapsed_providers_count">Hidden (%d)</string>
     <string name="collapsed_model_configs_count">Collapsed Model Configs (%d)</string>
     <string name="collapse_model_config">Collapse model config</string>
     <string name="uncollapse_model_config">Uncollapse model config</string>
@@ -7881,6 +7883,7 @@
     <string name="web_session_userscript_update_preview">Update Preview</string>
     <string name="web_session_userscript_library">Installed Scripts</string>
     <string name="web_session_userscript_none">No userscripts installed yet</string>
+    <string name="web_session_userscript_load_failed">Could not read installed userscripts</string>
     <string name="web_session_userscript_logs">Recent Logs</string>
     <string name="web_session_userscript_logs_empty">No recent userscript logs</string>
     <string name="web_session_userscript_page_menu">Page Script Menu</string>
@@ -8827,8 +8830,10 @@
     <string name="screen_ocr_hint">Circle the part you want to send</string>
     <string name="screen_ocr_reselect">Redo</string>
     <string name="screen_ocr_add">Add</string>
-    <string name="model_catalog_auto_desc">When you add models, their protocol, picture/audio/video input and context window are filled in from the model catalog, which updates itself every week. “Re-match” updates the catalog first, then resets every model from it.</string>
+    <string name="model_catalog_auto_desc">When you add models, their protocol, picture/audio/video input and context window are filled in from the model catalog. If a model is missing from the catalog, the app updates the catalog and tries again. “Re-match” resets every model from the newest catalog.</string>
     <string name="model_catalog_readapt">Re-match</string>
+    <string name="model_catalog_adapting">This model is not in the model catalog yet; updating the catalog and matching it…</string>
+    <string name="antigravity_models_tier_hint">Each model\'s tiers are shown as one entry; the tier is picked from the chat\'s thinking level when a message is sent.</string>
     <string name="model_catalog_readapt_matched">Models matched: %1$d</string>
     <string name="model_catalog_readapt_missing">not in catalog: %1$d</string>
     <string name="model_catalog_readapt_partly_offline">One catalog not updated</string>
@@ -8941,11 +8946,26 @@
     <string name="provider_account_logged_in">Account signed in</string>
     <string name="provider_account_login">Sign in</string>
     <string name="provider_account_logout">Sign out</string>
+    <string name="provider_account_switch">Switch account</string>
+    <string name="provider_account_changed_reload">The account changed. Load the model list again.</string>
     <string name="provider_account_login_failed">Account sign-in did not complete</string>
     <string name="provider_account_completing">Verifying account and service access</string>
     <string name="provider_oauth_client_settings">OAuth client settings</string>
     <string name="provider_oauth_client_hint">Client settings are encrypted in this app. Leave blank to use saved settings. They are excluded from model configuration exports.</string>
     <string name="provider_account_login_required">Sign in to the provider first</string>
+    <string name="provider_account_add">Add account</string>
+    <string name="provider_account_use">Use</string>
+    <string name="provider_account_remove">Remove</string>
+    <string name="provider_account_in_use">In use</string>
+    <string name="provider_account_needs_login">Sign-in expired. Sign in to this account again.</string>
+    <string name="provider_account_unnamed">Account %1$d</string>
+    <string name="provider_account_pool_hint">You can sign in to several accounts. When the one in use runs out of quota, is rate limited, or its sign-in stops working, another account that still works is used.</string>
+    <string name="provider_account_login_expired">The account sign-in expired. Sign in again or add an account in model settings.</string>
+    <string name="provider_account_pool_switched">Switched to account: %1$s</string>
+    <string name="provider_account_remove_title">Remove this account?</string>
+    <string name="provider_account_remove_message">After removing it, %1$s has to sign in again to be used.</string>
+    <string name="provider_account_removed">Account removed</string>
+    <string name="codex_device_add_action">Add with device code</string>
     <string name="speech_services_tts_profiles">TTS Profiles</string>
     <string name="speech_services_stt_profiles">STT Profiles</string>
     <string name="speech_services_profile_current">Current profile</string>
@@ -8999,6 +9019,8 @@
     <string name="memory_notes_tool_description">memory.md: %1$s</string>
     <string name="memory_notes_tool_result">memory.md (%1$d / %2$d characters). Latest content follows; existing conversation system prompts are not automatically rewritten.</string>
     <string name="memory_notes_full">memory.md has insufficient capacity. Read the latest content, consolidate or remove unneeded notes, then retry. This write changed nothing.</string>
+    <string name="memory_notes_full_free">memory.md is full (%1$d / %2$d characters); this write changed nothing. Do not remove a little and add a little: first free at least %3$d characters in one cleanup by merging similar entries and removing outdated or less important ones, then retry this write.</string>
+    <string name="memory_notes_change_too_big">This write adds %1$d characters, more than memory.md has room for; it changed nothing. Shorten it by at least %2$d characters or split it, then retry.</string>
     <string name="memory_notes_conflict">Notes changed while you were editing. Your draft is still above; compare it with the latest content and merge before saving.</string>
     <string name="memory_notes_not_unique">old_text did not match exactly one location. Read first, then copy the complete text to replace or remove.</string>
     <string name="memory_notes_invalid">Invalid action or parameters. Supported: read/add/replace/remove. Add and replace require content; replace and remove require old_text.</string>
@@ -9354,7 +9376,7 @@
     <string name="orbit_task_done">Completed</string>
     <string name="orbit_browser_open">Open page to continue</string>
     <string name="orbit_browser_handoff_help">AI browser actions pause while you handle this page. Return here when finished. Do not include passwords in your note.</string>
-    <string name="orbit_browser_overlay_required">Allow Operit to display over other apps in system settings before opening the page.</string>
+    <string name="orbit_browser_overlay_required">Allow Orbit to display over other apps in system settings before opening the page.</string>
     <string name="orbit_browser_reopen">The page was closed or the app restarted. Open the page again before continuing.</string>
     <string name="orbit_browser_not_ready">Wait for the page to load and resolve any security errors or dialogs in the browser first.</string>
     <string name="orbit_task_user_note">Additional note (optional)</string>
@@ -9448,8 +9470,6 @@
     <string name="attachment_edit_color_blue">Blue</string>
     <string name="attachment_edit_color_white">White</string>
     <string name="attachment_edit_color_black">Black</string>
-    <string name="orbit_notifications_row">Notifications</string>
-    <string name="orbit_notifications_row_desc">Quiet hours and how often results arrive</string>
     <string name="orbit_profile_open">Open %1$s\'s profile</string>
     <string name="orbit_profile_tab_activity">Tasks</string>
     <string name="orbit_profile_tab_approvals">Approvals</string>
@@ -9551,11 +9571,6 @@
     <string name="orbit_artifact_revise">Revise</string>
     <string name="orbit_previous_page">Previous page</string>
     <string name="orbit_next_page">Next page</string>
-    <string name="orbit_notifications_help">Tasks keep running while updates wait to be delivered together. Daily digests become available at the next 9 AM.</string>
-    <string name="orbit_quiet_hours">Quiet hours · 10 PM–8 AM</string>
-    <string name="orbit_delivery_interval">Minimum time between proactive updates</string>
-    <string name="orbit_delivery_immediate">Deliver immediately</string>
-    <string name="orbit_delivery_minutes">%1$d minutes</string>
     <string name="orbit_goal_title">Goal name</string>
     <string name="orbit_goal_plan">Plan and expectations</string>
     <string name="orbit_revision_request">What would you like to change?</string>
@@ -9749,7 +9764,7 @@
     <string name="orbit_watch_sms_from">Watches text messages from %1$s</string>
     <string name="orbit_watch_calendar">Watches the calendar for the next %1$d days</string>
     <string name="orbit_watch_reading">Reads along, keeping comments ready %1$d chapters ahead</string>
-    <string name="orbit_watch_reading_not_installed">The Legado build that works with Operit is not installed, so the book you read cannot be seen</string>
+    <string name="orbit_watch_reading_not_installed">The Legado build that works with Orbit is not installed, so the book you read cannot be seen</string>
     <string name="orbit_watch_reading_failed">Could not read Legado: %1$s</string>
     <string name="orbit_watch_script">Runs the script %1$s and watches its output</string>
     <string name="orbit_decision_unchanged">Nothing changed, so Orbit stayed quiet</string>
@@ -9763,17 +9778,17 @@
     <string name="orbit_task_in_chat">When it\'s due, %1$s handles it in the chat; if you\'re in the middle of a conversation, it waits a moment</string>
     <string name="orbit_run_in_chat">Handed to Orbit in the chat</string>
     <string name="orbit_decision_watch_failed">Could not read anything this time, so nothing was checked; it tries again at the next check</string>
-    <string name="orbit_watch_needs_notifications">Operit has no notification access, so it cannot read notifications. Turn on notification access for Operit in system settings.</string>
-    <string name="orbit_watch_needs_sms">Operit is not allowed to read text messages. Allow SMS for Operit in the app permissions in system settings.</string>
-    <string name="orbit_watch_needs_calendar">Operit is not allowed to read the calendar. Allow Calendar for Operit in the app permissions in system settings.</string>
+    <string name="orbit_watch_needs_notifications">Orbit has no notification access, so it cannot read notifications. Turn on notification access for Orbit in system settings.</string>
+    <string name="orbit_watch_needs_sms">Orbit is not allowed to read text messages. Allow SMS for Orbit in the app permissions in system settings.</string>
+    <string name="orbit_watch_needs_calendar">Orbit is not allowed to read the calendar. Allow Calendar for Orbit in the app permissions in system settings.</string>
     <string name="orbit_watch_script_changed">The check script %1$s was changed after it was set up, so it is not run for safety. Ask Orbit to update this task with the new script.</string>
     <string name="orbit_watch_script_timeout">The check script ran longer than %1$d seconds and gave no result this time.</string>
     <string name="orbit_watch_script_failed">The check script failed: %1$s</string>
     <string name="orbit_watch_open_settings">Open permission settings</string>
     <string name="orbit_task_last_result_time">Latest result · %1$s</string>
     <string name="orbit_watch_notifications_starting">The notification service is still starting, so this check was skipped. It will try again next time.</string>
-    <string name="orbit_watch_open_settings_failed">Could not open system settings. Please turn on the permission for Operit in Settings.</string>
-    <string name="orbit_watch_notifications_stuck">The notification service still isn\'t connected, so notifications can\'t be read. In system settings, turn notification access for Operit off and on again.</string>
+    <string name="orbit_watch_open_settings_failed">Could not open system settings. Please turn on the permission for Orbit in Settings.</string>
+    <string name="orbit_watch_notifications_stuck">The notification service still isn\'t connected, so notifications can\'t be read. In system settings, turn notification access for Orbit off and on again.</string>
     <string name="orbit_decision_notifications_stuck">The notification service never connected, so this check did not run</string>
     <string name="orbit_routine_self_review">Nightly self-review</string>
     <string name="orbit_routine_goal_briefing">Goal alignment</string>
@@ -9844,9 +9859,9 @@
     <string name="orbit_chats_long_press">Long press a side chat to rename, pin, archive or delete it</string>
     <string name="orbit_chats_unread">New messages</string>
     <string name="orbit_chats_title_unread">Chats — new messages</string>
-    <string name="orbit_menu_back_to_operit">Back to Operit</string>
-    <string name="orbit_menu_back_to_operit_confirm_title">Back to Operit?</string>
-    <string name="orbit_menu_back_to_operit_confirm_note">You can come back to Orbit from Operit\'s menu.</string>
+    <string name="orbit_menu_back_to_operit">Switch to classic chat</string>
+    <string name="orbit_menu_back_to_operit_confirm_title">Switch to classic chat?</string>
+    <string name="orbit_menu_back_to_operit_confirm_note">You can come back to Orbit from the classic chat menu.</string>
     <string name="orbit_chats_side_section">Side chats</string>
     <string name="orbit_sidebar_tabs">Tabs</string>
     <string name="orbit_chats_empty_title">Start a side chat</string>
@@ -9930,7 +9945,7 @@
     <string name="orbit_tools_search">Search tools</string>
     <string name="orbit_tools_empty">No tools found</string>
     <string name="orbit_tools_folder_internal">Orbit\'s own tools</string>
-    <string name="orbit_tools_folder_builtin">Operit built-in tools</string>
+    <string name="orbit_tools_folder_builtin">Built-in tools</string>
     <string name="orbit_tools_count">%1$d tools</string>
     <string name="orbit_tools_count_changed">%1$d tools · %2$d changed</string>
     <string name="orbit_tools_level_allow">Always allow</string>
@@ -10077,6 +10092,7 @@
     <string name="orbit_approval_voice_local">On-device model: %1$s</string>
     <string name="orbit_approval_voice_current">In use now: %1$s</string>
     <string name="orbit_approval_voice_create_note">It is used right after it is added</string>
+    <string name="orbit_approval_voice_create_keep_note">Only saved: the voice in use stays the same</string>
     <string name="orbit_approval_voice_delete_note">This cannot be undone</string>
     <string name="orbit_approval_voice_key_needed">To approve, type the API key</string>
     <string name="orbit_approval_voice_key_promise">The key goes straight into the voice settings. It never appears in the chat, and %1$s cannot see it.</string>
@@ -10104,7 +10120,7 @@
     <string name="orbit_text_settings_row">Font, text size, line and paragraph spacing</string>
     <string name="orbit_section_device">Phone and terminal</string>
     <string name="orbit_automation_settings_title">Automation and screenshots</string>
-    <string name="orbit_automation_settings_row">Screenshots, virtual screen, Root mode, keep-alive</string>
+    <string name="orbit_automation_settings_row">Screen on, web wait, virtual screen, screenshots</string>
     <string name="orbit_backup_title">Data backup</string>
     <string name="orbit_backup_row">Back up or restore chats, memory, model configs and the database</string>
     <string name="orbit_about_row">Version, updates, update log and open-source licenses</string>
@@ -10131,7 +10147,7 @@
     <string name="orbit_voice_own_err_sample_changed">The recording changed. Decline and let it ask again.</string>
     <string name="orbit_voice_own_err_key_gone">The MiMo key changed. Decline and let it ask again.</string>
     <string name="orbit_voice_own_err_profile_gone">The voice profile was deleted. Decline and let it ask again.</string>
-    <string name="orbit_voice_shared_note">The read-aloud and voice input settings below are shared with the rest of the app.</string>
+    <string name="orbit_voice_shared_note">The read-aloud settings below are shared with the rest of the app, and so are those on the voice input tab.</string>
     <string name="orbit_chat_search_open">Search chat history</string>
     <string name="orbit_find_title">Search for</string>
     <string name="orbit_find_date">Date</string>
@@ -10297,8 +10313,8 @@
     <string name="orbit_browser_task_stopping">Stopping</string>
     <string name="orbit_import_paste_label">The other AI\'s answer</string>
     <string name="orbit_import_too_long">%1$d / %2$d characters. Too long; import it in parts.</string>
-    <string name="orbit_geofence_needs_precise">Location monitoring has not started. In system Settings → Apps → Operit → Permissions → Location, allow precise location, then return to Orbit.</string>
-    <string name="orbit_geofence_needs_background">Location monitoring has not started. In system Settings → Apps → Operit → Permissions → Location, choose Allow all the time, then return to Orbit. While-in-use access cannot provide background reminders.</string>
+    <string name="orbit_geofence_needs_precise">Location monitoring has not started. Long-press the app icon on the home screen → App info → Permissions → Location, and allow precise location, then return to Orbit.</string>
+    <string name="orbit_geofence_needs_background">Location monitoring has not started. Long-press the app icon on the home screen → App info → Permissions → Location, and choose Allow all the time, then return to Orbit. While-in-use access cannot provide background reminders.</string>
     <string name="orbit_geofence_needs_location">Location monitoring has not started. Turn on the phone location switch, then return to Orbit.</string>
     <string name="orbit_geofence_no_fix">An accurate current position is unavailable. Turn on location and try somewhere with a better signal. Location monitoring has not started.</string>
     <string name="orbit_geofence_unavailable">The system could not enable location reminders. Check location permissions and try again.</string>
@@ -10311,4 +10327,14 @@
     <string name="orbit_geofence_place_detail">%1$s · %2$d m radius\n%3$s, %4$s (WGS84)</string>
     <string name="orbit_geofence_help">Reminds after a stable arrival or departure. The position at creation or resume is only the baseline. Android power saving may delay detection or miss brief visits.</string>
     <string name="orbit_file_changed_meanwhile">The file changed meanwhile, so nothing was overwritten. Copy your edit, reopen the file, and try again.</string>
+    <string name="provider_group_account">Account login</string>
+    <string name="provider_group_official">Official APIs</string>
+    <string name="provider_group_platform">Model platforms</string>
+    <string name="provider_group_custom">Custom endpoints</string>
+    <string name="provider_group_plugin">From plugins</string>
+    <string name="provider_picker_hide">Hide</string>
+    <string name="provider_picker_unhide">Show again</string>
+    <string name="provider_picker_hide_hint">Long-press a provider to hide it</string>
+    <string name="provider_picker_no_match">No matching providers</string>
+    <string name="provider_picker_hidden_state">Hidden</string>
 </resources>

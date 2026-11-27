@@ -69,6 +69,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.isTraversalGroup
 import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.selected
@@ -110,6 +111,10 @@ internal fun OrbitSideMenu(
     orbit: OrbitProfile,
     currentChatId: String,
     unread: Set<String>,
+    /** The WeChat channel's chat, listed under "Channels" instead of with the side chats; null when not linked. */
+    channelChatId: String?,
+    /** False until the WeChat link is read: the side chats wait, so the channel never shows among them. */
+    channelRead: Boolean,
     onSelect: (String) -> Unit,
     onDismiss: () -> Unit,
     onOpenSettings: () -> Unit,
@@ -265,6 +270,8 @@ internal fun OrbitSideMenu(
         Box(Modifier.fillMaxSize().then(if (archiveOpen || searching) Modifier.clearAndSetSemantics { } else Modifier)) {
             MenuContent(
                 orbit = orbit, currentChatId = currentChatId, unread = unread, busy = busy,
+                channelChatId = channelChatId,
+                channelRead = channelRead,
                 selectedTab = if (docked) selectedTab else null,
                 onSelectTab = onSelectTab,
                 onOpen = ::open,
@@ -288,7 +295,8 @@ internal fun OrbitSideMenu(
         // The archived side chats slide in over the menu, inside the panel.
         OrbitCoverPage(visible = archiveOpen && visible, onDismiss = { archiveOpen = false }) {
             ArchivePage(
-                sides = orbit.sideChats.filter { it.archived }.sortedByDescending { it.createdAt },
+                sides = if (!channelRead) emptyList()
+                    else orbit.sideChats.filter { it.archived && it.chatId != channelChatId }.sortedByDescending { it.createdAt },
                 currentChatId = currentChatId, unread = unread,
                 onBack = { archiveOpen = false },
                 onOpen = ::open,
@@ -434,6 +442,9 @@ private fun MenuContent(
     currentChatId: String,
     unread: Set<String>,
     busy: Boolean,
+    /** The WeChat channel's chat, shown under "Channels" instead of with the side chats; null when not linked. */
+    channelChatId: String?,
+    channelRead: Boolean,
     /** On the tablet sidebar: the tab showing, with every tab listed above the side chats. */
     selectedTab: OrbitTab?,
     onSelectTab: (OrbitTab) -> Unit,
@@ -449,8 +460,8 @@ private fun MenuContent(
     onLeaveOrbit: () -> Unit,
 ) {
     // Pinned side chats first, the newest pin on top; then the rest, newest first.
-    val sides = remember(orbit.sideChats) {
-        orbit.openSideChats.sortedWith(
+    val sides = remember(orbit.sideChats, channelChatId, channelRead) {
+        if (!channelRead) emptyList() else orbit.openSideChats.filter { it.chatId != channelChatId }.sortedWith(
             compareByDescending<OrbitSideChat> { it.pinnedAt }.thenByDescending { it.createdAt },
         )
     }
@@ -469,6 +480,30 @@ private fun MenuContent(
         Spacer(Modifier.height(if (sidebar) 16.dp else 20.dp))
         // A chat counts as shown only while the chat tab is.
         val onChat = selectedTab == null || selectedTab == OrbitTab.CHAT
+        // "Channels": apps Orbit is talked to from, like Muse's WhatsApp. Read here, answered there.
+        val channelRows: @Composable () -> Unit = {
+            if (channelChatId != null) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        stringResource(R.string.orbit_channels_section),
+                        style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 12.dp, top = 12.dp, bottom = 6.dp)
+                            .semantics { heading() },
+                    )
+                    ChatRow(
+                        icon = "message-circle", title = stringResource(R.string.orbit_weixin),
+                        selected = onChat && currentChatId == channelChatId, unread = channelChatId in unread,
+                        compact = sidebar,
+                        onClick = { onOpen(channelChatId) },
+                        leading = { OrbitWeixinMark(22.dp) },
+                    )
+                    androidx.compose.material3.HorizontalDivider(
+                        Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
+                    )
+                }
+            }
+        }
         val tabRows: @Composable () -> Unit = {
             // "Tabs": the main chat and the other pages, like the top of Muse's sidebar.
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -505,7 +540,8 @@ private fun MenuContent(
                     val archiveLabel = stringResource(R.string.orbit_chats_archived_open)
                     Box(
                         Modifier.size(48.dp).clip(CircleShape)
-                            .clickable(role = Role.Button, onClickLabel = archiveLabel, onClick = onOpenArchive)
+                            // Until the WeChat link is read, an archived channel could pass for a side chat.
+                            .clickable(enabled = channelRead, role = Role.Button, onClickLabel = archiveLabel, onClick = onOpenArchive)
                             .semantics { contentDescription = archiveLabel },
                         contentAlignment = Alignment.Center,
                     ) {
@@ -551,10 +587,11 @@ private fun MenuContent(
                 selected = currentChatId == orbit.chatId, unread = orbit.chatId in unread,
                 onClick = { onOpen(orbit.chatId) },
             )
+            channelRows()
             sideHeader()
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 if (sides.isEmpty()) {
-                    EmptySideChats(onNew = onNew, enabled = !busy)
+                    if (channelRead) EmptySideChats(onNew = onNew, enabled = !busy)
                 } else {
                     LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(2.dp)) { sideRows() }
                 }
@@ -563,8 +600,9 @@ private fun MenuContent(
             // On the sidebar the tabs scroll with the side chats, so a short window still shows them all.
             LazyColumn(Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 item(key = "tabs") { tabRows() }
+                item(key = "channels") { channelRows() }
                 item(key = "side-header") { sideHeader() }
-                if (sides.isEmpty()) {
+                if (sides.isEmpty() && channelRead) {
                     item(key = "side-empty") {
                         Box(Modifier.fillMaxWidth().padding(vertical = 24.dp)) { EmptySideChats(onNew = onNew, enabled = !busy) }
                     }
@@ -790,6 +828,8 @@ private fun ChatRow(
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
     longClickLabel: String? = null,
+    /** Drawn instead of [icon]: an app's own mark, say. */
+    leading: (@Composable () -> Unit)? = null,
 ) {
     val unreadLabel = stringResource(R.string.orbit_chats_unread)
     val pinnedLabel = stringResource(R.string.orbit_chats_pinned)
@@ -801,7 +841,7 @@ private fun ChatRow(
             .padding(horizontal = 16.dp, vertical = if (compact) 6.dp else 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(orbitIcon(icon), null, Modifier.size(22.dp))
+        if (leading != null) leading() else Icon(orbitIcon(icon), null, Modifier.size(22.dp))
         Spacer(Modifier.width(14.dp))
         Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f))

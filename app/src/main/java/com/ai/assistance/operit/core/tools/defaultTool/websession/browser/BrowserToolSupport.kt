@@ -54,6 +54,8 @@ internal data class BrowserNetworkRequestEntry(
     var requestId: String? = null
 }
 
+private val pendingDialogIdCounter = java.util.concurrent.atomic.AtomicLong()
+
 internal data class PendingDialog(
     val type: String,
     val message: String,
@@ -63,7 +65,8 @@ internal data class PendingDialog(
     val jsPromptResult: JsPromptResult? = null,
     /** How an engine tab's dialog is answered: OK or Cancel, and a prompt's text. */
     val answer: ((Boolean, String?) -> Unit)? = null,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    val id: Long = pendingDialogIdCounter.incrementAndGet(),
 )
 
 internal data class PendingAsyncJsCall(

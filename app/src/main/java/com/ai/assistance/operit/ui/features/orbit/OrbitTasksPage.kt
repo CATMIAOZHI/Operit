@@ -154,7 +154,7 @@ internal fun OrbitTasksPage(
         TaskGroup.entries.map { group -> group to marked.filter { (task, routine) -> group.contains(task, routine) }.map { it.first } }
             .filter { it.second.isNotEmpty() }
     }
-    // A run put off (busy chat, quiet hours) waits on its event; that is the real next time.
+    // A run put off (busy chat, the report interval) waits on its event; that is the real next time.
     val dues by produceState(emptyMap<String, Long>(), orbitId, retry) {
         try { repository.dao.observeTaskDues(orbitId).collect { rows -> value = rows.associate { it.taskId to it.dueAt } } }
         catch (e: CancellationException) { throw e }
@@ -362,7 +362,7 @@ private fun runOutcome(run: OrbitRunEntity, task: OrbitTaskEntity): String {
     val text = when {
         run.state == "RUNNING" -> stringResource(R.string.orbit_task_running)
         run.state == "CANCELLED" -> stringResource(R.string.orbit_run_cancelled)
-        run.error.isNotBlank() -> run.error
+        run.error.isNotBlank() -> com.ai.assistance.operit.features.orbit.OrbitWatchLegacyErrors.shown(context, run.error)
         run.state == "FAILED" -> stringResource(R.string.orbit_run_failed_unknown)
         run.decision == OrbitRunEntity.SKIPPED -> OrbitRoutines.skippedReason(context, task)
         run.decision == OrbitRunEntity.UNCHANGED -> stringResource(R.string.orbit_decision_unchanged)
@@ -513,7 +513,7 @@ private fun RunHistorySheet(
                             body.ifBlank {
                                 // No background transcript: what the run saw, and why there is nothing more.
                                 listOf(
-                                    openRun.error.ifBlank { openRun.observation.takeIf { openRun.decision != OrbitRunEntity.SKIPPED }.orEmpty() },
+                                    com.ai.assistance.operit.features.orbit.OrbitWatchLegacyErrors.shown(context, openRun.error).ifBlank { openRun.observation.takeIf { openRun.decision != OrbitRunEntity.SKIPPED }.orEmpty() },
                                     stringResource(R.string.orbit_run_record_none, orbitName),
                                 ).filter { it.isNotBlank() }.joinToString("\n\n")
                             },
@@ -534,7 +534,7 @@ private fun RunHistorySheet(
 @Composable
 private fun ChatRunRecord(run: OrbitRunEntity, orbitName: String, finding: Boolean, onOpen: (() -> Unit)?) {
     val reason = OrbitChatDecision.reason(run.decision)
-    val problem = run.error.takeIf { it.isNotBlank() }
+    val problem = run.error.takeIf { it.isNotBlank() }?.let { com.ai.assistance.operit.features.orbit.OrbitWatchLegacyErrors.shown(LocalContext.current, it) }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         if (problem != null || reason.isNotBlank()) {
             Surface(shape = RoundedCornerShape(16.dp), color = taskCardColor(), modifier = Modifier.fillMaxWidth()) {
@@ -923,7 +923,7 @@ private fun TaskDetail(
                         ?.let { OrbitChatDecision.label(context, it.decision, rememberOrbitName(orbitId)) }
                     Text(
                         if (skipped) OrbitRoutines.skippedReason(context, task)
-                        else chatOutcome ?: run?.error?.takeIf { it.isNotBlank() } ?: run?.observation?.takeIf { it.isNotBlank() }
+                        else chatOutcome ?: run?.error?.takeIf { it.isNotBlank() }?.let { com.ai.assistance.operit.features.orbit.OrbitWatchLegacyErrors.shown(context, it) } ?: run?.observation?.takeIf { it.isNotBlank() }
                             ?: stringResource(R.string.orbit_task_no_result),
                         style = MaterialTheme.typography.bodyLarge,
                         color = if (failed) com.ai.assistance.operit.ui.common.readableErrorColor() else MaterialTheme.colorScheme.onSurface,
@@ -1389,6 +1389,8 @@ private fun proactiveVerdictText(item: OrbitDeliveryEntity, name: String): Strin
 private fun watchPermissionOf(context: android.content.Context, error: String): String? = when (error) {
     context.getString(R.string.orbit_watch_needs_notifications), context.getString(R.string.orbit_watch_notifications_stuck) -> "notifications"
     context.getString(R.string.orbit_watch_needs_sms), context.getString(R.string.orbit_watch_needs_calendar) -> "app"
+    in com.ai.assistance.operit.features.orbit.OrbitWatchLegacyErrors.notifications -> "notifications"
+    in com.ai.assistance.operit.features.orbit.OrbitWatchLegacyErrors.appPermissions -> "app"
     else -> null
 }
 

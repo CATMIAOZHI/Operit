@@ -176,7 +176,14 @@ class MemoryLearningActions(
                     reviews.proposeNotes(before,after,if(operation=="add") content else "",sourceChatId,onCreated,
                         section = if (operation == "add") section else "")
                 }
-                val applied = reviews.applyAutomaticDecision(context, change)
+                val applied = try {
+                    reviews.applyAutomaticDecision(context, change)
+                } catch (e: MemoryNotesRepository.NotesException) {
+                    // Another write filled memory.md since the check above: the same guidance as there.
+                    if (e.reason != MemoryNotesRepository.Failure.FULL || e.before < 0) throw e
+                    throw IllegalArgumentException(
+                        memoryCapacityError("memory.md", e.before, e.after, MemoryNotesRepository.MAX_CHARS))
+                }
                 if (stagedChanges==null) forgetVersion(key)
                 reviews.toModelJson(applied)
             }
@@ -507,8 +514,21 @@ internal fun editText(current: String, operation: String, content: String, old: 
 
 internal fun memoryCapacityError(document: String, before: Int, after: Int, limit: Int) =
     "$document capacity exceeded: current_chars=$before, proposed_chars=$after, max_chars=$limit, " +
-        "over_by=${after-limit}. Read the latest staged content with memory_read, then shorten or remove " +
-        "existing text by at least ${after-limit} characters before retrying. A replacement can also exceed the limit."
+        "over_by=${after-limit}. " + when {
+            // Only memory.md is cleaned up in one go; user.md keeps the plain instruction.
+            document != "memory.md" ->
+                "Read the latest staged content with memory_read, then shorten or remove existing text by at " +
+                    "least ${after-limit} characters before retrying."
+            MemoryNotesRepository.editTooLong(before, after, limit) ->
+                "This change adds ${after-before} characters, more than memory.md has room for: shorten or " +
+                    "remove part of this change itself by at least ${after-limit} characters before retrying."
+            else -> MemoryNotesRepository.charsToFree(before, after, limit).let { free ->
+                "Do not trim just enough for this one change. Read the latest staged content with memory_read, " +
+                    "then shorten or remove existing text by at least $free characters in one cleanup (down to " +
+                    "${before - free} characters or fewer), merging similar entries and dropping outdated or less " +
+                    "important ones, before retrying."
+            }
+        } + " A replacement can also exceed the limit."
 
 internal fun exactEditError(current: String, old: String, sectioned: Boolean = false): String {
     if (sectioned && old.isNotEmpty()) {

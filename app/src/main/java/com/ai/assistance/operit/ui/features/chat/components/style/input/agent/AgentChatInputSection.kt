@@ -114,6 +114,7 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.ComposerPredictionTextField
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.AcceptPastedAttachments
+import com.ai.assistance.operit.ui.features.chat.components.style.input.common.rememberLongPasteAsAttachment
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.rememberComposerPredictionTransformation
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.EnhancedAIService
@@ -438,6 +439,17 @@ fun AgentChatInputSection(
             mappedModelName?.takeIf { it.isNotBlank() } ?: stringResource(R.string.functional_model_reselect)
         }
     val claudeThinkingFormats by ClaudeThinkingFormatState.formats.collectAsState()
+    val antigravityFamilies by com.ai.assistance.operit.api.chat.llmprovider.AntigravityFamilies.shown.collectAsState()
+    // An Antigravity chat follows its account from the start, so the menu shows that account's tiers.
+    val usesAntigravity = activeConfigSummary?.apiProviderTypeId?.let {
+        com.ai.assistance.operit.data.model.ApiProviderType.fromProviderTypeId(it)
+    } == com.ai.assistance.operit.data.model.ApiProviderType.GOOGLE_ANTIGRAVITY
+    val antigravityContext = androidx.compose.ui.platform.LocalContext.current.applicationContext
+    androidx.compose.runtime.LaunchedEffect(usesAntigravity) {
+        if (usesAntigravity) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            com.ai.assistance.operit.api.chat.llmprovider.watchAntigravityAccount(antigravityContext)
+        }
+    }
     val thinkingRequestSummary =
         remember(
             activeConfigSummary,
@@ -447,6 +459,7 @@ fun AgentChatInputSection(
             currentModelParameters,
             currentIsToolPkgProvider,
             claudeThinkingFormats,
+            antigravityFamilies,
         ) {
             activeConfigSummary?.let { config ->
                 ThinkingRequestSemantics.resolve(
@@ -881,11 +894,15 @@ fun AgentChatInputSection(
                         chatId = { actualViewModel.currentChatId.value },
                         onAttach = onAttachmentRequest,
                     ) { pasteModifier ->
+                    val longPaste = rememberLongPasteAsAttachment(
+                        userMessage, !isProcessing || allowTextInputWhileProcessing,
+                        actualViewModel::handleLongPaste, onUserMessageChange,
+                    )
                     ComposerPredictionTextField(
                         value = userMessage,
                         prediction = composerPrediction,
                         onAcceptPrediction = actualViewModel::acceptComposerPrediction,
-                        onValueChange = onUserMessageChange,
+                        onValueChange = longPaste,
                         visualTransformation = composerTransformation,
                         placeholder = {
                             Text(
@@ -1196,11 +1213,15 @@ fun AgentChatInputSection(
                             chatId = { actualViewModel.currentChatId.value },
                             onAttach = onAttachmentRequest,
                         ) { pasteModifier ->
+                        val longPaste = rememberLongPasteAsAttachment(
+                            userMessage, !isProcessing || allowTextInputWhileProcessing,
+                            actualViewModel::handleLongPaste, onUserMessageChange,
+                        )
                         ComposerPredictionTextField(
                             value = userMessage,
                             prediction = composerPrediction,
                             onAcceptPrediction = actualViewModel::acceptComposerPrediction,
-                            onValueChange = onUserMessageChange,
+                            onValueChange = longPaste,
                             visualTransformation = composerTransformation,
                             placeholder = {
                                 Text(

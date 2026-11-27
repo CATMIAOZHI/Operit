@@ -1,5 +1,6 @@
 package com.ai.assistance.operit.ui.features.orbit
 
+import com.ai.assistance.operit.ui.features.settings.components.settingsSearchTarget
 import android.Manifest
 import android.app.Activity
 import android.content.Context
@@ -80,7 +81,7 @@ internal fun OrbitPhonePermissionsPage(onBack: () -> Unit, onOpenDeviceAccess: (
  * the app is closed also shows as a notification. The permission only allows notifications at all.
  */
 @Composable
-internal fun OrbitNotificationSettingsPage(orbit: OrbitProfile, onBack: () -> Unit, onOpenDelivery: (() -> Unit)? = null) {
+internal fun OrbitNotificationSettingsPage(orbit: OrbitProfile, onBack: () -> Unit) {
     val app = LocalContext.current.applicationContext
     val scope = rememberCoroutineScope()
     var enabled by remember(orbit.id, orbit.messageNotifications) { mutableStateOf(orbit.messageNotifications) }
@@ -120,19 +121,6 @@ internal fun OrbitNotificationSettingsPage(orbit: OrbitProfile, onBack: () -> Un
                             }
                         }
                     })
-            }
-        }
-        // Quiet hours and how often results arrive.
-        onOpenDelivery?.let { open ->
-            Surface(onClick = open, shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surface) {
-                Row(Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(stringResource(R.string.orbit_notifications_row), style = MaterialTheme.typography.titleMedium)
-                        Text(stringResource(R.string.orbit_notifications_row_desc), Modifier.padding(top = 8.dp),
-                            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Icon(orbitIcon("chevron-right"), null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
             }
         }
     }
@@ -205,8 +193,18 @@ private fun PhonePermissionsPage(
         pending = null
         refresh++
     }
+    // Found from the settings search, the keep-alive row is scrolled to and flashes (its place:
+    // after the header, the help, the device access row and the permissions).
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val keepAliveTitle = stringResource(R.string.orbit_phone_keep_alive)
+    if (includeKeepAlive) androidx.compose.runtime.LaunchedEffect(Unit) {
+        if (com.ai.assistance.operit.ui.features.settings.components.SettingsSearchFocus.peek() == keepAliveTitle) {
+            listState.scrollToItem(2 + (if (onOpenDeviceAccess != null) 1 else 0) + entries.size)
+        }
+    }
     LazyColumn(
         Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).statusBarsPadding().navigationBarsPadding(),
+        state = listState,
         contentPadding = PaddingValues(20.dp, 8.dp, 20.dp, 32.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -287,7 +285,7 @@ private fun PhonePermissionsPage(
         if (includeKeepAlive) item("keep-alive") {
             val keepAliveLabel = stringResource(R.string.orbit_phone_keep_alive)
             Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surface) {
-                Row(Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.fillMaxWidth().settingsSearchTarget(keepAliveLabel).padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text(keepAliveLabel, style = MaterialTheme.typography.titleMedium)
                         Text(stringResource(R.string.orbit_phone_keep_alive_note), Modifier.padding(top = 8.dp),

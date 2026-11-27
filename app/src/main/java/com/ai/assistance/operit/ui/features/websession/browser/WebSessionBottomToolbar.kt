@@ -1,13 +1,13 @@
 package com.ai.assistance.operit.ui.features.websession.browser
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -21,21 +21,22 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.ai.assistance.operit.R
 
+/** Back, forward, new tab, the tab count and the menu, evenly spaced along the bottom. */
 @Composable
 internal fun WebSessionBottomToolbar(
     canGoBack: Boolean,
     canGoForward: Boolean,
-    currentTabNumber: Int,
+    tabCount: Int,
+    canCreateTab: Boolean = true,
     onBack: () -> Unit,
     onForward: () -> Unit,
     onNewTab: () -> Unit,
@@ -43,199 +44,76 @@ internal fun WebSessionBottomToolbar(
     onMenu: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Surface(
-        modifier =
-            modifier
-                .fillMaxWidth()
-                .padding(top = 2.dp),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 1.dp,
-        shadowElevation = 12.dp,
-        border =
-            BorderStroke(
-                width = 1.dp,
-                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
-            )
-    ) {
+    Surface(modifier = modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surface) {
         Row(
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            BrowserToolbarAction(
-                enabled = canGoBack,
-                onClick = onBack,
-                contentDescription = stringResource(R.string.web_session_back),
-                icon = {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = null
-                    )
+            ToolbarIcon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.web_session_back), onBack, canGoBack)
+            ToolbarIcon(Icons.AutoMirrored.Filled.ArrowForward, stringResource(R.string.web_session_forward), onForward, canGoForward)
+            val newTab = stringResource(R.string.web_session_new_tab)
+            Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                Surface(
+                    onClick = onNewTab,
+                    enabled = canCreateTab,
+                    shape = RoundedCornerShape(18.dp),
+                    color =
+                        MaterialTheme.colorScheme.primaryContainer.copy(
+                            alpha = if (canCreateTab) 1f else 0.38f
+                        ),
+                    contentColor =
+                        MaterialTheme.colorScheme.onPrimaryContainer.copy(
+                            alpha = if (canCreateTab) 1f else 0.38f
+                        ),
+                    modifier = Modifier.size(width = 56.dp, height = 40.dp).semantics { contentDescription = newTab },
+                ) {
+                    Box(contentAlignment = Alignment.Center) { Icon(Icons.Filled.Add, contentDescription = null) }
                 }
-            )
-            BrowserToolbarAction(
-                enabled = canGoForward,
-                onClick = onForward,
-                contentDescription = stringResource(R.string.web_session_forward),
-                icon = {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                        contentDescription = null
-                    )
-                }
-            )
-            BrowserToolbarPrimaryAction(
-                onClick = onNewTab,
-                contentDescription = stringResource(R.string.web_session_new_tab),
-                icon = {
-                    Icon(
-                        imageVector = Icons.Filled.Add,
-                        contentDescription = null
-                    )
-                }
-            )
-            BrowserToolbarTabAction(
-                currentTabNumber = currentTabNumber,
-                onClick = onTabs,
-                contentDescription =
-                    if (currentTabNumber > 0) {
-                        stringResource(R.string.web_session_tabs_with_index, currentTabNumber)
-                    } else {
-                        stringResource(R.string.web_session_tabs)
+            }
+            val tabs = stringResource(R.string.web_session_tabs)
+            Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                Surface(
+                    onClick = onTabs,
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surface,
+                    modifier = Modifier.size(44.dp).semantics { contentDescription = tabs },
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        // A small rounded square with the number of tabs in it.
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.surface,
+                            border = BorderStroke(1.8.dp, MaterialTheme.colorScheme.onSurface),
+                            modifier = Modifier.size(22.dp),
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(
+                                    text = if (tabCount > 99) ":)" else tabCount.coerceAtLeast(0).toString(),
+                                    fontSize = if (tabCount > 9) 10.sp else 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                            }
+                        }
                     }
-            )
-            BrowserToolbarAction(
-                onClick = onMenu,
-                contentDescription = stringResource(R.string.web_session_menu),
-                icon = {
-                    Icon(
-                        imageVector = Icons.Filled.MoreHoriz,
-                        contentDescription = null
-                    )
                 }
-            )
-        }
-    }
-}
-
-@Composable
-private fun RowScope.BrowserToolbarAction(
-    icon: @Composable () -> Unit,
-    onClick: () -> Unit,
-    contentDescription: String,
-    modifier: Modifier = Modifier,
-    enabled: Boolean = true
-) {
-    val alpha = if (enabled) 1f else 0.42f
-
-    Box(
-        modifier =
-            modifier
-                .weight(1f)
-                .alpha(alpha)
-                .padding(vertical = 2.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Surface(
-            modifier =
-                Modifier
-                    .clickable(enabled = enabled, onClick = onClick)
-                    .semantics(mergeDescendants = true) {
-                        this.contentDescription = contentDescription
-                        role = Role.Button
-                    },
-            shape = RoundedCornerShape(16.dp),
-            color = MaterialTheme.colorScheme.surface
-        ) {
-            Box(
-                modifier = Modifier.size(46.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                icon()
             }
+            ToolbarIcon(Icons.Filled.MoreHoriz, stringResource(R.string.web_session_menu), onMenu, true)
         }
     }
 }
 
 @Composable
-private fun RowScope.BrowserToolbarPrimaryAction(
-    icon: @Composable () -> Unit,
-    onClick: () -> Unit,
-    contentDescription: String,
-    modifier: Modifier = Modifier
-) {
-    Box(
-        modifier =
-            modifier
-                .weight(1f)
-                .padding(vertical = 2.dp),
-        contentAlignment = Alignment.Center
-    ) {
+private fun RowScope.ToolbarIcon(icon: ImageVector, label: String, onClick: () -> Unit, enabled: Boolean) {
+    Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
         Surface(
-            modifier =
-                Modifier
-                    .clickable(onClick = onClick)
-                    .semantics(mergeDescendants = true) {
-                        this.contentDescription = contentDescription
-                        role = Role.Button
-                    },
-            shape = RoundedCornerShape(20.dp),
-            color = MaterialTheme.colorScheme.primaryContainer,
-            tonalElevation = 1.dp,
-            shadowElevation = 4.dp
-        ) {
-            Box(
-                modifier = Modifier.size(width = 56.dp, height = 42.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                icon()
-            }
-        }
-    }
-}
-
-@Composable
-private fun RowScope.BrowserToolbarTabAction(
-    currentTabNumber: Int,
-    onClick: () -> Unit,
-    contentDescription: String,
-    modifier: Modifier = Modifier
-) {
-    Box(
-        modifier =
-            modifier
-                .weight(1f)
-                .padding(vertical = 2.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Surface(
-            modifier =
-                Modifier
-                    .clickable(onClick = onClick)
-                    .semantics(mergeDescendants = true) {
-                        this.contentDescription = contentDescription
-                        role = Role.Button
-                    },
-            shape = RoundedCornerShape(14.dp),
+            onClick = onClick,
+            enabled = enabled,
+            shape = CircleShape,
             color = MaterialTheme.colorScheme.surface,
-            border =
-                BorderStroke(
-                    width = 1.dp,
-                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.85f)
-                )
+            contentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) 1f else 0.38f),
+            modifier = Modifier.size(44.dp).semantics { contentDescription = label },
         ) {
-            Box(
-                modifier = Modifier.size(width = 44.dp, height = 38.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = currentTabNumber.coerceAtLeast(0).toString(),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-            }
+            Box(contentAlignment = Alignment.Center) { Icon(icon, contentDescription = null) }
         }
     }
 }

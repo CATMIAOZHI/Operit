@@ -1146,7 +1146,11 @@ internal fun StandardBrowserSessionTools.sessionById(sessionId: String): Browser
 
 internal fun StandardBrowserSessionTools.resolvePreferredSessionId(): String? {
     val registry = buildPageRegistry()
-    if (BrowserTaskScope.current() == null) StandardBrowserSessionTools.activeSessionId = registry.activeSessionId
+    // Finding the tab to act on brings it in front only where it may: never over the user's own window of other logins.
+    if (BrowserTaskScope.current() == null) {
+        registry.activeSessionId?.let(StandardBrowserSessionTools.sessions::get)?.takeIf(::mayTakeOwnWindow)
+            ?.let { StandardBrowserSessionTools.activeSessionId = it.id }
+    }
     return registry.activeSessionId
 }
 
@@ -2453,8 +2457,41 @@ internal fun StandardBrowserSessionTools.resolveBrowserOutputFile(
             File(baseDir, filename)
         }
     }
-    val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-    return File(baseDir, "${defaultPrefix}_$timestamp.$extension")
+    // Milliseconds plus a counter: screenshots from parallel tasks never share a file.
+    val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
+    return File(baseDir, "${defaultPrefix}_${timestamp}_${browserOutputCounter.incrementAndGet()}.$extension")
+}
+
+private val browserOutputCounter = java.util.concurrent.atomic.AtomicInteger()
+
+/**
+ * Saves the picture through a temporary file beside [output], then swaps it in: two tasks saving
+ * to the same name each leave a whole picture, never a mix of both.
+ */
+internal fun writeBitmapAtomically(bitmap: Bitmap, output: File, png: Boolean) {
+    writeFileAtomically(output) { stream ->
+        check(bitmap.compress(if (png) Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG, 92, stream)) {
+            "could not encode the screenshot"
+        }
+    }
+}
+
+/** Writes through a short temporary file in the same folder; [output] only changes once the write has finished. */
+internal fun writeFileAtomically(output: File, write: (java.io.OutputStream) -> Unit) {
+    val dir = output.absoluteFile.parentFile ?: throw java.io.IOException("no folder for ${output.path}")
+    dir.mkdirs()
+    val temp = java.nio.file.Files.createTempFile(dir.toPath(), ".browser-shot-", ".tmp").toFile()
+    try {
+        FileOutputStream(temp).use(write)
+        java.nio.file.Files.move(
+            temp.toPath(),
+            output.toPath(),
+            java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+            java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+        )
+    } finally {
+        temp.delete()
+    }
 }
 
 internal data class BrowserScreenshotResult(val path: String, val note: String? = null)
@@ -2526,12 +2563,10 @@ internal fun StandardBrowserSessionTools.takeScreenshot(
     }
     if (ref != null) return captureElementScreenshot(session, filename, type, ref)
     if (fullPage) captureFullPageWithDevtools(session, filename, type)?.let { return BrowserScreenshotResult(it) }
-    val path = runOnMainSync {
+    // Only taking the picture needs the main thread; compressing and saving it would hold up the screen.
+    val resolvedType = if (type == "jpg") "jpeg" else type
+    val bitmap = runOnMainSync {
         ensureSessionAttachedOnMain(session.id)
-        val resolvedType = if (type == "jpg") "jpeg" else type
-        val output = resolveBrowserOutputFile(filename, "page", if (resolvedType == "png") "png" else "jpg")
-        output.parentFile?.mkdirs()
-        val bitmap =
             when {
                 fullPage ->
                     captureFullPageBitmap(
@@ -2546,18 +2581,13 @@ internal fun StandardBrowserSessionTools.takeScreenshot(
                         session.viewportHeightPx
                     )
             }
-        try {
-            FileOutputStream(output).use { stream ->
-                bitmap.compress(
-                    if (resolvedType == "png") Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG,
-                    92,
-                    stream
-                )
-            }
-        } finally {
-            bitmap.recycle()
-        }
+    }
+    val path = try {
+        val output = resolveBrowserOutputFile(filename, "page", if (resolvedType == "png") "png" else "jpg")
+        writeBitmapAtomically(bitmap, output, png = resolvedType == "png")
         output.absolutePath
+    } finally {
+        bitmap.recycle()
     }
     return BrowserScreenshotResult(
         path,
@@ -2578,8 +2608,9 @@ private fun StandardBrowserSessionTools.captureClipWithDevtools(
 ): String? {
     if (!BrowserCdp.screenshotsWork(session.id)) return null
     val connection = BrowserCdp.connection(this, session) ?: return null
-    val density = context.resources.displayMetrics.density.toDouble().takeIf { it.isFinite() && it > 0.0 } ?: 1.0
-    // DevTools draws at screen density; keep the image inside the screenshot budget.
+    val density = layoutScaleOf(session.page, context.resources.displayMetrics.density).toDouble()
+        .takeIf { it.isFinite() && it > 0.0 } ?: 1.0
+    // DevTools draws at the tab's scale; keep the image inside the screenshot budget.
     val devicePixels = width * height * density * density
     val budgetScale = kotlin.math.sqrt(StandardBrowserSessionTools.MAX_SCREENSHOT_PIXEL_COUNT / devicePixels.coerceAtLeast(1.0))
     val sideScale = StandardBrowserSessionTools.MAX_SCREENSHOT_DIMENSION_PX / (maxOf(width, height) * density).coerceAtLeast(1.0)
@@ -2603,8 +2634,7 @@ private fun StandardBrowserSessionTools.captureClipWithDevtools(
     android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
     if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
     val output = resolveBrowserOutputFile(filename, prefix, if (resolvedType == "png") "png" else "jpg")
-    output.parentFile?.mkdirs()
-    output.writeBytes(bytes)
+    writeFileAtomically(output) { it.write(bytes) }
     return output.absolutePath
 }
 
@@ -2651,7 +2681,8 @@ private fun StandardBrowserSessionTools.captureElementScreenshot(
     val cutOff =
         geometry.left < geometry.visualLeft || geometry.top < geometry.visualTop ||
             right > geometry.visualLeft + geometry.visualWidth || bottom > geometry.visualTop + geometry.visualHeight
-    val path = runOnMainSync {
+    // Only the picture is taken on the main thread; compressing and saving it would hold up the screen.
+    val cropped = runOnMainSync {
         ensureSessionAttachedOnMain(session.id)
         val page = session.page
         val bitmap = captureViewportBitmap(page, session.viewportWidthPx, session.viewportHeightPx)
@@ -2667,25 +2698,21 @@ private fun StandardBrowserSessionTools.captureElementScreenshot(
             if (rightPx - left < 1 || bottomPx - top < 1) {
                 throw BrowserInputException("Ref $ref is outside the visible part of the page; scroll to it and retry.")
             }
-            val cropped = Bitmap.createBitmap(bitmap, left, top, rightPx - left, bottomPx - top)
-            val resolvedType = if (type == "jpg") "jpeg" else type
-            val output = resolveBrowserOutputFile(filename, "element", if (resolvedType == "png") "png" else "jpg")
-            output.parentFile?.mkdirs()
-            try {
-                FileOutputStream(output).use { stream ->
-                    cropped.compress(
-                        if (resolvedType == "png") Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG,
-                        92,
-                        stream
-                    )
-                }
-            } finally {
-                if (cropped !== bitmap) cropped.recycle()
+            // A copy, so the full picture can go now whatever createBitmap shares.
+            Bitmap.createBitmap(bitmap, left, top, rightPx - left, bottomPx - top).let { part ->
+                if (part === bitmap) part.copy(part.config ?: Bitmap.Config.ARGB_8888, false) else part
             }
-            output.absolutePath
         } finally {
             bitmap.recycle()
         }
+    }
+    val path = try {
+        val resolvedType = if (type == "jpg") "jpeg" else type
+        val output = resolveBrowserOutputFile(filename, "element", if (resolvedType == "png") "png" else "jpg")
+        writeBitmapAtomically(cropped, output, png = resolvedType == "png")
+        output.absolutePath
+    } finally {
+        cropped.recycle()
     }
     return BrowserScreenshotResult(
         path,
@@ -2731,15 +2758,8 @@ private fun StandardBrowserSessionTools.captureViewportWithDevtools(
     }
     val resolvedType = if (type == "jpg") "jpeg" else type
     val output = resolveBrowserOutputFile(filename, "page", if (resolvedType == "png") "png" else "jpg")
-    output.parentFile?.mkdirs()
     try {
-        FileOutputStream(output).use { stream ->
-            bitmap.compress(
-                if (resolvedType == "png") Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG,
-                92,
-                stream
-            )
-        }
+        writeBitmapAtomically(bitmap, output, png = resolvedType == "png")
     } finally {
         bitmap.recycle()
     }

@@ -6,20 +6,18 @@
 </p>
 
 <p align="center">
-  <b>A personal AI that lives on your Android phone, remembers you, and grows with you.</b>
+  <b>A local-first personal AI companion on your Android phone — it knows you, gets hands-on work done, is uniquely yours, and grows with you.</b>
 </p>
 
 <p align="center">
   <a href="https://github.com/CATMIAOZHI/orbit/releases/latest"><img src="https://img.shields.io/github/v/release/CATMIAOZHI/orbit?label=release&color=3D6FD1" alt="Latest release"></a>
-  <img src="https://img.shields.io/badge/Android-8.0%2B-3D6FD1" alt="Android 8.0+">
+  <img src="https://img.shields.io/badge/Android-10%2B-3D6FD1" alt="Android 10+">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-LGPL--3.0-D9531F" alt="LGPL-3.0"></a>
   <a href="https://github.com/CATMIAOZHI/orbit/stargazers"><img src="https://img.shields.io/github/stars/CATMIAOZHI/orbit?color=D9531F" alt="Stars"></a>
 </p>
 
 <p align="center">
   <a href="https://github.com/CATMIAOZHI/orbit/releases/latest">Download</a> ·
-  <a href="#what-orbit-does">Features</a> ·
-  <a href="#getting-started">Getting started</a> ·
   <a href="README.zh-CN.md">中文</a>
 </p>
 
@@ -27,13 +25,7 @@
 
 In a vast universe, you are the sun at the center, and Orbit is the planet that circles you. The logo says exactly that: the core is you; the ring and its two moons are Orbit.
 
-Orbit is a long-term personal agent. It talks with you, remembers what matters, works quietly in the background, and speaks up only when something is worth your attention. Its home is your phone: its memory, files and the traces of its growth are stored on the device, so changing models or providers does not make it forget you.
-
-Orbit ships inside **Operit Ry**, a personal distribution of [Operit](https://github.com/AAswordman/Operit) maintained by [WaterRainCat (水晴喵)](https://github.com/CATMIAOZHI).
-
-> Orbit is developed and released in [CATMIAOZHI/orbit](https://github.com/CATMIAOZHI/orbit); [CATMIAOZHI/Operit](https://github.com/CATMIAOZHI/Operit), the fork of official Operit, is its synced mirror. Both repositories carry the same Releases, so you can download the APK from either; issues and pull requests go to orbit.
-
-## What Orbit does
+Orbit is a **local-first** personal AI companion and assistant living directly on your Android phone. It keeps its memory, personality, and files on your device with no relay server in between, and grows through daily conversations, nightly reviews, and your corrections into a companion that is uniquely yours. It also comes with a **Linux terminal, built-in browser engine, background Android app control**, and **direct WeChat messaging**, so it can both talk with you and get real tasks done.
 
 <p align="center">
   <img src="docs/assets/readme/screens/en/chat.png" width="30%" alt="Chatting with Orbit">
@@ -43,57 +35,40 @@ Orbit ships inside **Operit Ry**, a personal distribution of [Operit](https://gi
   <img src="docs/assets/readme/screens/en/ideas.png" width="30%" alt="Orbit's ideas">
 </p>
 
-<table>
-<tr>
-<td width="50%" valign="top">
+## Why Orbit
 
-**Remembers you**<br>
-Facts, preferences, people and promises are kept in local memory files. Orbit learns from your corrections and turns methods that worked into reusable skills.
+| Pillar | How Orbit works |
+|---|---|
+| **Local-first** | Memory, personality (`SOUL.md`), chats, files, vault secrets, and browser logins stay on your phone with no relay server |
+| **Switch models, keep the same companion** | Switch freely across major cloud providers, OpenAI-compatible endpoints (including LAN), and multi-account pools while memory and personality stay on device |
+| **Uniquely yours over time** | Reviews conversations overnight, learns from your corrections, and distills working methods into reusable Skills |
+| **Gets hands-on work done** | Built-in Linux terminal, built-in browser engine, background Android app control, plus chatting with Orbit right from WeChat |
 
-</td>
-<td width="50%" valign="top">
+## What Orbit can do
 
-**Works while you are away**<br>
-Reminders, recurring tasks, and watches on notifications, texts, your calendar, web pages or places. A check that finds nothing new stays quiet and costs no tokens.
+- **Local memory that keeps growing**: facts, preferences, people, and promises live in local memory and identity files on your phone. Orbit reviews conversations overnight, learns from your corrections, and turns working methods into reusable Skills.
+- **Built-in Linux terminal**: run scripts, write code, work with repos and local files, and dispatch subagents for longer jobs.
+- **Built-in browser engine**: isolated logins for browsing, filling forms, and taking action; jump in anytime to sign in or pass a check, then hand it back — or open it manually for yourself.
+- **Background Android app control**: operates other Android apps on a background virtual display without taking over your screen, with human takeover anytime (requires Shizuku / ADB debugging or root, subject to device and app support).
+- **Proactive companionship: Feed, Ideas & Goals**: short posts written around your interests, ideas for things to do together, and long-term goals it tracks with you.
+- **Background schedules & watches**: reminders, recurring tasks, and watches on notifications, texts, calendar events, web pages, or locations; watches that support programmatic pre-checks can stay silent and skip model calls when nothing changed.
+- **Its own voice & reading companion**: with Xiaomi MiMo, design a voice from a text description or clone a voice sample for expressive voice messages (long-press to transcribe); paired with a compatible [Legado](https://github.com/CATMIAOZHI/legado) build and reading companion enabled, Orbit writes paragraph notes ahead of you.
+- **Transparent, safe & under your control**: configure tool permissions so actions that need confirmation ask for your approval first; task runs and approval records are viewable day by day; vault secrets saved through secure cards are encrypted locally and kept out of chat context when used by tools; payments always stay with you.
 
-</td>
-</tr>
-<tr>
-<td valign="top">
+## Chat with Orbit on WeChat
 
-**Feed, Ideas and Goals**<br>
-Short posts written around your interests, ideas for things to do together, and long-term goals it keeps track of with you.
+Reach your Orbit from WeChat like chatting with a friend — without opening the app:
 
-</td>
-<td valign="top">
+- **Scan to pair your own bot**: connect in **Settings → Message channels → WeChat** to send text, voice messages (transcribed by WeChat), images, and files straight from WeChat.
+- **Two-way sync, cleanly separated**: Orbit's replies, images, and files go back to WeChat and are archived inside a dedicated **WeChat** channel in Orbit without cluttering your main chat.
+- **Clear privacy boundary**: this WeChat link receives only messages sent to your paired bot — it does not read your contacts, group chats, or other WeChat conversations, and cannot message anyone else.
 
-**Gets things done on the phone**<br>
-A browser it can sign in with (you can take over at any time), apps operated on a background screen, a Linux terminal, files, and helper agents for longer jobs.
-
-</td>
-</tr>
-<tr>
-<td valign="top">
-
-**Reads with you**<br>
-Read a book in [Legado](https://github.com/CATMIAOZHI/legado) and Orbit writes paragraph comments ahead of you, so its notes are already there when you arrive.
-
-</td>
-<td valign="top">
-
-**Reaches you where you are**<br>
-Chat and side chats, option buttons and reactions, voice messages, and a WeChat channel for talking without opening the app.
-
-</td>
-</tr>
-</table>
-
-### A closer look
+## A closer look
 
 <table>
 <tr>
-<td width="33%" align="center"><img src="docs/assets/readme/screens/en/history.png" alt="Task history"><br><sub><b>Everything it did</b>, day by day</sub></td>
-<td width="33%" align="center"><img src="docs/assets/readme/screens/en/approvals.png" alt="Approvals"><br><sub><b>Asks before it acts</b>, and keeps a record</sub></td>
+<td width="33%" align="center"><img src="docs/assets/readme/screens/en/history.png" alt="Task history"><br><sub><b>Task runs</b>, day by day</sub></td>
+<td width="33%" align="center"><img src="docs/assets/readme/screens/en/approvals.png" alt="Approvals"><br><sub><b>Asks when confirmation is needed</b>, with records</sub></td>
 <td width="33%" align="center"><img src="docs/assets/readme/screens/en/browser.png" alt="Browser and background apps"><br><sub><b>Browser and background apps</b> you can take over</sub></td>
 </tr>
 <tr>
@@ -103,40 +78,45 @@ Chat and side chats, option buttons and reactions, voice messages, and a WeChat 
 </tr>
 </table>
 
-### A few things people use it for
+## How the author uses it every day
 
-- *"Keep an eye on my messages and tell me about the important ones."*
-- *"A parcel code just came in. Is it a new one?"*
-- *"Remind me to work out every morning, and ask me again if I skip a week."*
-- *"Remind me to take my keys when I leave home."*
-- *"Tell me when this page changes."*
-- *"Watch my GitHub issues, and when a bug comes in, send a helper to fix it and open a PR."*
-- *"Let's read this novel together."*
+- *"Keep an eye on the latest PC release news for GTA 6 and tell me when there is real progress."*
+- *"Review my Binance trades every week and summarize the lessons learned."*
+- *"Inspect this cool website and break down how it was built."*
+- *"Let's read this latest web novel together — do you think this character is going to die later?"*
+- *"Watch my phone notifications and only alert me for the important ones."*
+- *"Manage my Google Cloud and Cloudflare projects and make sure everything stays on the free tier."*
+- *"Deploy this web page to Cloudflare for me."*
+- *"Remember my friend's birthday and what she likes; a month before her next birthday, help me pick a gift."*
+- *"Just chat — bouncing from the Riemann hypothesis to video games to the future of AI."*
 
-## Bring your own model
+## Bring your own model, set your limits
 
-Orbit works with OpenAI, Claude, Gemini, DeepSeek, OpenRouter and Ollama Cloud. Select **OpenAI (Generic)** to enter an OpenAI-compatible endpoint, including one on your local network. You add your own API key where required, and requests go straight from your phone to the service you configure. Operit does not run a model service or relay your chats.
-
-Weekly token allowances and usage statistics keep background work within a budget you set.
+- **Flexible providers**: works with OpenAI, Claude, Gemini, DeepSeek, OpenRouter, Ollama Cloud, and custom endpoints (including local LAN servers) via **OpenAI (Generic)** (Chat Completions) or **OpenAI Responses (Generic)** (Responses API).
+- **Multi-account pools**: supports account login and multiple accounts for ChatGPT, Grok, and more — automatically switching on quota exhaustion, rate limits, or expired sessions, or letting you pick one manually.
+- **Direct from your phone**: account login tokens and vault secrets are encrypted on your device, while standard model configs (including API keys) are stored in the app's local DataStore. Requests go straight from your phone to the provider you configure — we do not run a model service or relay your chats.
+- **Local allowance controls**: set weekly and extra allowances by **cost (USD)** or **tokens** alongside usage statistics; once the local allowance is exhausted, subsequent model requests are paused.
 
 ## Your data
 
-- Memory, chats, tasks and files are stored on your device. You can export them at any time.
+- **Local by default**: memory, personality, chats, tasks, files, vault secrets, and built-in browser logins are stored on your device by default; memory, personality, chats, tasks, and regular files can be exported anytime (vault secrets and browser logins are excluded).
 - When Orbit thinks, the context it needs (your messages, relevant memory, tool results) is sent to the model provider you configured. Read that provider's terms to know how it handles data.
-- Websites and services Orbit uses on your behalf receive what is sent to them. Passwords and API keys go into a secure vault instead of the chat, and payment is always left to you.
+- Websites, voice services, and the WeChat channel receive what is needed for those actions. Vault secrets saved through secure cards and used by tools stay out of chat, and payment is always left to you.
 
 ## Getting started
 
-1. Download the latest APK from [Releases](https://github.com/CATMIAOZHI/orbit/releases/latest). It needs Android 8.0 or later on an arm64 phone; 6 GB of RAM or more is recommended.
+1. Download the latest APK from [Releases](https://github.com/CATMIAOZHI/orbit/releases/latest). It needs Android 10 or later on an arm64 phone; 6 GB of RAM or more is recommended.
 2. Install it, open the app and agree to the terms.
-3. Add a model and its API key.
+3. Add a model (with an API key or an existing account login).
 4. Open Orbit and say hello.
 
-> Only download Operit Ry from the Releases of [CATMIAOZHI/orbit](https://github.com/CATMIAOZHI/orbit/releases) or its mirror [CATMIAOZHI/Operit](https://github.com/CATMIAOZHI/Operit/releases). Packages from other places may have been modified.
+> Only download from the Releases of [CATMIAOZHI/orbit](https://github.com/CATMIAOZHI/orbit/releases) or its mirror [CATMIAOZHI/Operit](https://github.com/CATMIAOZHI/Operit/releases). Packages from other places may have been modified.
 
-Orbit is part of a full Android AI assistant. Beyond Orbit, Operit offers a built-in Ubuntu environment, 40+ tools, MCP servers and Skills, tool packages and workflows, character cards and a floating window. See the [documentation](docs) for more.
+Orbit ships inside **Operit Ry**. Beyond Orbit, Operit Ry includes a built-in Ubuntu environment, 40+ tools, MCP servers and Skills, tool packages and workflows, character cards, and a floating window. See the [documentation](docs) for more.
 
-## Builds and branches
+## Builds, repositories and branches
+
+Orbit is developed and released in [CATMIAOZHI/orbit](https://github.com/CATMIAOZHI/orbit); [CATMIAOZHI/Operit](https://github.com/CATMIAOZHI/Operit) is its synced mirror, where stable releases are synced after publishing. File feedback under [Issues](https://github.com/CATMIAOZHI/orbit/issues) and code contributions under [Pull Requests](https://github.com/CATMIAOZHI/orbit/pulls).
 
 | | Branch | Package | Updates |
 |---|---|---|---|
@@ -147,9 +127,9 @@ New features land in `dev` first and move to `main` after testing. The dev build
 
 ## Contributing
 
-Issues and pull requests are welcome on [CATMIAOZHI/orbit](https://github.com/CATMIAOZHI/orbit/issues). Please search for existing ones first, and keep API keys, tokens and cookies out of logs and screenshots.
+[Issues](https://github.com/CATMIAOZHI/orbit/issues) and [Pull Requests](https://github.com/CATMIAOZHI/orbit/pulls) are welcome on [CATMIAOZHI/orbit](https://github.com/CATMIAOZHI/orbit). Please search for existing ones first, and keep API keys, tokens and cookies out of logs and screenshots.
 
-- Build the app: [BUILDING.md](docs/doc-src/dev-core/BUILDING.md)
+- Build the app: [current build guide](docs/agent/build-guide.md) (see also [BUILDING.md](docs/doc-src/dev-core/BUILDING.md))
 - Write scripts, Skills and tool packages: [SCRIPT_DEV_GUIDE.md](docs/SCRIPT_DEV_GUIDE.md)
 
 <a href="https://github.com/CATMIAOZHI/orbit/graphs/contributors">
@@ -158,6 +138,6 @@ Issues and pull requests are welcome on [CATMIAOZHI/orbit](https://github.com/CA
 
 ## License and credits
 
-Operit Ry is an unofficial distribution based on [AAswordman/Operit](https://github.com/AAswordman/Operit) and keeps the original copyright and license notices. Thanks to the upstream authors and every contributor.
+Orbit ships inside Operit Ry, an unofficial personal distribution based on [AAswordman/Operit](https://github.com/AAswordman/Operit) maintained by [WaterRainCat (水晴喵)](https://github.com/CATMIAOZHI), keeping all original copyright and license notices. Thanks to the upstream authors and every contributor.
 
 Licensed under [LGPL-3.0](LICENSE).

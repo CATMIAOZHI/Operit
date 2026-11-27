@@ -3,6 +3,7 @@ package com.ai.assistance.operit.ui.features.chat.components
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -10,14 +11,17 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Reply
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -105,6 +109,15 @@ val LocalOrbitReactions = compositionLocalOf<Map<String, String>> { emptyMap() }
  * only stayed quiet) are drawn with a "hidden in chat" label so they can be audited.
  */
 val LocalShowHiddenChatRows = compositionLocalOf { false }
+
+/**
+ * Set in Orbit's WeChat channel: the chat is read here and answered in WeChat, so it takes no
+ * input and nothing in it sends. [ready] is false while the link is still being read and a side
+ * chat might be the channel; it then shows neither the input box nor the WeChat footer.
+ */
+class OrbitReadOnlyChannel(val ready: Boolean, val loginExpired: Boolean, val onReconnect: () -> Unit)
+
+val LocalOrbitReadOnlyChannel = compositionLocalOf<OrbitReadOnlyChannel?> { null }
 
 /**
  * Set while opening Orbit's developer view: told whether the transcript's replies are still being
@@ -359,6 +372,8 @@ data class OrbitPiece(
     val uiIndex: Int? = null,
     /** A reply with no words: its first card also shows a reaction given to the whole message. */
     val fallbackBadgeKey: String? = null,
+    /** Its place in its reply, top to bottom, as [OrbitSpeech.pieceList] gave it (0 for a lone bubble). */
+    val index: Int = 0,
 ) {
     /**
      * The key this bubble's reaction is kept under: the whole message's older reaction while that
@@ -378,9 +393,109 @@ class OrbitPieceActions(
     val reply: ((OrbitPiece) -> Unit)?,
     /** A long press on a voice bar inside the bubble: the menu for that bubble and that recording. */
     val voiceMenu: ((OrbitPiece, String) -> Unit)? = null,
+    /** False when a card bubble has no menu actions (e.g. read-only channel with reactions disabled). */
+    val cardHasMenu: Boolean = true,
 )
 
 val LocalOrbitPieceActions = compositionLocalOf<OrbitPieceActions?> { null }
+
+/**
+ * Picking the bubbles of one Orbit reply one by one while selecting messages. Given by a reply
+ * drawn as several bubbles; [picked] and [toggle] take a bubble's place in it, top to bottom.
+ */
+class OrbitPiecePick(
+    val picked: (Int) -> Boolean,
+    val toggle: (Int) -> Unit,
+    /** "Select to here" while nothing of the reply is picked; shown at [rangeAt]. */
+    val rangeHere: (() -> Unit)?,
+    val count: Int,
+    /** Each bubble says here whether "select to here" fits under its mark. */
+    val roomy: androidx.compose.runtime.snapshots.SnapshotStateMap<Int, Boolean>,
+    /**
+     * Where "select to here" shows, worked out once for the reply (see [orbitRangeSpot]): the bubble,
+     * and whether the pill takes the place of its mark (no bubble had room for both).
+     */
+    private val spot: androidx.compose.runtime.State<Pair<Int, Boolean>?>,
+) {
+    val rangeAt: Int? get() = if (rangeHere == null) null else spot.value?.first
+    val rangeAlone: Boolean get() = spot.value?.second == true
+}
+
+/**
+ * Where "select to here" goes in a reply of [pieces]: under the mark of the lowest bubble with room
+ * for both, else, once every bubble has been laid out, alone beside the lowest bubble of words.
+ */
+fun orbitRangeSpot(
+    roomy: androidx.compose.runtime.snapshots.SnapshotStateMap<Int, Boolean>,
+    pieces: List<OrbitPiece>,
+): Pair<Int, Boolean>? {
+    var lowest: Int? = null
+    for ((i, fits) in roomy) if (fits && (lowest == null || i > lowest)) lowest = i
+    if (lowest != null) return lowest to false
+    if (roomy.size < pieces.size) return null
+    return pieces.indexOfLast { it.summary == null }.takeIf { it >= 0 }?.let { it to true }
+}
+
+val LocalOrbitPiecePick = compositionLocalOf<OrbitPiecePick?> { null }
+
+/** The round mark of a message or bubble being picked. */
+@Composable
+fun OrbitPickMark(picked: Boolean, label: String, onClick: () -> Unit) {
+    val tint = MaterialTheme.colorScheme.primary
+    Box(
+        Modifier.size(22.dp)
+            .clip(androidx.compose.foundation.shape.CircleShape)
+            // The row or bubble already reads as one selectable item to a screen reader.
+            .clearAndSetSemantics {}
+            .clickable(
+                interactionSource = androidx.compose.runtime.remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                indication = null,
+                onClickLabel = label,
+                onClick = onClick,
+            )
+            .then(
+                if (picked) Modifier.background(tint)
+                // Filled, so it still shows where it lies over a wide card.
+                else Modifier.background(MaterialTheme.colorScheme.surface)
+                    .border(1.5.dp, MaterialTheme.colorScheme.outline, androidx.compose.foundation.shape.CircleShape)
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (picked) {
+            androidx.compose.material3.Icon(
+                androidx.compose.material.icons.Icons.Default.Check, null, Modifier.size(14.dp),
+                tint = MaterialTheme.colorScheme.onPrimary,
+            )
+        }
+    }
+}
+
+/** QQ's "select to here": picks every message between the last one picked and this one. */
+@Composable
+fun OrbitSelectRangePill(onClick: () -> Unit) {
+    // Only its own pill takes the tap; a bigger touch area would reach the mark above.
+    androidx.compose.runtime.CompositionLocalProvider(
+        androidx.compose.material3.LocalMinimumInteractiveComponentSize provides androidx.compose.ui.unit.Dp.Unspecified,
+    ) {
+        Surface(
+            onClick = onClick,
+            shape = RoundedCornerShape(50),
+            color = MaterialTheme.colorScheme.secondaryContainer,
+            contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+        ) {
+            Text(
+                stringResource(R.string.orbit_selection_range_here),
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 64.dp).padding(horizontal = 6.dp, vertical = 4.dp),
+            )
+        }
+    }
+}
+
+/** The widest the empty side next to a picked message or bubble is used for its mark. */
+val ORBIT_PICK_SIDE = 76.dp
 
 /**
  * The bubble a jump from the chat search is looking for ([target], a piece key) and where it was
@@ -402,12 +517,17 @@ class OrbitPieceSpot {
 
 val LocalOrbitPieceSpot = compositionLocalOf<OrbitPieceSpot?> { null }
 
-/** One bubble with its own gestures and its own reaction under it. */
+/**
+ * One bubble with its own gestures and its own reaction under it. [index] is its place in its
+ * reply, so it can be picked alone while selecting messages (see [OrbitPiecePick]).
+ */
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-fun OrbitPieceFrame(piece: OrbitPiece, content: @Composable () -> Unit) {
+fun OrbitPieceFrame(piece: OrbitPiece, index: Int = -1, content: @Composable () -> Unit) {
     val spot = LocalOrbitPieceSpot.current
     val wanted = spot != null && spot.target == piece.key
+    val pick = LocalOrbitPiecePick.current?.takeIf { index in 0 until it.count }
+    val picked = pick?.picked(index) == true
     // Every Dynamic UI card knows which one of its message it is, gestures or not (also while
     // Orbit is still writing), so its state never moves to another card.
     androidx.compose.runtime.CompositionLocalProvider(
@@ -415,9 +535,66 @@ fun OrbitPieceFrame(piece: OrbitPiece, content: @Composable () -> Unit) {
     ) {
         // Always the same box: only its modifier changes, so the bubble inside is never rebuilt.
         Box(
-            if (wanted) Modifier.onGloballyPositioned { spot?.report(piece.key, it.positionInRoot().y) }
-            else Modifier
-        ) { OrbitPieceGestures(piece, content) }
+            (if (wanted) Modifier.onGloballyPositioned { spot?.report(piece.key, it.positionInRoot().y) }
+            else Modifier).then(
+                if (picked) Modifier.background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f), RoundedCornerShape(8.dp))
+                else Modifier
+            )
+        ) {
+            // While picking, the bubble is one choice: its cards and links take no screen-reader action.
+            Box(if (pick != null) Modifier.clearAndSetSemantics {} else Modifier) { OrbitPieceGestures(piece, content) }
+            if (pick != null) OrbitPiecePickLayer(piece, index, pick, picked)
+        }
+    }
+}
+
+/** A tap anywhere on the bubble picks it; its round mark sits on the side the bubble leaves empty. */
+@Composable
+private fun androidx.compose.foundation.layout.BoxScope.OrbitPiecePickLayer(piece: OrbitPiece, index: Int, pick: OrbitPiecePick, picked: Boolean) {
+    val label = stringResource(R.string.multi_select)
+    val voice = stringResource(R.string.ai_message_quoted_voice)
+    val toggle = { pick.toggle(index) }
+    val words = androidx.compose.runtime.remember(piece, voice) {
+        piece.summary ?: OrbitSpeech.voiceCaption(piece)?.let { if (it.isEmpty()) voice else "$voice $it" } ?: piece.content.take(200)
+    }
+    Box(
+        Modifier.matchParentSize()
+            .clickable(
+                interactionSource = androidx.compose.runtime.remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                indication = null,
+                onClickLabel = label,
+                onClick = toggle,
+            )
+            .semantics {
+                selected = picked
+                contentDescription = words
+            },
+    )
+    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.matchParentSize()) {
+        val side = minOf(maxWidth * 0.2f, ORBIT_PICK_SIDE)
+        // Words or a voice bar leave the side empty; "select to here" fits under the mark when tall enough.
+        val roomy = piece.summary == null && side >= 64.dp && maxHeight >= 52.dp
+        androidx.compose.runtime.SideEffect { if (pick.roomy[index] != roomy) pick.roomy[index] = roomy }
+        val range = pick.rangeHere?.takeIf { pick.rangeAt == index }
+        when {
+            // A card may use the whole row: its mark goes in the top corner, over as little as it can.
+            piece.summary != null -> Box(Modifier.align(Alignment.TopEnd).padding(6.dp)) { OrbitPickMark(picked, label, toggle) }
+            // No bubble of the reply has room for both: the pill alone, the bubble still picked by a tap.
+            range != null && pick.rangeAlone -> Box(Modifier.align(Alignment.CenterEnd).requiredWidth(side), contentAlignment = Alignment.Center) {
+                OrbitSelectRangePill(range)
+            }
+            range != null && side >= 64.dp && maxHeight >= 52.dp -> Column(
+                Modifier.align(Alignment.CenterEnd).requiredWidth(side),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(4.dp),
+            ) {
+                OrbitPickMark(picked, label, toggle)
+                Box(Modifier.height(26.dp), contentAlignment = Alignment.Center) { OrbitSelectRangePill(range) }
+            }
+            else -> Box(Modifier.align(Alignment.CenterEnd).requiredWidth(side), contentAlignment = Alignment.Center) {
+                OrbitPickMark(picked, label, toggle)
+            }
+        }
     }
 }
 
@@ -430,7 +607,7 @@ private fun OrbitPieceGestures(piece: OrbitPiece, content: @Composable () -> Uni
     // One fixed layout whether or not gestures are on (multi-select, still being written): only the
     // handlers change, so a card inside is never rebuilt and a tapback never blinks off.
     val like = actions?.like?.let { { it(piece) } }
-    val menu = actions?.menu?.let { { it(piece) } }
+    val menu = actions?.menu?.takeIf { piece.summary == null || actions.cardHasMenu }?.let { { it(piece) } }
     val gestures = if (actions != null) OrbitMessageGestures(like, menu) else LocalOrbitMessageGestures.current
     // A voice bar here opens the menu for this very bubble, so "reply" quotes it.
     val voiceHost = com.ai.assistance.operit.ui.common.markdown.LocalVoiceMenu.current
@@ -488,6 +665,9 @@ fun rememberOrbitTurnFloor(chatId: String?, isLoading: Boolean, messages: List<C
 
 /** Where the Orbit reply now loading starts (see [rememberOrbitTurnFloor]), for the rows drawn below. */
 val LocalOrbitTurnFloor = compositionLocalOf<Long?> { null }
+
+/** The time of the Orbit reply being written now, if any; its bubbles are not picked one by one. */
+val LocalOrbitWritingTimestamp = compositionLocalOf<Long?> { null }
 
 /** Whether [message] can be part of the reply now loading, given [floor] from [rememberOrbitTurnFloor]. */
 fun orbitInCurrentTurn(message: ChatMessage?, floor: Long?): Boolean =
@@ -626,6 +806,52 @@ object OrbitSpeech {
      * Off elsewhere, so pieces keep their numbers (a channel keys what it sent by them).
      */
     fun pieceList(shown: String, timestamp: Long, english: Boolean, uiOffset: Int = 0, splitVoice: Boolean = false): List<OrbitPiece> {
+        val key = PieceKey(shown, timestamp, english, uiOffset, splitVoice)
+        synchronized(pieceCache) { pieceCache[key] }?.let { return it }
+        val made = splitPieces(shown, timestamp, english, uiOffset, splitVoice).mapIndexed { i, piece -> piece.copy(index = i) }
+        // A reply Orbit is still writing keeps only its latest text; all kept replies together hold
+        // at most [MAX_CACHED_CHARS] characters, the oldest let go first.
+        if (shown.length <= MAX_CACHED_CHARS) synchronized(pieceCache) {
+            val old = pieceCache.keys.iterator()
+            while (old.hasNext()) {
+                val it = old.next()
+                if (it.timestamp == timestamp && it.uiOffset == uiOffset && it.english == english && it.splitVoice == splitVoice) {
+                    cachedChars -= it.shown.length
+                    old.remove()
+                }
+            }
+            pieceCache[key] = made
+            cachedChars += shown.length
+            val eldest = pieceCache.keys.iterator()
+            while (cachedChars > MAX_CACHED_CHARS && eldest.hasNext()) {
+                val it = eldest.next()
+                if (it == key) break
+                cachedChars -= it.shown.length
+                eldest.remove()
+            }
+        }
+        return made
+    }
+
+    /** [pieceList] when it is already worked out, else null; never splits. */
+    fun cachedPieceList(shown: String, timestamp: Long, english: Boolean, uiOffset: Int = 0, splitVoice: Boolean = false): List<OrbitPiece>? =
+        synchronized(pieceCache) { pieceCache[PieceKey(shown, timestamp, english, uiOffset, splitVoice)] }
+
+    private const val MAX_CACHED_CHARS = 4_000_000
+    private var cachedChars = 0L
+
+    private data class PieceKey(val shown: String, val timestamp: Long, val english: Boolean, val uiOffset: Int, val splitVoice: Boolean)
+    // The same reply is split for drawing, for picking bubbles and for the selection bar; the latest
+    // few are kept so each is split once. A key compares its text by reference first, so it is cheap.
+    private val pieceCache = object : java.util.LinkedHashMap<PieceKey, List<OrbitPiece>>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<PieceKey, List<OrbitPiece>>?): Boolean {
+            val drop = size > 128
+            if (drop && eldest != null) cachedChars -= eldest.key.shown.length
+            return drop
+        }
+    }
+
+    private fun splitPieces(shown: String, timestamp: Long, english: Boolean, uiOffset: Int, splitVoice: Boolean): List<OrbitPiece> {
         val whole = timestamp.toString()
         if (!shown.contains("message_break", ignoreCase = true) && !shown.contains("```$ORBIT_CARD_FENCE\n") &&
             !shown.contains("```a2ui") && !(splitVoice && hasVoiceLine(shown))) return listOf(OrbitPiece(shown, whole, null, true))
@@ -681,6 +907,26 @@ object OrbitSpeech {
     }
 
     private fun hasVoiceLine(text: String) = text.contains("](") && voiceLines(text).isNotEmpty()
+
+    /**
+     * [text] with each voice message written as words: "[[voice]] caption" (only [voice] without
+     * a caption), so a copy or a kept message shows no private file address.
+     */
+    fun voiceAsWords(text: String, voice: String): String {
+        if (!text.contains("](")) return text
+        val lines = voiceLines(text)
+        if (lines.isEmpty()) return text
+        val out = StringBuilder()
+        var from = 0
+        lines.forEach { m ->
+            out.append(text, from, m.range.first)
+            val caption = m.value.substringAfter("![").substringBefore("](").trim()
+            out.append("[").append(voice).append("]")
+            if (caption.isNotEmpty()) out.append(" ").append(caption)
+            from = m.range.last + 1
+        }
+        return out.append(text, from, text.length).toString()
+    }
 
     /**
      * When [piece] is a voice message bubble (a voice line alone), its caption ("" when it has
@@ -1223,21 +1469,25 @@ fun OrbitPieceMenu(
     expanded: Boolean,
     onDismiss: () -> Unit,
     selected: String?,
-    onPick: (String) -> Unit,
-    onMore: () -> Unit,
+    onPick: ((String) -> Unit)?,
+    onMore: (() -> Unit)?,
     onReply: (() -> Unit)?,
 ) {
+    val hasTapback = onPick != null && onMore != null
+    if (!hasTapback && onReply == null) return
     com.ai.assistance.operit.ui.features.orbit.OrbitDropdownMenu(
         expanded = expanded,
         onDismissRequest = onDismiss,
         modifier = Modifier.widthIn(min = 200.dp),
     ) {
-        OrbitTapbackRow(selected, onPick, onMore)
+        if (hasTapback) OrbitTapbackRow(selected, onPick!!, onMore!!)
         if (onReply != null) {
-            androidx.compose.material3.HorizontalDivider(
-                modifier = Modifier.padding(vertical = 4.dp),
-                color = androidx.compose.material3.MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-            )
+            if (hasTapback) {
+                androidx.compose.material3.HorizontalDivider(
+                    modifier = Modifier.padding(vertical = 4.dp),
+                    color = androidx.compose.material3.MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                )
+            }
             androidx.compose.material3.DropdownMenuItem(
                 text = { androidx.compose.material3.Text(stringResource(R.string.reply_message), style = androidx.compose.material3.MaterialTheme.typography.bodyMedium) },
                 onClick = onReply,

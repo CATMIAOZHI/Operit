@@ -127,6 +127,7 @@ internal class WebSessionBrowserHost(
         fun onSelectSessionHistory(index: Int)
         fun onOpenUrl(url: String)
         fun onClearHistory()
+        fun onRemoveHistoryEntry(url: String, visitedAt: Long)
         fun onToggleDesktopMode()
         fun onOpenUserscripts()
         fun onImportUserscript()
@@ -146,9 +147,15 @@ internal class WebSessionBrowserHost(
         fun onOpenDownloadLocation(taskId: String)
         fun onConfirmExternalOpen(requestId: String)
         fun onCancelExternalOpen(requestId: String)
-        fun onHandlePendingDialog(accept: Boolean, promptText: String?)
+        fun onHandlePendingDialog(accept: Boolean, promptText: String?, expectedDialogId: Long? = null)
         /** Opens or puts away the browser through the tool that made it, as the browser window comes and goes. */
         fun onSetExpanded(expanded: Boolean)
+        /** The floating button: opens the main app's own tabs, on the one last in front. */
+        fun onOpenMainTabs()
+        /** Back from the recent apps to the user's own window: it opens again on a tab of [profile]. */
+        fun onReopenOwn(profile: String, startEditing: Boolean = true)
+        /** Called once the loading UI frame for a pending blank own launch is about to draw. */
+        fun onPendingLaunchFrameDrawn(launchId: Long)
     }
 
     private val windowManager = appContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
@@ -198,6 +205,11 @@ internal class WebSessionBrowserHost(
             DeceptiveMinimizedLayout(appContext).apply {
                 setBackgroundColor(AndroidColor.TRANSPARENT)
                 setOnClickListener {}
+                hasOwnBack = { hasOwnBackTarget() }
+                onOwnBackStarted = ::onBackGestureStarted
+                onOwnBackProgressed = ::onBackGestureProgressed
+                onOwnBackCancelled = ::onBackGestureCancelled
+                onOwnBackPressed = { fromGesture -> handleBack(fromGesture = fromGesture) }
             }
         installViewTreeOwners(root, lifecycleOwner)
         // Keep task pages attached and laid out for JavaScript, snapshots and native taps, without
@@ -237,30 +249,95 @@ internal class WebSessionBrowserHost(
                         // button. Going back in the page is the back button in the bottom bar. A
                         // dialog the page put up is dismissed first, like any popup; the same in
                         // the plain browser. Watching Orbit work, the user has nothing to close.
-                        backDismiss = if (watch != null && !watch.controlling) null else {
+                        watchActive = watch != null
+                        if (watch != null && !watch.controlling) {
+                            backDismiss = null
+                            composeBackTarget = BrowserBackTarget.NONE
+                            composeBackTargetKey = null
+                        } else {
+                            val dialog = hostState.browserState.pendingDialog
+                            val prompt = hostState.externalOpenPrompt
+                            val sheetShown =
+                                if (watch != null) hostState.sheetRoute == WebSessionBrowserSheetRoute.DOWNLOADS
+                                else hostState.sheetRoute != WebSessionBrowserSheetRoute.NONE
+                            // Priority follows visual stacking: in watch mode external-open sits above
+                            // the downloads sheet; in normal mode sheets cover the inline banner below.
                             when {
-                                hostState.browserState.pendingDialog != null ->
-                                    ({ callbacks.onHandlePendingDialog(false, null) })
-                                // The "open in another app" prompt and the sheets close first, too.
-                                hostState.externalOpenPrompt != null -> {
-                                    val id = hostState.externalOpenPrompt!!.requestId
-                                    ({ callbacks.onCancelExternalOpen(id) })
+                                dialog != null -> {
+                                    val dialogId = dialog.id
+                                    composeBackTarget = BrowserBackTarget.DIALOG
+                                    composeBackTargetKey = dialogId
+                                    backDismiss = { callbacks.onHandlePendingDialog(false, null, dialogId) }
                                 }
-                                hostState.sheetRoute != WebSessionBrowserSheetRoute.NONE ->
-                                    ({ updateHostState { it.copy(sheetRoute = WebSessionBrowserSheetRoute.NONE) } })
-                                else -> null
+                                watch != null && prompt != null -> {
+                                    val id = prompt.requestId
+                                    composeBackTarget = BrowserBackTarget.EXTERNAL_OPEN
+                                    composeBackTargetKey = id
+                                    backDismiss = { callbacks.onCancelExternalOpen(id) }
+                                }
+                                sheetShown -> {
+                                    composeBackTarget = BrowserBackTarget.SHEET
+                                    composeBackTargetKey = hostState.sheetRoute
+                                    backDismiss = { updateHostState { it.copy(sheetRoute = WebSessionBrowserSheetRoute.NONE) } }
+                                }
+                                prompt != null -> {
+                                    val id = prompt.requestId
+                                    composeBackTarget = BrowserBackTarget.EXTERNAL_OPEN
+                                    composeBackTargetKey = id
+                                    backDismiss = { callbacks.onCancelExternalOpen(id) }
+                                }
+                                hostState.isEditingUrl -> {
+                                    val animates =
+                                        watch != null ||
+                                            !com.ai.assistance.operit.ui.features.websession.browser.isBlankPage(
+                                                hostState.browserState.currentUrl
+                                            )
+                                    composeBackTarget = if (animates) BrowserBackTarget.URL_EDIT else BrowserBackTarget.NONE
+                                    composeBackTargetKey = if (animates) hostState.browserState.activeSessionId else null
+                                    backDismiss = {
+                                        updateHostState { it.copy(isEditingUrl = false, urlDraft = it.browserState.currentUrl) }
+                                    }
+                                }
+                                else -> {
+                                    composeBackTarget = BrowserBackTarget.NONE
+                                    composeBackTargetKey = null
+                                    backDismiss = null
+                                }
                             }
                         }
+                        val previousTargetStillOpen =
+                            if (composeBackTarget == BrowserBackTarget.NONE || (watch != null && !watch.controlling)) {
+                                false
+                            } else when (backMotion.target) {
+                            BrowserBackTarget.DIALOG ->
+                                hostState.browserState.pendingDialog?.id == backMotion.activeTargetKey()
+                            BrowserBackTarget.EXTERNAL_OPEN ->
+                                hostState.externalOpenPrompt?.requestId == backMotion.activeTargetKey()
+                            BrowserBackTarget.SHEET ->
+                                (if (watch != null) hostState.sheetRoute == WebSessionBrowserSheetRoute.DOWNLOADS
+                                else hostState.sheetRoute != WebSessionBrowserSheetRoute.NONE) &&
+                                    hostState.sheetRoute == backMotion.activeTargetKey()
+                            BrowserBackTarget.URL_EDIT ->
+                                hostState.isEditingUrl && hostState.browserState.activeSessionId == backMotion.activeTargetKey()
+                            else -> false
+                        }
+                        backMotion.syncActive(composeBackTarget, composeBackTargetKey, previousTargetStillOpen)
                         watchPutAway = watchWork?.executorChatId?.let { talk ->
                             { com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.close(talk) }
                         }
-                        root.onBackKey = watch?.let { backDismiss ?: watchPutAway }
                         syncBrowserBack()
                         val ended = lastWatchTalk?.takeIf { watchWork == null && it !in orbitWorks }
                         lastWatchTalk = watchWork?.executorChatId
-                        if (ended != null && isExpanded) {
+                        // Not when the user's own window took the screen meanwhile.
+                        if (ended != null && isExpanded && ownWindowProfile() == null) {
                             // The work is over: close the watch screen rather than leave an unlocked page behind.
-                            root.post { callbacks.onMinimize() }
+                            // Checked again when it runs: the user's own window or another watch may have opened since.
+                            root.post {
+                                if (isExpanded && ownWindowProfile() == null &&
+                                    com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.watching.value == null) {
+                                    callbacks.onMinimize()
+                                }
+                            }
                         }
                     }
 
@@ -282,11 +359,19 @@ internal class WebSessionBrowserHost(
                                 } else {
                                     Modifier
                                 },
-                            hostState = if (watchWork == null) hostState else hostState.copy(browserState =
-                                hostState.browserState.copy(tabs = hostState.browserState.tabs.filter { tab ->
-                                    com.ai.assistance.operit.core.tools.defaultTool.standard.StandardBrowserSessionTools.sessions[tab.sessionId]?.browserTaskId == watchWork.executorChatId
-                                })),
+                            // The watch screen lists the watched task's tabs; the user's own window, their own tabs.
+                            hostState = run {
+                                val own = if (watchWork == null) ownWindowProfile() else null
+                                if (watchWork == null && own == null) hostState else hostState.copy(browserState =
+                                    hostState.browserState.copy(tabs = hostState.browserState.tabs.filter { tab ->
+                                        val session = com.ai.assistance.operit.core.tools.defaultTool.standard.StandardBrowserSessionTools.sessions[tab.sessionId]
+                                        if (watchWork != null) session?.browserTaskId == watchWork.executorChatId
+                                        else tab.sessionId == com.ai.assistance.operit.core.tools.defaultTool.standard.StandardBrowserSessionTools.PENDING_OWN_TAB_ID ||
+                                            session?.isOwnTabOf(own!!) == true
+                                    }))
+                            },
                             watch = watch,
+                            backMotion = backMotion,
                             bookmarks = bookmarks,
                             globalHistory = history,
                             userscriptUiState = userscriptUiState,
@@ -309,6 +394,7 @@ internal class WebSessionBrowserHost(
                             onSelectSessionHistory = callbacks::onSelectSessionHistory,
                             onOpenUrl = callbacks::onOpenUrl,
                             onClearHistory = callbacks::onClearHistory,
+                            onRemoveHistoryEntry = callbacks::onRemoveHistoryEntry,
                             onToggleDesktopMode = callbacks::onToggleDesktopMode,
                             onOpenUserscripts = callbacks::onOpenUserscripts,
                             onImportUserscript = callbacks::onImportUserscript,
@@ -328,7 +414,8 @@ internal class WebSessionBrowserHost(
                             onOpenDownloadLocation = callbacks::onOpenDownloadLocation,
                             onConfirmExternalOpen = callbacks::onConfirmExternalOpen,
                             onCancelExternalOpen = callbacks::onCancelExternalOpen,
-                            onHandlePendingDialog = callbacks::onHandlePendingDialog
+                            onHandlePendingDialog = callbacks::onHandlePendingDialog,
+                            onPendingLaunchFrameDrawn = callbacks::onPendingLaunchFrameDrawn
                         )
                         }
                     }
@@ -356,8 +443,14 @@ internal class WebSessionBrowserHost(
 
     fun destroy() {
         launchToken++
+        launching = false
         BrowserPageMenus.onChanged = null
+        backMotion.finishPendingOrReset()
+        clearBackGesture()
         backDismiss = null
+        composeBackTarget = BrowserBackTarget.NONE
+        composeBackTargetKey = null
+        watchActive = false
         watchPutAway = null
         val activity = createdActivity?.get()
         createdActivity = null
@@ -365,7 +458,7 @@ internal class WebSessionBrowserHost(
         closingActivity = null
         overlayFallback = false
         composeView?.let { compose -> (compose.parent as? ViewGroup)?.takeIf { it !== rootView }?.removeView(compose) }
-        activity?.takeIf { !it.isFinishing }?.finishAndRemoveTask()
+        activity?.takeIf { !it.isFinishing }?.close()
         hideTextSelectionActionsOverlay()
         hideIndicator()
         overlayLifecycleOwner?.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
@@ -393,6 +486,8 @@ internal class WebSessionBrowserHost(
         downloadUiState: BrowserDownloadUiState,
         externalOpenPrompt: ExternalOpenPromptState?
     ) {
+        // Another tab in front ends typing: the draft was for the tab it started on.
+        val editing = hostState.isEditingUrl && browserState.activeSessionId == hostState.browserState.activeSessionId
         hostState =
             hostState.copy(
                 browserState = browserState,
@@ -401,8 +496,9 @@ internal class WebSessionBrowserHost(
                         selectedFilter = hostState.downloadUiState.selectedFilter
                     ),
                 externalOpenPrompt = externalOpenPrompt,
+                isEditingUrl = editing,
                 urlDraft =
-                    if (hostState.isEditingUrl) {
+                    if (editing) {
                         hostState.urlDraft
                     } else {
                         browserState.currentUrl
@@ -414,11 +510,12 @@ internal class WebSessionBrowserHost(
 
     /**
      * Orbit puts nothing on the screen: its pages open from the card in its chat. The floating
-     * button is only for the main app's own tabs (those without an Orbit task).
+     * button is only for the main app's own tabs (no Orbit task, the main app's logins); the user's
+     * own Orbit window opens again from the Orbit's browser page.
      */
     private fun wantsIndicator(): Boolean =
         com.ai.assistance.operit.core.tools.defaultTool.standard.StandardBrowserSessionTools.sessions.values
-            .any { it.browserTaskId == null }
+            .any { it.browserTaskId == null && it.profileName == BrowserProfiles.MAIN }
 
     private fun syncIndicatorWithPages() {
         if (isExpanded || rootView == null) return
@@ -426,6 +523,14 @@ internal class WebSessionBrowserHost(
     }
 
     fun attachActiveWebView(page: BrowserPage?, viewportWidth: Int? = null, viewportHeight: Int? = null) {
+        // A window leaving the screen keeps what it showed: another page coming to the front
+        // meanwhile waits in the background, still able to run, and is attached when the browser
+        // opens again.
+        if (page != null && page !== webViewHost.currentPage() && !isExpanded && closingActivity != null) {
+            // Parked once; later refreshes while the window leaves find it there already.
+            if (page.view.parent !== backgroundViews) parkWebView(page, viewportWidth, viewportHeight)
+            return
+        }
         webViewHost.currentPage()?.takeIf { it !== page }?.let { previous ->
             com.ai.assistance.operit.core.tools.defaultTool.standard.StandardBrowserSessionTools.sessions.values
                 .firstOrNull { it.page === previous && it.browserTaskId != null }?.let {
@@ -450,16 +555,22 @@ internal class WebSessionBrowserHost(
     private fun parkWebView(page: BrowserPage, width: Int?, height: Int?) {
         val webView = page.view
         val target = backgroundViews ?: return
-        if (webView.parent !== target) {
+        val moved = webView.parent !== target
+        if (moved) {
             (webView.parent as? ViewGroup)?.removeView(webView)
             target.addView(webView)
         }
-        val density = appContext.resources.displayMetrics.density
+        val density = layoutScaleOf(page, appContext.resources.displayMetrics.density)
         val w = width?.let { (it * density).roundToInt() } ?: appContext.resources.displayMetrics.widthPixels
         val h = height?.let { (it * density).roundToInt() } ?: appContext.resources.displayMetrics.heightPixels
-        webView.layoutParams = FrameLayout.LayoutParams(w, h)
         val scale = minOf(appContext.resources.displayMetrics.widthPixels.toFloat() / w,
             appContext.resources.displayMetrics.heightPixels.toFloat() / h)
+        // Parked already at this size: no new layout, which the many calls on a background page would repeat.
+        val sized = !moved && webView.layoutParams?.let { it.width == w && it.height == h } == true &&
+            webView.width == w && webView.height == h && webView.scaleX == scale && webView.scaleY == scale
+        // Its rest or run was settled when it was parked.
+        if (sized) return
+        webView.layoutParams = FrameLayout.LayoutParams(w, h)
         webView.pivotX = 0f
         webView.pivotY = 0f
         webView.scaleX = scale
@@ -467,8 +578,20 @@ internal class WebSessionBrowserHost(
         webView.translationX = 0f
         webView.translationY = 0f
         // A page Orbit stopped using stays at rest when it goes back to the background.
-        val task = com.ai.assistance.operit.core.tools.defaultTool.standard.StandardBrowserSessionTools.sessions.values
-            .firstOrNull { it.page === page }?.browserTaskId
+        val sessions = com.ai.assistance.operit.core.tools.defaultTool.standard.StandardBrowserSessionTools.sessions.values
+        val task = sessions.firstOrNull { it.page === page }?.browserTaskId
+        if (moved && task == null) {
+            // One page of no task works behind the user's window at a time (a chat's tool using
+            // other logins); the ones before leave the container until used again.
+            for (index in target.childCount - 1 downTo 0) {
+                val child = target.getChildAt(index)
+                if (child === webView) continue
+                val idle = sessions.firstOrNull { it.page.view === child && it.browserTaskId == null } ?: continue
+                // Paused too: a detached engine page would otherwise keep drawing off screen.
+                runCatching { idle.page.onPause() }
+                target.removeViewAt(index)
+            }
+        }
         val watch = com.ai.assistance.operit.features.orbit.OrbitBrowserWatch
         if (watch.resting(task)) watch.rest(page) else page.onResume()
         webView.measure(View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY),
@@ -492,6 +615,7 @@ internal class WebSessionBrowserHost(
         try {
             windowManager.addView(actionsView, params)
             selectionActionsView = actionsView
+            syncBrowserBack()
             actionsView.post {
                 updateTextSelectionActionsLayout(actionsView, anchorX, anchorY)
             }
@@ -517,6 +641,7 @@ internal class WebSessionBrowserHost(
         }
         selectionActionsView = null
         selectionActionsParams = null
+        syncBrowserBack()
     }
 
     fun isExpanded(): Boolean = isExpanded
@@ -551,13 +676,18 @@ internal class WebSessionBrowserHost(
         composeView ?: return
 
         if (!expanded) {
+            backMotion.finishPendingOrReset()
+            clearBackGesture()
             hideTextSelectionActionsOverlay()
             // Put away, the browser is no longer Orbit's watch screen; the card opens it again.
             com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.unwatch()
-        } else if (com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.watching.value == null) {
+        } else if (com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.watching.value == null &&
+            ownWindowProfile() == null
+        ) {
             com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.watchSession(hostState.browserState.activeSessionId)
         }
 
+        val wasExpanded = isExpanded
         isExpanded = expanded
         hostState =
             if (expanded) {
@@ -573,17 +703,18 @@ internal class WebSessionBrowserHost(
         if (expanded) {
             hideIndicator()
             uiLanguage = com.ai.assistance.operit.util.LocaleUtils.getCurrentLanguage(appContext)
-            if (browserActivity == null) launchBrowserActivity()
+            if (browserActivity == null && !launching) launchBrowserActivity()
         } else {
             if (wantsIndicator()) showIndicator() else hideIndicator()
             launchToken++
+            launching = false
             overlayFallback = false
             // Put away by the browser itself: its window goes too. Left for another app, the
             // window stays in the recent apps to come back to.
-            if (!leavingActivity) {
+            if (!leavingActivity && (wasExpanded || stoppedOwnProfile == null)) {
                 createdActivity?.get()?.takeIf { !it.isFinishing }?.let { closing ->
                     closingActivity = closing
-                    closing.finishAndRemoveTask()
+                    closing.closeLikeAPage()
                 }
                 // A closing window shows nothing more: opening again right away starts a new one.
                 browserActivity = null
@@ -607,25 +738,55 @@ internal class WebSessionBrowserHost(
     /** The activity could not open (the system blocked it); the browser shows over everything as before. */
     private var overlayFallback = false
     private var launchToken = 0
+    /** A window was asked for and has not shown yet: asking again would open a second one. */
+    private var launching = false
     /** Set while the browser is put away because the user left its window for another app. */
     private var leavingActivity = false
     private val mainHandler = Handler(Looper.getMainLooper())
+    /** The login set of the user's own window when it was left for another app; null otherwise. */
+    private var stoppedOwnProfile: String? = null
+    /** Whether the URL bar was actively being edited when the user's own window left for another app. */
+    private var stoppedOwnEditingUrl: Boolean = false
+
+    /** True when the user's own browser window is parked in Recents waiting to reopen. */
+    internal fun hasPendingRecentsOwnWindow(): Boolean = stoppedOwnProfile != null
+
+    /** A deleted Orbit's logins: its window waiting in the recent apps comes back on the main ones. */
+    internal fun forgetOwnWindow(profile: String) {
+        if (stoppedOwnProfile == profile) stoppedOwnProfile = BrowserProfiles.MAIN
+    }
 
     private fun launchBrowserActivity() {
         val token = ++launchToken
         val started = runCatching {
-            appContext.startActivity(
-                android.content.Intent(appContext, WebSessionBrowserActivity::class.java)
-                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-            )
+            // Opened in the app, the window joins the app's task and opens like a page of it; a
+            // task of its own opened with the system's jump into another app. It still leaves
+            // the screen with the app. Opened from the floating button over another app, it gets
+            // a task of its own, so closing it goes back to that app.
+            val inApp = com.ai.assistance.operit.util.AppActivityTracker.resumedActivity
+                ?.takeIf { it !is WebSessionBrowserActivity && !it.isFinishing && !it.isDestroyed }
+            if (inApp != null) {
+                val options = android.app.ActivityOptions.makeCustomAnimation(
+                    inApp, R.anim.browser_window_enter, R.anim.browser_window_hold,
+                )
+                inApp.startActivity(android.content.Intent(inApp, WebSessionBrowserActivity::class.java), options.toBundle())
+            } else {
+                appContext.startActivity(
+                    android.content.Intent(appContext, WebSessionBrowserActivity::class.java)
+                        .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
+                )
+            }
         }.onFailure { AppLogger.w("WebSessionBrowserHost", "Could not open the browser window: ${it.message}") }.isSuccess
         if (!started) {
             overlayFallback = true
             return
         }
+        launching = true
         // Some systems quietly refuse to open a window from the background; show it the old way then.
         mainHandler.postDelayed({
-            if (token == launchToken && isExpanded && browserActivity == null) {
+            if (token != launchToken) return@postDelayed
+            launching = false
+            if (isExpanded && browserActivity == null) {
                 AppLogger.w("WebSessionBrowserHost", "The browser window did not open; showing it as an overlay")
                 overlayFallback = true
                 placeBrowserScreen()
@@ -636,7 +797,7 @@ internal class WebSessionBrowserHost(
     internal fun onActivityCreated(activity: WebSessionBrowserActivity) {
         val previous = createdActivity?.get()
         createdActivity = java.lang.ref.WeakReference(activity)
-        if (previous != null && previous !== activity && !previous.isFinishing) previous.finishAndRemoveTask()
+        if (previous != null && previous !== activity && !previous.isFinishing) previous.close()
     }
 
     /**
@@ -645,20 +806,25 @@ internal class WebSessionBrowserHost(
      */
     internal fun onActivityStarted(activity: WebSessionBrowserActivity, firstStart: Boolean) {
         if (activity.isFinishing) return
+        val own = stoppedOwnProfile
+        val wasEditing = stoppedOwnEditingUrl
+        stoppedOwnProfile = null
+        stoppedOwnEditingUrl = false
         if (createdActivity?.get() !== activity) onActivityCreated(activity)
         if (!isExpanded && firstStart) {
-            activity.finishAndRemoveTask()
+            activity.close()
             return
         }
         browserActivity = activity
+        launching = false
         overlayFallback = false
         browserBackground?.let(activity::applyBrowserBackground)
         syncBrowserBack()
         if (isExpanded) {
             placeBrowserScreen()
         } else {
-            // Back from the recent apps: the browser opens again.
-            callbacks.onSetExpanded(true)
+            // Back from the recent apps: the browser opens again, on the user's own logins if it showed them.
+            if (own != null) callbacks.onReopenOwn(own, startEditing = wasEditing) else callbacks.onSetExpanded(true)
         }
     }
 
@@ -669,6 +835,8 @@ internal class WebSessionBrowserHost(
             return
         }
         if (browserActivity !== activity) return
+        backMotion.finishPendingOrReset()
+        clearBackGesture()
         browserActivity = null
         if (!isExpanded || activity.isFinishing) {
             placeBrowserScreen()
@@ -676,6 +844,9 @@ internal class WebSessionBrowserHost(
         }
         // The user went to another app (or locked the phone). The page goes back to the overlay,
         // where it keeps running for the AI; a user holding control keeps it.
+        // Tabs of other logins may come to the front meanwhile; the window remembers its own.
+        stoppedOwnProfile = ownWindowProfile()
+        stoppedOwnEditingUrl = hostState.isEditingUrl
         leavingActivity = true
         try {
             callbacks.onSetExpanded(false)
@@ -697,10 +868,16 @@ internal class WebSessionBrowserHost(
             placeBrowserScreen()
         }
         if (browserActivity === activity) {
+            backMotion.finishPendingOrReset()
+            clearBackGesture()
             browserActivity = null
             placeBrowserScreen()
         }
-        if (createdActivity?.get() === activity) createdActivity = null
+        if (createdActivity?.get() === activity) {
+            createdActivity = null
+            stoppedOwnProfile = null
+            stoppedOwnEditingUrl = false
+        }
     }
 
     /**
@@ -708,29 +885,119 @@ internal class WebSessionBrowserHost(
      * menu, or a popup on Orbit's watch screen. Going back in the page is the button in the bottom
      * bar; anything else closes the window ([onActivityFinishing]).
      */
-    internal fun handleBack() {
-        if (BrowserPageMenus.dismissOpen()) return
-        backDismiss?.let { return it() }
+    internal fun handleBack(fromGesture: Boolean = false) {
+        val wasBlocked = gestureBlocked
+        val startedTarget = gestureTarget
+        val startedKey = gestureKey
+        clearBackGesture()
+        if (fromGesture) {
+            // Ignore a swipe that started during an in-flight exit, or whose starting overlay was
+            // replaced/dismissed mid-swipe, so it never closes the layer underneath.
+            if (wasBlocked) return
+            val (curTarget, curKey) = currentBackDescriptor()
+            if (startedTarget != curTarget || startedKey != curKey) {
+                backMotion.cancel()
+                return
+            }
+        }
+        if (BrowserPageMenus.dismissOpen()) {
+            backMotion.reset()
+            return
+        }
+        if (selectionActionsView != null) {
+            dismissTextSelectionActions()
+            hideTextSelectionActionsOverlay()
+            backMotion.reset()
+            return
+        }
+        val dismiss = backDismiss
+        if (dismiss != null) {
+            backMotion.commit(composeBackTarget, composeBackTargetKey, dismiss)
+            return
+        }
         // Only when the window's back state is stale: put away as the system's back would.
         callbacks.onMinimize()
         watchPutAway?.invoke()
     }
 
+    internal fun onBackGestureStarted() {
+        gestureStarted = true
+        if (backMotion.isCommitting) {
+            gestureBlocked = true
+            return
+        }
+        gestureBlocked = false
+        val (target, key) = currentBackDescriptor()
+        gestureTarget = target
+        gestureKey = key
+        backMotion.start(target, key)
+    }
+
+    internal fun onBackGestureProgressed(progress: Float) {
+        if (!gestureStarted || gestureBlocked) return
+        val (target, key) = currentBackDescriptor()
+        backMotion.move(progress, target, key)
+    }
+
+    internal fun onBackGestureCancelled() {
+        clearBackGesture()
+        backMotion.cancel()
+    }
+
+    private fun clearBackGesture() {
+        gestureStarted = false
+        gestureBlocked = false
+        gestureTarget = BrowserBackTarget.NONE
+        gestureKey = null
+    }
+
+    private fun currentBackDescriptor(): Pair<BrowserBackTarget, Any?> = when {
+        BrowserPageMenus.open != null -> BrowserBackTarget.PAGE_MENU to BrowserPageMenus.open
+        selectionActionsView != null -> BrowserBackTarget.TEXT_SELECTION to selectionActionsView
+        else -> composeBackTarget to composeBackTargetKey
+    }
+
+    private fun hasOwnBackTarget(): Boolean =
+        BrowserPageMenus.open != null || selectionActionsView != null || backDismiss != null
+
     /** What back closes on the watch screen (a page dialog, a prompt, the downloads sheet). */
     private var backDismiss: (() -> Unit)? = null
+    private var composeBackTarget = BrowserBackTarget.NONE
+    private var composeBackTargetKey: Any? = null
+    private var watchActive = false
+    private var gestureStarted = false
+    private var gestureBlocked = false
+    private var gestureTarget = BrowserBackTarget.NONE
+    private var gestureKey: Any? = null
+    private val backMotion = BrowserBackMotion()
     /** Leaves the watch screen without handing control back: only its button does that. */
     private var watchPutAway: (() -> Unit)? = null
 
     /**
-     * Whether back is the browser's own right now (see [WebSessionBrowserActivity]); otherwise the
-     * system takes it, shrinks the window with the finger and closes it.
+     * Whether back is the browser's own right now (see [WebSessionBrowserActivity]); otherwise it
+     * shrinks the page with the finger and closes the window.
      */
     private fun syncBrowserBack() {
         if (Looper.myLooper() != Looper.getMainLooper()) {
             mainHandler.post(::syncBrowserBack)
             return
         }
-        browserActivity?.setBrowserTakesBack(BrowserPageMenus.open != null || backDismiss != null)
+        browserActivity?.setBrowserTakesBack(hasOwnBackTarget())
+        rootView?.let { root ->
+            val overlayFull = isExpanded && browserActivity == null && overlayFallback
+            root.onCloseWindow = when {
+                watchActive -> watchPutAway
+                overlayFull -> callbacks::onMinimize
+                else -> null
+            }
+            root.onBackKey = when {
+                watchActive -> backDismiss ?: watchPutAway
+                overlayFull -> ({
+                    if (hasOwnBackTarget()) handleBack(fromGesture = false) else callbacks.onMinimize()
+                })
+                else -> null
+            }
+        }
     }
 
     /**
@@ -740,6 +1007,8 @@ internal class WebSessionBrowserHost(
      */
     internal fun onActivityFinishing(activity: WebSessionBrowserActivity) {
         if (activity !== browserActivity || createdActivity?.get() !== activity || !isExpanded) return
+        backMotion.finishPendingOrReset()
+        clearBackGesture()
         closingActivity = activity
         browserActivity = null
         val putAway = watchPutAway
@@ -800,6 +1069,7 @@ internal class WebSessionBrowserHost(
         if (root.windowToken != null) {
             windowManager.updateViewLayout(root, params)
         }
+        syncBrowserBack()
     }
 
     /** Only a browser on screen takes input, and Orbit's locked watch screen none. */
@@ -827,6 +1097,13 @@ internal class WebSessionBrowserHost(
         updateHostState { it.copy(sheetRoute = route) }
     }
 
+    /** Opens the browser ready to type: the address bar is focused, empty, with suggestions under it. */
+    fun startUrlEditing() {
+        updateHostState {
+            it.copy(sheetRoute = WebSessionBrowserSheetRoute.NONE, isEditingUrl = true, urlDraft = "")
+        }
+    }
+
     /**
      * The Orbit work the tab in front belongs to. A user in control keeps the watch screen on any
      * tab they reach (a page may open a new one), so the hand-back button never disappears.
@@ -839,7 +1116,11 @@ internal class WebSessionBrowserHost(
         // Opened from Orbit's card, the browser stays the watch screen on whatever tab shows,
         // even before the first page is ready or after the last tab closed.
         watchingTalk?.let(works::get)?.let { return it }
+        if (ownWindowProfile() != null) return null
         val active = browserState.activeSessionId
+        // The user's own tab in front is their own window, never a watch screen.
+        if (active != null && com.ai.assistance.operit.core.tools.defaultTool.standard.StandardBrowserSessionTools
+                .sessions[active]?.browserTaskId == null) return null
         return active?.let { id -> works.values.firstOrNull { it.sessionId == id } }
             ?: works.values.filter { it.control != com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.Control.NONE }
                 .maxByOrNull { it.lastActionAt }
@@ -1117,7 +1398,8 @@ internal class WebSessionBrowserHost(
                             activeDownloadCount = hostState.browserState.activeDownloadCount,
                             hasFailedDownloads = hostState.browserState.hasFailedDownloads,
                             externalOpenPrompt = hostState.externalOpenPrompt,
-                            onToggleFullscreen = { setExpanded(true) },
+                            // It stands for the main app's own tabs, whatever tab was in front last.
+                            onToggleFullscreen = { callbacks.onOpenMainTabs() },
                             onDragBy = { dx, dy -> moveIndicatorBy(dx, dy) },
                             onConfirmExternalOpen = callbacks::onConfirmExternalOpen,
                             onCancelExternalOpen = callbacks::onCancelExternalOpen
@@ -1313,6 +1595,13 @@ private class DeceptiveMinimizedLayout(context: Context) : FrameLayout(context) 
             if (value == null && wasWatching) resetBackTransform()
             syncBackCallback()
         }
+    var hasOwnBack: () -> Boolean = { false }
+    var onOwnBackStarted: (() -> Unit)? = null
+    var onOwnBackProgressed: ((Float) -> Unit)? = null
+    var onOwnBackCancelled: (() -> Unit)? = null
+    var onOwnBackPressed: ((Boolean) -> Unit)? = null
+    /** Closes the fallback overlay window itself (never an inner popup that appeared mid-exit). */
+    var onCloseWindow: (() -> Unit)? = null
 
     /**
      * With the app's predictive back on, Android 13+ hands the back key to a window callback before
@@ -1321,6 +1610,8 @@ private class DeceptiveMinimizedLayout(context: Context) : FrameLayout(context) 
      */
     private var backCallback: Any? = null
     private var backCommitting = false
+    private var swipeClosesOwn = false
+    private var swipeStarted = false
 
     private fun syncBackCallback() {
         if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) return
@@ -1331,10 +1622,20 @@ private class DeceptiveMinimizedLayout(context: Context) : FrameLayout(context) 
                 object : android.window.OnBackAnimationCallback {
                     override fun onBackStarted(backEvent: android.window.BackEvent) {
                         if (backCommitting) return
+                        swipeStarted = true
+                        swipeClosesOwn = hasOwnBack()
+                        if (swipeClosesOwn) {
+                            onOwnBackStarted?.invoke()
+                            return
+                        }
                         animate().cancel()
                     }
                     override fun onBackProgressed(backEvent: android.window.BackEvent) {
                         if (backCommitting) return
+                        if (swipeClosesOwn) {
+                            onOwnBackProgressed?.invoke(backEvent.progress)
+                            return
+                        }
                         val p = backEvent.progress.coerceIn(0f, 1f)
                         scaleX = 1f - 0.06f * p
                         scaleY = scaleX
@@ -1344,29 +1645,61 @@ private class DeceptiveMinimizedLayout(context: Context) : FrameLayout(context) 
                     }
                     override fun onBackCancelled() {
                         if (backCommitting) return
+                        swipeStarted = false
+                        if (swipeClosesOwn) {
+                            swipeClosesOwn = false
+                            onOwnBackCancelled?.invoke()
+                            return
+                        }
                         animate().scaleX(1f).scaleY(1f).translationX(0f).alpha(1f)
                             .setDuration(180).withEndAction(null).start()
                     }
                     override fun onBackInvoked() {
                         if (backCommitting) return
+                        val startedOwn = swipeClosesOwn
+                        val fromGesture = swipeStarted
+                        val own = hasOwnBack()
+                        swipeClosesOwn = false
+                        swipeStarted = false
+                        if (startedOwn && !own) {
+                            onOwnBackCancelled?.invoke()
+                            return
+                        }
+                        if (own) {
+                            if (fromGesture && !startedOwn) {
+                                // Whole-window swipe interrupted by a newly-opened popup: spring the
+                                // window back to rest and keep the new popup open.
+                                animate().scaleX(1f).scaleY(1f).translationX(0f).alpha(1f)
+                                    .setDuration(180).withEndAction(null).start()
+                                return
+                            }
+                            onOwnBackPressed?.invoke(fromGesture)
+                            return
+                        }
                         if (BrowserPageMenus.dismissOpen()) {
                             onBackCancelled()
                             return
                         }
+                        val closeWindow = onCloseWindow ?: onBackKey
                         backCommitting = true
                         animate().scaleX(0.94f).scaleY(0.94f).alpha(0.8f).setDuration(140)
                             .withEndAction {
-                                onBackKey?.invoke()
+                                closeWindow?.invoke()
                                 resetBackTransform()
                             }.start()
                     }
                 }
             } else {
-                android.window.OnBackInvokedCallback { if (!BrowserPageMenus.dismissOpen()) onBackKey?.invoke() }
+                android.window.OnBackInvokedCallback {
+                    if (hasOwnBack()) onOwnBackPressed?.invoke(false)
+                    else if (!BrowserPageMenus.dismissOpen()) onBackKey?.invoke()
+                }
             }
             dispatcher.registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, callback)
             backCallback = callback
         } else if (!want && backCallback != null) {
+            swipeClosesOwn = false
+            swipeStarted = false
             runCatching { dispatcher?.unregisterOnBackInvokedCallback(backCallback as android.window.OnBackInvokedCallback) }
             backCallback = null
         }
@@ -1406,7 +1739,10 @@ private class DeceptiveMinimizedLayout(context: Context) : FrameLayout(context) 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         val back = onBackKey
         if (back != null && event.keyCode == KeyEvent.KEYCODE_BACK) {
-            if (event.action == KeyEvent.ACTION_UP && !event.isCanceled && !BrowserPageMenus.dismissOpen()) back()
+            if (event.action == KeyEvent.ACTION_UP && !event.isCanceled) {
+                if (hasOwnBack()) onOwnBackPressed?.invoke(false)
+                else if (!BrowserPageMenus.dismissOpen()) back()
+            }
             return true
         }
         return super.dispatchKeyEvent(event)

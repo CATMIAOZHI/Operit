@@ -51,6 +51,7 @@ import com.ai.assistance.operit.ui.features.chat.components.style.bubble.BubbleS
 import com.ai.assistance.operit.ui.features.chat.components.style.cursor.CursorStyleChatMessage
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.CheckCircle
@@ -164,12 +165,14 @@ fun ChatScreenContent(
 
     // Multi-select mode state
     var isMultiSelectMode by remember { mutableStateOf(false) }
-    val transcriptSelection = remember(currentChatId) { TranscriptSelection() }
+    val selectionScope = androidx.compose.runtime.rememberCoroutineScope()
+    val transcriptSelection = remember(currentChatId) { TranscriptSelection(selectionScope) }
     var selectedMessageIndices by transcriptSelection.forMessages(chatHistory)
     // An Orbit chat selects only the messages it shows; its bar copies, shares and keeps them.
     val orbitMessageHost = if (LocalOrbitChatLook.current) {
         com.ai.assistance.operit.ui.features.orbit.LocalOrbitMessageHost.current
     } else null
+    val currentOrbitHost = androidx.compose.runtime.rememberUpdatedState(orbitMessageHost)
     // Sharing picked Orbit messages draws them as one picture, with the bubbles this chat shows.
     val shareOrbitPicture = orbitMessageHost?.let { host ->
         com.ai.assistance.operit.ui.features.orbit.rememberOrbitPictureShare(host, chatAreaHorizontalPadding.dp) { message ->
@@ -216,25 +219,105 @@ fun ChatScreenContent(
     }
     // Where "select to here" starts: the message picked last, else the picked one nearest.
     var selectionAnchor by remember(currentChatId) { mutableStateOf<Long?>(null) }
-    val selectableMessageIndices = remember(chatHistory, orbitMessageHost != null) {
-        chatHistory.mapIndexedNotNull { index, message ->
-            if ((message.sender == "user" || message.sender == "ai") &&
-                (orbitMessageHost == null || !OrbitSpeech.hidden(message))) index else null
-        }.toSet()
+    // A reply of several bubbles can be picked in part: its picked bubbles, by message time. A reply
+    // picked whole has no entry.
+    var selectedMessagePieces by remember(currentChatId) { mutableStateOf(emptyMap<Long, Set<Int>>()) }
+    val pickContext = LocalContext.current
+    // The bubble picked last, with its reply's time: "select to here" goes on from it.
+    var selectionAnchorPiece by remember(currentChatId) { mutableStateOf<Pair<Long, Int>?>(null) }
+    val pickMessagePieces: (Int, Set<Int>, Int) -> Unit = { index, pieces, count ->
+        chatHistory.getOrNull(index)?.timestamp?.let { stamp ->
+            val stamps = transcriptSelection.timestamps
+            val inSelection = stamp in stamps
+            val before = selectedMessagePieces[stamp] ?: if (inSelection) (0 until count).toSet() else emptySet()
+            selectedMessagePieces =
+                if (pieces.isEmpty() || pieces.size >= count) selectedMessagePieces - stamp
+                else selectedMessagePieces + (stamp to pieces)
+            // The selection is copied only when the reply goes in or out of it.
+            if (pieces.isEmpty() && inSelection) transcriptSelection.remove(stamp)
+            else if (pieces.isNotEmpty() && !inSelection) transcriptSelection.add(stamp)
+            // Only a bubble newly picked moves where "select to here" starts.
+            (pieces - before).singleOrNull()?.let { added ->
+                selectionAnchor = stamp
+                selectionAnchorPiece = stamp to added
+            }
+        }
+    }
+    fun selectable(message: ChatMessage) = (message.sender == "user" || message.sender == "ai") &&
+        (orbitMessageHost == null || !OrbitSpeech.hidden(message))
+    // Only the plain chat's "select all" needs every selectable message, and only while selecting.
+    val selectableMessageIndices = remember(chatHistory, orbitMessageHost != null, isMultiSelectMode) {
+        if (!isMultiSelectMode || orbitMessageHost != null) emptySet()
+        else chatHistory.indices.filterTo(LinkedHashSet()) { selectable(chatHistory[it]) }
     }
     // Another Orbit chat on screen starts with nothing selected.
     LaunchedEffect(currentChatId) {
         if (orbitMessageHost != null) isMultiSelectMode = false
     }
-    val selectRangeTo: (Int) -> Unit = { target ->
-        val picked = selectedMessageIndices
-        val from = selectionAnchor?.let { stamp -> chatHistory.indexOfFirst { it.timestamp == stamp } }?.takeIf { it in picked }
-            ?: picked.minByOrNull { kotlin.math.abs(it - target) }
-        if (from != null) {
-            val low = minOf(from, target)
-            val high = maxOf(from, target)
-            selectedMessageIndices = picked + selectableMessageIndices.filter { it in low..high }
-            selectionAnchor = chatHistory.getOrNull(target)?.timestamp
+    // Worked out off the main thread from the selection as it was, and applied only if it is
+    // still the same: a range may span a long stretch of the chat.
+    var rangeJob by remember(currentChatId) { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    // A copy, share or keep waiting for "select to here" to finish; only one at a time.
+    var pickedExportJob by remember(currentChatId) { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    // Another chat on screen: work still waiting on this chat's selection stops with it.
+    DisposableEffect(currentChatId) {
+        onDispose {
+            rangeJob?.cancel()
+            pickedExportJob?.cancel()
+        }
+    }
+    val selectRangeTo: (Int) -> Unit = range@{ target ->
+        // While picked messages are being copied, shared or kept, the selection stays as it is.
+        if (pickedExportJob?.isActive == true) return@range
+        val history = chatHistory
+        val stamps = transcriptSelection.timestamps
+        val piecesNow = selectedMessagePieces
+        val anchor = selectionAnchor
+        val anchorPiece = selectionAnchorPiece
+        // The last tap wins: a range still being worked out is dropped.
+        rangeJob?.cancel()
+        rangeJob = orbitMessageHost?.scope?.launch {
+            val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                // The anchor is found directly; only without it is the whole selection looked through.
+                val from = anchor?.takeIf { it in stamps }?.let { TranscriptSelection.find(history, it) }?.takeIf { it >= 0 }
+                    ?: TranscriptSelection.indicesOf(history, stamps).minByOrNull { kotlin.math.abs(it - target) }
+                    ?: return@withContext null
+                val low = minOf(from, target)
+                val high = maxOf(from, target)
+                val grownStamps = HashSet(stamps)
+                for (i in low..high) {
+                    if ((i - low) % 1024 == 0) ensureActive()
+                    history.getOrNull(i)?.takeIf(::selectable)?.let { grownStamps += it.timestamp }
+                }
+                // Every reply in the range is picked whole, but the one it starts from: picked in
+                // part, it gains the bubbles from the one picked last on toward the range.
+                val grownPieces = if (piecesNow.isEmpty()) piecesNow else {
+                    val start = history.getOrNull(from)
+                    val lowStamp = history.getOrNull(low)?.timestamp
+                    val highStamp = history.getOrNull(high)?.timestamp
+                    piecesNow.mapNotNull { (stamp, set) ->
+                        when {
+                            stamp == start?.timestamp && set.isNotEmpty() -> {
+                                val count = com.ai.assistance.operit.ui.features.orbit.OrbitMessageActions.bubbleCount(pickContext, start)
+                                val last = anchorPiece?.takeIf { it.first == stamp && it.second in set }?.second
+                                val grown = set + if (target > from) (last ?: set.min()) until count
+                                    else 0..(last ?: set.max())
+                                if (grown.size >= count) null else stamp to grown
+                            }
+                            lowStamp != null && highStamp != null && stamp in lowStamp..highStamp -> null
+                            else -> stamp to set
+                        }
+                    }.toMap()
+                }
+                // Made into the selection's own set here, so the main thread only swaps it in.
+                Triple(PickedTimes.of(grownStamps), grownPieces, history.getOrNull(target)?.timestamp)
+            } ?: return@launch
+            if (transcriptSelection.timestamps === stamps && selectedMessagePieces === piecesNow) {
+                transcriptSelection.replace(result.first)
+                selectedMessagePieces = result.second
+                selectionAnchor = result.third
+                selectionAnchorPiece = null
+            }
         }
     }
     // In an Orbit the selection bar follows the back swipe down before selecting ends.
@@ -242,8 +325,12 @@ fun ChatScreenContent(
     com.ai.assistance.operit.ui.features.orbit.OrbitBackHandler(
         selectionBack, enabled = orbitMessageHost != null && isMultiSelectMode,
     ) {
+        rangeJob?.cancel()
+        pickedExportJob?.cancel()
+        selectionAnchorPiece = null
         isMultiSelectMode = false
         selectedMessageIndices = emptySet()
+        selectedMessagePieces = emptyMap()
     }
     var isGeneratingImage by remember { mutableStateOf(false) }
     var showSharePreviewDialog by remember { mutableStateOf(false) }
@@ -467,9 +554,13 @@ fun ChatScreenContent(
                         bubbleAiBubbleLiquidGlass = bubbleAiBubbleLiquidGlass,
                         bubbleAiBubbleWaterGlass = bubbleAiBubbleWaterGlass,
                         isMultiSelectMode = isMultiSelectMode,
-                        selectedMessageIndices = selectedMessageIndices,
+                        selectedTimestamps = transcriptSelection.timestamps,
                         onToggleMultiSelectMode = { initialIndex ->
                             isMultiSelectMode = !isMultiSelectMode
+                            selectedMessagePieces = emptyMap()
+                            selectionAnchorPiece = null
+                            rangeJob?.cancel()
+                            pickedExportJob?.cancel()
                             if (!isMultiSelectMode) {
                                 selectedMessageIndices = emptySet()
                             } else if (initialIndex != null) {
@@ -479,14 +570,20 @@ fun ChatScreenContent(
                             }
                         },
                         onToggleMessageSelection = { index ->
-                            selectedMessageIndices = if (selectedMessageIndices.contains(index)) {
-                                selectedMessageIndices - index
-                            } else {
-                                selectionAnchor = chatHistory.getOrNull(index)?.timestamp
-                                selectedMessageIndices + index
+                            // By time, one message in or out: the rest of the selection is not touched.
+                            chatHistory.getOrNull(index)?.timestamp?.let { stamp ->
+                                selectedMessagePieces = selectedMessagePieces - stamp
+                                if (stamp in transcriptSelection.timestamps) transcriptSelection.remove(stamp)
+                                else {
+                                    selectionAnchor = stamp
+                                    selectionAnchorPiece = null
+                                    transcriptSelection.add(stamp)
+                                }
                             }
                         },
                         onSelectMessageRangeTo = if (orbitMessageHost != null) selectRangeTo else null,
+                        selectedMessagePieces = selectedMessagePieces,
+                        onPickMessagePieces = if (orbitMessageHost != null) pickMessagePieces else null,
                         horizontalPadding = chatAreaHorizontalPadding.dp,
                         bubbleUserImageStyle = bubbleUserImageStyle,
                         bubbleAiImageStyle = bubbleAiImageStyle,
@@ -609,10 +706,14 @@ fun ChatScreenContent(
                         bubbleAiBubbleLiquidGlass = bubbleAiBubbleLiquidGlass,
                         bubbleAiBubbleWaterGlass = bubbleAiBubbleWaterGlass,
                         isMultiSelectMode = isMultiSelectMode,
-                        selectedMessageIndices = selectedMessageIndices,
+                        selectedTimestamps = transcriptSelection.timestamps,
                         horizontalPadding = chatAreaHorizontalPadding.dp,
                         onToggleMultiSelectMode = { initialIndex ->
                             isMultiSelectMode = !isMultiSelectMode
+                            selectedMessagePieces = emptyMap()
+                            selectionAnchorPiece = null
+                            rangeJob?.cancel()
+                            pickedExportJob?.cancel()
                             if (!isMultiSelectMode) {
                                 selectedMessageIndices = emptySet()
                             } else if (initialIndex != null) {
@@ -622,14 +723,20 @@ fun ChatScreenContent(
                             }
                         },
                         onToggleMessageSelection = { index ->
-                            selectedMessageIndices = if (selectedMessageIndices.contains(index)) {
-                                selectedMessageIndices - index
-                            } else {
-                                selectionAnchor = chatHistory.getOrNull(index)?.timestamp
-                                selectedMessageIndices + index
+                            // By time, one message in or out: the rest of the selection is not touched.
+                            chatHistory.getOrNull(index)?.timestamp?.let { stamp ->
+                                selectedMessagePieces = selectedMessagePieces - stamp
+                                if (stamp in transcriptSelection.timestamps) transcriptSelection.remove(stamp)
+                                else {
+                                    selectionAnchor = stamp
+                                    selectionAnchorPiece = null
+                                    transcriptSelection.add(stamp)
+                                }
                             }
                         },
                         onSelectMessageRangeTo = if (orbitMessageHost != null) selectRangeTo else null,
+                        selectedMessagePieces = selectedMessagePieces,
+                        onPickMessagePieces = if (orbitMessageHost != null) pickMessagePieces else null,
                         showChatFloatingDotsAnimation = showChatFloatingDotsAnimation,
                         bubbleUserImageStyle = bubbleUserImageStyle,
                         bubbleAiImageStyle = bubbleAiImageStyle,
@@ -657,40 +764,125 @@ fun ChatScreenContent(
             exit = fadeOut() + slideOutVertically(targetOffsetY = { it }),
         ) {
             if (orbitMessageHost != null) {
-                fun picked() = selectedMessageIndices.sorted().mapNotNull { chatHistory.getOrNull(it) }
+                val actions = com.ai.assistance.operit.ui.features.orbit.OrbitMessageActions
+                // Each picked message with the bubbles picked of it (null: the whole message).
+                fun pickedParts(
+                    stamps: Set<Long> = transcriptSelection.timestamps,
+                    history: List<ChatMessage> = chatHistory,
+                    pieces: Map<Long, Set<Int>> = selectedMessagePieces,
+                ) = TranscriptSelection.indicesOf(history, stamps).mapNotNull { index ->
+                    history.getOrNull(index)?.let { it to pieces[it.timestamp] }
+                }
+                // A reply picked in part whose picked bubbles are gone (it changed) is left out.
+                fun picked(parts: List<Pair<ChatMessage, Set<Int>?>>) = parts.mapNotNull { (message, pieces) ->
+                    if (pieces == null) message else actions.partOf(context, message, pieces)
+                }
                 fun done() {
+                    selectionAnchorPiece = null
+                    rangeJob?.cancel()
+                    pickedExportJob?.cancel()
                     isMultiSelectMode = false
                     selectedMessageIndices = emptySet()
+                    selectedMessagePieces = emptyMap()
                 }
+                fun exportPicked(work: suspend (Set<Long>, List<ChatMessage>, Map<Long, Set<Int>>) -> Unit) {
+                    if (pickedExportJob?.isActive == true) return
+                    val history = chatHistory
+                    // Waits for "select to here" (no other can start meanwhile); closing selecting
+                    // cancels the wait, so it never reads another selection.
+                    pickedExportJob = orbitMessageHost.scope.launch {
+                        rangeJob?.join()
+                        val stamps = transcriptSelection.timestamps
+                        val pieces = selectedMessagePieces
+                        pickedExportJob = null
+                        done()
+                        orbitMessageHost.scope.launch { work(stamps, history, pieces) }
+                    }
+                }
+                // The bar counts bubbles: a reply of three bubbles picked whole is three.
+                // Counted at once for a usual selection; a very large one is counted off the main
+                // thread, showing the number of messages until then (never an older selection's count).
+                // A reply picked in part counts the picked bubbles it still has.
+                fun countOf(parts: List<Pair<ChatMessage, Set<Int>?>>, check: () -> Unit = {}) =
+                    parts.sumOf { (message, pieces) ->
+                        check()
+                        val all = actions.bubbleCount(context, message)
+                        pieces?.count { it < all } ?: all
+                    }
+                // At once only from the splits the chat already made; anything else off the main thread.
+                // Worked out again only when the picked messages change: a small selection is keyed
+                // by those messages, a large one by the selection alone. The reply being written
+                // counts as one until it is done.
+                val writing = LocalOrbitWritingTimestamp.current
+                val pickedStamps = transcriptSelection.timestamps
+                // The reply being written is keyed by its time alone, so its words do not restart counting.
+                // Found by binary search only; a picked message not found so is left to the background.
+                val smallParts = if (pickedStamps.size <= 200) {
+                    TranscriptSelection.indicesOrNull(chatHistory, pickedStamps)?.mapNotNull { index ->
+                        chatHistory.getOrNull(index)?.let { message ->
+                            (if (message.timestamp == writing) message.copy(content = "", contentStream = null) else message) to
+                                selectedMessagePieces[message.timestamp]
+                        }
+                    }
+                } else null
+                val quickCount = remember(smallParts, writing) {
+                    smallParts?.fold(0 as Int?) { sum, (message, pieces) ->
+                        if (sum == null) return@fold null
+                        if (message.timestamp == writing) return@fold sum + 1
+                        val all = actions.knownBubbleCount(context, message) ?: return@fold null
+                        sum + (pieces?.count { it < all } ?: all)
+                    }
+                }
+                val slowCount = remember(pickedStamps, selectedMessagePieces, smallParts, writing) { mutableStateOf<Int?>(null) }
+                LaunchedEffect(slowCount) {
+                    if (quickCount == null) {
+                        val indices = pickedStamps
+                        val history = chatHistory
+                        val pieces = selectedMessagePieces
+                        slowCount.value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                            val parts = pickedParts(indices, history, pieces)
+                            countOf(parts.filter { it.first.timestamp != writing }) { ensureActive() } +
+                                parts.count { it.first.timestamp == writing }
+                        }
+                    }
+                }
+                val pickedCount = quickCount ?: slowCount.value ?: pickedStamps.size
                 com.ai.assistance.operit.ui.features.orbit.OrbitSelectionBar(
-                    count = selectedMessageIndices.size,
+                    count = pickedCount,
                     onClose = ::done,
+                    // Each action waits for a "select to here" still being worked out, then takes the
+                    // selection as it is and works it out off the main thread.
                     onCopy = {
-                        val messages = picked()
-                        orbitMessageHost.scope.launch {
+                        exportPicked { stamps, history, pieces ->
+                            val messages = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                                picked(pickedParts(stamps, history, pieces))
+                            }
                             com.ai.assistance.operit.ui.features.orbit.OrbitMessageActions.copy(
                                 context,
                                 com.ai.assistance.operit.ui.features.orbit.OrbitMessageActions.transcript(context, orbitMessageHost, messages),
                             )
                         }
-                        done()
                     },
                     onShare = {
-                        val messages = picked().sortedBy { it.timestamp }
-                        if (messages.isNotEmpty()) shareOrbitPicture?.invoke(messages)
-                        done()
+                        val shareChat = orbitMessageHost.chatId
+                        exportPicked { stamps, history, pieces ->
+                            val picks = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                                pickedParts(stamps, history, pieces).sortedBy { it.first.timestamp }
+                                    .map { (message, part) -> com.ai.assistance.operit.ui.features.orbit.OrbitShareImage.Pick(message, part) }
+                            }
+                            // Drawn only for the chat they were picked in, should another be on screen by now.
+                            if (picks.isNotEmpty() && currentOrbitHost.value?.chatId == shareChat) shareOrbitPicture?.invoke(picks)
+                        }
                     },
                     onKeep = {
-                        val messages = picked()
-                        orbitMessageHost.scope.launch {
+                        exportPicked { stamps, history, pieces ->
                             val items = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
-                                messages.map {
-                                    com.ai.assistance.operit.ui.features.orbit.OrbitMessageActions.favoriteOf(context, orbitMessageHost, it)
+                                pickedParts(stamps, history, pieces).map { (message, part) ->
+                                    actions.favoriteOf(context, orbitMessageHost, message, part = part)
                                 }
                             }
                             com.ai.assistance.operit.ui.features.orbit.OrbitMessageActions.keep(context, orbitMessageHost, items)
                         }
-                        done()
                     },
                 )
             } else Surface(

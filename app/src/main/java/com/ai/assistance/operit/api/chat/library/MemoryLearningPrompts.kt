@@ -86,7 +86,7 @@ internal fun buildMemoryLearningInstructions(chatId: String, notes: Boolean, ski
               ## How to Run (the canonical invocation), ## Quick Reference (a flat command list, no narration),
               ## Procedure (numbered, copy-paste-exact), ## Pitfalls, ## Verification (one check that proves it worked).
               Omit a section only when it genuinely has no content.
-            - Frame commands through Operit tools named in backticks (read_file, write_file, edit_file, visit_web,
+            - Frame commands through the app's tools named in backticks (read_file, write_file, edit_file, visit_web,
               use_package, execute_shell, execute_in_terminal_session, capture_screenshot) instead of naming shell
               utilities like cat, grep, sed or find. Third-party CLIs belong inside a script file.
             - Prefer exact commands, paths, endpoints and keys that appear verbatim in the source. Never invent flags,

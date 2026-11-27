@@ -75,6 +75,9 @@ internal class WebSessionWebViewHost {
 
     fun currentPage(): BrowserPage? = activePage
 
+    /** Whether the user zoomed the page picture in past fitting the screen. */
+    val isUserZoomed: Boolean get() = userZoom > 1f
+
     /**
      * Zooms the page picture by [zoomChange] around ([centroidX], [centroidY]) and moves it by
      * ([panX], [panY]), all in container pixels. It never shrinks below fitting the screen.
@@ -206,10 +209,9 @@ internal class WebSessionWebViewHost {
      * the view transform only fits that logical viewport on the phone.
      */
     private fun layoutSize(webView: View, cssWidth: Int, cssHeight: Int): Pair<Int, Int> {
-        val density =
-            webView.resources.displayMetrics.density
-                .takeIf { it.isFinite() && it > 0f }
-                ?: 1f
+        // An engine tab has its own scale (a desktop one is drawn at 1080p); a WebView the screen's.
+        val screen = webView.resources.displayMetrics.density.takeIf { it.isFinite() && it > 0f } ?: 1f
+        val density = layoutScaleOf(activePage?.takeIf { it.view === webView }, screen)
         return (cssWidth * density).roundToInt().coerceAtLeast(1) to
             (cssHeight * density).roundToInt().coerceAtLeast(1)
     }

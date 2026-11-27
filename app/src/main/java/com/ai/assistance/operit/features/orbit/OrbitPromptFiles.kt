@@ -93,7 +93,7 @@ object OrbitPromptFiles {
     suspend fun syncIdentityName(context: Context, orbitId: String, name: String) {
         identity(context, orbitId) // Makes the file from the template if it is missing.
         val file = File(dir(context, orbitId), IDENTITY_FILE)
-        val pattern = Regex("""(?m)^(\s*[-*]\s*(?:\*\*)?(?:名字|Name)(?:\*\*)?\s*[:：]\s*).*$""")
+        val pattern = Regex("""(?m)^(\h*+[-*]\h*+(?:\*\*)?(?:名字|Name)(?:\*\*)?\h*+[:：]\h*+).*$""")
         // Read and write under one lock so a save from the editor is not lost.
         withContext(Dispatchers.IO) {
             lock(file).withLock {
