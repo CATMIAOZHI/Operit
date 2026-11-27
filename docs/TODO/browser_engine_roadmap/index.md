@@ -72,9 +72,9 @@ App 默认内置 Cefrium（内核压缩存放，约多 100 MB 下载），只发
 - 权限：宿主 Manifest 用 `tools:node="remove"` 后从 11 条减到 5 条（联网 2、凭据 2、SDK 内部 1），复测通过。
 - 防护：SDK 无条件 `no-sandbox`，Chromium 额外的渲染进程 seccomp 初始化被跳过；Android isolated UID 和系统 seccomp 仍在，namespace 无法验证。恢复 Chromium 沙盒需改 SDK 重新编译，归第三版。
 
-## Cefrium 维护者的更新（2026-11-01，issue #75，未复测）
+## Cefrium 维护者的更新（2026-11-01，orbit#1，已复测，见下节）
 
-Cefrium 维护者在 [issue #75](https://github.com/CATMIAOZHI/Operit/issues/75) 说明 0.10.1 之后的变化；已回复会复测。以下都是对方说法，要用 0.20.0（2026-11-13 发布，Maven 仓库现只列 0.18.0–0.20.0）实测后才算数：
+Cefrium 维护者在 [orbit#1](https://github.com/CATMIAOZHI/orbit/issues/1)（原 Operit#75，已迁移到 orbit 仓库）说明 0.10.1 之后的变化。以下是对方说法，已用 0.21.0 复测全部成立（见下节）：
 
 - 浏览器标识：0.10.2 起 Chrome 版本取自内核，不再是 `Chrome/0.1`，不用再每页用 CDP 改标识。
 - 沙盒：0.10.2 起不再传 `no-sandbox`，渲染进程在 isolated UID 之上安装 Chromium 的 seccomp-BPF 策略。上面“恢复沙盒归第三版”可能不再需要。
@@ -101,7 +101,7 @@ Cefrium 维护者在 [issue #75](https://github.com/CATMIAOZHI/Operit/issues/75)
 | 体积 | arm64 的 `libcef.so` 202 MB。默认不压缩存进 APK，arm64 调试包 306 MB；`useLegacyPackaging = true` 压缩存放后能正常运行（x86_64 包从 332 MB 降到 208 MB），arm64 估计比普通版多约 90 MB 下载 |
 | 工具链 | JDK 25、Gradle 9.7.1、AGP 9.4、compileSdk 37、minSdk 29。Operit 现在是 AGP 9.1.1、Gradle 9.3.1、compileSdk 36、JDK 17，接入前要先升级工具链；Cefrium 的类文件是 Java 25（major 69），Kotlin 编译器也要能读 |
 
-结论：维护者在 issue #75 说的变化都成立。第二版可以开始接入，第一步是升级 Operit 的构建工具链。
+结论：维护者在 orbit#1 说的变化都成立。第二版可以开始接入，第一步是升级 Operit 的构建工具链。
 
 ## 第二版接入进度
 
