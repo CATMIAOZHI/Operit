@@ -30,10 +30,13 @@ import org.junit.Assert.fail
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
+import org.junit.runner.RunWith
 import org.mockito.Mockito
 import org.mockito.kotlin.any
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
 /**
  * 导入器测试：
@@ -49,8 +52,7 @@ import org.mockito.kotlin.whenever
  *    - 受控补导不删除/不覆盖活动 DataStore 文件、不级联删除事件。
  *
  * DataStore 隔离：模块级 `Context.apiDataStore` 委托在单个 JVM 内只创建一个
- * DataStore 实例（绑定首个访问它的 Context），且每个文件的 DataStore 写入在
- * Windows 上不稳定（tmp→目标 renameTo）。因此：
+ * DataStore 实例（绑定首个访问它的 Context）。因此：
  * - 每个“生命周期阶段”使用独立 filesDir 临时目录，阶段间通过反射清空单例，
  *   使每阶段只读/写自己的文件；
  * - “旧 DataStore 文件恢复”用种子文件（独立 DataStore 实例单次 edit 生成）
@@ -58,6 +60,9 @@ import org.mockito.kotlin.whenever
  *   读取恢复后的文件——与恢复完成→冷启动的实际生命周期一致，全程不删除
  *   或覆盖活动 actor 的文件。
  */
+// Robolectric makes DataStore select its modern Android file replacement path.
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34], manifest = Config.NONE, application = android.app.Application::class)
 class TokenBaselineImportRunnerTest {
 
     @Before
@@ -132,7 +137,7 @@ class TokenBaselineImportRunnerTest {
     /** 真实 Room 数据库（JVM 驱动），与迁移测试同一套支撑。 */
     private fun openDatabase(filesDir: File): AppDatabase =
         Room.databaseBuilder(mockContext(filesDir), AppDatabase::class.java, "app_database")
-            .setDriver(JdbcSQLiteDriver())
+            .setDriver(JdbcSQLiteDriver.forRobolectric())
                 .addMigrations(AppDatabase.MIGRATION_28_29, AppDatabase.MIGRATION_29_30, AppDatabase.MIGRATION_30_31, AppDatabase.MIGRATION_31_32)
             .allowMainThreadQueries()
             .build()
@@ -584,11 +589,7 @@ class TokenBaselineImportRunnerTest {
                 val dao = database.tokenStatsDao()
                 assertEquals(2, dao.countBaselines())
 
-                // 显式重置 B：独立删除路径，只删 B 的 baseline；P1 闭环会在删除事务后
-                // 排空 B 的 legacy 累计键（该文件的唯一真实写入）——Windows 先读入
-                // 缓存再移除磁盘文件，使排空 edit 的 rename 目标不存在。
-                prefs.getInputTokensForProviderModel(providerModelB)
-                check(File(File(phase, "datastore"), "api_settings.preferences_pb").delete())
+                // 显式重置 B：只删 B 的 baseline，删除事务后排空 B 的 legacy 累计键。
                 TokenStatsResetCoordinator.daoProvider = { dao }
                 try {
                     Mockito.mockStatic(AppLogger::class.java).use {
@@ -855,7 +856,7 @@ class TokenBaselineImportRunnerTest {
             }
 
             // 阶段 B：真实累计 setter 增长计数（updateTokensForProviderModel 是
-            // 现有累计 setter；新阶段独立 DataStore 文件，首写安全），再次普通启动：
+            // 现有累计 setter；新阶段使用独立 DataStore 文件），再次普通启动：
             // 计数更新为 N+X，但冻结价格不变（按冻结价重估成本）。
             clearApiDataStoreSingleton()
             val phaseB = kotlin.io.path.createTempDirectory("runner-phase").toFile()
@@ -1105,9 +1106,6 @@ class TokenBaselineImportRunnerTest {
                 val ctx = mockContext(phase)
                 val prefs = constructApiPreferences(ctx)
                 injectApiPreferences(prefs)
-                // Windows DataStore：读入缓存后移除磁盘文件，使排空的 edit 成为唯一真实写入
-                prefs.getInputTokensForProviderModel(providerA)
-                check(File(File(phase, "datastore"), "api_settings.preferences_pb").delete())
 
                 // 删除事务：A 的 baseline 删除 + PENDING operation（items 精确到 A）
                 val op =
@@ -1174,8 +1172,6 @@ class TokenBaselineImportRunnerTest {
             // 排空恢复后（模拟下次启动）：清理完成、B 导入、A 保持删除
             val realPrefs = constructApiPreferences(ctx)
             injectApiPreferences(realPrefs)
-            realPrefs.getInputTokensForProviderModel(providerA)
-            check(File(File(phase, "datastore"), "api_settings.preferences_pb").delete())
             val retryReady = Mockito.mockStatic(AppLogger::class.java).use {
                 TokenBaselineImportRunner.ensureMigratedStrict(ctx)
             }
@@ -1286,8 +1282,6 @@ class TokenBaselineImportRunnerTest {
                 // 排空恢复后：受控补导完成（marker 消费、generation 记录），A 保持删除
                 val realPrefs = constructApiPreferences(ctx)
                 injectApiPreferences(realPrefs)
-                realPrefs.getInputTokensForProviderModel(providerA)
-                check(File(File(phase, "datastore"), "api_settings.preferences_pb").delete())
                 Mockito.mockStatic(AppLogger::class.java).use {
                     TokenBaselineImportRunner.consumePendingRestore(ctx)
                 }
