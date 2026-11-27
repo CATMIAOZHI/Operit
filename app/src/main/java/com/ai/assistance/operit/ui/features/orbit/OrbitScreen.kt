@@ -208,8 +208,6 @@ fun OrbitScreen(
     // Settings already read open the page at once; only the very first visit waits for them.
     val settings by preferences.settingsFlow.collectAsState(initial = preferences.loadedSnapshot())
     val loadedSettings = settings ?: return
-    // The lock screen has nothing to wait for; the launch mark opens onto it at once.
-    if (loadedSettings.appLock) com.ai.assistance.operit.ui.main.MarkLaunchReadyAfterFrame()
     // Outside the lock, so locking again never hands the screen back to the chat from before.
     loadedSettings.activeOrbitId?.let { androidx.compose.runtime.key(it) { OrbitRestoresPreviousChat(it) } }
     // With the app lock on, nothing of Orbit draws until the system check is passed.
@@ -895,6 +893,14 @@ private fun OrbitChatPage(
     // Covered by the menu, the profile or a full page over it, the chat is not being read.
     // The profile is revealed under the back preview without changing the selected chat.
     val profileShown = showProfile && (!devView || devPicture != null || devEntering)
+    // Coming back onto a page other than the chat, the launch mark opens once that page has drawn.
+    // It waits two frames, so a page that cannot come back (and goes back at once) does not count.
+    if (subPage != null || profileShown || (!devView && tab != OrbitTab.CHAT)) {
+        LaunchedEffect(subPage, profileShown, tab) {
+            repeat(2) { androidx.compose.runtime.withFrameNanos { } }
+            com.ai.assistance.operit.ui.main.LaunchReveal.markReady()
+        }
+    }
     val chatOnScreen = tab == OrbitTab.CHAT && !showChats && !profileShown && !sidebarSearch &&
         subPage == null && !showImport && !chatSearchOpen &&
         lifecycleState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
