@@ -243,6 +243,17 @@ class AntigravityTransport(
     fun scoped(account: com.ai.assistance.operit.data.api.ProviderAccount): kotlin.coroutines.CoroutineContext =
         attemptAccount.asContextElement(account)
 
+    /**
+     * A Gemini request handed over as the object itself, made for one attempt only: [request]
+     * rewrites it in place and encodes just the final envelope, instead of reading text back in.
+     */
+    class JsonBody(val json: JSONObject) : RequestBody() {
+        override fun contentType() = "application/json".toMediaType()
+        override fun writeTo(sink: okio.BufferedSink) {
+            sink.writeUtf8(json.toString())
+        }
+    }
+
     suspend fun request(
         body: RequestBody,
         streaming: Boolean,
@@ -251,10 +262,11 @@ class AntigravityTransport(
         val account = picked ?: keys.account()
         // This account's own families, fixed for this request whatever another account loads meanwhile.
         val families = manager.antigravityFamilies(account.identity)
-        val raw = Buffer().also { body.writeTo(it) }.readUtf8()
+        // Parsed straight from the body, so the text copy can go before the request is compiled.
+        val input = (body as? JsonBody)?.json ?: JSONObject(Buffer().also { body.writeTo(it) }.readUtf8())
         names.clear()
         val session = currentCoroutineContext()[OpenCodeSessionContext]?.sessionId ?: fallbackSession
-        val compiled = compile(JSONObject(raw), model, session, names, families)
+        val compiled = compile(input, model, session, names, families)
         val envelope = JSONObject().put("project", account.projectId).put("model", compiled.first)
             .put("userAgent", "antigravity").put("requestType", "agent")
             .put("requestId", "agent-${UUID.randomUUID()}").put("request", compiled.second)
@@ -345,7 +357,9 @@ class AntigravityTransport(
         internal fun compile(input: JSONObject, model: String, session: String,
             names: MutableMap<String, String> = mutableMapOf(),
             families: Map<String, Set<String>>? = null): Pair<String, JSONObject> {
-            val body = JSONObject(input.toString())
+            // Callers pass a request object of their own: changing it in place saves a full copy,
+            // which for a long chat is several megabytes.
+            val body = input
             // CCA accepts the Gemini wire shape, not arbitrary GenerateContent extensions.
             body.keys().asSequence().toList().filter {
                 it !in setOf("contents", "systemInstruction", "tools", "generationConfig", "toolConfig")
