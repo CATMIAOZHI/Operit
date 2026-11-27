@@ -200,10 +200,10 @@ android {
         // The engine needs Android 10.
         minSdk = if (browserBuild) 29 else 26
         targetSdk = 34
-        // Bound to the baseline version, not to the ry release counter: bump by one only when the
-        // baseline itself moves. Stable and dev must agree; see docs/agent/dev-to-main-promotion.md.
-        versionCode = 100205
-        versionName = "1.12.2-ry.25"
+        // Every stable release increments versionCode by one, including a baseline update.
+        // Stable and dev must agree; see docs/agent/dev-to-main-promotion.md.
+        versionCode = 100206
+        versionName = "1.12.2-ry.26"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
