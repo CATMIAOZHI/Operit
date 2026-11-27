@@ -8927,6 +8927,8 @@
     <string name="quota_title">Usage &amp; balance</string>
     <string name="quota_refresh">Refresh</string>
     <string name="quota_unavailable">Balance is temporarily unavailable</string>
+    <string name="quota_stale">Refresh failed; the numbers above are from the last check</string>
+    <string name="quota_rejected">The key is invalid or cannot read the balance; check the API key</string>
     <string name="quota_not_fetched">Tap refresh to load the balance</string>
     <string name="quota_no_windows">This account reported no quota windows</string>
     <string name="quota_window_five_hour">5 hours</string>
@@ -9849,7 +9851,7 @@
     <string name="orbit_chats_title_label">Title</string>
     <string name="orbit_chats_title_hint">For example: Trip plans</string>
     <string name="orbit_chats_delete">Delete side chat</string>
-    <string name="orbit_chats_delete_confirm">Delete “%1$s” and all its messages? Reminders set in this side chat will show up in the main chat.</string>
+    <string name="orbit_chats_delete_confirm">Delete “%1$s” and all its messages? Reminders and tasks now in this side chat will show up in the main chat.</string>
     <string name="orbit_chats_delete_weixin_title">This chat is linked to WeChat</string>
     <string name="orbit_chats_delete_weixin_text">Messages from WeChat land in “%1$s”, so it can\'t be deleted right now. To delete it, first disconnect in Settings → Message channels → WeChat.</string>
     <string name="orbit_chats_delete_weixin_settings">Open settings</string>

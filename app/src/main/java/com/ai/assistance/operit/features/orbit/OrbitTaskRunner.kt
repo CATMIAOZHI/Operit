@@ -708,7 +708,12 @@ object OrbitTaskRunner {
      */
     private suspend fun wakeOrbit(context: Context, orbit: com.ai.assistance.operit.data.preferences.OrbitProfile,
         state: ActiveRun, task: OrbitTaskEntity, run: OrbitRunEntity, leftMs: Long): OrbitWake.Told {
-        val chatId = task.chatId.takeIf { it in orbit.talkChatIds } ?: orbit.chatId
+        // A side chat whose history was deleted in the chat history settings is still listed; its
+        // task wakes in the main chat, like its results.
+        val chatId = task.chatId.takeIf { it in orbit.talkChatIds && (it == orbit.chatId ||
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                AppDatabase.getDatabase(context).chatDao().getChatById(it) != null
+            }) } ?: orbit.chatId
         val english = com.ai.assistance.operit.util.LocaleUtils.usesEnglishPrompt(context)
         val checkIn = task.kind in setOf("DAILY", "ONCE")
         // Orbit wakes inside the conversation, so an excerpt of it would only repeat what it sees.

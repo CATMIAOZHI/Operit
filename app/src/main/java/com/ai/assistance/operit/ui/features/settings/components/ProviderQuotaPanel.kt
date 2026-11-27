@@ -39,6 +39,8 @@ fun ProviderQuotaPanel(
     loading: Boolean,
     failed: Boolean,
     onRefresh: () -> Unit,
+    /** The provider refused the key (401/403): refreshing again will not help. */
+    rejected: Boolean = false,
 ) {
     // The countdown is the only part of this panel that ages without new data, so it drives its own
     // clock rather than making every caller remember to tick.
@@ -63,10 +65,12 @@ fun ProviderQuotaPanel(
             }
         }
         when {
-            loading -> LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            // A refresh keeps the last numbers on screen; the bar only stands in while there are none.
+            loading && quota == null -> LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             quota == null -> Text(
                 text = stringResource(
-                    if (failed) R.string.quota_unavailable else R.string.quota_not_fetched,
+                    if (failed && rejected) R.string.quota_rejected
+                    else if (failed) R.string.quota_unavailable else R.string.quota_not_fetched,
                 ),
                 style = MaterialTheme.typography.bodySmall,
                 color = if (failed) {
@@ -76,6 +80,7 @@ fun ProviderQuotaPanel(
                 },
             )
             else -> {
+                if (loading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 if (quota.windows.isEmpty()) {
                     Text(
                         text = stringResource(R.string.quota_no_windows),
@@ -105,7 +110,12 @@ fun ProviderQuotaPanel(
                 // being replaced by an error that says nothing about the account's real usage.
                 if (failed) {
                     Text(
-                        text = stringResource(R.string.quota_unavailable),
+                        text = stringResource(R.string.quota_stale),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    if (rejected) Text(
+                        text = stringResource(R.string.quota_rejected),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error,
                     )
