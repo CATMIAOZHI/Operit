@@ -200,8 +200,8 @@ android {
         targetSdk = 34
         // Every stable release increments versionCode by one, including a baseline update.
         // Stable and dev must agree; see docs/agent/dev-to-main-promotion.md.
-        versionCode = 100206
-        versionName = "1.12.2-ry.26"
+        versionCode = 100207
+        versionName = "1.12.2-ry.27"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
