@@ -456,9 +456,9 @@ class UpdateManager private constructor(private val context: Context) {
         if (best == null) {
             AppLogger.d(TAG, "tryFetchLatestPatchUpdate(): no valid patch candidates")
         }
-        // 所有渠道都做链可达性预检：不可达时回退到完整 APK（bestFull），
-        // 而不是等到安装阶段才让 resolvePatchChain 失败。
-        // 链起点是当前安装 APK 的 SHA-256；读整个 APK 较慢，只在确实有补丁候选时才算。
+        // 补丁链可达性预检：当前安装 APK 的 SHA-256 必须能通过补丁边到达目标，
+        // 否则回退到完整 APK（bestFull），避免安装阶段才失败。
+        // 读整个 APK 较慢，只在确实有补丁候选时才算。
         val patchIsReachable =
             best != null && canReachSha(sha256Hex(File(context.applicationInfo.sourceDir)), bestTargetSha, patchEdges)
         return if (patchIsReachable) best ?: bestFull else bestFull
