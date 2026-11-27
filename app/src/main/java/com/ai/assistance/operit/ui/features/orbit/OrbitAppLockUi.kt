@@ -120,6 +120,8 @@ internal fun OrbitAppLockGate(enabled: Boolean, orbit: OrbitProfile?, content: @
         holder.SaveableStateProvider("orbit") { content() }
         return
     }
+    // The lock has nothing to wait for; the launch mark opens onto it at once.
+    com.ai.assistance.operit.ui.main.MarkLaunchReadyAfterFrame()
     // The lock wears Orbit's own look (its light or dark mode and colors), like the pages behind it.
     if (orbit != null) {
         OrbitAppearanceTheme(orbit) { OrbitLockScreen(orbit = orbit, resumed = resumed) }

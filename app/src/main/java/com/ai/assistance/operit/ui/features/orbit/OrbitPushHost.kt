@@ -171,8 +171,9 @@ internal fun <T : Any> OrbitPushHost(
         val spec = tween<Float>(OrbitMotion.PUSH_MS, easing = OrbitMotion.Easing)
         // Each group of writes below happens before the next frame, so nothing flashes between them.
         when {
-            gestureDone -> {
-                // The swipe already took the page off screen: drop it.
+            // The swipe already took the page off screen, or the launch mark still covers the app
+            // (a page that cannot come back after recreation): change pages without moving them.
+            gestureDone || com.ai.assistance.operit.ui.main.LaunchReveal.covering.value -> {
                 gestureDone = false
                 drawn = entries
                 state.depth = entries.size
