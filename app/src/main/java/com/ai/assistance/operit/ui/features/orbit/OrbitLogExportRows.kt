@@ -53,10 +53,21 @@ private val TOOL_ERROR_RANGES = listOf(
 /** [warning]: set when the newest log lines may be missing from the file. */
 private class SavedLog(val name: String, val uri: Uri, val warning: String? = null)
 
-/** Settings rows that save the app log or the tool-error records to Download/operit, ready to share. */
+/**
+ * Settings rows that save the app log or the tool-error records to Download/operit, ready to share,
+ * in one card under [title] with the rows [before] and [after] them.
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun OrbitLogExportSection(cardColor: Color) {
+internal fun OrbitLogExportSection(
+    cardColor: Color,
+    title: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    before: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit = {},
+    after: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit = {},
+    appLogModifier: Modifier = Modifier,
+    toolErrorsModifier: Modifier = Modifier,
+) {
     val context = LocalContext.current
     val resources = androidx.compose.ui.platform.LocalResources.current
     val scope = rememberCoroutineScope()
@@ -108,23 +119,25 @@ internal fun OrbitLogExportSection(cardColor: Color) {
     }
 
     Column {
-        SettingsSectionTitle(text = stringResource(R.string.orbit_section_troubleshoot), icon = CardIcons.get("lucide:bug") ?: androidx.compose.material.icons.Icons.Rounded.Build)
+        SettingsSectionTitle(text = title, icon = icon)
         SettingsCard(backgroundColor = cardColor) {
+            before()
             LogExportRow(
+                modifier = appLogModifier,
                 title = stringResource(R.string.orbit_log_export_app),
-                subtitle = stringResource(R.string.orbit_log_export_app_desc),
                 icon = "scroll-text",
                 running = running == LogExport.APP,
                 onClick = { if (running == null) asking = LogExport.APP },
             )
             SettingsRowDivider(inset = false)
             LogExportRow(
+                modifier = toolErrorsModifier,
                 title = stringResource(R.string.orbit_log_export_tool_errors),
-                subtitle = stringResource(R.string.orbit_log_export_tool_errors_desc),
                 icon = "file-warning",
                 running = running == LogExport.TOOL_ERRORS,
                 onClick = { if (running == null) asking = LogExport.TOOL_ERRORS },
             )
+            after()
         }
     }
 
@@ -210,10 +223,14 @@ internal fun OrbitLogExportSection(cardColor: Color) {
 }
 
 @Composable
-private fun LogExportRow(title: String, subtitle: String, icon: String, running: Boolean, onClick: () -> Unit) {
+private fun LogExportRow(
+    title: String, icon: String, running: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier,
+) {
     SettingsNavRow(
+        modifier = modifier,
         title = title,
-        subtitle = if (running) stringResource(R.string.orbit_log_export_running) else subtitle,
+        // Only a running export says something under its name, like the other rows on the page.
+        subtitle = if (running) stringResource(R.string.orbit_log_export_running) else null,
         icon = CardIcons.get("lucide:$icon"),
         searchable = false,
         onClick = onClick,

@@ -9285,6 +9285,8 @@
     <string name="orbit_quota_status_extra">This week\'s allowance is used up; using the extra allowance</string>
     <string name="orbit_quota_usage">Usage</string>
     <string name="orbit_quota_adjust">Change allowances</string>
+    <string name="orbit_quota_adjust_short">Adjust</string>
+    <string name="orbit_quota_reset_extra_short">Refill extra</string>
     <string name="orbit_quota_adjust_help">The weekly allowance starts over every Monday at midnight. The extra allowance is only used once the week\'s is gone; 0 turns it off. With both used up, %1$s pauses.</string>
     <string name="orbit_quota_mode">Count by</string>
     <string name="orbit_quota_mode_money">Spending</string>
@@ -9300,6 +9302,7 @@
     <string name="orbit_quota_unit_size">1000000</string>
     <string name="orbit_quota_number_style">en</string>
     <string name="orbit_quota_status_ok">%1$s left this week</string>
+    <string name="orbit_quota_status_reset">%1$s; the weekly allowance resets %2$s</string>
     <string name="orbit_quota_weekly_min">At least %1$s</string>
     <string name="orbit_quota_extra_invalid">Enter a number</string>
     <string name="orbit_quota_extra_zero">0: pause as soon as the week\'s allowance is gone</string>
@@ -9934,12 +9937,13 @@
     <string name="orbit_vault_empty">No passwords, keys or OAuth logins saved yet. When one is needed, %1$s shows a secure card.</string>
     <string name="orbit_vault_delete_title">Delete this sign-in or key?</string>
     <string name="orbit_vault_delete_confirm">This item for %1$s will be deleted for good.</string>
-    <string name="orbit_section_privacy">Privacy and security</string>
+    <string name="orbit_section_privacy">Privacy and data</string>
     <string name="orbit_section_display">Display</string>
     <string name="orbit_section_messages">Messages and voice</string>
-    <string name="orbit_section_tools">Tools</string>
+    <string name="orbit_section_tools">Tools and connections</string>
     <string name="orbit_section_data">Data</string>
     <string name="orbit_section_developer">Developer</string>
+    <string name="orbit_section_help">Help and about</string>
     <string name="orbit_developer_switch">Developer mode</string>
     <string name="orbit_developer_switch_desc">Shows \"Raw conversation\" at the top of the task list: Orbit\'s chat opened in the normal chat screen, with all thinking and tool calls, and messages hidden in the chat (such as tapback notices and quiet endings) labeled. Background task details also show their full instructions.</string>
     <string name="orbit_tools_row">Per-tool permissions</string>
