@@ -30,6 +30,10 @@ internal object OrbitAppUpdate {
     /** The version that brought the engine. */
     private const val ENGINE_VERSION = "browser_engine_version"
     private const val KEY = "app_updated:"
+    /** The note that a newer version can be installed, one per day ("update_available@2026-11-27"). */
+    private const val AVAILABLE_KEY = "update_available@"
+    /** The day an Orbit last heard of a newer version, per Orbit. */
+    private const val AVAILABLE_DAY = "available_day:"
     /** A note queued by a process that died is told again after this (OrbitNotices' stale time). */
     private const val RETRY_MS = 16 * 60_000L
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -48,6 +52,59 @@ internal object OrbitAppUpdate {
     fun onOrbitResumed(context: Context) {
         val app = context.applicationContext
         scope.launch { runCatching { notice(app); tell(app) } }
+    }
+
+    /**
+     * A newer version [version] can be installed (found by the daily automatic check; [releaseUrl] is
+     * its release page): the running Orbit hears of it at most once a day and tells the user in its
+     * own words. [stillOn] is asked again right before the note goes out (the user may turn the check
+     * off meanwhile); a note that waited past midnight, or whose Orbit was paused, is dropped.
+     */
+    suspend fun tellAvailable(context: Context, version: String, releaseUrl: String, stillOn: suspend () -> Boolean) {
+        val app = context.applicationContext
+        val orbits = OrbitPreferences.getInstance(app)
+        val orbit = orbits.current().active?.takeUnless { it.deleting } ?: return
+        val date = java.time.LocalDate.now()
+        val today = date.toString()
+        synchronized(this) {
+            val prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            // A new day: older marks are dropped. The days next to today stay, so a clock set back a
+            // day (another time zone) cannot wipe the mark of a day already told.
+            if (prefs.getString(AVAILABLE_DAY + orbit.id, null) != today) {
+                OrbitNotices.clear(app, orbit.id, AVAILABLE_KEY,
+                    keep = listOf(date.minusDays(1), date, date.plusDays(1)).map { AVAILABLE_KEY + it })
+                prefs.edit().putString(AVAILABLE_DAY + orbit.id, today).apply()
+            }
+        }
+        val current = BuildConfig.VERSION_NAME
+        OrbitNotices.once(app, orbit.id, AVAILABLE_KEY + today,
+            "[orbit-update-available] 有新版本\n这是 App 发给你的说明，不是用户说的，用户也看不到。Orbit 有新版本 $version " +
+                "可以更新，现在是 $current。用一两句自然的话告诉用户，更新在「设置 → 关于」里。这个版本的发布记录在 " +
+                "$releaseUrl ，用户问起这次更新了什么时再去看。同一个版本你已经提过、用户没回应，就别天天重复，" +
+                "隔几天再轻轻提一句；用户说过暂时不想更新，就不再提。不提的时候调用 orbit_nothing_to_do 保持安静。",
+            "[orbit-update-available] A new version is out\nThis is a note from the app, not from the user; they cannot " +
+                "see it. Orbit $version can be installed; this is $current. Tell the user in a sentence or two; the update " +
+                "is under Settings → About. This version's release record is at $releaseUrl — look at it when the user " +
+                "asks what changed. If you already mentioned this version and the user did not respond, do not repeat it " +
+                "every day; a light word again after a few days is enough. If the user said they do not want to update for " +
+                "now, do not bring it up again. When you do not mention it, call orbit_nothing_to_do to stay quiet.",
+            wanted = {
+                // The day is read last, after the reads that may wait, so a note never crosses midnight.
+                stillOn() && orbits.current().active?.let { it.id == orbit.id && !it.deleting } == true &&
+                    java.time.LocalDate.now().toString() == today
+            })
+    }
+
+    /** The automatic check was turned off: a note about a new version not yet told is dropped. */
+    suspend fun withdrawAvailable(context: Context) {
+        val app = context.applicationContext
+        OrbitPreferences.getInstance(app).current().orbits.forEach { OrbitNotices.withdraw(app, it.id, AVAILABLE_KEY) }
+    }
+
+    private fun releasesUrl(): String {
+        val repo = if (BuildConfig.PERSONAL_DEV_UPDATE_CHANNEL) DistributionConfig.NIGHTLY_REPOSITORY
+            else DistributionConfig.SOURCE_REPOSITORY
+        return "https://github.com/${DistributionConfig.OWNER}/$repo/releases"
     }
 
     /**
@@ -113,9 +170,7 @@ internal object OrbitAppUpdate {
         val orbit = OrbitPreferences.getInstance(app).current().active?.takeUnless { it.deleting } ?: return
         // Read again after the wait: an update noticed meanwhile is told by the next call.
         if (snapshot(app).let { it.at != s.at || it.engineSince != s.engineSince }) return
-        val repo = if (BuildConfig.PERSONAL_DEV_UPDATE_CHANNEL) DistributionConfig.NIGHTLY_REPOSITORY
-            else DistributionConfig.SOURCE_REPOSITORY
-        val releases = "https://github.com/${DistributionConfig.OWNER}/$repo/releases"
+        val releases = releasesUrl()
         val current = BuildConfig.VERSION_NAME
         // Moved to the built-in browser: an Orbit made before that version was installed had used
         // the old one, and tells the user, once.

@@ -65,9 +65,7 @@ class UpdateManager private constructor(private val context: Context) {
         fun getInstance(context: Context): UpdateManager {
             return INSTANCE
                     ?: synchronized(this) {
-                        val instance = UpdateManager(context.applicationContext)
-                        INSTANCE = instance
-                        instance
+                        INSTANCE ?: UpdateManager(context.applicationContext).also { INSTANCE = it }
                     }
         }
 
@@ -343,7 +341,6 @@ class UpdateManager private constructor(private val context: Context) {
         var bestVersion = ""
         var bestFullVersion = ""
         var bestTargetSha = ""
-        val currentApkSha = sha256Hex(File(context.applicationInfo.sourceDir))
         val patchEdges = mutableMapOf<String, MutableSet<String>>()
 
         for (r in releases) {
@@ -436,7 +433,9 @@ class UpdateManager private constructor(private val context: Context) {
         }
         // 补丁链可达性预检：当前安装 APK 的 SHA-256 必须能通过补丁边到达目标，
         // 否则回退到完整 APK（bestFull），避免安装阶段才失败。
-        val patchIsReachable = canReachSha(currentApkSha, bestTargetSha, patchEdges)
+        // 读整个 APK 较慢，只在确实有补丁候选时才算。
+        val patchIsReachable =
+            best != null && canReachSha(sha256Hex(File(context.applicationInfo.sourceDir)), bestTargetSha, patchEdges)
         return if (patchIsReachable) best ?: bestFull else bestFull
     }
 

@@ -404,6 +404,11 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
         if (isMainAppProcess()) {
             runCatching { com.ai.assistance.operit.data.model.ModelAutoConfig.schedule(applicationContext) }
                 .onFailure { AppLogger.w(TAG, "Could not schedule the model catalog refresh: ${it.message}") }
+            // Once a day, look for a new version while the user has it on (About page).
+            applicationScope.launch {
+                runCatching { com.ai.assistance.operit.data.updates.AppUpdateAutoCheck.sync(applicationContext) }
+                    .onFailure { AppLogger.w(TAG, "Could not schedule the update check: ${it.message}") }
+            }
             applicationScope.launch {
                 runCatching { com.ai.assistance.operit.data.model.ModelAutoConfig.refreshIfStale(applicationContext) }
                     .onFailure { AppLogger.w(TAG, "Model catalog refresh failed: ${it.message}") }

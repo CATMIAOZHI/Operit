@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -416,12 +417,25 @@ private fun SettingsRow(
     subtitleText: String? = null,
     subtitleContent: (@Composable () -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
-    onClick: (() -> Unit)? = null
+    onClick: (() -> Unit)? = null,
+    /** A switch row: the whole row turns it, and screen readers read the title with its state. */
+    checked: Boolean? = null,
+    onCheckedChange: ((Boolean) -> Unit)? = null,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(enabled = onClick != null) { onClick?.invoke() }
+            .then(
+                if (checked != null && onCheckedChange != null) {
+                    Modifier.toggleable(
+                        value = checked,
+                        role = androidx.compose.ui.semantics.Role.Switch,
+                        onValueChange = onCheckedChange
+                    )
+                } else {
+                    Modifier.clickable(enabled = onClick != null) { onClick?.invoke() }
+                }
+            )
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -457,7 +471,10 @@ private fun SettingsRow(
             }
         }
 
-        if (trailing != null) {
+        if (checked != null) {
+            Spacer(modifier = Modifier.width(12.dp))
+            Switch(checked = checked, onCheckedChange = null)
+        } else if (trailing != null) {
             trailing()
         } else if (onClick != null) {
             Icon(
@@ -489,6 +506,7 @@ private fun AboutScreenContent(
 
     val preferences = remember { UserPreferencesManager.getInstance(context) }
     val betaEnabled = preferences.betaPlanEnabled.collectAsState(initial = false).value
+    val autoCheckUpdates = preferences.autoCheckUpdates.collectAsState(initial = true).value
 
     // 获取UpdateManager实例
     val updateManager = remember { UpdateManager.getInstance(context) }
@@ -981,13 +999,22 @@ private fun AboutScreenContent(
                         iconTint = MaterialTheme.colorScheme.tertiary,
                         title = stringResource(id = R.string.beta_plan),
                         subtitleText = stringResource(id = R.string.beta_plan_desc),
-                        trailing = {
-                            Switch(
-                                checked = betaEnabled,
-                                onCheckedChange = { enabled ->
-                                    scope.launch { preferences.saveBetaPlanEnabled(enabled) }
-                                }
-                            )
+                        checked = betaEnabled,
+                        onCheckedChange = { enabled ->
+                            scope.launch { preferences.saveBetaPlanEnabled(enabled) }
+                        }
+                    )
+
+                    HorizontalDivider(modifier = Modifier.padding(start = 66.dp))
+
+                    SettingsRow(
+                        icon = Icons.Default.Autorenew,
+                        iconTint = MaterialTheme.colorScheme.secondary,
+                        title = stringResource(id = R.string.auto_check_updates),
+                        subtitleText = stringResource(id = R.string.auto_check_updates_desc),
+                        checked = autoCheckUpdates,
+                        onCheckedChange = { enabled ->
+                            com.ai.assistance.operit.data.updates.AppUpdateAutoCheck.setEnabled(context, enabled)
                         }
                     )
                 }

@@ -1540,7 +1540,9 @@
     <string name="github_source_desc">直接从GitHub官方服务器下载，速度可能较慢</string>
     <string name="no_mirrors_found">未找到可用的镜像源</string>
     <string name="beta_plan">Beta 计划</string>
-    <string name="beta_plan_desc">加入后将会在有更新的测试版本的时候，wifi下自动下载30MB左右的补丁更新。</string>
+    <string name="beta_plan_desc">加入后也会收到测试版，通常用 30MB 左右的补丁更新。</string>
+    <string name="auto_check_updates">自动检查更新</string>
+    <string name="auto_check_updates_desc">每天自动查一次新版本。有新版本时，Orbit 会在聊天里告诉你。</string>
     <string name="main_github_login_success">登录成功，欢迎 %1$s！</string>
     <string name="main_github_get_user_failed">获取用户信息失败: %1$s</string>
     <string name="main_github_login_failed">登录失败: %1$s</string>
