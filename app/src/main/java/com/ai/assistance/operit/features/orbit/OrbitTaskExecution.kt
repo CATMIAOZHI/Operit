@@ -21,7 +21,13 @@ internal object OrbitTaskExecution {
         val root = binding.chatId == binding.rootChatId
         // Only the alignment review reads a window of chat page by page.
         val reads = root && dao.run(binding.runId)?.let { dao.task(it.taskId) }?.source == OrbitRoutines.ALIGNMENT_SOURCE
-        return promptsForBinding(root) + if (reads) listOf(OrbitReviewReader.prompt) else emptyList()
+        val prompts = promptsForBinding(root) + if (reads) listOf(OrbitReviewReader.prompt) else emptyList()
+        // The mail tool is only offered once the Orbit has a mailbox.
+        val mail = com.ai.assistance.operit.core.tools.OrbitExtraTools.mailNames
+        if (prompts.none { it.name in mail }) return prompts
+        val owner = runCatching { OrbitMemoryScope.owner(context, chatId) }
+            .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }.getOrNull()
+        return if (OrbitMailAccounts.connected(context, owner?.id)) prompts else prompts.filter { it.name !in mail }
     }
 
     internal fun promptsForBinding(root: Boolean) =

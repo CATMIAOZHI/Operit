@@ -83,11 +83,14 @@ internal object OrbitTools {
         }?.let { it.chatId == it.rootChatId } == true
         // Any other chat the Orbit owns is one its agents opened: a subagent of the chat or a task.
         val isOrbitSubagent = hasOrbitSkills && !isOrbitChat && !isTaskRoot
-        return visibilityFor(isOrbitChat, hasOrbitSkills, isTaskRoot, isOrbitSubagent)
+        val hasMail = runCatching { com.ai.assistance.operit.features.orbit.OrbitMailAccounts.connected(context, owner?.id) }
+            .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }.getOrDefault(false)
+        return visibilityFor(isOrbitChat, hasOrbitSkills, isTaskRoot, isOrbitSubagent, hasMail)
     }
 
     private fun visibilityFor(
         isOrbitChat: Boolean, hasOrbitSkills: Boolean, isTaskRoot: Boolean, isOrbitSubagent: Boolean,
+        hasMail: Boolean = true,
     ): Map<String, Boolean> =
         mapOf(SET_NAME to isOrbitChat, OrbitSkillTools.NAME to hasOrbitSkills,
             OrbitTaskTools.NAME to (isOrbitChat || isTaskRoot), OrbitSoulTools.NAME to (isOrbitChat || isTaskRoot),
@@ -96,7 +99,7 @@ internal object OrbitTools {
             OrbitBoardTools.FEED to (isOrbitChat || isTaskRoot), OrbitBoardTools.IDEA to (isOrbitChat || isTaskRoot),
             OrbitBoardTools.TRACKING to (isOrbitChat || isTaskRoot),
             com.ai.assistance.operit.features.orbit.OrbitTaskRunner.FINISH to false) +
-            OrbitExtraTools.visibility(isOrbitChat, isTaskRoot, isOrbitSubagent) +
+            OrbitExtraTools.visibility(isOrbitChat, isTaskRoot, isOrbitSubagent, hasMail) +
             // Browsing is mostly left to subagents, and they are the ones who meet a password page.
             mapOf(OrbitBrowserHandoffTools.NAME to hasOrbitSkills, OrbitBrowserShowTools.NAME to hasOrbitSkills)
 

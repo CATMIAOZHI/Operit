@@ -987,6 +987,7 @@ private fun OrbitChatPage(
                 onOpenNotificationSettings = { push(OrbitSubPage.NOTIFICATION_SETTINGS) },
                 onOpenSpeech = { push(OrbitSubPage.SPEECH_SETTINGS) },
                 onOpenChannels = { push(OrbitSubPage.CHANNELS) },
+                onOpenConnectors = { push(OrbitSubPage.CONNECTORS) },
                 onOpenText = { push(OrbitSubPage.TEXT_SETTINGS) },
                 onOpenAutomation = { push(OrbitSubPage.AUTOMATION_SETTINGS) },
                 onOpenBackup = { push(OrbitSubPage.BACKUP) },
@@ -1001,6 +1002,7 @@ private fun OrbitChatPage(
             )
             OrbitSubPage.CHANNELS -> OrbitChannelsPage(orbit, onBack = back,
                 onOpenWeixin = { push(OrbitSubPage.WEIXIN) })
+            OrbitSubPage.CONNECTORS -> OrbitConnectorsPage(orbit, onBack = back)
             OrbitSubPage.WEIXIN -> OrbitWeixinPage(orbit, onBack = back, onOpenChat = { chat ->
                 talkChatId = chat
                 tab = OrbitTab.CHAT
@@ -1701,7 +1703,7 @@ private fun OrbitChatPage(
     }
 }
 
-private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, MEMORY, MEMORY_LIBRARY, IDENTITY, USER, PROMPTS, PROMPT, ALIGNMENT, FILES, PACKAGES, TOOL_PERMISSIONS, TOOL_ACCESS, VAULT, VAULT_ENTRY, USAGE, USAGE_TRENDS, APPEARANCE, PET, MODELS, CONTEXT, MODEL_CONFIG, PHONE_PERMISSIONS, DEVICE_ACCESS, NOTIFICATION_SETTINGS, SPEECH_SETTINGS, CHANNELS, WEIXIN, TEXT_SETTINGS, AUTOMATION_SETTINGS, BACKUP, ABOUT, UPDATE_HISTORY, LANGUAGE, STORAGE, COMPONENTS, MCP_CONFIG, TERMINAL_STARTUP, HELP, AGREEMENT, APP_COSTS, APP_PRICING, APP_GROUPS, ROLE_CARDS, LESSONS }
+private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, MEMORY, MEMORY_LIBRARY, IDENTITY, USER, PROMPTS, PROMPT, ALIGNMENT, FILES, PACKAGES, TOOL_PERMISSIONS, TOOL_ACCESS, VAULT, VAULT_ENTRY, USAGE, USAGE_TRENDS, APPEARANCE, PET, MODELS, CONTEXT, MODEL_CONFIG, PHONE_PERMISSIONS, DEVICE_ACCESS, NOTIFICATION_SETTINGS, SPEECH_SETTINGS, CHANNELS, CONNECTORS, WEIXIN, TEXT_SETTINGS, AUTOMATION_SETTINGS, BACKUP, ABOUT, UPDATE_HISTORY, LANGUAGE, STORAGE, COMPONENTS, MCP_CONFIG, TERMINAL_STARTUP, HELP, AGREEMENT, APP_COSTS, APP_PRICING, APP_GROUPS, ROLE_CARDS, LESSONS }
 
 /** iOS-like timing: a quick start that settles softly (UIKit's default presentation curve). */
 internal object OrbitMotion {
@@ -2253,6 +2255,7 @@ private fun OrbitSettingsPage(
     onOpenNotificationSettings: () -> Unit,
     onOpenSpeech: () -> Unit,
     onOpenChannels: () -> Unit,
+    onOpenConnectors: () -> Unit,
     onOpenText: () -> Unit,
     onOpenAutomation: () -> Unit,
     onOpenBackup: () -> Unit,
@@ -2295,6 +2298,7 @@ private fun OrbitSettingsPage(
         onOpenNotificationSettings = onOpenNotificationSettings, onOpenAppearance = onOpenAppearance,
         onOpenPet = onOpenPet, onOpenText = onOpenText, onOpenSpeech = onOpenSpeech,
         onOpenPhonePermissions = onOpenPhonePermissions, onOpenChannels = onOpenChannels,
+        onOpenConnectors = onOpenConnectors,
         onOpenAutomation = onOpenAutomation, onOpenBackup = onOpenBackup,
         onOpenPrompts = onOpenPrompts, onOpenPackages = onOpenPackages,
         onOpenToolAccess = onOpenToolAccess, onOpenVault = onOpenVault, onOpenImport = onOpenImport,
@@ -2557,6 +2561,14 @@ private fun OrbitSettingsPage(
                         searchable = false,
                         onClick = onOpenChannels,
                     )
+                    SettingsRowDivider(inset = false)
+                    SettingsNavRow(
+                        title = stringResource(R.string.orbit_connectors_title),
+                        subtitle = stringResource(R.string.orbit_connectors_row),
+                        icon = lucide("mail"),
+                        searchable = false,
+                        onClick = onOpenConnectors,
+                    )
                 }
             }
 
@@ -2783,6 +2795,7 @@ private fun orbitSettingsEntries(
     onOpenSpeech: () -> Unit,
     onOpenPhonePermissions: () -> Unit,
     onOpenChannels: () -> Unit,
+    onOpenConnectors: () -> Unit,
     onOpenAutomation: () -> Unit,
     onOpenBackup: () -> Unit,
     onOpenPrompts: () -> Unit,
@@ -2824,6 +2837,7 @@ private fun orbitSettingsEntries(
         add(entry(R.string.orbit_notification_settings, R.string.orbit_phone_notify_note, "bell", messages, onOpenNotificationSettings))
         add(entry(R.string.orbit_speech_card_title, R.string.orbit_speech_row, "audio-lines", messages, onOpenSpeech))
         add(entry(R.string.orbit_channels_title, R.string.orbit_channels_row, "message-circle", messages, onOpenChannels))
+        add(entry(R.string.orbit_connectors_title, R.string.orbit_connectors_row, "mail", messages, onOpenConnectors))
         add(entry(R.string.orbit_phone_permissions, R.string.orbit_phone_permissions_row, "hand", device, onOpenPhonePermissions))
         add(entry(R.string.orbit_automation_settings_title, R.string.orbit_automation_settings_row, "scan-line", device, onOpenAutomation))
         add(entry(R.string.components_title, R.string.orbit_components_row, "boxes", device, onOpenComponents))
