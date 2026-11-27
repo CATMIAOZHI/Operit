@@ -40,7 +40,7 @@ internal fun StandardBrowserSessionTools.sessionPageStarted(session: BrowserTool
     clearEventLogs(session)
     session.pendingDialog = null
     notifySessionStateChanged(session)
-    userscriptManager.onPageChanged(session.id, url, forceReset = true)
+    if (!BrowserSignInCatch.isSignInTab(session.id)) userscriptManager.onPageChanged(session.id, url, forceReset = true)
     syncNavigationStateUi(session)
 }
 
@@ -48,13 +48,13 @@ internal fun StandardBrowserSessionTools.sessionPageCommitted(session: BrowserTo
     session.currentUrl = url
     session.lastSnapshot = null
     notifySessionStateChanged(session)
-    userscriptManager.onPageChanged(session.id, url)
+    if (!BrowserSignInCatch.isSignInTab(session.id)) userscriptManager.onPageChanged(session.id, url)
     refreshNavigationStateTwice(session)
 }
 
 internal fun StandardBrowserSessionTools.sessionPageFinished(session: BrowserToolSession, url: String) {
     session.currentUrl = url
-    userscriptManager.onPageChanged(session.id, url)
+    if (!BrowserSignInCatch.isSignInTab(session.id)) userscriptManager.onPageChanged(session.id, url)
     session.pageTitle = session.page.title ?: ""
     session.pageLoaded = true
     session.isLoading = false
@@ -89,7 +89,13 @@ internal fun StandardBrowserSessionTools.sessionTitleChanged(session: BrowserToo
 }
 
 /** Blob and data links become downloads; other schemes may open another app. True cancels the navigation. */
-internal fun StandardBrowserSessionTools.sessionShouldOverrideNavigation(session: BrowserToolSession, uri: Uri): Boolean {
+internal fun StandardBrowserSessionTools.sessionShouldOverrideNavigation(
+    session: BrowserToolSession,
+    uri: Uri,
+    mainFrame: Boolean = true,
+): Boolean {
+    // An app sign-in's return address: the sign-in takes it, the tab never loads it.
+    if (mainFrame && BrowserSignInCatch.offer(session.id, uri)) return true
     val scheme = uri.scheme?.lowercase()
     if (scheme == "blob") {
         injectBlobDownloaderScript(session, uri.toString())
@@ -237,7 +243,8 @@ internal fun StandardBrowserSessionTools.createEngineSessionOnMain(
     page.events = engineEvents(session)
     applySessionUserAgent(session, resolveUserAgent(customUserAgent, desktopModeOf(browserTaskId)))
     BrowserCdp.attachEngineOnMain(this, session, page)
-    userscriptManager.attachSession(session.id, session.page)
+    // A sign-in page runs no userscripts: they could read the password typed there.
+    if (!BrowserSignInCatch.isSignInTab(session.id)) userscriptManager.attachSession(session.id, session.page)
     return session
 }
 

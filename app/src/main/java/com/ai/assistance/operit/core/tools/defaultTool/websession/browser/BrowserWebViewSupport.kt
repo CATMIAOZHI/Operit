@@ -88,7 +88,8 @@ internal fun StandardBrowserSessionTools.createSessionOnMain(
         session.viewportHeightPx = StandardBrowserSessionTools.DEFAULT_DESKTOP_VIEWPORT_HEIGHT
     }
     configureWebView(session, webView, resolveUserAgent(customUserAgent, desktopModeOf(browserTaskId)))
-    userscriptManager.attachSession(session.id, session.page)
+    // A sign-in page runs no userscripts: they could read the password typed there.
+    if (!BrowserSignInCatch.isSignInTab(session.id)) userscriptManager.attachSession(session.id, session.page)
     return session
 }
 
@@ -343,7 +344,7 @@ internal fun StandardBrowserSessionTools.configureWebView(
             }
 
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
-                sessionShouldOverrideNavigation(session, request.url)
+                sessionShouldOverrideNavigation(session, request.url, mainFrame = request.isForMainFrame)
 
             override fun shouldInterceptRequest(
                 view: WebView,
@@ -809,9 +810,9 @@ internal fun StandardBrowserSessionTools.createSessionTabOnMain(
     appContext: Context,
     initialUrl: String,
     sessionName: String? = null,
-    customUserAgent: String? = null
+    customUserAgent: String? = null,
+    sessionId: String = UUID.randomUUID().toString(),
 ): BrowserToolSession {
-    val sessionId = UUID.randomUUID().toString()
     val session = createSessionOnMain(appContext, sessionId, sessionName, customUserAgent)
     StandardBrowserSessionTools.sessions[sessionId] = session
     addSessionOrder(sessionId)
@@ -1137,9 +1138,11 @@ private fun StandardBrowserSessionTools.syncProjectedBrowserStateUnscoped() {
         activeSession?.viewportHeightPx
     )
     activeSession?.let(::applyViewportOverride)
+    // A sign-in tab runs no userscripts, so it has no userscript state to show.
+    val scriptTab = resolvedActiveId?.takeUnless(BrowserSignInCatch::isSignInTab)
     userscriptManager.updateVisibleSession(
-        sessionId = resolvedActiveId,
-        pageUrl = activeSession?.currentUrl
+        sessionId = scriptTab,
+        pageUrl = activeSession?.currentUrl?.takeIf { scriptTab != null }
     )
     StandardBrowserSessionTools.browserHost?.updateHostProjection(
         browserState = buildBrowserState(registry, downloadProjection.summary),
@@ -1403,10 +1406,13 @@ internal fun StandardBrowserSessionTools.createPopupSessionOnMain(
     parentSession: BrowserToolSession,
     enginePopup: EngineBrowserPage? = null,
 ): BrowserToolSession {
-    val popupSession =
+    val popupId = UUID.randomUUID().toString()
+    // A window a sign-in page opens is part of the sign-in, before its first page.
+    BrowserSignInCatch.windowOpened(parentSession.id, popupId)
+    val popupSession = try {
         createSessionOnMain(
             appContext = parentSession.page.view.context ?: context.applicationContext,
-            sessionId = UUID.randomUUID().toString(),
+            sessionId = popupId,
             sessionName = parentSession.sessionName,
             customUserAgent = parentSession.customUserAgent,
             profileName = parentSession.profileName,
@@ -1415,6 +1421,10 @@ internal fun StandardBrowserSessionTools.createPopupSessionOnMain(
             // A window takes its opener's browser: a WebView hands its window a WebView.
             useEngine = parentSession.page is EngineBrowserPage,
         )
+    } catch (e: Throwable) {
+        BrowserSignInCatch.tabClosed(popupId)
+        throw e
+    }
     StandardBrowserSessionTools.sessions[popupSession.id] = popupSession
     addSessionOrder(popupSession.id)
     ensureOverlayOnMain(context.applicationContext)
@@ -1775,6 +1785,7 @@ internal fun StandardBrowserSessionTools.closeSession(sessionId: String): Boolea
     val wasActive = StandardBrowserSessionTools.activeSessionId == sessionId
     val previouslyActiveId = StandardBrowserSessionTools.activeSessionId
     val session = StandardBrowserSessionTools.sessions.remove(sessionId) ?: return@runOnMainSync false
+    BrowserSignInCatch.tabClosed(sessionId)
     StandardBrowserSessionTools.lastOwnByProfile.remove(session.profileName, sessionId)
     // Closing in the user's own window, the next tab is another of theirs, never an Orbit task's page.
     val ownOnly = ownProfile?.takeIf { session.isOwnTabOf(it) }

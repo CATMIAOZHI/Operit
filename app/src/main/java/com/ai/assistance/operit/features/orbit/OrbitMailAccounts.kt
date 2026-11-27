@@ -41,7 +41,7 @@ internal enum class OrbitMailProvider(val id: String, val label: String) {
  * Who Orbit signs in as with Google and Microsoft. For now these are Thunderbird's published desktop
  * clients (the git-credential-email project uses the same ones); once Orbit's own clients are
  * registered, only this object changes. Their scopes reach IMAP and SMTP only, so mail is read and
- * sent over IMAP/SMTP for both services.
+ * sent over IMAP/SMTP for both services; `openid email` / `openid profile` only name the signed-in address.
  */
 internal object OrbitMailClients {
     class Client(val clientId: String, val clientSecret: String?, val scope: String)
@@ -50,7 +50,7 @@ internal object OrbitMailClients {
         clientId = "406964657835-aq8lmia8j95dhl1a2bvharmfk3t1hgqj.apps.googleusercontent.com",
         // Thunderbird's installed-app secret, published in its source; Google does not treat it as secret.
         clientSecret = "kSmqreRr0qwBWJgbf5Y-PjSU",
-        scope = "https://mail.google.com/",
+        scope = "openid email https://mail.google.com/",
     )
     val outlook = Client(
         clientId = "9e5f94bc-e8a4-4e73-b8be-63364c29d753",
@@ -62,7 +62,7 @@ internal object OrbitMailClients {
     const val GOOGLE_AUTH = "https://accounts.google.com/o/oauth2/v2/auth"
     const val GOOGLE_TOKEN = "https://oauth2.googleapis.com/token"
     const val GOOGLE_REVOKE = "https://oauth2.googleapis.com/revoke"
-    const val MS_DEVICE_CODE = "https://login.microsoftonline.com/common/oauth2/v2.0/devicecode"
+    const val MS_AUTH = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
     const val MS_TOKEN = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
     /** Microsoft's tenant for personal accounts (outlook.com, hotmail.com), which send through another SMTP host. */
     const val MS_CONSUMER_TENANT = "9188040d-6c67-4c5b-b112-36a304b66dad"
@@ -162,9 +162,13 @@ internal object OrbitMailAccounts {
      * thrown away ("gen").
      */
     suspend fun save(context: Context, orbitId: String, provider: OrbitMailProvider, email: String, tokens: Tokens,
-        consumer: Boolean): OrbitMailAccount = withContext(Dispatchers.IO) {
+        consumer: Boolean, revokesBefore: Long = Long.MAX_VALUE): OrbitMailAccount = withContext(Dispatchers.IO) {
         val refresh = tokens.refresh?.takeIf { it.isNotBlank() } ?: throw OrbitMailAuthError(OrbitMailAuthError.Kind.NO_REFRESH)
         lock.withLock {
+            // A Gmail disconnect of this address after [revokesBefore] may have revoked these new tokens too.
+            if (provider == OrbitMailProvider.GMAIL && (revokedAt[email.trim().lowercase()] ?: 0L) > revokesBefore) {
+                throw OrbitMailAuthError(OrbitMailAuthError.Kind.BUSY)
+            }
             val all = readLocked(context, orbitId)
             val same = all.firstOrNull { it.optString("provider") == provider.id && it.optString("email").equals(email, true) }
             if (same == null && all.size >= MAX_ACCOUNTS) throw OrbitMailAuthError(OrbitMailAuthError.Kind.TOO_MANY)
@@ -193,26 +197,34 @@ internal object OrbitMailAccounts {
             // Listed under the same lock that removed the mailbox, so signing the address in again always sees it.
             if (gone.optString("provider") == OrbitMailProvider.GMAIL.id) {
                 val address = gone.optString("email").lowercase()
+                revokedAt[address] = revokeCount.incrementAndGet()
                 val job = background.launch {
                     runCatching { postJson(OrbitMailClients.GOOGLE_REVOKE, FormBody.Builder().add("token", gone.optString("refresh_token")).build()) }
                 }
-                revoking[address] = job
-                job.invokeOnCompletion { revoking.remove(address, job) }
+                revoking += job
+                job.invokeOnCompletion { revoking.remove(job) }
             }
         }
     }
 
-    /** Revokes still on their way to Google, by address: they would also undo a newer sign-in of that address. */
-    private val revoking = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Job>()
+    /** Revokes still on their way to Google, every one: they would also undo a newer sign-in of their address. */
+    private val revoking: MutableSet<kotlinx.coroutines.Job> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+    /** Counts Google revokes started; [revokedAt] has the count of each address's latest one. */
+    private val revokeCount = java.util.concurrent.atomic.AtomicLong(0)
+    private val revokedAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    /** Where the revoke count stands; [save] refuses a Gmail address revoked after it. */
+    fun revokeMark(): Long = revokeCount.get()
 
     /**
-     * Waits for a revoke of [email] to finish, so signing it in again is not undone. One that takes
-     * too long is left to finish (a request Google already has cannot be called back), and the
-     * sign-in stops with [OrbitMailAuthError.Kind.BUSY].
+     * Waits for the revokes on their way to Google to finish, so a new sign-in is not undone. One
+     * that takes too long is left to finish (a request Google already has cannot be called back),
+     * and the sign-in stops with [OrbitMailAuthError.Kind.BUSY].
      */
-    suspend fun awaitRevoke(email: String) {
-        val job = lock.withLock { revoking[email.trim().lowercase()] } ?: return
-        kotlinx.coroutines.withTimeoutOrNull(REVOKE_WAIT_MS) { job.join() }
+    suspend fun awaitRevokes() {
+        val jobs = lock.withLock { revoking.toList() }
+        if (jobs.isEmpty()) return
+        kotlinx.coroutines.withTimeoutOrNull(REVOKE_WAIT_MS) { jobs.forEach { it.join() } }
             ?: throw OrbitMailAuthError(OrbitMailAuthError.Kind.BUSY)
     }
 

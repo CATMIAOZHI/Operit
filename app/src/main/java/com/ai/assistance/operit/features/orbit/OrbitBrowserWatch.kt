@@ -12,8 +12,10 @@ import com.ai.assistance.operit.core.application.OperitApplication
 import com.ai.assistance.operit.core.tools.defaultTool.standard.StandardBrowserSessionTools
 import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserEngines
 import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserProfiles
+import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserSignInCatch
 import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserTaskScope
 import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.closeSession
+import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.createSessionTabOnMain
 import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.ensureOverlayOnMain
 import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.ensureSessionAttachedOnMain
 import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.openPendingBlankOwnOnMain
@@ -644,6 +646,92 @@ internal object OrbitBrowserWatch {
                     StandardBrowserSessionTools.browserHost?.startUrlEditing()
                 }
             } }
+        }
+    }
+
+    /** The browser tools for sign-in tabs: one instance, so tabs open and close through the same one. */
+    private val signInBrowser by lazy { StandardBrowserSessionTools(app) }
+
+    /** [signInBrowser], built off the main thread: its first start reads saved settings from disk. */
+    private suspend fun signInTools(): StandardBrowserSessionTools = withContext(Dispatchers.IO) { signInBrowser }
+
+    /**
+     * Opens [url] (a mail service's sign-in page) in a new tab [tabId] of the user's own browser
+     * window, with the Orbit's logins, so a Google or Microsoft account signed in there is signed in
+     * for the Orbit's browser too. False when the browser may not show: the overlay permission is
+     * missing, and its settings page is opened when it can be.
+     */
+    suspend fun openSignIn(context: Context, orbitId: String, url: String, tabId: String): Boolean {
+        if (!Settings.canDrawOverlays(context)) {
+            OrbitPermissionCards.openSettings(context, OrbitPermissionCards.OVERLAY)
+            return false
+        }
+        overlayWait?.cancel()
+        val app = context.applicationContext
+        BrowserEngines.current?.warmLibrary(app)
+        val (browser, profile) = withContext(Dispatchers.IO) {
+            coroutineScope {
+                val themeWarm = async { warmFloatingThemeBriefly(app) }
+                val tools = signInBrowser
+                val resolvedProfile = BrowserProfiles.forOrbit(app, orbitId)
+                themeWarm.await()
+                tools to resolvedProfile
+            }
+        }
+        withContext(Dispatchers.Main) {
+            unwatch()
+            BrowserProfiles.withScope(profile) { BrowserTaskScope.withScope(null) {
+                StandardBrowserSessionTools.clearPendingOwnOnMain()
+                browser.ensureOverlayOnMain(app, initialExpanded = true)
+                browser.createSessionTabOnMain(app, initialUrl = url, sessionId = tabId)
+                browser.ensureSessionAttachedOnMain(tabId, explicit = true)
+                browser.setExpandedOnMain(true)
+            } }
+        }
+        return true
+    }
+
+    /**
+     * Brings the sign-in [firstTab] started back to the front of the browser window: that tab, or a
+     * window it opened when the tab itself was closed. False when none is open.
+     */
+    suspend fun showSignIn(context: Context, firstTab: String): Boolean {
+        val browser = runCatching { signInTools() }.getOrElse { return false }
+        val app = context.applicationContext
+        return withContext(Dispatchers.Main) {
+            val session = BrowserSignInCatch.tabsOf(firstTab).firstNotNullOfOrNull(StandardBrowserSessionTools.sessions::get)
+                ?: return@withContext false
+            unwatch()
+            BrowserProfiles.withScope(session.profileName) { BrowserTaskScope.withScope(null) {
+                StandardBrowserSessionTools.clearPendingOwnOnMain()
+                browser.ensureSessionAttachedOnMain(session.id, explicit = true)
+                browser.ensureOverlayOnMain(app, initialExpanded = true)
+                browser.setExpandedOnMain(true)
+            } }
+            true
+        }
+    }
+
+    /**
+     * Closes the sign-ins [firstTabs] started, every tab and window of them; the browser window
+     * goes too when one of them was in front.
+     */
+    suspend fun closeSignIn(firstTabs: Collection<String>) {
+        if (firstTabs.isEmpty()) return
+        withContext(kotlinx.coroutines.NonCancellable) {
+            runCatching {
+                // Nothing to close when no tab of them was ever created: the browser need not start.
+                if (firstTabs.flatMap(BrowserSignInCatch::tabsOf).none(StandardBrowserSessionTools.sessions::containsKey)) {
+                    return@runCatching
+                }
+                val browser = signInTools()
+                withContext(Dispatchers.Main) {
+                    val all = firstTabs.flatMap(BrowserSignInCatch::tabsOf).toSet()
+                    val inFront = StandardBrowserSessionTools.activeSessionId in all
+                    all.filter(StandardBrowserSessionTools.sessions::containsKey).forEach { browser.closeSession(it) }
+                    if (inFront && _watching.value == null) browser.setExpandedOnMain(false)
+                }
+            }.onFailure { AppLogger.w("OrbitBrowserWatch", "Could not close the sign-in tab: ${it.message}") }
         }
     }
 
