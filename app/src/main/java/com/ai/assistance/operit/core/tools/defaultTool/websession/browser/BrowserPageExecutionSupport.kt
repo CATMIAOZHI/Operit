@@ -1960,7 +1960,9 @@ internal fun StandardBrowserSessionTools.sessionIdAtIndex(index: Int): String? =
 internal fun StandardBrowserSessionTools.pageError(
     toolName: String,
     session: BrowserToolSession?,
-    message: String
+    message: String,
+    /** False when the page was just too slow to answer: the last snapshot is shown instead of a new one. */
+    liveSnapshot: Boolean = true
 ): ToolResult {
     // The error comes first; the page follows for context, its snapshot kept to one section's
     // length. If reading the page fails, the original error still goes back.
@@ -1971,7 +1973,11 @@ internal fun StandardBrowserSessionTools.pageError(
                     buildBrowserResponse(
                         openTabs = renderOpenTabs(),
                         pageState = renderPageState(it),
-                        snapshot = inlineOrSaved(captureSnapshotText(it), "snapshot", "yaml"),
+                        snapshot =
+                            if (liveSnapshot) inlineOrSaved(replySnapshotText(it), "snapshot", "yaml")
+                            else it.lastSnapshot?.let { last ->
+                                inlineOrSaved("# From the last snapshot, taken earlier\n" + last.yaml, "snapshot", "yaml")
+                            },
                         modalState = renderModalState(it),
                     )
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
@@ -1991,7 +1997,7 @@ internal fun StandardBrowserSessionTools.pageError(
 internal fun StandardBrowserSessionTools.buildSettledBrowserResponse(
     settlement: StandardBrowserSessionTools.BrowserActionSettlement,
     code: String? = null,
-    snapshot: String? = settlement.snapshot?.yaml,
+    snapshot: String? = settlement.snapshot?.yaml ?: settlement.snapshotNote,
     consoleMessages: String? = renderNewConsoleMessages(settlement.session, settlement.consoleMarker),
     modalState: String? = renderModalState(settlement.session),
     downloads: String? = renderDownloads(settlement.session, settlement.downloadMarker),

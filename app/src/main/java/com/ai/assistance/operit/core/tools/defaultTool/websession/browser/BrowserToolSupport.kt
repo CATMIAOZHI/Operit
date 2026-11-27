@@ -21,7 +21,9 @@ internal data class BrowserSnapshot(
     val generation: Long,
     val yaml: String,
     val nodesByRef: Map<String, BrowserSnapshotNode>,
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    /** Lists only part of the page (a selector or depth, or cut short on a very large page). */
+    val partial: Boolean = false
 )
 
 internal data class BrowserSnapshotNode(
@@ -155,6 +157,17 @@ internal fun buildBrowserResponse(
 
 /** Longest single section placed in a reply; longer text is saved to a file so it does not flood the context. */
 internal const val BROWSER_INLINE_SECTION_CHARS = 12_000
+
+/** How long the page may spend building a snapshot before it stops and lists what it has. */
+internal const val SNAPSHOT_JS_BUDGET_MS = 3_000
+/** Most elements one snapshot lists; a bigger page is cut short with a note. */
+internal const val SNAPSHOT_MAX_ENTRIES = 1_000
+/** Most characters of one snapshot's text, so a page of long labels stays readable too. */
+internal const val SNAPSHOT_MAX_CHARS = 40_000
+/** Outer limit for an asked-for snapshot, with room for a page busy drawing before it runs. */
+internal const val SNAPSHOT_TIMEOUT_MS = 15_000L
+/** Outer limit for a snapshot added to another tool's reply: that tool's answer must not wait long for it. */
+internal const val REPLY_SNAPSHOT_TIMEOUT_MS = 6_000L
 
 /**
  * [text] as is when short; otherwise part of it plus the path of a file holding all of it.
@@ -586,11 +599,11 @@ internal fun StandardBrowserSessionTools.settleBrowserAction(
             runOnMainSync<Unit> {
                 ensureSessionAttachedOnMain(activeSession.id)
             }
-            val snapshot =
+            val (snapshot, snapshotNote) =
                 if (policy.captureSnapshot && canCaptureSnapshotForSettlement(activeSession)) {
-                    latestSnapshot(activeSession)
+                    snapshotForReply(activeSession)
                 } else {
-                    null
+                    null to null
                 }
             val finalRegistry = buildPageRegistry()
             return BrowserToolActionSettlement(
@@ -599,7 +612,8 @@ internal fun StandardBrowserSessionTools.settleBrowserAction(
                 snapshot = snapshot,
                 consoleMarker = if (activeSession.id == markers.initialSessionId) markers.consoleTimestamp else 0L,
                 downloadMarker = markers.downloadTimestamp,
-                timedOut = false
+                timedOut = false,
+                snapshotNote = snapshotNote
             )
         }
 
@@ -625,11 +639,11 @@ internal fun StandardBrowserSessionTools.settleBrowserAction(
     runOnMainSync<Unit> {
         ensureSessionAttachedOnMain(activeSession.id)
     }
-    val snapshot =
+    val (snapshot, snapshotNote) =
         if (policy.captureSnapshot && canCaptureSnapshotForSettlement(activeSession)) {
-            latestSnapshot(activeSession)
+            snapshotForReply(activeSession)
         } else {
-            null
+            null to null
         }
     val finalRegistry = buildPageRegistry()
     return BrowserToolActionSettlement(
@@ -638,7 +652,8 @@ internal fun StandardBrowserSessionTools.settleBrowserAction(
         snapshot = snapshot,
         consoleMarker = if (activeSession.id == markers.initialSessionId) markers.consoleTimestamp else 0L,
         downloadMarker = markers.downloadTimestamp,
-        timedOut = true
+        timedOut = true,
+        snapshotNote = snapshotNote
     )
 }
 
@@ -648,15 +663,59 @@ private fun StandardBrowserSessionTools.canCaptureSnapshotForSettlement(
 
 internal fun StandardBrowserSessionTools.latestSnapshot(
     session: BrowserToolSession,
-    forceRefresh: Boolean = true
+    forceRefresh: Boolean = true,
+    timeoutMs: Long = SNAPSHOT_TIMEOUT_MS
 ): BrowserSnapshot {
     if (!forceRefresh) {
         session.lastSnapshot?.let { return it }
     }
-    val snapshot = captureSnapshotModel(session)
-    session.lastSnapshot = snapshot
-    return snapshot
+    return rememberSnapshot(session, captureSnapshotModel(session, timeoutMs = timeoutMs))
 }
+
+/**
+ * Keeps [fresh] as the page's latest snapshot. When it or the one before lists only part of the page,
+ * refs handed out earlier on this page stay usable: the page still carries them, and an action on a
+ * ref that is gone fails there.
+ */
+internal fun rememberSnapshot(session: BrowserToolSession, fresh: BrowserSnapshot): BrowserSnapshot {
+    val previous = session.lastSnapshot
+    // Kept only across one partial reading, newest first within a cap, so a long-lived page does not pile up refs.
+    val kept =
+        if (previous != null && previous.sessionId == fresh.sessionId && (previous.partial || fresh.partial)) {
+            val merged = LinkedHashMap(previous.nodesByRef)
+            fresh.nodesByRef.forEach { (ref, node) ->
+                merged.remove(ref)
+                merged[ref] = node
+            }
+            val oldest = merged.keys.iterator()
+            while (merged.size > MAX_REMEMBERED_REFS && oldest.hasNext()) {
+                oldest.next()
+                oldest.remove()
+            }
+            fresh.copy(nodesByRef = merged)
+        } else {
+            fresh
+        }
+    session.lastSnapshot = kept
+    return kept
+}
+
+private const val MAX_REMEMBERED_REFS = 3_000
+
+/**
+ * The page's snapshot for a reply that is mainly about something else (an action, a wait, a tab
+ * change). One that cannot be built is replaced by a note, so the tool still answers.
+ */
+internal fun StandardBrowserSessionTools.snapshotForReply(
+    session: BrowserToolSession
+): Pair<BrowserSnapshot?, String?> =
+    try {
+        latestSnapshot(session, timeoutMs = REPLY_SNAPSHOT_TIMEOUT_MS) to null
+    } catch (e: Exception) {
+        com.ai.assistance.operit.util.AppLogger.w("BrowserSnapshot", "Snapshot skipped in a reply: ${e.message}")
+        null to "# Snapshot unavailable (${e.message ?: "error"}). Use browser_take_screenshot to see the page, " +
+            "or browser_snapshot with a selector to read one part of it."
+    }
 
 private fun StandardBrowserSessionTools.actionSettled(
     session: BrowserToolSession,
@@ -759,21 +818,25 @@ private fun formatDownloadEvent(event: WebDownloadEvent): String =
         }
     }
 
+/** The page's snapshot text; throws when it cannot be built (for callers that need a real reading). */
 internal fun StandardBrowserSessionTools.captureSnapshotText(session: BrowserSnapshotSession): String =
     latestSnapshot(session).yaml
 
+/** The page's snapshot text for another tool's reply, or a note in its place. */
+internal fun StandardBrowserSessionTools.replySnapshotText(session: BrowserSnapshotSession): String =
+    snapshotForReply(session).let { (snapshot, note) -> snapshot?.yaml ?: note.orEmpty() }
+
+/** A node of the latest snapshot, without building a new one (used to show code for a ref already acted on). */
 internal fun StandardBrowserSessionTools.snapshotNode(
     session: BrowserSnapshotSession,
     ref: String
-): BrowserSnapshotNode? {
-    val snapshot = session.lastSnapshot ?: latestSnapshot(session)
-    return snapshot.nodesByRef[ref]
-}
+): BrowserSnapshotNode? = session.lastSnapshot?.nodesByRef?.get(ref)
 
 internal fun StandardBrowserSessionTools.captureSnapshotModel(
     session: BrowserSnapshotSession,
     selector: String? = null,
-    depth: Int? = null
+    depth: Int? = null,
+    timeoutMs: Long = SNAPSHOT_TIMEOUT_MS
 ): BrowserSnapshot {
     val selectorLiteral = selector?.let(JSONObject::quote) ?: "null"
     val depthLiteral = depth?.toString() ?: "null"
@@ -782,10 +845,30 @@ internal fun StandardBrowserSessionTools.captureSnapshotModel(
         (function() {
             const selector = $selectorLiteral;
             const depthLimit = $depthLiteral;
+            // A huge page (a cloud console has tens of thousands of elements) must still answer in time:
+            // the walk stops after a time and size budget, top of the page first, and says so.
+            const startedAt = Date.now();
+            const timeBudgetMs = $SNAPSHOT_JS_BUDGET_MS;
+            const maxEntries = $SNAPSHOT_MAX_ENTRIES;
+            const maxChars = $SNAPSHOT_MAX_CHARS;
+            let visitedElements = 0;
+            let emittedEntries = 0;
+            let stoppedBy = "";
+            const outOfBudget = () => {
+                if (stoppedBy) return true;
+                if (emittedEntries >= maxEntries) {
+                    stoppedBy = "size";
+                } else if ((++visitedElements & 63) === 0 && Date.now() - startedAt > timeBudgetMs) {
+                    stoppedBy = "time";
+                }
+                return !!stoppedBy;
+            };
             const normalize = (value) => String(value == null ? "" : value).replace(/\s+/g, " ").trim();
+            // One long paragraph or label must not fill the whole snapshot.
+            const clip = (text, max) => text.length > max ? text.slice(0, max).trimEnd() + "…" : text;
             const escapeQuoted = (value) => String(value == null ? "" : value).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
             const yamlScalar = (value) => {
-                const text = normalize(value);
+                const text = clip(normalize(value), 1000);
                 if (!text) {
                     return "";
                 }
@@ -794,22 +877,7 @@ internal fun StandardBrowserSessionTools.captureSnapshotModel(
                 }
                 return '"' + escapeQuoted(text) + '"';
             };
-            const quotedName = (value) => '"' + escapeQuoted(normalize(value)) + '"';
-            // Also looks inside open shadow roots, where web components keep their content.
-            const deepQueryAll = (root, query) => {
-                const found = [];
-                const stack = [root];
-                while (stack.length) {
-                    const current = stack.pop();
-                    try { found.push.apply(found, Array.from(current.querySelectorAll(query))); } catch (_) {}
-                    let all = [];
-                    try { all = current.querySelectorAll("*"); } catch (_) {}
-                    for (let i = 0; i < all.length; i++) {
-                        if (all[i].shadowRoot) stack.push(all[i].shadowRoot);
-                    }
-                }
-                return found;
-            };
+            const quotedName = (value) => '"' + escapeQuoted(clip(normalize(value), 300)) + '"';
             // Children as drawn: a shadow host shows its shadow root, and slots show what is put into them.
             const renderedChildren = (element) => {
                 const source = element.shadowRoot ? element.shadowRoot.childNodes : element.childNodes;
@@ -825,36 +893,6 @@ internal fun StandardBrowserSessionTools.captureSnapshotModel(
                 });
                 return result;
             };
-            const collectWindows = () => {
-                const queue = [window];
-                const visited = new Set();
-                const result = [];
-                while (queue.length) {
-                    const currentWindow = queue.shift();
-                    if (!currentWindow || visited.has(currentWindow)) {
-                        continue;
-                    }
-                    visited.add(currentWindow);
-                    let currentDocument;
-                    try {
-                        currentDocument = currentWindow.document;
-                    } catch (_) {
-                        continue;
-                    }
-                    if (!currentDocument) {
-                        continue;
-                    }
-                    result.push(currentWindow);
-                    deepQueryAll(currentDocument, "iframe, frame").forEach((frameElement) => {
-                        try {
-                            if (frameElement.contentWindow) {
-                                queue.push(frameElement.contentWindow);
-                            }
-                        } catch (_) {}
-                    });
-                }
-                return result;
-            };
             try {
                 const isVisible = (element) => {
                     if (!element || element.nodeType !== Node.ELEMENT_NODE) {
@@ -863,6 +901,14 @@ internal fun StandardBrowserSessionTools.captureSnapshotModel(
                     const tagName = String(element.tagName || "").toLowerCase();
                     if (tagName === "body" || tagName === "html") {
                         return true;
+                    }
+                    // The engine's own check is far cheaper than reading the computed style of every element.
+                    if (typeof element.checkVisibility === "function") {
+                        if (!element.checkVisibility({ visibilityProperty: true })) {
+                            return false;
+                        }
+                        const box = element.getBoundingClientRect();
+                        return box.width > 0 || box.height > 0 || element.getClientRects().length > 0;
                     }
                     const currentWindow = element.ownerDocument && element.ownerDocument.defaultView;
                     if (!currentWindow) {
@@ -875,26 +921,21 @@ internal fun StandardBrowserSessionTools.captureSnapshotModel(
                     const rect = element.getBoundingClientRect();
                     return rect.width > 0 || rect.height > 0 || element.getClientRects().length > 0;
                 };
-                const existingRefElements = [];
-                collectWindows().forEach((currentWindow) => {
-                    try {
-                        deepQueryAll(currentWindow.document, "[aria-ref]").forEach((element) => {
-                            existingRefElements.push(element);
-                        });
-                    } catch (_) {}
-                });
-                const existingRefNumbers = existingRefElements
-                    .map((element) => {
-                        const match = /^e(\d+)$/.exec(String(element.getAttribute("aria-ref") || ""));
-                        return match ? parseInt(match[1], 10) : 0;
-                    })
-                    .filter((value) => Number.isFinite(value) && value > 0);
-                let nextRef = existingRefNumbers.length ? Math.max.apply(null, existingRefNumbers) + 1 : 1;
+                // Refs are numbered on from a counter kept on this page, and each element given one is
+                // remembered, so nothing has to be searched first. A ref is reused only where this script
+                // set it; an aria-ref the page wrote itself is replaced, and finding a ref checks the same
+                // record (browserRefResolverScript), so a page's own attribute can never be taken for it.
+                if (!(window.__operitRefOwners instanceof WeakMap) || !Number.isFinite(window.__operitNextRef)) {
+                    window.__operitRefOwners = new WeakMap();
+                    window.__operitNextRef = 1;
+                }
+                const refOwners = window.__operitRefOwners;
                 const ensureRef = (element) => {
                     let ref = normalize(element.getAttribute("aria-ref"));
-                    if (!ref) {
-                        ref = "e" + nextRef++;
+                    if (!ref || refOwners.get(element) !== ref) {
+                        ref = "e" + window.__operitNextRef++;
                         element.setAttribute("aria-ref", ref);
+                        refOwners.set(element, ref);
                     }
                     return ref;
                 };
@@ -1123,7 +1164,7 @@ internal fun StandardBrowserSessionTools.captureSnapshotModel(
                     }
                     return tokens;
                 };
-                const directTextEntries = (element) => {
+                const directTextEntries = (childNodes) => {
                     const entries = [];
                     let buffer = [];
                     const flush = () => {
@@ -1133,7 +1174,7 @@ internal fun StandardBrowserSessionTools.captureSnapshotModel(
                         }
                         buffer = [];
                     };
-                    renderedChildren(element).forEach((node) => {
+                    childNodes.forEach((node) => {
                         if (node.nodeType === Node.TEXT_NODE) {
                             buffer.push(node.textContent || "");
                             return;
@@ -1166,17 +1207,20 @@ internal fun StandardBrowserSessionTools.captureSnapshotModel(
                     return normalize(entries.map((entry) => entry.text).join(" "));
                 };
                 const collectEntries = (element, remainingDepth) => {
-                    if (!element || element.nodeType !== Node.ELEMENT_NODE || !isVisible(element) || (remainingDepth != null && remainingDepth < 0)) {
+                    if (!element || element.nodeType !== Node.ELEMENT_NODE || (remainingDepth != null && remainingDepth < 0) || outOfBudget() || !isVisible(element)) {
                         return [];
                     }
                     const role = roleFor(element);
                     const name = role ? nameFor(element, role) : "";
                     const includeSelf = shouldEmitElement(element, role, name);
+                    // Counted before its children, so the limit holds however deep the page nests.
+                    if (includeSelf || role === "iframe") {
+                        emittedEntries++;
+                    }
                     if (role === "iframe") {
                         const ref = ensureRef(element);
                         const attributes = stateTokens(element, role);
                         attributes.push("ref=" + ref);
-                        nodes.push({ ref: ref, role: role, name: name });
                         let children = [];
                         let readable = false;
                         if (remainingDepth == null || remainingDepth > 0) {
@@ -1194,30 +1238,37 @@ internal fun StandardBrowserSessionTools.captureSnapshotModel(
                         if (!readable) {
                             attributes.push("cross-origin: contents not readable, use a screenshot and browser_mouse_click_xy inside it");
                         }
-                        return [{ kind: "element", role: role, name: name, attributes: attributes, inlineText: "", children: children }];
+                        return [{ kind: "element", role: role, name: name, ref: ref, attributes: attributes, inlineText: "", children: children }];
                     }
                     const childDepth = includeSelf && remainingDepth != null ? remainingDepth - 1 : remainingDepth;
                     const allowChildTraversal = childDepth == null || childDepth >= 0;
-                    const textEntries = directTextEntries(element);
+                    const childNodes = renderedChildren(element);
+                    const textEntries = directTextEntries(childNodes);
                     const combinedChildren = [];
                     let textIndex = 0;
-                    renderedChildren(element).forEach((childNode) => {
+                    for (let childIndex = 0; childIndex < childNodes.length; childIndex++) {
+                        // Out of budget: the rest of this level is not walked either.
+                        if (stoppedBy) {
+                            break;
+                        }
+                        const childNode = childNodes[childIndex];
                         if (childNode.nodeType === Node.TEXT_NODE || (childNode.nodeType === Node.ELEMENT_NODE && String(childNode.tagName || "").toLowerCase() === "br")) {
                             const nextText = textEntries[textIndex];
                             if (nextText) {
                                 combinedChildren.push(nextText);
                                 textIndex++;
                             }
-                            return;
+                            continue;
                         }
                         if (childNode.nodeType === Node.ELEMENT_NODE && allowChildTraversal) {
                             collectEntries(childNode, childDepth).forEach((entry) => {
                                 combinedChildren.push(entry);
                             });
                         }
-                    });
+                    }
                     if (!includeSelf) {
-                        if (combinedChildren.length) {
+                        // Cut short: reading the text of all it holds could take as long as the walk itself.
+                        if (combinedChildren.length || stoppedBy) {
                             return combinedChildren;
                         }
                         const text = inlineLeafText(element);
@@ -1225,10 +1276,10 @@ internal fun StandardBrowserSessionTools.captureSnapshotModel(
                     }
                     const collapsedText = collapseTextEntries(combinedChildren);
                     const attributes = stateTokens(element, role);
+                    let ownRef = null;
                     if (needsRef(element, role)) {
-                        const ref = ensureRef(element);
-                        attributes.push("ref=" + ref);
-                        nodes.push({ ref: ref, role: role, name: name });
+                        ownRef = ensureRef(element);
+                        attributes.push("ref=" + ownRef);
                     }
                     let inlineText = "";
                     let children = combinedChildren;
@@ -1252,12 +1303,29 @@ internal fun StandardBrowserSessionTools.captureSnapshotModel(
                         inlineText = collapsedText;
                         children = [];
                     }
-                    return [{ kind: "element", role: role, name: name, attributes: attributes, inlineText: inlineText, children: children }];
+                    return [{ kind: "element", role: role, name: name, ref: ownRef, attributes: attributes, inlineText: inlineText, children: children }];
+                };
+                let renderedChars = 0;
+                let outputFull = false;
+                // Adds a line only while it fits; past the limit the rest is left out and the snapshot says so.
+                const accept = (line, lines) => {
+                    if (outputFull || renderedChars + line.length + 1 > maxChars) {
+                        outputFull = true;
+                        stoppedBy = stoppedBy || "chars";
+                        return false;
+                    }
+                    renderedChars += line.length + 1;
+                    lines.push(line);
+                    return true;
                 };
                 const renderEntry = (entry, indent, lines) => {
+                    // Full: nothing more is formatted.
+                    if (outputFull) {
+                        return;
+                    }
                     const prefix = "  ".repeat(indent) + "- ";
                     if (entry.kind === "text") {
-                        lines.push(prefix + "text: " + yamlScalar(entry.text));
+                        accept(prefix + "text: " + yamlScalar(entry.text), lines);
                         return;
                     }
                     let line = prefix + entry.role;
@@ -1272,7 +1340,18 @@ internal fun StandardBrowserSessionTools.captureSnapshotModel(
                     } else if (entry.children.length) {
                         line += ":";
                     }
-                    lines.push(line);
+                    if (!accept(line, lines)) {
+                        return;
+                    }
+                    // Only refs that are shown go back, each with a short name.
+                    if (entry.ref) {
+                        // A name too long to keep whole is left out, so code shown for this ref finds it by ref
+                        // instead of by a shortened name that would match nothing.
+                        const fullName = normalize(entry.name);
+                        nodes.push(fullName.length > 300
+                            ? { ref: entry.ref, role: "generic", name: "" }
+                            : { ref: entry.ref, role: entry.role, name: fullName });
+                    }
                     entry.children.forEach((child) => renderEntry(child, indent + 1, lines));
                 };
                 const root = selector ? document.querySelector(selector) : (document.body || document.documentElement);
@@ -1282,10 +1361,22 @@ internal fun StandardBrowserSessionTools.captureSnapshotModel(
                 const entries = collectEntries(root, depthLimit);
                 const lines = [];
                 entries.forEach((entry) => renderEntry(entry, 0, lines));
+                if (stoppedBy) {
+                    let total = 0;
+                    try { total = document.getElementsByTagName("*").length; } catch (_) {}
+                    // First, so it is read even if a long reply is cut at its end.
+                    lines.unshift(
+                        "# Only the first part of this page is listed: it holds more than one snapshot can show" +
+                        (total ? " (" + total + " elements)" : "") +
+                        ". To read another area, call browser_snapshot with a CSS selector for that area (a small depth keeps it short), " +
+                        "or use browser_take_screenshot. If an earlier ref is not accepted, snapshot its area again."
+                    );
+                }
                 return JSON.stringify({
                     ok: true,
                     yaml: lines.join("\n"),
-                    nodes
+                    nodes,
+                    truncated: !!stoppedBy
                 });
             } catch (e) {
                 return JSON.stringify({
@@ -1295,7 +1386,7 @@ internal fun StandardBrowserSessionTools.captureSnapshotModel(
             }
         })();
         """.trimIndent()
-    val json = runJsonScript(session.page, script, "snapshot_capture_error")
+    val json = runJsonScript(session.page, script, "snapshot_capture_error", timeoutMs)
     if (json?.optBoolean("ok", false) != true) {
         throw RuntimeException(json?.optString("error").orEmpty().ifBlank { "snapshot_capture_error" })
     }
@@ -1318,7 +1409,8 @@ internal fun StandardBrowserSessionTools.captureSnapshotModel(
         sessionId = session.id,
         generation = nextSnapshotGeneration(),
         yaml = json.optString("yaml").trim(),
-        nodesByRef = nodes
+        nodesByRef = nodes,
+        partial = json.optBoolean("truncated") || selector != null || depth != null
     )
 }
 
@@ -1346,6 +1438,14 @@ internal fun browserRefResolverScript(functionName: String = "__operitResolveRef
     """
     const $functionName = (refValue) => {
         const wantedRef = String(refValue || "");
+        // Only an element the snapshot gave this ref counts (see captureSnapshotModel); a page may carry
+        // aria-ref attributes of its own.
+        const owners = window.__operitRefOwners;
+        // No table means no snapshot has handed out a ref in this document (e.g. it just navigated).
+        if (!(owners instanceof WeakMap)) {
+            return null;
+        }
+        const owned = (element) => owners.get(element) === wantedRef;
         // Searches open shadow roots too, matching how the snapshot hands out refs.
         const deepQueryAll = (root, query) => {
             const found = [];
@@ -1382,9 +1482,12 @@ internal fun browserRefResolverScript(functionName: String = "__operitResolveRef
             try {
                 target = currentDocument.querySelector('[aria-ref="' + wantedRef.replace(/["\\]/g, "") + '"]');
             } catch (_) {}
+            if (target && !owned(target)) {
+                target = null;
+            }
             if (!target) {
                 target = deepQueryAll(currentDocument, "[aria-ref]").find((element) => {
-                    return String(element.getAttribute("aria-ref") || "") === wantedRef;
+                    return String(element.getAttribute("aria-ref") || "") === wantedRef && owned(element);
                 }) || null;
             }
             if (target) {
