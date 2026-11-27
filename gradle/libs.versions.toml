@@ -69,6 +69,7 @@ test-rules = "1.5.0"
 coroutines = "1.8.0"
 coroutines-test = "1.7.3"
 mockito = "5.2.0"
+mockito-core = "5.20.0"
 mockito-kotlin = "5.1.0"
 reorderable = "2.5.1"
 swipe = "1.2.0"
@@ -235,7 +236,7 @@ coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutin
 coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutines-test" }
 
 # Mocks
-mockito-core = { group = "org.mockito", name = "mockito-core", version.ref = "mockito" }
+mockito-core = { group = "org.mockito", name = "mockito-core", version.ref = "mockito-core" }
 mockito-kotlin = { group = "org.mockito.kotlin", name = "mockito-kotlin", version.ref = "mockito-kotlin" }
 mockito-android = { group = "org.mockito", name = "mockito-android", version.ref = "mockito" }
 

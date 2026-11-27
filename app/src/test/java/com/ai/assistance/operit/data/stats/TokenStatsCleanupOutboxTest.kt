@@ -28,12 +28,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
+import org.junit.runner.RunWith
 import org.mockito.Mockito
 import org.mockito.kotlin.any
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
 /**
  * legacy cleanup outbox 排空协议测试（阶段 5 P1 闭环）：
@@ -45,14 +48,15 @@ import org.mockito.kotlin.whenever
  * - ALL kind 清全部累计键但不触碰价格/计费方式等配置键与 marker 键；
  * - 重启排空（无 PENDING）不触碰 DataStore。
  *
- * Windows DataStore 约束：模块级 `Context.apiDataStore` 委托在单个 JVM 内只创建
- * 一个 DataStore 实例，且同一文件每次真实写入在 Windows 上不稳定（rename 目标
- * 已存在时失败）。因此每个测试阶段最多一次真实写入：先用独立 DataStore 实例生成
- * 种子文件（[seedPreferencesFile]），复制到阶段目录（[restorePreferencesInto]），
- * 被测流程（排空的 apply）是阶段文件的唯一真实写入；失败路径用注入的
+ * 模块级 `Context.apiDataStore` 委托在单个 JVM 内只创建一个 DataStore 实例，
+ * 每个测试阶段使用独立目录。先生成种子文件（[seedPreferencesFile]），再复制到
+ * 阶段目录（[restorePreferencesInto]）供被测流程直接读取和更新。失败路径用注入的
  * ApiPreferences mock 在边界模拟 DataStore 故障（协调器协议用真实 DAO 验证），
  * 键级幂等语义由纯函数 [applyLegacyCleanupMutation] 直接验证——不绕过生产协议。
  */
+// Robolectric makes DataStore select its modern Android file replacement path.
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34], manifest = Config.NONE, application = android.app.Application::class)
 class TokenStatsCleanupOutboxTest {
 
     private val providerA = "DEEPSEEK:deepseek-chat"
@@ -108,7 +112,7 @@ class TokenStatsCleanupOutboxTest {
 
     private fun openDatabase(filesDir: File): AppDatabase =
         Room.databaseBuilder(mockContext(filesDir), AppDatabase::class.java, "app_database")
-            .setDriver(JdbcSQLiteDriver())
+            .setDriver(JdbcSQLiteDriver.forRobolectric())
             .addMigrations(
                 AppDatabase.MIGRATION_28_29,
                 AppDatabase.MIGRATION_29_30,
@@ -161,17 +165,6 @@ class TokenStatsCleanupOutboxTest {
         )
     }
 
-    /**
-     * Windows DataStore 约束（与 VM 测试同款技术）：DataStore 1.0.0 以 renameTo 原子
-     * 替换，Windows 上目标文件已存在时替换失败。先用一次读把种子文件内容载入
-     * DataStore 内存缓存（后续 edit 基于缓存状态），再移除磁盘文件，使被测流程的
-     * edit（rename 目标不存在）成为该文件的唯一真实写入——不绕过生产协议。
-     */
-    private suspend fun primeDatastoreForWrite(phase: File, prefs: ApiPreferences) {
-        prefs.getInputTokensForProviderModel("DEEPSEEK:deepseek-chat")
-        check(File(File(phase, "datastore"), "api_settings.preferences_pb").delete())
-    }
-
     // ==== 排空协议 ====
 
     @Test
@@ -204,14 +197,13 @@ class TokenStatsCleanupOutboxTest {
                 val ctx = mockContext(phase)
                 val prefs = constructApiPreferences(ctx)
                 injectApiPreferences(prefs)
-                primeDatastoreForWrite(phase, prefs)
 
                 // 删除事务创建 operation（items 精确到 legacy A）
                 val result = dao.deleteDisplayModelEventsTx("group-x", deleteBaselines = true)
                 val op = result.cleanupOperation!!
                 assertEquals(1, dao.getCleanupItems(op.operationId).size)
 
-                // 排空（该文件的唯一真实写入）
+                // 排空待处理操作
                 Mockito.mockStatic(AppLogger::class.java).use { TokenStatsResetCoordinator.drainPendingCleanup(ctx) }
 
                 // DataStore：A 键精准清除，B 键与价格配置保留，marker 已写
@@ -269,10 +261,9 @@ class TokenStatsCleanupOutboxTest {
                     dao.getPendingCleanupOperations().single().status,
                 )
 
-                // 模拟重启：注入真实 prefs（该文件的首个真实写入），排空重试成功
+                // 模拟重启：注入真实 prefs，排空重试成功
                 val realPrefs = constructApiPreferences(ctx)
                 injectApiPreferences(realPrefs)
-                primeDatastoreForWrite(phase, realPrefs)
                 Mockito.mockStatic(AppLogger::class.java).use { TokenStatsResetCoordinator.drainPendingCleanup(ctx) }
                 val applied = dao.getAllCleanupOperations().single()
                 assertEquals(TokenStatCleanupOperationEntity.STATUS_APPLIED, applied.status)
@@ -376,7 +367,6 @@ class TokenStatsCleanupOutboxTest {
             val ctx = mockContext(phase)
             val prefs = constructApiPreferences(ctx)
             injectApiPreferences(prefs)
-            primeDatastoreForWrite(phase, prefs)
 
             val op = dao.deleteAllStatisticsTx(deleteBaselines = true).cleanupOperation!!
             assertEquals(TokenStatCleanupOperationEntity.SCOPE_ALL, op.scope)

@@ -15,6 +15,8 @@ import java.sql.ResultSet
 import java.sql.ResultSetMetaData
 import java.sql.SQLException
 import java.sql.Types
+import java.util.Properties
+import org.sqlite.JDBC
 
 /**
  * 单元测试用纯 JVM SQLite 驱动：基于 org.xerial:sqlite-jdbc 实现
@@ -31,14 +33,24 @@ import java.sql.Types
  * - 无结果集的语句（DDL、PRAGMA 赋值等）在 sqlite-jdbc 的 executeQuery 下会抛出
  *   “query does not return ResultSet”，按 step() 返回 false 处理；其他 SQLException 照常抛出。
  */
-class JdbcSQLiteDriver : SQLiteDriver {
-    override fun open(fileName: String): SQLiteConnection = JdbcSQLiteConnection(fileName)
+class JdbcSQLiteDriver(
+    private val connect: (String) -> JdbcConnection = DriverManager::getConnection,
+) : SQLiteDriver {
+    override fun open(fileName: String): SQLiteConnection = JdbcSQLiteConnection(fileName, connect)
+
+    companion object {
+        // Robolectric's sandbox may not see the driver registered with DriverManager.
+        fun forRobolectric() = JdbcSQLiteDriver { url -> JDBC.createConnection(url, Properties()) }
+    }
 }
 
-class JdbcSQLiteConnection(fileName: String) : SQLiteConnection {
+class JdbcSQLiteConnection(
+    fileName: String,
+    connect: (String) -> JdbcConnection = DriverManager::getConnection,
+) : SQLiteConnection {
 
     private val connection: JdbcConnection =
-        DriverManager.getConnection("jdbc:sqlite:$fileName").apply {
+        connect("jdbc:sqlite:$fileName").apply {
             // Room 连接池会在同一文件上开多个连接；Windows 上 sqlite-jdbc 的
             // journal 文件删除（SQLITE_IOERR_DELETE）会被其它连接/杀软短暂锁定。
             // 内存日志模式彻底避开 journal 文件（仅测试用，无崩溃恢复需求）。
