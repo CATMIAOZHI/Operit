@@ -102,7 +102,8 @@ internal fun StandardBrowserSessionTools.resolveWebViewContext(fallbackContext: 
     }
 }
 
-@SuppressLint("ClickableViewAccessibility")
+// WrongConstant: WebViewFeature.WEB_AUTHENTICATION is newer than the list lint checks against.
+@SuppressLint("ClickableViewAccessibility", "WrongConstant")
 internal fun StandardBrowserSessionTools.configureWebView(
     session: BrowserToolSession,
     webView: WebView,

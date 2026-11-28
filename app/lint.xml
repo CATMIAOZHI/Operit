@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <!-- The Cefrium plugin's generated manifest names the engine's child services, which the
+         engine's own runtime provides; lint cannot see them in the project. -->
+    <issue id="MissingClass">
+        <ignore regexp="generateCefriumJavalessManifest" />
+    </issue>
+    <!-- Mostly flags Context strings read in callbacks and effects, where they are right; the calls
+         made while drawing use stringResource. Kept visible as a warning. -->
+    <issue id="LocalContextGetResourceValueCall" severity="warning" />
+</lint>

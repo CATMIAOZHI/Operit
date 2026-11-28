@@ -194,13 +194,14 @@ fun MessageInfoDialog(
                             )
                         }
                         if (turn.lastFile == null) {
-                            if (!unsent)
-                            Text(
-                                text = if (turn.count > 0) stringResource(R.string.orbit_dev_info_request_count_only, turn.count)
-                                else stringResource(R.string.orbit_dev_info_request_none),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
+                            if (!unsent) {
+                                Text(
+                                    text = if (turn.count > 0) stringResource(R.string.orbit_dev_info_request_count_only, turn.count)
+                                    else stringResource(R.string.orbit_dev_info_request_none),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
                         } else {
                             if (turn.count > 0) {
                             Text(

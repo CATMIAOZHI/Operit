@@ -497,7 +497,7 @@ private fun RunHistorySheet(
                         if (found != null) onOpenProcess(found)
                         else android.widget.Toast.makeText(context,
                             if (process.isFailure) resources.getString(R.string.orbit_run_turn_failed)
-                            else resources.getString(R.string.orbit_run_turn_gone, orbitName),
+                            else resources.getString(R.string.orbit_run_turn_gone),
                             android.widget.Toast.LENGTH_SHORT).show()
                     } finally {
                         findingTurn = false

@@ -308,6 +308,7 @@ android {
     }
     lint {
         baseline = file("lint-baseline.xml")
+        lintConfig = file("lint.xml")
         checkDependencies = true
         disable += "MissingTranslation"
     }

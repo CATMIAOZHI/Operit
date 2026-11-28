@@ -74,7 +74,7 @@ fun AttachmentChip(
 
     if (isImage) {
         var open by remember(attachmentInfo.filePath) { mutableStateOf(false) }
-        val openLabel = context.getString(R.string.attachment_edit_open)
+        val openLabel = androidx.compose.ui.res.stringResource(R.string.attachment_edit_open)
         Box(
             modifier =
                 Modifier.size(52.dp)
@@ -102,7 +102,7 @@ fun AttachmentChip(
                 IconButton(onClick = onRemove, modifier = Modifier.fillMaxSize()) {
                     Icon(
                         imageVector = Icons.Default.Close,
-                        contentDescription = context.getString(R.string.remove_attachment),
+                        contentDescription = androidx.compose.ui.res.stringResource(R.string.remove_attachment),
                         modifier = Modifier.size(10.dp),
                         tint = Color.White,
                     )
@@ -135,7 +135,7 @@ fun AttachmentChip(
                     )
                     .clip(chipShape)
                     .then(
-                        if (canOpen) Modifier.clickable(onClickLabel = context.getString(R.string.attachment_edit_open)) {
+                        if (canOpen) Modifier.clickable(onClickLabel = androidx.compose.ui.res.stringResource(R.string.attachment_edit_open)) {
                             val file = previewFile ?: return@clickable
                             val name = attachmentInfo.fileName.ifBlank { file.name }
                             val preview = com.ai.assistance.operit.ui.features.orbit.OrbitMediaPreview
@@ -173,7 +173,7 @@ fun AttachmentChip(
                 IconButton(onClick = onRemove, modifier = Modifier.size(14.dp)) {
                     Icon(
                         imageVector = Icons.Default.Close,
-                        contentDescription = context.getString(R.string.remove_attachment),
+                        contentDescription = androidx.compose.ui.res.stringResource(R.string.remove_attachment),
                         modifier = Modifier.size(10.dp),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
