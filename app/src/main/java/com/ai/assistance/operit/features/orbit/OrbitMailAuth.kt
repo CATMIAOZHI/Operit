@@ -162,7 +162,8 @@ internal object OrbitMailAuth {
         val form = FormBody.Builder().add("grant_type", "authorization_code").add("code", code)
             .add("client_id", client.clientId).add("redirect_uri", redirect).add("code_verifier", verifier)
         client.clientSecret?.let { form.add("client_secret", it) }
-        if (!gmail) form.add("scope", client.scope)
+        // Microsoft redeems a code for one resource; Graph comes later from the refresh token.
+        if (!gmail) form.add("scope", client.tokenScope)
         val tokens = try {
             OrbitMailAccounts.tokenCall(if (gmail) OrbitMailClients.GOOGLE_TOKEN else OrbitMailClients.MS_TOKEN, form.build())
         } catch (e: OrbitMailSignInNeeded) {
@@ -173,7 +174,7 @@ internal object OrbitMailAuth {
 
     /** Names the signed-in address from the ID token, checks the mailbox and saves it. */
     private suspend fun save(context: Context, orbitId: String, provider: OrbitMailProvider, expected: String?,
-        tokens: OrbitMailAccounts.Tokens, revokes: Long): OrbitMailAccount {
+        tokens: OrbitMailAccounts.Tokens, revokes: Long, calendar: Boolean = true): OrbitMailAccount {
         val gmail = provider == OrbitMailProvider.GMAIL
         val claims = tokens.idToken?.let(::claims) ?: JSONObject()
         val email = (if (gmail) listOf("email") else listOf("email", "preferred_username", "upn"))
@@ -184,7 +185,8 @@ internal object OrbitMailAuth {
         }
         val consumer = !gmail && claims.optString("tid") == OrbitMailClients.MS_CONSUMER_TENANT
         OrbitMailBox.verify(provider, email, tokens.access, consumer)
-        return OrbitMailAccounts.save(context.applicationContext, orbitId, provider, email, tokens, consumer, revokesBefore = revokes)
+        return OrbitMailAccounts.save(context.applicationContext, orbitId, provider, email, tokens, consumer,
+            revokesBefore = revokes, calendar = calendar)
     }
 
     /** What one request to the local page said. */
@@ -324,7 +326,9 @@ internal object OrbitMailAuth {
                     val tokens = OrbitMailAccounts.Tokens(access, json.optString("refresh_token").takeIf { it.isNotEmpty() },
                         json.optLong("expires_in", 3600).coerceIn(60, 24 * 3600), json.optString("id_token").takeIf { it.isNotEmpty() })
                     withContext(Dispatchers.Main.immediate) { onConnecting() }
-                    return save(context, orbitId, OrbitMailProvider.OUTLOOK, expected, tokens, OrbitMailAccounts.revokeMark())
+                    // A code sign-in asks for mail only.
+                    return save(context, orbitId, OrbitMailProvider.OUTLOOK, expected, tokens, OrbitMailAccounts.revokeMark(),
+                        calendar = false)
                 }
                 when (OrbitMailAccounts.errorCode(json)) {
                     "authorization_pending" -> Unit
@@ -341,7 +345,8 @@ internal object OrbitMailAuth {
     suspend fun startOutlookCode(): OutlookCode {
         val client = OrbitMailClients.outlook
         val (status, json) = OrbitMailAccounts.postJson(OrbitMailClients.MS_DEVICE_CODE,
-            FormBody.Builder().add("client_id", client.clientId).add("scope", client.scope).build())
+            // Only the mail resource: a code sign-in has no way to name the resource its token is for.
+            FormBody.Builder().add("client_id", client.clientId).add("scope", client.tokenScope).build())
         if (status !in 200..299) throw OrbitMailAuthError(OrbitMailAuthError.Kind.REFUSED)
         val userCode = json.optString("user_code")
         val deviceCode = json.optString("device_code")

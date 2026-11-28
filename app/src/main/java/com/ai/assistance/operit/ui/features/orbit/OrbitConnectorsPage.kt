@@ -203,7 +203,7 @@ internal fun OrbitConnectorsPage(orbit: OrbitProfile, onBack: () -> Unit) {
                     }
                 }
             }
-            SectionLabel(stringResource(R.string.orbit_connectors_add))
+            SectionLabel(stringResource(if (connected.isEmpty()) R.string.orbit_connectors_add else R.string.orbit_connectors_add_more))
             SettingsCard(backgroundColor = cardColor, contentPadding = PaddingValues(0.dp)) {
                 ServiceRow("Gmail", stringResource(R.string.orbit_connectors_gmail_desc)) { choose(OrbitMailProvider.GMAIL, null) }
                 SettingsRowDivider(inset = false)
@@ -231,10 +231,8 @@ internal fun OrbitConnectorsPage(orbit: OrbitProfile, onBack: () -> Unit) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     shown.expected?.let { Text(stringResource(R.string.orbit_connectors_use_account, it), fontWeight = FontWeight.Medium) }
                     Text(stringResource(R.string.orbit_connectors_choose), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    if (shown.provider == OrbitMailProvider.GMAIL) {
-                        Text(stringResource(R.string.orbit_connectors_gmail_scopes), style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
+                    Text(stringResource(R.string.orbit_connectors_gmail_scopes), style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                     WayRow(stringResource(R.string.orbit_connectors_way_orbit), stringResource(R.string.orbit_connectors_way_orbit_desc)) {
                         startInOrbit(shown.provider, shown.expected)
                     }
@@ -422,11 +420,15 @@ private fun AccountRow(account: OrbitMailAccount, onSignInAgain: () -> Unit, onD
         Column(Modifier.weight(1f)) {
             Text(account.email, style = MaterialTheme.typography.titleMedium)
             Text(
-                if (account.needsSignIn) stringResource(R.string.orbit_connectors_needs_sign_in) else account.provider.label,
+                when {
+                    account.needsSignIn -> stringResource(R.string.orbit_connectors_needs_sign_in)
+                    !account.calendar -> account.provider.label + " · " + stringResource(R.string.orbit_connectors_old_scopes)
+                    else -> account.provider.label
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = if (account.needsSignIn) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            if (account.needsSignIn) TextButton(onClick = onSignInAgain, contentPadding = PaddingValues(0.dp)) {
+            if (account.needsSignIn || !account.calendar) TextButton(onClick = onSignInAgain, contentPadding = PaddingValues(0.dp)) {
                 Text(stringResource(R.string.orbit_connectors_sign_in_again))
             }
         }

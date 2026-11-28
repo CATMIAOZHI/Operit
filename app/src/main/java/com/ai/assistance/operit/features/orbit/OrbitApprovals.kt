@@ -123,11 +123,11 @@ internal object OrbitApprovals {
     fun cached(orbitId: String, id: String): Approval? = cache[orbitId + "/" + id]
 
     /**
-     * Approvals that offer "always allow" next to "allow once": a sending tool (except mail, where
-     * every message is confirmed), or a hook loading keys.
+     * Approvals that offer "always allow" next to "allow once": a sending tool (except mail and the
+     * calendar, where every message and change is confirmed), or a hook loading keys.
      */
     fun offersAlways(action: String): Boolean =
-        OrbitConnectorSend.toolOf(action).let { it != null && it != com.ai.assistance.operit.core.tools.OrbitMailTools.SEND } ||
+        OrbitConnectorSend.toolOf(action).let { it != null && !OrbitConnectorSend.confirmsEach(it) } ||
             OrbitApprovalActions.type(action) == OrbitHookVault.ACTION
 
     fun observe(context: Context, orbitId: String): Flow<List<Approval>> =

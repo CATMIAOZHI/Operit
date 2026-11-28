@@ -41,13 +41,19 @@ internal enum class OrbitMailProvider(val id: String, val label: String) {
  * Who Orbit signs in as with Google and Microsoft. For now these are Thunderbird's published desktop
  * clients (the git-credential-email project uses the same ones); once Orbit's own clients are
  * registered, only this object changes. A sign-in asks for every scope Thunderbird asks for with a
- * mail account (Google: mail, contacts, calendar; Microsoft: IMAP, POP, SMTP, Exchange), so later
- * features need no new consent; `openid email` / `openid profile` only name the signed-in address.
- * Mail itself is read and sent over IMAP/SMTP for both services.
+ * mail account (Google: mail, contacts, calendar; Microsoft: IMAP, POP, SMTP, Exchange); Microsoft
+ * is also asked for its calendar and contacts on Graph, another resource, whose token comes from the
+ * same refresh token. `openid email` / `openid profile` only name the signed-in address. Mail is read
+ * and sent over IMAP/SMTP, calendars and contacts over CalDAV/CardDAV (Google) or Graph (Microsoft).
  */
 internal object OrbitMailClients {
-    /** [refreshScope]: what a refresh asks for (Microsoft only); kept to what every saved sign-in was granted. */
-    class Client(val clientId: String, val clientSecret: String?, val scope: String, val refreshScope: String = scope)
+    /**
+     * [scope]: what the sign-in page asks the user for. [tokenScope]: what the code is redeemed for
+     * (Microsoft gives a token for one resource at a time). [refreshScope]: what a mail refresh asks
+     * for (Microsoft only), kept to what every saved sign-in was granted.
+     */
+    class Client(val clientId: String, val clientSecret: String?, val scope: String,
+        val tokenScope: String = scope, val refreshScope: String = tokenScope)
 
     val gmail = Client(
         clientId = "406964657835-aq8lmia8j95dhl1a2bvharmfk3t1hgqj.apps.googleusercontent.com",
@@ -60,11 +66,17 @@ internal object OrbitMailClients {
         clientId = "9e5f94bc-e8a4-4e73-b8be-63364c29d753",
         clientSecret = null,
         scope = "https://outlook.office.com/IMAP.AccessAsUser.All https://outlook.office.com/POP.AccessAsUser.All " +
+            "https://outlook.office.com/SMTP.Send https://outlook.office.com/EWS.AccessAsUser.All offline_access openid profile " +
+            "https://graph.microsoft.com/Calendars.ReadWrite https://graph.microsoft.com/Contacts.Read",
+        tokenScope = "https://outlook.office.com/IMAP.AccessAsUser.All https://outlook.office.com/POP.AccessAsUser.All " +
             "https://outlook.office.com/SMTP.Send https://outlook.office.com/EWS.AccessAsUser.All offline_access openid profile",
         // Mailboxes connected before the wider sign-in were granted only these; Microsoft refuses a
         // refresh asking for more, and gives the token every scope granted for the resource anyway.
         refreshScope = "https://outlook.office.com/IMAP.AccessAsUser.All https://outlook.office.com/SMTP.Send offline_access openid profile",
     )
+
+    /** Microsoft Graph, for calendars and contacts; granted on the sign-in page, redeemed by refreshing. */
+    const val GRAPH_SCOPE = "https://graph.microsoft.com/Calendars.ReadWrite https://graph.microsoft.com/Contacts.Read offline_access"
 
     const val GOOGLE_AUTH = "https://accounts.google.com/o/oauth2/v2/auth"
     const val GOOGLE_TOKEN = "https://oauth2.googleapis.com/token"
@@ -88,6 +100,8 @@ internal data class OrbitMailAccount(
     val needsSignIn: Boolean,
     /** A personal Microsoft account (outlook.com, hotmail.com). */
     val consumer: Boolean,
+    /** Signed in in a way that also asked for calendar and contacts (not Outlook's code sign-in). */
+    val calendar: Boolean,
 ) {
     /** How the model names this mailbox when the same address is on both services. */
     val qualified: String get() = "${provider.id}:$email"
@@ -153,7 +167,7 @@ internal object OrbitMailAccounts {
     private fun account(json: JSONObject): OrbitMailAccount? {
         val provider = OrbitMailProvider.of(json.optString("provider")) ?: return null
         return OrbitMailAccount(json.optString("id"), provider, json.optString("email"), json.optLong("added_at"),
-            json.optBoolean("needs_sign_in"), json.optBoolean("consumer"))
+            json.optBoolean("needs_sign_in"), json.optBoolean("consumer"), json.optBoolean("calendar"))
     }
 
     /** Whether this Orbit has any mailbox, without decrypting anything (the store is deleted when empty). */
@@ -170,7 +184,7 @@ internal object OrbitMailAccounts {
      * thrown away ("gen").
      */
     suspend fun save(context: Context, orbitId: String, provider: OrbitMailProvider, email: String, tokens: Tokens,
-        consumer: Boolean, revokesBefore: Long = Long.MAX_VALUE): OrbitMailAccount = withContext(Dispatchers.IO) {
+        consumer: Boolean, revokesBefore: Long = Long.MAX_VALUE, calendar: Boolean = true): OrbitMailAccount = withContext(Dispatchers.IO) {
         val refresh = tokens.refresh?.takeIf { it.isNotBlank() } ?: throw OrbitMailAuthError(OrbitMailAuthError.Kind.NO_REFRESH)
         lock.withLock {
             // A Gmail disconnect of this address after [revokesBefore] may have revoked these new tokens too.
@@ -186,6 +200,8 @@ internal object OrbitMailAccounts {
                 .put("provider", provider.id).put("email", email)
                 .put("added_at", same?.optLong("added_at") ?: System.currentTimeMillis())
                 .put("consumer", consumer)
+                // Microsoft keeps what the user allowed, so a later code sign-in still has calendar and contacts.
+                .put("calendar", calendar || same?.optBoolean("calendar") == true)
                 .put("refresh_token", refresh).put("access_token", tokens.access)
                 .put("expires_at", System.currentTimeMillis() + tokens.expiresInSeconds * 1000)
             writeLocked(context, orbitId, if (same == null) all + entry else all.map { if (it === same) entry else it })
@@ -202,6 +218,7 @@ internal object OrbitMailAccounts {
             val all = readLocked(context, orbitId)
             val gone = all.firstOrNull { it.optString("id") == id } ?: return@withLock null
             writeLocked(context, orbitId, all.filter { it !== gone })
+            OrbitContactsBox.forget(orbitId, id)
             // Listed under the same lock that removed the mailbox, so signing the address in again always sees it.
             if (gone.optString("provider") == OrbitMailProvider.GMAIL.id) {
                 val address = gone.optString("email").lowercase()
@@ -318,6 +335,44 @@ internal object OrbitMailAccounts {
         writeLocked(context, orbitId, all)
         true
     }
+
+    /**
+     * A Microsoft Graph token (calendar, contacts) for an Outlook account, kept apart from its mail
+     * token: Microsoft hands out a token for one resource at a time, from the same refresh token.
+     * A refusal never marks the mailbox as needing a sign-in (mail may still work); it says that
+     * the account has to be signed in again to allow calendar and contacts.
+     */
+    suspend fun graphLogin(context: Context, orbitId: String, accountId: String, refused: String? = null): Login =
+        withContext(Dispatchers.IO) {
+            fun usable(json: JSONObject): String? = json.optString("graph_access_token").takeIf {
+                it.isNotEmpty() && it != refused && json.optLong("graph_expires_at") - System.currentTimeMillis() > REFRESH_MARGIN_MS
+            }
+            current(context, orbitId, accountId).let { (account, json) ->
+                check(account.provider == OrbitMailProvider.OUTLOOK) { "Not an Outlook account" }
+                usable(json)?.let { return@withContext Login(account, it) }
+            }
+            refreshing.getOrPut("$orbitId/$accountId") { Mutex() }.withLock {
+                val (account, json) = current(context, orbitId, accountId)
+                usable(json)?.let { return@withLock Login(account, it) }
+                val gen = json.optString("gen")
+                val client = OrbitMailClients.outlook
+                val form = FormBody.Builder().add("grant_type", "refresh_token").add("client_id", client.clientId)
+                    .add("refresh_token", json.optString("refresh_token")).add("scope", OrbitMailClients.GRAPH_SCOPE)
+                val tokens = try {
+                    tokenCall(OrbitMailClients.MS_TOKEN, form.build())
+                } catch (e: OrbitMailSignInNeeded) {
+                    throw OrbitMailSignInNeeded("${account.email} has not allowed calendar and contacts, or its sign-in " +
+                        "expired: ask the user to open Orbit settings → Connectors and sign this account in again in Orbit's " +
+                        "browser (signing in with a code connects mail only)")
+                }
+                if (update(context, orbitId, accountId, gen) {
+                        it.put("graph_access_token", tokens.access)
+                            .put("graph_expires_at", System.currentTimeMillis() + tokens.expiresInSeconds * 1000)
+                        tokens.refresh?.takeIf { r -> r.isNotBlank() }?.let { r -> it.put("refresh_token", r) }
+                    }) return@withLock Login(account, tokens.access)
+                error("${account.email} was just signed in again; try again")
+            }
+        }
 
     private fun signInNeeded(account: OrbitMailAccount) = OrbitMailSignInNeeded(
         "${account.email} needs to be connected again: ask the user to open Orbit settings → Connectors and sign in again")

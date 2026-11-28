@@ -13,6 +13,7 @@ import com.ai.assistance.operit.features.orbit.OrbitMailAccount
 import com.ai.assistance.operit.features.orbit.OrbitMailAccounts
 import com.ai.assistance.operit.features.orbit.OrbitMailBox
 import com.ai.assistance.operit.features.orbit.OrbitMemoryScope
+import com.ai.assistance.operit.features.orbit.OrbitContactsBox
 import com.ai.assistance.operit.util.LocaleUtils
 import org.json.JSONArray
 import org.json.JSONObject
@@ -32,14 +33,14 @@ internal object OrbitMailTools {
 
     val prompt = ToolPrompt(
         name = MAIL,
-        description = "用户连接的 Gmail / Outlook 邮箱：看账号和文件夹、列出和搜索邮件、读正文、存附件、标已读未读、归档、存草稿。发邮件和回复用 $SEND。",
+        description = "用户连接的 Gmail / Outlook 邮箱：看账号和文件夹、列出和搜索邮件、读正文、存附件、标已读未读、归档、存草稿、查通讯录。发邮件和回复用 $SEND，日历用 orbit_calendar。",
         parametersStructured = listOf(
-            ToolParameterSchema("action", description = "accounts/folders/list/search/read/attachment/mark/archive/draft", required = true),
-            ToolParameterSchema("account", description = "用哪个邮箱（地址）；只连了一个时可不填", required = false),
+            ToolParameterSchema("action", description = "accounts/folders/list/search/read/attachment/mark/archive/draft/contacts", required = true),
+            ToolParameterSchema("account", description = "用哪个邮箱（地址）；只连了一个时可不填；contacts 不填就查所有账号", required = false),
             ToolParameterSchema("folder", description = "list/search：inbox（默认）、sent、drafts、archive、all、trash、spam，或 folders 返回的名字", required = false),
-            ToolParameterSchema("query", description = "search：Gmail 用它自己的搜索写法（from:、subject:、has:attachment、newer_than:7d），默认搜全部邮件；Outlook 在标题、发件人和正文里找", required = false),
+            ToolParameterSchema("query", description = "search：Gmail 用它自己的搜索写法（from:、subject:、has:attachment、newer_than:7d），默认搜全部邮件；Outlook 在标题、发件人和正文里找。contacts：按名字、地址、电话或公司找，不填列出全部", required = false),
             ToolParameterSchema("unread_only", "boolean", "list/search：只要未读", false),
-            ToolParameterSchema("limit", "integer", "list/search：最多几封，1-50，默认20", false),
+            ToolParameterSchema("limit", "integer", "list/search/contacts：最多几条，1-50，默认20", false),
             ToolParameterSchema("before", "integer", "list/search：上次返回的 next_before，往前接着找更早的", false),
             ToolParameterSchema("id", description = "read/attachment：邮件 id（来自 list/search）；mark/archive 可用逗号隔开多个，最多50", required = false),
             ToolParameterSchema("start_char", "integer", "read：从正文第几个字开始，用上次的 next_start_char 接着读", false),
@@ -60,6 +61,7 @@ internal object OrbitMailTools {
   - attachment 把附件存进你文件夹的 mail/ 下并返回路径，用文件工具读；要给用户看，用 orbit_file import 再 send。
   - archive：Gmail 是移出收件箱（还在全部邮件里），Outlook 是移到「存档」。没有删除邮件的操作。
   - draft 只存进草稿箱，不会发出。
+  - contacts 只读，用来查人和地址。
 """,
     )
 
@@ -123,6 +125,8 @@ internal object OrbitMailTools {
                         .apply { if (account.needsSignIn) put("needs_sign_in", true) })
                 }
             })
+        } else if (action == "contacts") {
+            ok(MAIL, contacts(context, orbitId, a))
         } else {
             val account = OrbitMailAccounts.pick(context, orbitId, a["account"])
             val english = LocaleUtils.usesEnglishPrompt(context)
@@ -162,16 +166,45 @@ internal object OrbitMailTools {
     private fun ids(a: Map<String, String>): List<String> =
         a["id"]?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
 
-    // ---- sending ----
+    /** Contacts of one account, or of every account when none is named. */
+    private suspend fun contacts(context: Context, orbitId: String, a: Map<String, String>): JSONObject {
+        val limit = (int(a["limit"], "limit") ?: 20).coerceIn(1, 50)
+        val all = OrbitMailAccounts.list(context, orbitId)
+        val accounts = if (a["account"] == null) all.also {
+            check(it.isNotEmpty()) { "No mailbox is connected. Ask the user to connect Gmail or Outlook in Orbit settings → Connectors" }
+        } else listOf(OrbitMailAccounts.pick(context, orbitId, a["account"]))
+        val several = accounts.size > 1
+        fun nameOf(account: OrbitMailAccount) =
+            if (all.count { it.email.equals(account.email, true) } > 1) account.qualified else account.email
+        val found = JSONArray()
+        val errors = JSONArray()
+        var total = 0
+        for (account in accounts) {
+            try {
+                check(!account.needsSignIn) { "needs to be connected again in Orbit settings → Connectors" }
+                val (list, count) = OrbitContactsBox.search(context, orbitId, account, a["query"], limit)
+                total += count
+                list.forEach { found.put(OrbitContactsBox.json(it).apply { if (several) put("account", nameOf(account)) }) }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (!several) throw e
+                errors.put(JSONObject().put("account", nameOf(account)).put("error", e.message ?: e.javaClass.simpleName))
+            }
+        }
+        val shown = (0 until found.length()).map { found.getJSONObject(it) }.sortedBy { it.optString("name").lowercase() }.take(limit)
+        return JSONObject().put("contacts", JSONArray(shown)).put("found", total)
+            .apply { if (total > shown.size) put("more", "Showing ${shown.size} of $total; search more precisely") }
+            .apply { if (errors.length() > 0) put("errors", errors) }
+    }
 
-    /** A send card: its title, what it shows, and the exact message the app sends once it is allowed. */
-    class Prepared(val title: String, val detail: String, val params: List<ToolParameter>)
+    // ---- sending ----
 
     /**
      * Works out the message [tool] asks to send: the account, the final recipients (for a reply, the
      * original's reply address or sender, or everyone), subject, text and quote. Throws with what to fix.
      */
-    suspend fun prepare(context: Context, orbit: OrbitProfile, tool: AITool): Prepared {
+    suspend fun prepare(context: Context, orbit: OrbitProfile, tool: AITool): OrbitConnectorSend.Prepared {
         val a = args(tool)
         val account = OrbitMailAccounts.pick(context, orbit.id, a["account"])
         check(!account.needsSignIn) {
@@ -190,7 +223,7 @@ internal object OrbitMailTools {
                 needsRecipient = true)
             else -> throw IllegalArgumentException("action must be send or reply")
         }
-        return Prepared(title(composed, action == "reply", english), describe(account, composed, english), listOfNotNull(
+        return OrbitConnectorSend.Prepared(title(composed, action == "reply", english), describe(account, composed, english), listOfNotNull(
             ToolParameter("action", action),
             ToolParameter("account_id", account.id),
             ToolParameter("from", account.email),

@@ -54,10 +54,12 @@ internal object OrbitExtraTools {
             Spec(OrbitOptionsTools.prompt, false, OrbitOptionsTools::execute),
             Spec(OrbitPrivacyTools.originPrompt, true, OrbitPrivacyTools::executeOrigin),
             Spec(OrbitPrivacyTools.presendPrompt, true, OrbitPrivacyTools::executePresend),
-            // Mail: background tasks and subagents may read it; sending is only offered where the user
-            // can confirm it on a card, the Orbit's own chats.
+            // Mail and calendar: background tasks and subagents may read them; sending and changing
+            // are only offered where the user can confirm them on a card, the Orbit's own chats.
             Spec(OrbitMailTools.prompt, true, OrbitMailTools::execute, OrbitMailTools::run, inSubagents = true),
             Spec(OrbitMailTools.sendPrompt, false, OrbitMailTools::executeSend, OrbitMailTools::runSend),
+            Spec(OrbitCalendarTools.prompt, true, OrbitCalendarTools::execute, OrbitCalendarTools::run, inSubagents = true),
+            Spec(OrbitCalendarTools.changePrompt, false, OrbitCalendarTools::executeChange, OrbitCalendarTools::runChange),
         )
     }
     val prompts: List<ToolPrompt> get() = specs.map { it.prompt }
@@ -65,8 +67,8 @@ internal object OrbitExtraTools {
     val taskPrompts: List<ToolPrompt> get() = specs.filter { it.inTasks }.map { it.prompt }
     val taskNames: Set<String> by lazy { specs.filter { it.inTasks }.map { it.prompt.name }.toSet() }
 
-    /** The mail tools, shown only once the Orbit has a mailbox. */
-    val mailNames = setOf(OrbitMailTools.MAIL, OrbitMailTools.SEND)
+    /** The connector tools (mail, calendar), shown only once the Orbit has a mailbox. */
+    val mailNames = setOf(OrbitMailTools.MAIL, OrbitMailTools.SEND, OrbitCalendarTools.CALENDAR, OrbitCalendarTools.CHANGE)
 
     fun visibility(isOrbitChat: Boolean, isTaskRoot: Boolean, isOrbitSubagent: Boolean = false, hasMail: Boolean = true): Map<String, Boolean> =
         specs.associate {

@@ -17,6 +17,15 @@ class OrbitConnectorSendTest {
             com.ai.assistance.operit.ui.permissions.orbitDefaultPermissionLevel("orbit_mail_send", true, builtIn))
         assertEquals(com.ai.assistance.operit.ui.permissions.PermissionLevel.ALLOW,
             com.ai.assistance.operit.ui.permissions.orbitDefaultPermissionLevel("orbit_mail", false, builtIn))
+        // Calendar changes likewise; reading the calendar does not ask.
+        assertEquals(com.ai.assistance.operit.ui.permissions.PermissionLevel.ASK,
+            com.ai.assistance.operit.ui.permissions.orbitDefaultPermissionLevel("orbit_calendar_change", true, builtIn))
+        assertEquals(com.ai.assistance.operit.ui.permissions.PermissionLevel.ALLOW,
+            com.ai.assistance.operit.ui.permissions.orbitDefaultPermissionLevel("orbit_calendar", false, builtIn))
+        // Each mail and calendar change gets its own card, never "always allow".
+        assertTrue(OrbitConnectorSend.confirmsEach("orbit_calendar_change"))
+        assertTrue(OrbitConnectorSend.confirmsEach("orbit_mail_send"))
+        assertFalse(OrbitConnectorSend.confirmsEach("orbit_calendar"))
     }
 
     @Test
