@@ -23,5 +23,8 @@ class ArchiveUtilEntryFileTest {
         assertThrows(SecurityException::class.java) {
             ArchiveUtil.entryFile(root, "../${root.name}-sibling/evil.txt")
         }
+        assertThrows(SecurityException::class.java) {
+            ArchiveUtil.entryFile(root, File(root.parentFile, "evil.txt").path)
+        }
     }
 }

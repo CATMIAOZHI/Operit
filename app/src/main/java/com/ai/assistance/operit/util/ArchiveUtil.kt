@@ -109,12 +109,12 @@ object ArchiveUtil {
 
     /** Where [entryName] goes inside [targetDir]; throws when a "../" or absolute name would land outside it. */
     fun entryFile(targetDir: File, entryName: String): File {
-        val root = targetDir.canonicalFile
-        val file = File(root, entryName).canonicalFile
-        if (file != root && !file.path.startsWith(root.path + File.separator)) {
+        val root = targetDir.canonicalFile.toPath()
+        val path = root.resolve(entryName).normalize()
+        if (!path.startsWith(root)) {
             throw SecurityException("Archive entry escapes the target folder: $entryName")
         }
-        return file
+        return path.toFile()
     }
 
     /** Extract an archive file */
