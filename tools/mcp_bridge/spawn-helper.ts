@@ -1,14 +1,35 @@
-import { MCPClient } from 'mcp-client';
 import * as path from 'path';
 import * as os from 'os';
 import { McpServiceInfo } from './index'; // Assuming McpServiceInfo is exported from index.ts
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
+import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
 
+// The official MCP SDK client, used directly (it was wrapped by the mcp-client package before).
+class BridgeClient {
+    private readonly client: Client;
 
-// 扩展 MCPClient 以支持自定义 headers
-class MCPClientWithHeaders extends MCPClient {
+    constructor(info: { name: string; version: string }) {
+        this.client = new Client(info);
+    }
+
+    /** A local server started as a child process, talking over stdio. */
+    async connectStdio(options: { command: string; args: string[]; cwd: string; env: Record<string, string | undefined> }): Promise<void> {
+        const env: Record<string, string> = { ...getDefaultEnvironment() };
+        for (const [key, value] of Object.entries(options.env)) {
+            if (value !== undefined) env[key] = value;
+        }
+        await this.client.connect(new StdioClientTransport({
+            command: options.command,
+            args: options.args,
+            cwd: options.cwd,
+            env,
+        }));
+    }
+
+    /** A remote server, over Streamable HTTP or SSE, with optional headers. */
     async connectWithHeaders(options: {
         url: string;
         headers?: Record<string, string>;
@@ -18,17 +39,31 @@ class MCPClientWithHeaders extends MCPClient {
         const transport = options.connectionType === 'sse'
             ? new SSEClientTransport(new URL(options.url), { requestInit })
             : new StreamableHTTPClientTransport(new URL(options.url), { requestInit });
+        await this.client.connect(transport);
+    }
 
-        // 访问私有的 client 和 transports (使用 any 绕过类型检查)
-        const clientInstance = (this as any).client as Client;
-        const transportsArray = (this as any).transports as any[];
+    /** Every tool, following the server's pages. */
+    async getAllTools(): Promise<Tool[]> {
+        const tools: Tool[] = [];
+        let cursor: string | undefined;
+        do {
+            const page = await this.client.listTools(cursor ? { cursor } : undefined);
+            tools.push(...page.tools);
+            cursor = page.nextCursor;
+        } while (cursor);
+        return tools;
+    }
 
-        transportsArray.push(transport);
-        await clientInstance.connect(transport);
+    async callTool(invocation: { name: string; arguments: Record<string, unknown> }): Promise<CallToolResult> {
+        return (await this.client.callTool(invocation)) as CallToolResult;
+    }
+
+    close(): Promise<void> {
+        return this.client.close();
     }
 }
 
-let client: MCPClientWithHeaders | null = null;
+let client: BridgeClient | null = null;
 let serviceName: string;
 let serviceInfo: McpServiceInfo;
 
@@ -48,7 +83,7 @@ const handlers = {
         serviceName = params.serviceName;
         serviceInfo = params.serviceInfo;
 
-        client = new MCPClientWithHeaders({
+        client = new BridgeClient({
             name: `helper-for-${serviceName}`,
             version: '1.0.0',
         });
@@ -75,8 +110,7 @@ const handlers = {
                     ...(os.platform() === 'linux' ? { NODE_OPTIONS: '--openssl-legacy-provider' } : {}),
                 };
 
-                await client.connect({
-                    type: 'stdio',
+                await client.connectStdio({
                     command: actualCommand,
                     args: actualArgs,
                     cwd: workingDir,
