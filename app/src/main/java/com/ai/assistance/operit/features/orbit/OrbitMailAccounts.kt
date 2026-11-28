@@ -40,29 +40,37 @@ internal enum class OrbitMailProvider(val id: String, val label: String) {
 /**
  * Who Orbit signs in as with Google and Microsoft. For now these are Thunderbird's published desktop
  * clients (the git-credential-email project uses the same ones); once Orbit's own clients are
- * registered, only this object changes. Their scopes reach IMAP and SMTP only, so mail is read and
- * sent over IMAP/SMTP for both services; `openid email` / `openid profile` only name the signed-in address.
+ * registered, only this object changes. A sign-in asks for every scope Thunderbird asks for with a
+ * mail account (Google: mail, contacts, calendar; Microsoft: IMAP, POP, SMTP, Exchange), so later
+ * features need no new consent; `openid email` / `openid profile` only name the signed-in address.
+ * Mail itself is read and sent over IMAP/SMTP for both services.
  */
 internal object OrbitMailClients {
-    class Client(val clientId: String, val clientSecret: String?, val scope: String)
+    /** [refreshScope]: what a refresh asks for (Microsoft only); kept to what every saved sign-in was granted. */
+    class Client(val clientId: String, val clientSecret: String?, val scope: String, val refreshScope: String = scope)
 
     val gmail = Client(
         clientId = "406964657835-aq8lmia8j95dhl1a2bvharmfk3t1hgqj.apps.googleusercontent.com",
         // Thunderbird's installed-app secret, published in its source; Google does not treat it as secret.
         clientSecret = "kSmqreRr0qwBWJgbf5Y-PjSU",
-        scope = "openid email https://mail.google.com/",
+        scope = "openid email https://mail.google.com/ https://www.googleapis.com/auth/carddav " +
+            "https://www.googleapis.com/auth/calendar",
     )
     val outlook = Client(
         clientId = "9e5f94bc-e8a4-4e73-b8be-63364c29d753",
         clientSecret = null,
-        // openid/profile only name the signed-in address; mail itself needs the first two.
-        scope = "https://outlook.office.com/IMAP.AccessAsUser.All https://outlook.office.com/SMTP.Send offline_access openid profile",
+        scope = "https://outlook.office.com/IMAP.AccessAsUser.All https://outlook.office.com/POP.AccessAsUser.All " +
+            "https://outlook.office.com/SMTP.Send https://outlook.office.com/EWS.AccessAsUser.All offline_access openid profile",
+        // Mailboxes connected before the wider sign-in were granted only these; Microsoft refuses a
+        // refresh asking for more, and gives the token every scope granted for the resource anyway.
+        refreshScope = "https://outlook.office.com/IMAP.AccessAsUser.All https://outlook.office.com/SMTP.Send offline_access openid profile",
     )
 
     const val GOOGLE_AUTH = "https://accounts.google.com/o/oauth2/v2/auth"
     const val GOOGLE_TOKEN = "https://oauth2.googleapis.com/token"
     const val GOOGLE_REVOKE = "https://oauth2.googleapis.com/revoke"
     const val MS_AUTH = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
+    const val MS_DEVICE_CODE = "https://login.microsoftonline.com/common/oauth2/v2.0/devicecode"
     const val MS_TOKEN = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
     /** Microsoft's tenant for personal accounts (outlook.com, hotmail.com), which send through another SMTP host. */
     const val MS_CONSUMER_TENANT = "9188040d-6c67-4c5b-b112-36a304b66dad"
@@ -319,7 +327,7 @@ internal object OrbitMailAccounts {
         val form = FormBody.Builder().add("grant_type", "refresh_token").add("client_id", client.clientId)
             .add("refresh_token", refreshToken)
         client.clientSecret?.let { form.add("client_secret", it) }
-        if (provider == OrbitMailProvider.OUTLOOK) form.add("scope", client.scope)
+        if (provider == OrbitMailProvider.OUTLOOK) form.add("scope", client.refreshScope)
         val url = if (provider == OrbitMailProvider.GMAIL) OrbitMailClients.GOOGLE_TOKEN else OrbitMailClients.MS_TOKEN
         return tokenCall(url, form.build())
     }

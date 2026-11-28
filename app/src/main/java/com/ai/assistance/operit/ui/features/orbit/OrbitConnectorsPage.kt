@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -14,8 +15,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.preferences.OrbitProfile
 import com.ai.assistance.operit.features.orbit.OrbitBrowserWatch
@@ -33,10 +37,18 @@ import kotlinx.coroutines.launch
 
 /** A sign-in being shown, step by step. [expected] is the address when signing in again. */
 private sealed interface MailSignIn {
-    /** The service's sign-in page is open in Orbit's browser, in [tab] once it shows. */
-    data class Waiting(val provider: OrbitMailProvider, val expected: String?, val tab: String? = null) : MailSignIn
-    /** It failed with [error]; offers to start over. */
-    data class Failed(val provider: OrbitMailProvider, val expected: String?, val error: String) : MailSignIn
+    /** Choosing where to sign in: Orbit's browser or the phone's. */
+    data class Choose(val provider: OrbitMailProvider, val expected: String?) : MailSignIn
+    /**
+     * The service's sign-in page is open: in Orbit's browser, in [tab] once it shows; or in the
+     * phone's browser, at [url] (Gmail).
+     */
+    data class Waiting(val provider: OrbitMailProvider, val expected: String?, val tab: String? = null,
+        val url: String? = null) : MailSignIn
+    /** An Outlook code to enter at [url] in any browser ([code] is null until Microsoft gave it). */
+    data class OutlookCode(val expected: String?, val code: String?, val url: String?) : MailSignIn
+    /** It failed with [error]; offers to start over the same way ([inOrbit]: in Orbit's browser). */
+    data class Failed(val provider: OrbitMailProvider, val expected: String?, val error: String, val inOrbit: Boolean) : MailSignIn
     /** The service answered; the mailbox is being checked and saved. */
     object Connecting : MailSignIn
 }
@@ -45,6 +57,7 @@ private sealed interface MailSignIn {
 private fun describe(context: Context, e: Throwable): String = when {
     e is OrbitMailAuthError -> when (e.kind) {
         OrbitMailAuthError.Kind.TIMEOUT -> context.getString(R.string.orbit_connectors_err_timeout)
+        OrbitMailAuthError.Kind.CODE_EXPIRED -> context.getString(R.string.orbit_connectors_err_code_expired)
         OrbitMailAuthError.Kind.NO_BROWSER -> context.getString(R.string.orbit_connectors_err_browser)
         OrbitMailAuthError.Kind.REFUSED -> context.getString(R.string.orbit_connectors_err_refused)
         OrbitMailAuthError.Kind.WRONG_ACCOUNT -> context.getString(R.string.orbit_connectors_err_wrong_account, e.email.orEmpty())
@@ -55,6 +68,7 @@ private fun describe(context: Context, e: Throwable): String = when {
         OrbitMailAuthError.Kind.TOO_MANY -> context.getString(R.string.orbit_connectors_err_too_many)
         OrbitMailAuthError.Kind.BUSY -> context.getString(R.string.orbit_connectors_err_busy)
     }
+    e is android.content.ActivityNotFoundException || e is SecurityException -> context.getString(R.string.orbit_connectors_err_open_browser)
     e is java.io.IOException || e.cause is java.io.IOException || e is javax.mail.MessagingException ->
         context.getString(R.string.orbit_connectors_err_network)
     else -> context.getString(R.string.orbit_connectors_err_other)
@@ -89,7 +103,19 @@ internal fun OrbitConnectorsPage(orbit: OrbitProfile, onBack: () -> Unit) {
         job = null
     }
 
-    fun start(provider: OrbitMailProvider, expected: String?) {
+    /** Asks where to sign in. */
+    fun choose(provider: OrbitMailProvider, expected: String?) {
+        job?.cancel()
+        job = null
+        signIn = MailSignIn.Choose(provider, expected)
+    }
+
+    fun failed(provider: OrbitMailProvider, expected: String?, e: Exception, inOrbit: Boolean) {
+        signIn = MailSignIn.Failed(provider, expected, describe(context, e), inOrbit)
+    }
+
+    /** Signs in in Orbit's own browser. */
+    fun startInOrbit(provider: OrbitMailProvider, expected: String?) {
         job?.cancel()
         signIn = MailSignIn.Waiting(provider, expected)
         job = scope.launch {
@@ -111,10 +137,46 @@ internal fun OrbitConnectorsPage(orbit: OrbitProfile, onBack: () -> Unit) {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                signIn = MailSignIn.Failed(provider, expected, describe(context, e))
+                failed(provider, expected, e, inOrbit = true)
             } finally {
                 OrbitBrowserWatch.closeSignIn(tabs.toList())
             }
+        }
+    }
+
+    /** Signs in in the phone's browser: Gmail returns to Orbit by itself, Outlook by a code. */
+    fun startElsewhere(provider: OrbitMailProvider, expected: String?) {
+        job?.cancel()
+        signIn = if (provider == OrbitMailProvider.GMAIL) MailSignIn.Waiting(provider, expected)
+            else MailSignIn.OutlookCode(expected, null, null)
+        job = scope.launch {
+            try {
+                if (provider == OrbitMailProvider.GMAIL) {
+                    finished(OrbitMailAuth.signInGmailElsewhere(context, orbit.id, expected,
+                        onUrl = { url ->
+                            signIn = MailSignIn.Waiting(provider, expected, url = url)
+                            OrbitMailAuth.openInBrowser(context, url)
+                        },
+                        onConnecting = { signIn = MailSignIn.Connecting }))
+                } else {
+                    val started = OrbitMailAuth.startOutlookCode()
+                    signIn = MailSignIn.OutlookCode(expected, started.userCode, started.verificationUrl)
+                    finished(started.finish(context, orbit.id, expected) { signIn = MailSignIn.Connecting })
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                failed(provider, expected, e, inOrbit = false)
+            }
+        }
+    }
+
+    /** Opens [url] in the phone's browser, saying so when it cannot. */
+    fun openElsewhere(url: String) {
+        try {
+            OrbitMailAuth.openInBrowser(context, url)
+        } catch (e: Exception) {
+            Toast.makeText(context, describe(context, e), Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -137,16 +199,16 @@ internal fun OrbitConnectorsPage(orbit: OrbitProfile, onBack: () -> Unit) {
                 SettingsCard(backgroundColor = cardColor, contentPadding = PaddingValues(0.dp)) {
                     connected.forEachIndexed { index, account ->
                         if (index > 0) SettingsRowDivider(inset = false)
-                        AccountRow(account, onSignInAgain = { start(account.provider, account.email) }, onDisconnect = { disconnect = account })
+                        AccountRow(account, onSignInAgain = { choose(account.provider, account.email) }, onDisconnect = { disconnect = account })
                     }
                 }
             }
             SectionLabel(stringResource(R.string.orbit_connectors_add))
             SettingsCard(backgroundColor = cardColor, contentPadding = PaddingValues(0.dp)) {
-                ServiceRow("Gmail", stringResource(R.string.orbit_connectors_gmail_desc)) { start(OrbitMailProvider.GMAIL, null) }
+                ServiceRow("Gmail", stringResource(R.string.orbit_connectors_gmail_desc)) { choose(OrbitMailProvider.GMAIL, null) }
                 SettingsRowDivider(inset = false)
                 ServiceRow(stringResource(R.string.orbit_connectors_outlook), stringResource(R.string.orbit_connectors_outlook_desc)) {
-                    start(OrbitMailProvider.OUTLOOK, null)
+                    choose(OrbitMailProvider.OUTLOOK, null)
                 }
             }
             Text(
@@ -162,22 +224,75 @@ internal fun OrbitConnectorsPage(orbit: OrbitProfile, onBack: () -> Unit) {
         TextButton(onClick = ::stop, Modifier.fillMaxWidth()) { Text(stringResource(R.string.cancel)) }
     }
     when (val shown = signIn) {
+        is MailSignIn.Choose -> OrbitDialog(
+            onDismissRequest = ::stop,
+            title = titleOf(shown.provider),
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    shown.expected?.let { Text(stringResource(R.string.orbit_connectors_use_account, it), fontWeight = FontWeight.Medium) }
+                    Text(stringResource(R.string.orbit_connectors_choose), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (shown.provider == OrbitMailProvider.GMAIL) {
+                        Text(stringResource(R.string.orbit_connectors_gmail_scopes), style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    WayRow(stringResource(R.string.orbit_connectors_way_orbit), stringResource(R.string.orbit_connectors_way_orbit_desc)) {
+                        startInOrbit(shown.provider, shown.expected)
+                    }
+                    WayRow(
+                        stringResource(R.string.orbit_connectors_way_system),
+                        stringResource(if (shown.provider == OrbitMailProvider.GMAIL) R.string.orbit_connectors_way_system_gmail_desc
+                            else R.string.orbit_connectors_way_system_outlook_desc),
+                    ) { startElsewhere(shown.provider, shown.expected) }
+                }
+            },
+            dismissButton = cancelButton,
+        )
         is MailSignIn.Waiting -> OrbitDialog(
             onDismissRequest = ::stop,
             title = titleOf(shown.provider),
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     shown.expected?.let { Text(stringResource(R.string.orbit_connectors_use_account, it), fontWeight = FontWeight.Medium) }
-                    Waiting(stringResource(R.string.orbit_connectors_waiting))
+                    Waiting(stringResource(if (shown.url != null) R.string.orbit_connectors_waiting_system else R.string.orbit_connectors_waiting))
                 }
             },
             confirmButton = {
-                // Back to the sign-in tab after leaving the browser window before finishing.
-                shown.tab?.let { tab ->
-                    OrbitDialogAction(onClick = { scope.launch { OrbitBrowserWatch.showSignIn(context, tab) } }, secondary = true) {
+                // Back to the sign-in page after leaving it before finishing.
+                when {
+                    shown.tab != null -> OrbitDialogAction(onClick = { scope.launch { OrbitBrowserWatch.showSignIn(context, shown.tab) } },
+                        secondary = true) { Text(stringResource(R.string.orbit_connectors_open_again)) }
+                    shown.url != null -> OrbitDialogAction(onClick = { openElsewhere(shown.url) }, secondary = true) {
                         Text(stringResource(R.string.orbit_connectors_open_again))
                     }
                 }
+            },
+            dismissButton = cancelButton,
+        )
+        is MailSignIn.OutlookCode -> OrbitDialog(
+            onDismissRequest = ::stop,
+            title = titleOf(OrbitMailProvider.OUTLOOK),
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    shown.expected?.let { Text(stringResource(R.string.orbit_connectors_use_account, it), fontWeight = FontWeight.Medium) }
+                    if (shown.code == null) Waiting(stringResource(R.string.orbit_connectors_getting_code))
+                    else {
+                        Text(stringResource(R.string.orbit_connectors_outlook_text))
+                        SelectionContainer {
+                            Text(
+                                shown.code, Modifier.fillMaxWidth(), textAlign = TextAlign.Center,
+                                style = MaterialTheme.typography.headlineMedium.copy(fontFamily = FontFamily.Monospace, letterSpacing = 4.sp),
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                        }
+                        Waiting(stringResource(R.string.orbit_connectors_waiting_system))
+                    }
+                }
+            },
+            confirmButton = {
+                if (shown.code != null && shown.url != null) OrbitDialogAction(onClick = {
+                    copy(context, shown.code)
+                    openElsewhere(shown.url)
+                }) { Text(stringResource(R.string.orbit_connectors_copy_open)) }
             },
             dismissButton = cancelButton,
         )
@@ -191,7 +306,9 @@ internal fun OrbitConnectorsPage(orbit: OrbitProfile, onBack: () -> Unit) {
                 }
             },
             confirmButton = {
-                OrbitDialogAction(onClick = { start(shown.provider, shown.expected) }) { Text(stringResource(R.string.orbit_connectors_retry)) }
+                OrbitDialogAction(onClick = {
+                    if (shown.inOrbit) startInOrbit(shown.provider, shown.expected) else startElsewhere(shown.provider, shown.expected)
+                }) { Text(stringResource(R.string.orbit_connectors_retry)) }
             },
             dismissButton = cancelButton,
         )
@@ -241,6 +358,28 @@ private fun Waiting(text: String) = Row(verticalAlignment = Alignment.CenterVert
 @Composable
 private fun titleOf(provider: OrbitMailProvider) = stringResource(
     if (provider == OrbitMailProvider.GMAIL) R.string.orbit_connectors_gmail_title else R.string.orbit_connectors_outlook_title)
+
+private fun copy(context: Context, text: String) {
+    (context.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager)
+        ?.setPrimaryClip(android.content.ClipData.newPlainText("code", text))
+    Toast.makeText(context, R.string.orbit_connectors_code_copied, Toast.LENGTH_SHORT).show()
+}
+
+/** One way to sign in, as a tappable row. */
+@Composable
+private fun WayRow(title: String, subtitle: String, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+            Text(title, style = MaterialTheme.typography.titleSmall)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
 
 @Composable
 private fun SectionLabel(text: String) = Text(
