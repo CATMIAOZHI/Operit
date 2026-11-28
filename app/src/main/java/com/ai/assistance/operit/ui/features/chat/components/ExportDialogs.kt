@@ -942,7 +942,7 @@ suspend fun exportWindowsApp(
                     while (entries.hasMoreElements()) {
                         currentCoroutineContext().ensureActive()
                         val entry = entries.nextElement()
-                        val entryFile = File(extractedDir, entry.name)
+                        val entryFile = com.ai.assistance.operit.util.ArchiveUtil.entryFile(extractedDir, entry.name)
 
                         if (entry.isDirectory) {
                             entryFile.mkdirs()

@@ -159,9 +159,9 @@ const BilibiliVideoAnalysis = (function () {
     function unescapeXml(text: string): string {
         return text.replace(/&lt;/g, '<')
             .replace(/&gt;/g, '>')
-            .replace(/&amp;/g, '&')
             .replace(/&quot;/g, '"')
-            .replace(/&apos;/g, "'");
+            .replace(/&apos;/g, "'")
+            .replace(/&amp;/g, '&');
     }
 
     const mixinKeyEncTab = [

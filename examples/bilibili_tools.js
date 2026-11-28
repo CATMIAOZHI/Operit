@@ -105,9 +105,9 @@ const BilibiliVideoAnalysis = (function () {
     function unescapeXml(text) {
         return text.replace(/&lt;/g, '<')
             .replace(/&gt;/g, '>')
-            .replace(/&amp;/g, '&')
             .replace(/&quot;/g, '"')
-            .replace(/&apos;/g, "'");
+            .replace(/&apos;/g, "'")
+            .replace(/&amp;/g, '&');
     }
     const mixinKeyEncTab = [
         46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35,

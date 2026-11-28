@@ -75,11 +75,11 @@ const duckduckgo = (function () {
      * @returns Decoded text.
      */
     function decodeHtmlEntities(text) {
-        return text.replace(/&amp;/g, '&')
-            .replace(/&lt;/g, '<')
+        return text.replace(/&lt;/g, '<')
             .replace(/&gt;/g, '>')
             .replace(/&quot;/g, '"')
-            .replace(/&#39;/g, "'");
+            .replace(/&#39;/g, "'")
+            .replace(/&amp;/g, '&');
     }
     /**
      * Search DuckDuckGo and return formatted results.

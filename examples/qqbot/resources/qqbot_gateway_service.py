@@ -86,6 +86,7 @@ class SimpleWebSocketClient:
         raw_sock = socket.create_connection((host, port), timeout=10)
         if scheme == "wss":
             context = ssl.create_default_context()
+            context.minimum_version = ssl.TLSVersion.TLSv1_2
             sock = context.wrap_socket(raw_sock, server_hostname=host)
         else:
             sock = raw_sock

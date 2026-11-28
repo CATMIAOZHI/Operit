@@ -22,9 +22,9 @@ function unescapeXmlForDisplay(input: string) {
   return result
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
-    .replace(/&amp;/g, '&')
     .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'");
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
 }
 
 function normalizeEscapedTextForDisplay(input: string) {

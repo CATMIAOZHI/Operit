@@ -107,6 +107,16 @@ object ArchiveUtil {
         }
     }
 
+    /** Where [entryName] goes inside [targetDir]; throws when a "../" or absolute name would land outside it. */
+    fun entryFile(targetDir: File, entryName: String): File {
+        val root = targetDir.canonicalFile
+        val file = File(root, entryName).canonicalFile
+        if (file != root && !file.path.startsWith(root.path + File.separator)) {
+            throw SecurityException("Archive entry escapes the target folder: $entryName")
+        }
+        return file
+    }
+
     /** Extract an archive file */
     fun extractArchive(
             archiveFile: File,
@@ -148,7 +158,7 @@ object ArchiveUtil {
                         val currentEntry = entry ?: continue
 
                         val fileName = currentEntry.name
-                        val newFile = File(targetDir, fileName)
+                        val newFile = entryFile(targetDir, fileName)
 
                         // Create directories if needed
                         if (currentEntry.isDirectory) {
@@ -213,7 +223,7 @@ object ArchiveUtil {
                     val currentEntry = entry ?: continue
 
                     val fileName = currentEntry.name
-                    val newFile = File(targetDir, fileName)
+                    val newFile = entryFile(targetDir, fileName)
 
                     // Create directories if needed
                     if (currentEntry.isDirectory) {
@@ -286,7 +296,7 @@ object ArchiveUtil {
                             val currentEntry = entry ?: continue
 
                             val fileName = currentEntry.name
-                            val newFile = File(targetDir, fileName)
+                            val newFile = entryFile(targetDir, fileName)
 
                             // Create directories if needed
                             if (currentEntry.isDirectory) {
@@ -384,7 +394,7 @@ object ArchiveUtil {
 
                     archive.fileHeaders.forEach { fileHeader ->
                         val fileName = fileHeader.fileName
-                        val newFile = File(targetDir, fileName)
+                        val newFile = entryFile(targetDir, fileName)
 
                         // Create directories if needed
                         if (fileHeader.isDirectory) {
