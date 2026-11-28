@@ -4795,6 +4795,8 @@
     <string name="external_http_chat_async_example">Exemplu de apel de returnare asincron</string>
     <string name="external_http_chat_health_example">Exemplu de control medical</string>
     <string name="external_http_chat_intent_title">Intent Instrucțiuni de utilizare</string>
+    <string name="external_intent_chat_allow">Permite altor aplicații să trimită mesaje către Orbit</string>
+    <string name="external_intent_chat_allow_desc">Când este activat, orice aplicație de pe telefon poate face Orbit să răspundă printr-o difuzare, iar răspunsul ajunge înapoi la acea aplicație. Poate dezvălui amintirile sau alte date private. Activează doar pentru integrări precum Tasker.</string>
     <string name="external_http_chat_intent_desc">Accesul la difuzare rămâne activ, fiind potrivit pentru acest dispozitiv App Integrare,Tasker sau adb Depanare</string>
     <string name="external_http_chat_intent_overview">HTTP și Intent Semantica parametrilor este identică, diferă doar punctul de intrare.\n\nSolicitare Action:%1$s\nRetrimitere implicită Action:%2$s\n\nFrecvent utilizate extras:message,request_id,group,create_new_chat,chat_id,create_if_none,show_floating,return_tool_status,initial_mode,auto_exit_after_ms,stop_after,reply_action,reply_package\n\nDupă finalizarea procesării, datele vor fi transmise înapoi prin difuzare success,chat_id,ai_response,error; dacă doriți să returnați doar către destinația specificată App, vă rugăm să configurați reply_package.</string>
     <string name="external_http_chat_copy_example">Exemplu de copiere</string>

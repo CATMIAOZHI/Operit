@@ -75,6 +75,7 @@ fun ExternalHttpChatSettingsScreen(onBackPressed: () -> Unit) {
     val preferences = remember { ExternalHttpApiPreferences.getInstance(context) }
 
     val enabled by preferences.enabledFlow.collectAsState(initial = false)
+    val intentEnabled by preferences.intentEnabledFlow.collectAsState(initial = false)
     val savedPort by preferences.portFlow.collectAsState(initial = ExternalHttpApiPreferences.DEFAULT_PORT)
     val bearerToken by preferences.bearerTokenFlow.collectAsState(initial = "")
     val serviceState by AIForegroundService.externalHttpState.collectAsState()
@@ -435,6 +436,28 @@ adb shell am broadcast \
                 cardColor = cardColor,
                 icon = Icons.Default.Android
             ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            text = stringResource(R.string.external_intent_chat_allow),
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                        Text(
+                            text = stringResource(R.string.external_intent_chat_allow_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = intentEnabled,
+                        onCheckedChange = { checked -> scope.launch { preferences.setIntentEnabled(checked) } }
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
                 SelectionContainer {
                     Text(
                         text = intentOverview,

@@ -49,8 +49,9 @@ as a user turn, which candidate 3 could not promise.
 Do not cap the effective permission level. The origin decides what counts as the owner's
 authorization, not which stop the owner may use.
 
-The exported receiver itself is out of scope. Any application that can send the broadcast can
-already start a turn today, exactly as it could before this round.
+The exported receiver itself is out of scope here. It is now gated by an owner switch instead
+("允许其他 App 发消息" in the external HTTP settings, `external_intent_chat_enabled`, off by default):
+while it is off the receiver answers with an error and never reaches the model.
 
 ## Validation
 

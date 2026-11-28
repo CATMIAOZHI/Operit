@@ -8,6 +8,8 @@
 
 HTTP 接口与本文的 Intent 接口语义一致，仅入口不同。
 
+**需要先手动开启**：在「设置 > 外部 HTTP 调用 > Intent 调用说明」里打开「允许其他 App 发消息」。这个开关默认关闭；关闭时请求不会交给模型，只会回传 `success=false` 和一条说明如何开启的 `error`。
+
 该接口的实现位于：
 
 - `app/src/main/java/com/ai/assistance/operit/integrations/intent/ExternalChatReceiver.kt`

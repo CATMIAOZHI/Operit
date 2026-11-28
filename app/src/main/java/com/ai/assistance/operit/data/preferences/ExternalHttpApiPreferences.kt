@@ -41,6 +41,18 @@ class ExternalHttpApiPreferences private constructor(private val context: Contex
             preferences[KEY_BEARER_TOKEN].orEmpty()
         }
 
+    /** Whether other apps may start a chat through the EXTERNAL_CHAT broadcast; off until the owner turns it on. */
+    val intentEnabledFlow: Flow<Boolean> =
+        context.externalHttpApiDataStore.data.map { preferences ->
+            preferences[KEY_INTENT_ENABLED] ?: false
+        }
+
+    suspend fun setIntentEnabled(enabled: Boolean) {
+        context.externalHttpApiDataStore.edit { preferences ->
+            preferences[KEY_INTENT_ENABLED] = enabled
+        }
+    }
+
     suspend fun setEnabled(enabled: Boolean) {
         context.externalHttpApiDataStore.edit { preferences ->
             preferences[KEY_ENABLED] = enabled
@@ -111,6 +123,7 @@ class ExternalHttpApiPreferences private constructor(private val context: Contex
         private val KEY_ENABLED = booleanPreferencesKey("external_http_api_enabled")
         private val KEY_PORT = intPreferencesKey("external_http_api_port")
         private val KEY_BEARER_TOKEN = stringPreferencesKey("external_http_api_bearer_token")
+        private val KEY_INTENT_ENABLED = booleanPreferencesKey("external_intent_chat_enabled")
 
         @Volatile
         private var INSTANCE: ExternalHttpApiPreferences? = null

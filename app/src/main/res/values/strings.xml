@@ -5283,6 +5283,8 @@
     <string name="external_http_chat_async_example">异步回调示例</string>
     <string name="external_http_chat_health_example">健康检查示例</string>
     <string name="external_http_chat_intent_title">Intent 调用说明</string>
+    <string name="external_intent_chat_allow">允许其他 App 发消息</string>
+    <string name="external_intent_chat_allow_desc">打开后，手机上任何 App 都能用广播让 Orbit 回复，回复会发回给对方，可能带出你的记忆等隐私。只在需要 Tasker 等集成时打开。</string>
     <string name="external_http_chat_intent_desc">广播入口仍然保留，适合本机 App 集成、Tasker 或 adb 调试</string>
     <string name="external_http_chat_intent_overview">HTTP 与 Intent 参数语义一致，仅入口不同。\n\n请求 Action：%1$s\n默认回传 Action：%2$s\n\n常用 extras：message、request_id、group、create_new_chat、chat_id、create_if_none、show_floating、return_tool_status、initial_mode、auto_exit_after_ms、stop_after、reply_action、reply_package\n\n处理完成后会通过广播回传 success、chat_id、ai_response、error；如果只希望回传给指定 App，请设置 reply_package。</string>
     <string name="external_http_chat_copy_example">复制示例</string>

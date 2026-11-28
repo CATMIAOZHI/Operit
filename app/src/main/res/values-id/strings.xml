@@ -4060,6 +4060,8 @@
     <string name="mcp_plugin_updated_at">Diperbarui pada: %1$s</string>
 
     <string name="external_http_chat_intent_title">Penjelasan Pemanggilan Intent</string>
+    <string name="external_intent_chat_allow">Izinkan aplikasi lain mengirim pesan ke Orbit</string>
+    <string name="external_intent_chat_allow_desc">Jika aktif, aplikasi apa pun di ponsel ini dapat membuat Orbit membalas lewat broadcast, dan balasannya dikirim kembali ke aplikasi itu. Balasan bisa memuat ingatan atau data pribadi Anda. Aktifkan hanya untuk integrasi seperti Tasker.</string>
     <string name="external_http_chat_intent_desc">Pintu masuk broadcast masih dipertahankan, cocok untuk integrasi aplikasi lokal, Tasker, atau debugging adb</string>
     <string name="external_http_chat_intent_overview">HTTP dan Intent memiliki semantik parameter yang sama, hanya pintu masuknya yang berbeda.\n\nAksi Permintaan: %1$s\nAksi Pengembalian Default: %2$s\n\nEkstra yang umum digunakan: message, request_id, group, create_new_chat, chat_id, create_if_none, show_floating, return_tool_status, initial_mode, auto_exit_after_ms, stop_after, reply_action, reply_package\n\nSetelah pemrosesan selesai, akan dikembalikan melalui broadcast: success, chat_id, ai_response, error; jika hanya ingin dikembalikan ke aplikasi tertentu, atur reply_package.</string>
     <string name="external_http_chat_copy_example">Salin Contoh</string>

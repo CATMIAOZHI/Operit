@@ -4611,6 +4611,8 @@
     <string name="external_http_chat_async_example">Ejemplo de llamada asíncrona con callback</string>
     <string name="external_http_chat_health_example">Ejemplo de verificación de salud</string>
     <string name="external_http_chat_intent_title">Instrucciones de llamada mediante Intent</string>
+    <string name="external_intent_chat_allow">Permitir que otras apps envíen mensajes a Orbit</string>
+    <string name="external_intent_chat_allow_desc">Si se activa, cualquier app del teléfono puede hacer que Orbit responda mediante una difusión, y la respuesta vuelve a esa app. Puede revelar tus recuerdos u otros datos privados. Actívalo solo para integraciones como Tasker.</string>
     <string name="external_http_chat_intent_desc">La entrada por broadcast aún se conserva, adecuada para integración con aplicaciones locales, Tasker o depuración con adb</string>
     <string name="external_http_chat_intent_overview">Los parámetros de HTTP e Intent son semánticamente equivalentes, solo cambia la entrada.\n\nAction de solicitud: %1$s\nAction de retorno predeterminada: %2$s\n\nExtras comunes: message, request_id, group, create_new_chat, chat_id, create_if_none, show_floating, return_tool_status, initial_mode, auto_exit_after_ms, stop_after, reply_action, reply_package\n\nUna vez procesado, se retransmitirá mediante broadcast success, chat_id, ai_response, error; si solo desea que se devuelva a una aplicación específica, configure reply_package.</string>
     <string name="external_http_chat_copy_example">Copiar ejemplo</string>

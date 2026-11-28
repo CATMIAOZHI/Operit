@@ -4174,6 +4174,8 @@
     <string name="external_http_chat_async_example">비동기 콜백 예</string>
     <string name="external_http_chat_health_example">상태 확인 예시</string>
     <string name="external_http_chat_intent_title">Intent 호출 가이드</string>
+    <string name="external_intent_chat_allow">다른 앱이 Orbit에 메시지 보내기 허용</string>
+    <string name="external_intent_chat_allow_desc">켜면 이 휴대폰의 어떤 앱이든 브로드캐스트로 Orbit의 답장을 받을 수 있으며, 답장은 그 앱으로 전달됩니다. 기억이나 다른 개인 정보가 드러날 수 있습니다. Tasker 같은 연동이 필요할 때만 켜세요.</string>
     <string name="external_http_chat_intent_desc">로컬 앱 통합, Tasker 또는 adb 디버깅에는 브로드캐스트 항목을 계속 사용할 수 있습니다.</string>
     <string name="external_http_chat_intent_overview">HTTP와 Intent는 동일한 매개변수 의미를 공유합니다. 입력 방법만 다릅니다.
 

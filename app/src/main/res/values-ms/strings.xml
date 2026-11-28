@@ -4155,6 +4155,8 @@
     <string name="external_http_chat_async_example">Contoh panggilan balik tak segerak</string>
     <string name="external_http_chat_health_example">Contoh pemeriksaan kesihatan</string>
     <string name="external_http_chat_intent_title">Penjelasan Panggilan Intent</string>
+    <string name="external_intent_chat_allow">Benarkan apl lain menghantar mesej kepada Orbit</string>
+    <string name="external_intent_chat_allow_desc">Apabila dihidupkan, mana-mana apl pada telefon ini boleh membuat Orbit membalas melalui siaran, dan balasan dihantar semula kepada apl itu. Ia mungkin mendedahkan ingatan atau maklumat peribadi anda. Hidupkan hanya untuk integrasi seperti Tasker.</string>
     <string name="external_http_chat_intent_desc">Kemasukan siaran masih dikekalkan, sesuai untuk integrasi App tempatan, Tasker atau penyahpepijat adb</string>
     <string name="external_http_chat_intent_overview">HTTP dan Intent mempunyai semantik parameter yang sama, hanya kemasukan yang berbeza.\n\nTindakan Permintaan: %1$s\nTindakan Pemulangan Lalai: %2$s\n\nExtras biasa: message, request_id, group, create_new_chat, chat_id, create_if_none, show_floating, return_tool_status, initial_mode, auto_exit_after_ms, stop_after, reply_action, reply_package\n\nSelepas pemprosesan selesai, ia akan dipulangkan melalui siaran: success, chat_id, ai_response, error; jika anda hanya mahu memulangkan kepada App tertentu, tetapkan reply_package.</string>
     <string name="external_http_chat_copy_example">Salin contoh</string>

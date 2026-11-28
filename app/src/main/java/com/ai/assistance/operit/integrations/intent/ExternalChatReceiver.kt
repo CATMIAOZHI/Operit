@@ -7,9 +7,11 @@ import com.ai.assistance.operit.integrations.externalchat.ExternalChatRequest
 import com.ai.assistance.operit.integrations.externalchat.ExternalChatRequestExecutor
 import com.ai.assistance.operit.integrations.externalchat.ExternalChatResult
 import com.ai.assistance.operit.core.application.OperitApplication
+import com.ai.assistance.operit.data.preferences.ExternalHttpApiPreferences
 import com.ai.assistance.operit.util.AppLogger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 class ExternalChatReceiver : BroadcastReceiver() {
@@ -42,6 +44,9 @@ class ExternalChatReceiver : BroadcastReceiver() {
         const val EXTRA_RESULT_CHAT_ID = "chat_id"
         const val EXTRA_RESULT_AI_RESPONSE = "ai_response"
         const val EXTRA_RESULT_ERROR = "error"
+
+        private const val ERROR_INTENT_DISABLED =
+            "Orbit does not accept messages from other apps. Turn it on in Settings > External HTTP Calls."
     }
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -69,6 +74,21 @@ class ExternalChatReceiver : BroadcastReceiver() {
                 val replyAction = intent.getStringExtra(EXTRA_REPLY_ACTION)?.takeIf { it.isNotBlank() }
                     ?: ACTION_EXTERNAL_CHAT_RESULT
                 val replyPackage = intent.getStringExtra(EXTRA_REPLY_PACKAGE)?.takeIf { it.isNotBlank() }
+                // Any installed app can send this broadcast, so it only reaches the model once the owner allows it.
+                if (!ExternalHttpApiPreferences.getInstance(context).intentEnabledFlow.first()) {
+                    AppLogger.w(TAG, "Ignored an external chat broadcast: not allowed in settings")
+                    sendResultBroadcast(
+                        context = context,
+                        action = replyAction,
+                        packageName = replyPackage,
+                        result = ExternalChatResult(
+                            requestId = intent.getStringExtra(EXTRA_REQUEST_ID),
+                            success = false,
+                            error = ERROR_INTENT_DISABLED
+                        )
+                    )
+                    return@launch
+                }
                 val result = ExternalChatRequestExecutor(context.applicationContext).execute(
                     ExternalChatRequest(
                         requestId = intent.getStringExtra(EXTRA_REQUEST_ID),
